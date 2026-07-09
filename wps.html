@@ -243,23 +243,76 @@
       background: #26324d;
     }
 
-    button:disabled,
-    input:disabled {
+    input:disabled,
+    select:disabled,
+    textarea:disabled,
+    button:disabled {
       opacity: 0.4;
       cursor: not-allowed;
     }
 
     #out {
       width: 100%;
-      min-height: 0;
+      min-height: 1.6em;
       margin: 14px auto 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+      text-align: left;
+      white-space: pre-line;
+    }
+    
+    #out:empty {
+      display: none;
+    }
+    
+    #out.terminal-state {
+      min-height: 0;
+      margin: 28px auto 0;
+      white-space: normal;
+      text-align: left;
+    }
+    
+    .terminal-card {
+      width: 100%;
+      text-align: left;
+    }
+    
+    .terminal-title {
+      color: var(--ink);
+      font-size: clamp(24px, 6vw, 30px);
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: center;
+    }
+    
+    .terminal-subtitle {
+      margin-top: 8px;
       color: var(--muted);
       font-size: 14px;
       line-height: 1.45;
       text-align: center;
     }
-
-    #out:empty { display: none; }
+    
+    .terminal-section {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--track);
+    }
+    
+    .terminal-section-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    
+    .terminal-details {
+      margin-top: 5px;
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.5;
+    }
 
     .previous-submission {
       width: 100%;
@@ -388,7 +441,7 @@
         </div>
 
         <div class="nav-row">
-          <button id="nextOrSubmit" type="button">Save</button>
+          <button id="nextOrSubmit" type="button">Submit</button>
         </div>
 
         <div class="progress">Q 2 of 2</div>
@@ -485,40 +538,92 @@
     }
 
     document.addEventListener('change', event => {
+      if (event.target.matches('input, select')) {
+        out.classList.remove('terminal-state');
+        out.textContent = '';
+      }
+    
       if (event.target.matches('.check-option input[type="checkbox"]')) {
         setSelectedState(event.target);
       }
     });
+    
+    document.addEventListener('input', event => {
+      if (event.target.matches('input, select')) {
+        out.classList.remove('terminal-state');
+        out.textContent = '';
+      }
+    });
 
     function lockSubmittedForm() {
-      document.querySelectorAll('.box input, .box button').forEach(el => {
+      document.querySelectorAll('.box input, .box select, .box textarea, .box button').forEach(el => {
         el.disabled = true;
       });
     }
-
+    
     function formatSubmissionDate(value) {
       const date = new Date(value);
-
+    
       if (Number.isNaN(date.getTime())) {
         return 'Date unavailable';
       }
-
+    
       return date.toLocaleDateString('en-GB', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric'
       });
     }
-
+    
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+    
+    function formatSubmittedEmployers(batch) {
+      if (!Array.isArray(batch) || !batch.length) return '';
+    
+      const employers = batch
+        .map(item => item.employer)
+        .filter(Boolean);
+    
+      if (!employers.length) return '';
+    
+      return [
+        '<section class="terminal-section">',
+        '<div class="terminal-section-label">Submitted workplaces</div>',
+        `<div class="terminal-details">${escapeHtml(employers.join(' · '))}</div>`,
+        '</section>'
+      ].join('');
+    }
+    
+    function formatSubmissionMessage(submittedAt, title, batch = []) {
+      return [
+        '<section class="terminal-card">',
+        `<div class="terminal-title">${title}</div>`,
+        `<div class="terminal-subtitle">Submitted ${formatSubmissionDate(submittedAt)}</div>`,
+        formatSubmittedEmployers(batch),
+        '</section>'
+      ].filter(Boolean).join('');
+    }
+    
+    function showTerminalState(message) {
+      step1.classList.remove('active');
+      step2.classList.remove('active');
+    
+      out.classList.add('terminal-state');
+      out.innerHTML = message;
+    }
+    
     function showAlreadySubmitted(submittedAt) {
-      out.innerHTML = `
-        <section class="previous-submission">
-          <div class="previous-submission-detail">
-            <span>Already submitted:</span>
-            <strong>${formatSubmissionDate(submittedAt)}</strong>
-          </div>
-        </section>
-      `;
+      lockSubmittedForm();
+      showTerminalState(
+        formatSubmissionMessage(submittedAt, 'Already submitted')
+      );
     }
 
     function initialiseSubmissionLock() {
@@ -527,7 +632,6 @@
       const last = localStorage.getItem(SUBMIT_KEY);
       if (!last) return;
 
-      lockSubmittedForm();
       showAlreadySubmitted(last);
     }
 
@@ -561,7 +665,8 @@
         .map(input => input.value);
 
       if (Number.isNaN(score) || score < 0 || score > 10) {
-        alert('Please enter a 0–10 score.');
+        out.classList.remove('terminal-state');
+        out.textContent = '⚠️ Please fill all fields';
         return;
       }
 
@@ -579,8 +684,9 @@
         return;
       }
 
-      out.textContent = 'Saving…';
+      out.textContent = 'Submitting…';
       nextOrSubmit.disabled = true;
+      nextOrSubmit.textContent = 'Submitting…';
 
       const batch = responses.map(response => ({
         employer: response.employer,
@@ -594,18 +700,23 @@
         .then(() => {
           const count = batch.length;
           const submittedAt = new Date().toISOString();
-
+        
           if (ENFORCE_SINGLE_SUBMISSION) {
             localStorage.setItem(SUBMIT_KEY, submittedAt);
             lockSubmittedForm();
-            showAlreadySubmitted(submittedAt);
+            showTerminalState(
+              formatSubmissionMessage(submittedAt, 'Submitted', batch)
+            );
           } else {
-            out.textContent = `Saved ${count} ${count === 1 ? 'entry!' : 'entries!'}`;
+            out.textContent = `Submitted ${count} ${count === 1 ? 'entry!' : 'entries!'}`;
           }
         })
         .catch(error => {
-          out.textContent = '⚠ ' + error.message;
+          out.classList.remove('terminal-state');
+          out.textContent = '⚠️ Unable to submit right now, please try again';
           nextOrSubmit.disabled = false;
+          nextOrSubmit.textContent = idx < employers.length - 1 ? 'Next' : 'Submit';
+          console.error(error);
         });
     });
 
@@ -618,7 +729,7 @@
       });
 
       refreshSelectedStates();
-      nextOrSubmit.textContent = idx < employers.length - 1 ? 'Next' : 'Save';
+      nextOrSubmit.textContent = idx < employers.length - 1 ? 'Next' : 'Submit';
       nextOrSubmit.disabled = false;
       out.textContent = '';
     }
