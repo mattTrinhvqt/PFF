@@ -32,7 +32,6 @@
       app.style.transform = 'none';
 
       let sizer = document.getElementById('appSizer');
-
       if (!sizer) {
         sizer = app.cloneNode(true);
         sizer.id = 'appSizer';
@@ -550,67 +549,28 @@
   </div>
 
   <script>
-    const BACKEND_URL = 'PASTE_YOUR_DEPLOYED_WEB_APP_URL_HERE';
+    /**********************
+     * CONFIG
+     **********************/
+    const SPREADSHEET_ID = '1UZizMV2CNlyNbKytN4QCSc4HcsKCx-PxOrboJyMCN1E';
+    const SHEET_NAME = 'Data';
 
-    function callCasualEstimatorBackend(action, params = {}) {
-      return new Promise((resolve, reject) => {
-        if (!BACKEND_URL || BACKEND_URL === 'PASTE_YOUR_DEPLOYED_WEB_APP_URL_HERE') {
-          reject(new Error('Backend URL has not been set.'));
-          return;
-        }
+    const MMM_TREAT_AS_CATEGORICAL = false;
+    const STATE_LEVELS = ['NSW', 'QLD', 'ACT', 'VIC', 'SA', 'NT', 'WA', 'TAS'];
 
-        const callbackName = `casualEstimatorCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-        const script = document.createElement('script');
+    const Z_TWO_SIDED_95 = 1.96;
 
-        const timeout = window.setTimeout(() => {
-          cleanup();
-          reject(new Error('Request timed out.'));
-        }, 30000);
-
-        function cleanup() {
-          window.clearTimeout(timeout);
-
-          try {
-            delete window[callbackName];
-          } catch (error) {
-            window[callbackName] = undefined;
-          }
-
-          if (script.parentNode) {
-            script.parentNode.removeChild(script);
-          }
-        }
-
-        window[callbackName] = response => {
-          cleanup();
-
-          if (!response || !response.ok) {
-            reject(new Error(response?.message || 'Request failed.'));
-            return;
-          }
-
-          resolve(response);
-        };
-
-        script.onerror = () => {
-          cleanup();
-          reject(new Error('Network error.'));
-        };
-
-        const query = new URLSearchParams({
-          callback: callbackName,
-          action,
-          ...params
-        });
-
-        script.src = `${BACKEND_URL}?${query.toString()}`;
-        document.body.appendChild(script);
-      });
-    }
+    const Z_P05 = -1.64485;
+    const Z_P20 = -0.84162;
+    const Z_P50 = 0.00000;
+    const Z_P80 = 0.84162;
+    const Z_P95 = 1.64485;
 
     const out = document.getElementById('out');
     const estimateBtn = document.getElementById('estimateBtn');
     const AUFMT = new Intl.NumberFormat('en-AU');
+
+    let cachedModel = null;
 
     function round0(x) {
       if (x === null || x === undefined || isNaN(x)) return '–';
@@ -645,15 +605,104 @@
       document.getElementById('p95v').textContent = round0(p95);
     }
 
+    function loadGvizData() {
+      return new Promise((resolve, reject) => {
+        const callbackName = `casualEstimatorSheetCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+        const script = document.createElement('script');
+
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('Could not load Google Sheet data'));
+        }, 15000);
+
+        function cleanup() {
+          window.clearTimeout(timeout);
+
+          try {
+            delete window[callbackName];
+          } catch (error) {
+            window[callbackName] = undefined;
+          }
+
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+
+        window[callbackName] = response => {
+          cleanup();
+
+          if (response?.status === 'error') {
+            reject(new Error(response?.errors?.[0]?.detailed_message || 'Could not load Google Sheet data'));
+            return;
+          }
+
+          resolve(response);
+        };
+
+        script.onerror = () => {
+          cleanup();
+          reject(new Error('Could not load Google Sheet data'));
+        };
+
+        // Pull only the needed columns:
+        // B = rate, C = years, E = MMM, I = state.
+        const tq = 'select B,C,E,I where B is not null';
+
+        const params = new URLSearchParams({
+          sheet: SHEET_NAME,
+          headers: '1',
+          tq,
+          tqx: `responseHandler:${callbackName}`
+        });
+
+        script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+        document.body.appendChild(script);
+      });
+    }
+
+    function getCellDisplayValue(cell) {
+      if (!cell) return '';
+      return String(cell.f ?? cell.v ?? '').trim();
+    }
+
+    function getCellRawValue(cell) {
+      if (!cell) return '';
+      return cell.v ?? cell.f ?? '';
+    }
+
+    function normaliseRowsFromGviz(response) {
+      const rows = response?.table?.rows || [];
+
+      return rows.map(row => {
+        const cells = row?.c || [];
+
+        return {
+          rate: toNum(getCellRawValue(cells[0])),
+          yearsRaw: toNum(getCellRawValue(cells[1])),
+          mmm: toInt(getCellRawValue(cells[2])),
+          state: getCellDisplayValue(cells[3]).trim().toUpperCase()
+        };
+      });
+    }
+
     function loadModel() {
-      callCasualEstimatorBackend('summary')
-        .then(() => {
+      document.getElementById('modelMeta').textContent = 'Loading model…';
+
+      loadGvizData()
+        .then(response => {
+          const rawRows = normaliseRowsFromGviz(response);
+          cachedModel = buildModel(rawRows);
+
           document.getElementById('modelMeta').textContent = 'MLR (OLS) model loaded';
           scheduleApplyScale();
         })
         .catch(err => {
+          cachedModel = null;
+
           document.getElementById('modelMeta').innerHTML =
             '<span class="warn">Model error: ' + err.message + '</span>';
+
           scheduleApplyScale();
         });
     }
@@ -673,12 +722,6 @@
         return;
       }
 
-      const payload = {
-        years: String(years),
-        mmm: String(mmm),
-        state
-      };
-
       const resultsEl = document.getElementById('results');
 
       resultsEl.style.display = 'none';
@@ -688,7 +731,18 @@
 
       scheduleApplyScale();
 
-      callCasualEstimatorBackend('predict', payload)
+      Promise.resolve()
+        .then(() => {
+          if (!cachedModel) {
+            throw new Error('Model has not loaded yet.');
+          }
+
+          return predict({
+            years,
+            mmm,
+            state
+          }, cachedModel);
+        })
         .then(res => {
           document.getElementById('results').style.display = 'block';
           renderPercentileScale(res);
@@ -706,6 +760,365 @@
           estimateBtn.disabled = false;
           estimateBtn.textContent = 'Calculate';
         });
+    }
+
+    /**********************
+     * MODEL
+     **********************/
+    function buildModel(rawRows) {
+      const rows = [];
+
+      rawRows.forEach(r => {
+        const rate = toNum(r.rate);
+
+        const yearsRaw = toNum(r.yearsRaw);
+        const yearsLog = Number.isFinite(yearsRaw) && yearsRaw >= 0
+          ? Math.log(1 + yearsRaw)
+          : NaN;
+
+        const mmm = toInt(r.mmm);
+        const state = String(r.state ?? '').trim().toUpperCase();
+
+        const numericOk =
+          [rate, yearsLog, mmm].every(Number.isFinite) &&
+          mmm >= 1 &&
+          mmm <= 7;
+
+        const stateOk = STATE_LEVELS.includes(state);
+
+        if (numericOk && stateOk) {
+          rows.push({
+            rate,
+            years: yearsLog,
+            mmm,
+            state
+          });
+        }
+      });
+
+      if (rows.length < 10) {
+        throw new Error('Not enough valid rows (need ≥10).');
+      }
+
+      const n = rows.length;
+
+      const stateCounts = countBy(
+        rows.map(r => r.state).filter(s => s && s !== STATE_LEVELS[0])
+      );
+
+      let stateKeep = sortKeysByCountDesc(stateCounts);
+
+      function baseP() {
+        return 1 + 1 + (MMM_TREAT_AS_CATEGORICAL ? 6 : 1);
+      }
+
+      let p = baseP() + stateKeep.length;
+
+      while (n <= p && stateKeep.length > 0) {
+        stateKeep.pop();
+        p = baseP() + stateKeep.length;
+      }
+
+      if (n <= p) {
+        throw new Error(`Insufficient data (n=${n}, p=${p}) after pruning states.`);
+      }
+
+      const designInfo = makeDesignInfo(stateKeep);
+
+      const X = [];
+      const y = [];
+
+      rows.forEach(r => {
+        y.push(r.rate);
+        X.push(buildXRow(r, designInfo));
+      });
+
+      const nFinal = y.length;
+      const pFinal = X[0].length;
+
+      if (nFinal <= pFinal) {
+        throw new Error(`Insufficient data (n=${nFinal}, p=${pFinal}).`);
+      }
+
+      const Xt = transpose(X);
+      const XtX = multiply(Xt, X);
+      const XtX_inv = invert(XtX);
+      const Xty = multiplyVec(Xt, y);
+      const beta = multiplyMatVec(XtX_inv, Xty);
+
+      const yhat = X.map(row => dot(row, beta));
+      const resid = y.map((v, i) => v - yhat[i]);
+
+      const sse = dot(resid, resid);
+      const ybar = y.reduce((a, b) => a + b, 0) / n;
+      const sst = y.reduce((acc, v) => acc + Math.pow(v - ybar, 2), 0);
+
+      const r2 = 1 - (sse / sst);
+      const df = n - p;
+      const s2 = sse / df;
+
+      return {
+        beta,
+        XtX_inv,
+        s2,
+        r2,
+        n,
+        p,
+        df,
+        designInfo
+      };
+    }
+
+    function predict(input, model) {
+      const x0 = buildX0(input, model.designInfo);
+
+      const yhat = dot(x0, model.beta);
+      const h = quadForm(model.XtX_inv, x0);
+
+      const se_pred = Math.sqrt(model.s2 * (1 + h));
+
+      const p05 = yhat + Z_P05 * se_pred;
+      const p20 = yhat + Z_P20 * se_pred;
+      const p50 = yhat + Z_P50 * se_pred;
+      const p80 = yhat + Z_P80 * se_pred;
+      const p95 = yhat + Z_P95 * se_pred;
+
+      const predLo = yhat - Z_TWO_SIDED_95 * se_pred;
+      const predHi = yhat + Z_TWO_SIDED_95 * se_pred;
+
+      return {
+        yhat,
+        p05,
+        p20,
+        p50,
+        p80,
+        p95,
+        predLo,
+        predHi,
+        n: model.n,
+        r2: model.r2
+      };
+    }
+
+    function makeDesignInfo(stateKeep) {
+      const terms = ['Intercept', 'logYears'];
+
+      if (MMM_TREAT_AS_CATEGORICAL) {
+        for (let k = 2; k <= 7; k++) {
+          terms.push(`MMM${k}`);
+        }
+      } else {
+        terms.push('MMM_ordinal');
+      }
+
+      const stateRef = STATE_LEVELS[0];
+      const stateDummies = (stateKeep || []).slice();
+
+      stateDummies.forEach(s => {
+        terms.push(`State_${s}`);
+      });
+
+      return {
+        terms,
+        mmmCategorical: MMM_TREAT_AS_CATEGORICAL,
+        stateRef,
+        stateDummies
+      };
+    }
+
+    function buildXRow(r, designInfo) {
+      const row = [1, r.years];
+
+      if (designInfo.mmmCategorical) {
+        for (let k = 2; k <= 7; k++) {
+          row.push(r.mmm === k ? 1 : 0);
+        }
+      } else {
+        row.push(r.mmm);
+      }
+
+      designInfo.stateDummies.forEach(s => {
+        row.push(r.state === s ? 1 : 0);
+      });
+
+      return row;
+    }
+
+    function buildX0(input, designInfo) {
+      const yearsRaw = toNum(input.years);
+      const yearsLog = Number.isFinite(yearsRaw) && yearsRaw >= 0
+        ? Math.log(1 + yearsRaw)
+        : NaN;
+
+      const mmm = Math.max(1, Math.min(7, Math.round(toNum(input.mmm))));
+
+      const stateIn = String(input.state || designInfo.stateRef)
+        .trim()
+        .toUpperCase();
+
+      const row = [1, yearsLog];
+
+      if (designInfo.mmmCategorical) {
+        for (let k = 2; k <= 7; k++) {
+          row.push(mmm === k ? 1 : 0);
+        }
+      } else {
+        row.push(mmm);
+      }
+
+      designInfo.stateDummies.forEach(s => {
+        row.push(stateIn === s ? 1 : 0);
+      });
+
+      return row;
+    }
+
+    /**********************
+     * MATRIX HELPERS
+     **********************/
+    function toNum(v) {
+      const n = typeof v === 'string' ? parseFloat(v) : Number(v);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    function toInt(v) {
+      const n = typeof v === 'string' ? parseInt(v, 10) : Math.floor(Number(v));
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    function transpose(A) {
+      return A[0].map((_, i) => A.map(r => r[i]));
+    }
+
+    function multiply(A, B) {
+      const r = A.length;
+      const c = B[0].length;
+      const m = B.length;
+
+      const out = Array.from({ length: r }, () => Array(c).fill(0));
+
+      for (let i = 0; i < r; i++) {
+        for (let k = 0; k < m; k++) {
+          const aik = A[i][k];
+
+          for (let j = 0; j < c; j++) {
+            out[i][j] += aik * B[k][j];
+          }
+        }
+      }
+
+      return out;
+    }
+
+    function multiplyVec(A, v) {
+      const r = A.length;
+      const c = A[0].length;
+
+      const out = Array(r).fill(0);
+
+      for (let i = 0; i < r; i++) {
+        let s = 0;
+
+        for (let j = 0; j < c; j++) {
+          s += A[i][j] * v[j];
+        }
+
+        out[i] = s;
+      }
+
+      return out;
+    }
+
+    function multiplyMatVec(A, v) {
+      return multiplyVec(A, v);
+    }
+
+    function dot(a, b) {
+      let s = 0;
+
+      for (let i = 0; i < a.length; i++) {
+        s += a[i] * b[i];
+      }
+
+      return s;
+    }
+
+    function identity(n) {
+      const I = Array.from({ length: n }, () => Array(n).fill(0));
+
+      for (let i = 0; i < n; i++) {
+        I[i][i] = 1;
+      }
+
+      return I;
+    }
+
+    function invert(A) {
+      const n = A.length;
+      const M = A.map(r => r.slice());
+      const I = identity(n);
+
+      for (let c = 0; c < n; c++) {
+        let pivot = c;
+        let maxAbs = Math.abs(M[c][c]);
+
+        for (let r = c + 1; r < n; r++) {
+          const v = Math.abs(M[r][c]);
+
+          if (v > maxAbs) {
+            maxAbs = v;
+            pivot = r;
+          }
+        }
+
+        if (maxAbs === 0) {
+          throw new Error('Design matrix is singular (perfect multicollinearity).');
+        }
+
+        if (pivot !== c) {
+          [M[c], M[pivot]] = [M[pivot], M[c]];
+          [I[c], I[pivot]] = [I[pivot], I[c]];
+        }
+
+        const diag = M[c][c];
+
+        for (let j = 0; j < n; j++) {
+          M[c][j] /= diag;
+          I[c][j] /= diag;
+        }
+
+        for (let r = 0; r < n; r++) {
+          if (r !== c) {
+            const f = M[r][c];
+
+            for (let j = 0; j < n; j++) {
+              M[r][j] -= f * M[c][j];
+              I[r][j] -= f * I[c][j];
+            }
+          }
+        }
+      }
+
+      return I;
+    }
+
+    function quadForm(invXtX, x) {
+      const tmp = multiplyMatVec(invXtX, x);
+      return dot(x, tmp);
+    }
+
+    function countBy(arr) {
+      const c = Object.create(null);
+
+      arr.forEach(v => {
+        c[v] = (c[v] || 0) + 1;
+      });
+
+      return c;
+    }
+
+    function sortKeysByCountDesc(counts) {
+      return Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
     }
 
     document.getElementById('estimateBtn').addEventListener('click', estimate);
