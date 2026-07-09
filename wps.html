@@ -467,7 +467,7 @@
         const timeout = window.setTimeout(() => {
           cleanup();
           reject(new Error('Request timed out.'));
-        }, 30000);
+        }, 90000);
 
         function cleanup() {
           window.clearTimeout(timeout);
@@ -517,8 +517,8 @@
     let employers = [];
     let responses = [];
     let idx = 0;
-    let submittingWaitMessageTimer = null;
-    let isSubmitting = false;
+    let optimisticSubmittedTimer = null;
+    let hasShownOptimisticSubmitted = false;
 
     const step1 = document.getElementById('step1');
     const step2 = document.getElementById('step2');
@@ -686,31 +686,42 @@
         return;
       }
 
-      out.classList.remove('terminal-state');
-      out.textContent = 'Submitting…';
-      nextOrSubmit.disabled = true;
-      
-      isSubmitting = true;
-      
-      clearTimeout(submittingWaitMessageTimer);
-      submittingWaitMessageTimer = window.setTimeout(() => {
-        if (isSubmitting) {
-          out.textContent = 'This can take ~20 seconds, thanks for waiting!';
-        }
-      }, 5000);
-
       const batch = responses.map(response => ({
         employer: response.employer,
         score: response.score,
         boosters: response.boosters.join('; ')
       }));
+      
+      out.classList.remove('terminal-state');
+      out.textContent = 'Submitting…';
+      nextOrSubmit.disabled = true;
+      hasShownOptimisticSubmitted = false;
+      
+      clearTimeout(optimisticSubmittedTimer);
+      optimisticSubmittedTimer = window.setTimeout(() => {
+        hasShownOptimisticSubmitted = true;
+      
+        const optimisticSubmittedAt = new Date().toISOString();
+      
+        if (ENFORCE_SINGLE_SUBMISSION) {
+          localStorage.setItem(SUBMIT_KEY, optimisticSubmittedAt);
+          lockSubmittedForm();
+        }
+      
+        showTerminalState(
+          formatSubmissionMessage(optimisticSubmittedAt, 'Submitted', batch)
+        );
+      }, 3000);
 
       callPromoterBackend('saveAll', {
         batch: JSON.stringify(batch)
       })
         .then(() => {
-          isSubmitting = false;
-          clearTimeout(submittingWaitMessageTimer);
+          clearTimeout(optimisticSubmittedTimer);
+        
+          if (hasShownOptimisticSubmitted) {
+            return;
+          }
         
           const count = batch.length;
           const submittedAt = new Date().toISOString();
@@ -726,8 +737,12 @@
           }
         })
         .catch(error => {
-          isSubmitting = false;
-          clearTimeout(submittingWaitMessageTimer);
+          clearTimeout(optimisticSubmittedTimer);
+        
+          if (hasShownOptimisticSubmitted) {
+            console.error(error);
+            return;
+          }
         
           out.classList.remove('terminal-state');
           out.textContent = '⚠️ Unable to submit right now, please try again';
