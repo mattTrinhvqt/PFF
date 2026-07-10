@@ -458,8 +458,11 @@
   <script>
     const SPREADSHEET_ID = '12kFzZpUBE8J4WZygnK2EbFIEFC2MN2MWNuCselrFZ6s';
     const SHEET_NAME = 'Optom-related jobs summary stats';
-    const TABLE_RANGE = 'K1:M3';
-    const EXPECTED_ROWS = 3;
+    
+    const TABLE_HEADER_RANGE = 'K1:M1';
+    const TABLE_DATA_RANGE = 'K2:M3';
+    
+    const EXPECTED_DATA_ROWS = 2;
     const EXPECTED_COLS = 3;
 
     const app = document.getElementById('app');
@@ -609,7 +612,21 @@
       return String(cell.f ?? cell.v ?? '').trim();
     }
 
-    function normaliseGvizTable(response) {
+    function normaliseHeaderResponse(response) {
+      if (response?.status === 'error') {
+        throw new Error(response?.errors?.[0]?.detailed_message || 'Could not load Google Sheet header');
+      }
+    
+      const headers = [];
+    
+      for (let c = 0; c < EXPECTED_COLS; c++) {
+        headers.push(String(response?.table?.cols?.[c]?.label || '').trim() || '—');
+      }
+    
+      return headers;
+    }
+    
+    function normaliseDataResponse(response) {
       if (response?.status === 'error') {
         throw new Error(response?.errors?.[0]?.detailed_message || 'Could not load Google Sheet data');
       }
@@ -617,9 +634,7 @@
       const rows = response?.table?.rows || [];
       const values = [];
     
-      // Read K1:M3 exactly as sheet rows.
-      // Do not use Google gviz column labels, because they can wrongly promote row 2 into the header.
-      for (let r = 0; r < EXPECTED_ROWS; r++) {
+      for (let r = 0; r < EXPECTED_DATA_ROWS; r++) {
         const row = [];
     
         for (let c = 0; c < EXPECTED_COLS; c++) {
@@ -631,54 +646,69 @@
     
       return values;
     }
-
+    function loadGvizRange(range, headers) {
+      return new Promise((resolve, reject) => {
+        const callbackName = `pffJobTracker2Callback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+        const script = document.createElement('script');
+    
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('Could not load data'));
+        }, 10000);
+    
+        function cleanup() {
+          window.clearTimeout(timeout);
+    
+          try {
+            delete window[callbackName];
+          } catch (error) {
+            window[callbackName] = undefined;
+          }
+    
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+    
+        window[callbackName] = response => {
+          cleanup();
+          resolve(response);
+        };
+    
+        script.onerror = () => {
+          cleanup();
+          reject(new Error('Could not load data'));
+        };
+    
+        const params = new URLSearchParams({
+          sheet: SHEET_NAME,
+          range,
+          headers: String(headers),
+          tqx: `responseHandler:${callbackName}`
+        });
+    
+        script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+        document.body.appendChild(script);
+      });
+    }
+    
     function loadTableData() {
-      const callbackName = `pffJobTracker2Callback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-      const script = document.createElement('script');
-
-      const timeout = window.setTimeout(() => {
-        cleanup();
-        showError(new Error('Could not load data'));
-      }, 10000);
-
-      function cleanup() {
-        window.clearTimeout(timeout);
-
-        try {
-          delete window[callbackName];
-        } catch (error) {
-          window[callbackName] = undefined;
-        }
-
-        if (script.parentNode) {
-          script.parentNode.removeChild(script);
-        }
-      }
-
-      window[callbackName] = response => {
-        cleanup();
-
-        try {
-          renderTable(normaliseGvizTable(response));
-        } catch (error) {
+      Promise.all([
+        loadGvizRange(TABLE_HEADER_RANGE, 1),
+        loadGvizRange(TABLE_DATA_RANGE, 0)
+      ])
+        .then(([headerResponse, dataResponse]) => {
+          const headers = normaliseHeaderResponse(headerResponse);
+          const dataRows = normaliseDataResponse(dataResponse);
+    
+          renderTable([
+            headers,
+            ...dataRows
+          ]);
+        })
+        .catch(error => {
           showError(error);
-        }
-      };
-
-      script.onerror = () => {
-        cleanup();
-        showError(new Error('Could not load data'));
-      };
-
-    const params = new URLSearchParams({
-      sheet: SHEET_NAME,
-      range: TABLE_RANGE,
-      headers: '0',
-      tqx: `responseHandler:${callbackName}`
-    });
-
-      script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
-      document.body.appendChild(script);
+        });
     }
 
     loadTableData();
