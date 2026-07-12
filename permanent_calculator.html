@@ -321,12 +321,35 @@
     }
 
     #results {
+      position: relative;
       display: none;
       grid-column: 1 / -1;
       margin-top: 12px;
       padding-top: 22px;
       border-top: 1px solid var(--track);
       text-align: left;
+    }
+    
+    #resultsStatus {
+      display: none;
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      transform: translateY(-50%);
+      color: var(--muted);
+      background: #fff;
+      font-size: 14px;
+      line-height: 1;
+      text-align: center;
+    }
+    
+    #results.show-status {
+      border-top-color: transparent;
+    }
+    
+    #results.show-status #resultsStatus {
+      display: block;
     }
 
     .results-section-label {
@@ -566,6 +589,7 @@
         <div id="out" aria-live="polite"></div>
 
         <section id="results" aria-live="polite">
+          <div id="resultsStatus" aria-live="polite"></div>
           <div id="resultsHeading" class="results-section-label">
             Estimated salary
           </div>
@@ -692,6 +716,7 @@
 
     const toggleBtn = document.getElementById('toggleBtn');
     const resultsHeading = document.getElementById('resultsHeading');
+    const resultsStatus = document.getElementById('resultsStatus');
 
     const AUFMT = new Intl.NumberFormat('en-AU');
 
@@ -896,41 +921,61 @@
       const resultsEl = document.getElementById('results');
       const hadPreviousResults = Boolean(lastRes);
     
-      /*
-       * Hide the result area only for the very first calculation.
-       * On later calculations, leave the previous results visible.
-       */
       if (!hadPreviousResults) {
+        /*
+         * The first calculation has no visible results section yet,
+         * so use the normal message underneath the button.
+         */
         resultsEl.style.display = 'none';
+        out.textContent = 'Calculating…';
+      } else {
+        /*
+         * On recalculation, replace the divider line with the status
+         * without adding another row or moving the results.
+         */
+        out.textContent = '';
+        resultsStatus.textContent = 'Calculating…';
+        resultsEl.classList.add('show-status');
       }
     
-      out.textContent = 'Calculating…';
       estimateBtn.disabled = true;
-      estimateBtn.textContent = 'Calculating…';
     
       scheduleApplyScale();
     
       callPermanentEstimatorBackend('predict', payload)
         .then(res => {
+          /*
+           * Restore the divider line before displaying the new values.
+           */
+          resultsEl.classList.remove('show-status');
+          resultsStatus.textContent = '';
+          out.textContent = '';
+    
           resultsEl.style.display = 'block';
     
           lastRes = res;
     
           /*
-           * Animate only when there were existing displayed values.
-           * The first result appears immediately.
+           * Animate only when replacing existing displayed values.
            */
           updateView(hadPreviousResults);
     
-          out.textContent = '';
           estimateBtn.disabled = false;
           estimateBtn.textContent = 'Calculate';
         })
         .catch(err => {
-          /*
-           * Existing results remain visible if recalculation fails.
-           */
-          out.textContent = '⚠ ' + err.message;
+          if (hadPreviousResults) {
+            /*
+             * Keep the previous results stationary and show the error
+             * where the divider line normally appears.
+             */
+            out.textContent = '';
+            resultsStatus.textContent = '⚠ ' + err.message;
+            resultsEl.classList.add('show-status');
+          } else {
+            out.textContent = '⚠ ' + err.message;
+          }
+    
           scheduleApplyScale();
     
           estimateBtn.disabled = false;
