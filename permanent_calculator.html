@@ -408,6 +408,7 @@
       color: var(--ink);
       font-size: 13px;
       font-weight: 400;
+      font-variant-numeric: tabular-nums;
       line-height: 1;
       white-space: nowrap;
     }
@@ -685,6 +686,9 @@
     let viewMode = 'salary';
     let lastRes = null;
     let fteHours = null;
+    let numberAnimationToken = 0;
+    
+    const NUMBER_ANIMATION_MS = 500;
 
     const toggleBtn = document.getElementById('toggleBtn');
     const resultsHeading = document.getElementById('resultsHeading');
@@ -720,51 +724,113 @@
       };
     }
 
-    function updateView() {
+    function updateView(animateNumbers = false) {
       if (!lastRes) return;
-
+    
       const showHourly = viewMode === 'hourly';
       const displayRes = showHourly ? toHourly(lastRes) : lastRes;
-
+    
       if (showHourly && !displayRes) {
         alert('Still fetching FTE hours… please try again in a moment.');
         return;
       }
-
-      renderPercentileScale(displayRes);
-
-      resultsHeading.textContent = showHourly ? 'Estimated hourly rate' : 'Estimated salary';
-
+    
+      renderPercentileScale(displayRes, animateNumbers);
+    
+      resultsHeading.textContent = showHourly
+        ? 'Estimated hourly rate'
+        : 'Estimated salary';
+    
       toggleBtn.textContent = showHourly
         ? 'Hourly rate; switch to Salary'
         : 'Salary; switch to Hourly rate';
-
+    
       toggleBtn.style.display = 'inline-block';
-
+    
       scheduleApplyScale();
     }
-
-    function renderPercentileScale(res) {
+    
+    function animateNumber(
+      elementId,
+      targetValue,
+      formatter,
+      animate,
+      token
+    ) {
+      const element = document.getElementById(elementId);
+      const target = Number(targetValue);
+    
+      if (!Number.isFinite(target)) {
+        element.textContent = '–';
+        delete element.dataset.numericValue;
+        return;
+      }
+    
+      const start = Number(element.dataset.numericValue);
+      const reduceMotion =
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    
+      const shouldAnimate =
+        animate &&
+        Number.isFinite(start) &&
+        start !== target &&
+        !reduceMotion;
+    
+      if (!shouldAnimate) {
+        element.textContent = formatter(target);
+        element.dataset.numericValue = String(target);
+        return;
+      }
+    
+      const startedAt = performance.now();
+    
+      function frame(now) {
+        if (token !== numberAnimationToken) return;
+    
+        const progress = Math.min(
+          (now - startedAt) / NUMBER_ANIMATION_MS,
+          1
+        );
+    
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const current = start + (target - start) * eased;
+    
+        element.textContent = formatter(current);
+        element.dataset.numericValue = String(current);
+    
+        if (progress < 1) {
+          requestAnimationFrame(frame);
+        } else {
+          element.textContent = formatter(target);
+          element.dataset.numericValue = String(target);
+        }
+      }
+    
+      requestAnimationFrame(frame);
+    }
+    
+    function renderPercentileScale(res, animateNumbers = false) {
       const [p05, p20, p50, p80, p95] =
         [res.p05, res.p20, res.p50, res.p80, res.p95].map(Number);
-
+    
       const P_MIN = 5;
       const P_MAX = 95;
       const P_SPAN = P_MAX - P_MIN;
-
+    
       const posPct = p => ((p - P_MIN) / P_SPAN) * 100;
-
+      const token = ++numberAnimationToken;
+    
       document.querySelector('.t5').style.left = posPct(5) + '%';
       document.querySelector('.t20').style.left = posPct(20) + '%';
       document.querySelector('.t50').style.left = posPct(50) + '%';
       document.querySelector('.t80').style.left = posPct(80) + '%';
       document.querySelector('.t95').style.left = posPct(95) + '%';
-
-      document.getElementById('p05v').textContent = round0(p05);
-      document.getElementById('p20v').textContent = round0(p20);
-      document.getElementById('p50v').textContent = fmtDollarsInt(p50);
-      document.getElementById('p80v').textContent = round0(p80);
-      document.getElementById('p95v').textContent = round0(p95);
+    
+      animateNumber('p05v', p05, round0, animateNumbers, token);
+      animateNumber('p20v', p20, round0, animateNumbers, token);
+      animateNumber('p50v', p50, fmtDollarsInt, animateNumbers, token);
+      animateNumber('p80v', p80, round0, animateNumbers, token);
+      animateNumber('p95v', p95, round0, animateNumbers, token);
     }
 
     function loadModel() {
@@ -793,57 +859,87 @@
     }
 
     function estimate() {
-      const years = parseFloat(document.getElementById('years').value);
-      const mmm = parseInt(document.getElementById('mmm').value, 10);
-      const state = document.getElementById('state').value.trim();
-
-      if (!isFinite(years) || years < 0 || !isFinite(mmm) || mmm < 1 || mmm > 7) {
+      const years = parseFloat(
+        document.getElementById('years').value
+      );
+    
+      const mmm = parseInt(
+        document.getElementById('mmm').value,
+        10
+      );
+    
+      const state =
+        document.getElementById('state').value.trim();
+    
+      if (
+        !isFinite(years) ||
+        years < 0 ||
+        !isFinite(mmm) ||
+        mmm < 1 ||
+        mmm > 7
+      ) {
         alert('Please enter valid years and MMM (1–7).');
         return;
       }
-
+    
       if (!state) {
         alert('Please select a State/territory.');
         return;
       }
-
+    
       const payload = {
         years: String(years),
         mmm: String(mmm),
         state
       };
-
+    
       const resultsEl = document.getElementById('results');
-
-      resultsEl.style.display = 'none';
+      const hadPreviousResults = Boolean(lastRes);
+    
+      /*
+       * Hide the result area only for the very first calculation.
+       * On later calculations, leave the previous results visible.
+       */
+      if (!hadPreviousResults) {
+        resultsEl.style.display = 'none';
+      }
+    
       out.textContent = 'Calculating…';
       estimateBtn.disabled = true;
       estimateBtn.textContent = 'Calculating…';
-
+    
       scheduleApplyScale();
-
+    
       callPermanentEstimatorBackend('predict', payload)
         .then(res => {
-          document.getElementById('results').style.display = 'block';
-
+          resultsEl.style.display = 'block';
+    
           lastRes = res;
-          viewMode = 'salary';
-          updateView();
-
+    
+          /*
+           * Animate only when there were existing displayed values.
+           * The first result appears immediately.
+           */
+          updateView(hadPreviousResults);
+    
           out.textContent = '';
           estimateBtn.disabled = false;
           estimateBtn.textContent = 'Calculate';
         })
         .catch(err => {
+          /*
+           * Existing results remain visible if recalculation fails.
+           */
           out.textContent = '⚠ ' + err.message;
           scheduleApplyScale();
-
+    
           estimateBtn.disabled = false;
           estimateBtn.textContent = 'Calculate';
         });
     }
-
-    document.getElementById('estimateBtn').addEventListener('click', estimate);
+    document
+      .getElementById('estimateBtn')
+      .addEventListener('click', estimate);
 
     toggleBtn.addEventListener('click', () => {
       viewMode = viewMode === 'salary' ? 'hourly' : 'salary';
