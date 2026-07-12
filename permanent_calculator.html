@@ -636,8 +636,14 @@
           </button>
 
           <p class="calculator-note">
-            Salary estimates (FTE) exclude super and include location and weekend/night loadings
-          </p>  
+            Salary estimates (FTE) exclude super and include location and weekend/night loadings.
+            <span id="workPatternNote" hidden>
+              Consider your individual roster against medians of
+              <span id="medianSat"></span> Saturdays,
+              <span id="medianSun"></span> Sundays and
+              <span id="medianLate"></span> late nights per 4-week cycle
+            </span>
+          </p>
         </section>
 
       </main>
@@ -646,7 +652,11 @@
 
   <script>
     const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwimN0dzcx3KGmFa7drDmoZrkupY5qsN5JOs1Jhc5lq---ThAWIzSvSvMATmxbAdlo/exec';
-
+    const WORK_PATTERN_SHEET_ID =
+      '1D4EoCMnH_RbwbuzFtw92NOwnvR_r9zQV7dAaXtfnnd0';
+    
+    const WORK_PATTERN_SHEET_GID = '0';
+    
     function callPermanentEstimatorBackend(action, params = {}) {
       return new Promise((resolve, reject) => {
         if (!BACKEND_URL || BACKEND_URL === 'PASTE_YOUR_DEPLOYED_WEB_APP_URL_HERE') {
@@ -703,6 +713,91 @@
       });
     }
 
+    function loadWorkPatternMedians() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `workPatternCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    
+        const script = document.createElement('script');
+    
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('Work-pattern request timed out.'));
+        }, 15000);
+    
+        function cleanup() {
+          window.clearTimeout(timeout);
+    
+          try {
+            delete window[callbackName];
+          } catch (error) {
+            window[callbackName] = undefined;
+          }
+    
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+    
+        window[callbackName] = response => {
+          cleanup();
+    
+          if (!response || response.status === 'error') {
+            reject(
+              new Error(
+                response?.errors?.[0]?.detailed_message ||
+                'Could not load work-pattern medians.'
+              )
+            );
+            return;
+          }
+    
+          const rows = response?.table?.rows || [];
+    
+          const values = rows.slice(0, 3).map(row => {
+            const cell = row?.c?.[0];
+    
+            return String(
+              cell?.f ?? cell?.v ?? ''
+            ).trim();
+          });
+    
+          if (
+            values.length < 3 ||
+            values.some(value => value === '')
+          ) {
+            reject(
+              new Error('AU11, AU12 or AU13 is blank or unavailable.')
+            );
+            return;
+          }
+    
+          resolve({
+            sat: values[0],
+            sun: values[1],
+            late: values[2]
+          });
+        };
+    
+        script.onerror = () => {
+          cleanup();
+          reject(new Error('Could not load work-pattern medians.'));
+        };
+    
+        const params = new URLSearchParams({
+          gid: WORK_PATTERN_SHEET_GID,
+          range: 'AU11:AU13',
+          headers: '0',
+          tqx: `responseHandler:${callbackName}`
+        });
+    
+        script.src =
+          `https://docs.google.com/spreadsheets/d/` +
+          `${WORK_PATTERN_SHEET_ID}/gviz/tq?${params.toString()}`;
+    
+        document.body.appendChild(script);
+      });
+    }    
     const out = document.getElementById('out');
     const estimateBtn = document.getElementById('estimateBtn');
 
@@ -860,25 +955,50 @@
     function loadModel() {
       callPermanentEstimatorBackend('summary')
         .then(() => {
-          document.getElementById('modelMeta').textContent = 'MLR (OLS) model loaded';
+          document.getElementById('modelMeta').textContent =
+            'MLR (OLS) model loaded';
+    
           scheduleApplyScale();
         })
         .catch(err => {
           document.getElementById('modelMeta').innerHTML =
-            '<span class="warn">Model error: ' + err.message + '</span>';
+            '<span class="warn">Model error: ' +
+            err.message +
+            '</span>';
+    
           scheduleApplyScale();
         });
-
+    
       callPermanentEstimatorBackend('fteHours')
         .then(response => {
           const n = Number(response.fteHours);
-
+    
           if (Number.isFinite(n) && n > 0) {
             fteHours = n;
           }
         })
         .catch(err => {
-          console.warn('FTE hours fetch failed:', err.message);
+          console.warn(
+            'FTE hours fetch failed:',
+            err.message
+          );
+        });
+    
+      loadWorkPatternMedians()
+        .then(({ sat, sun, late }) => {
+          document.getElementById('medianSat').textContent = sat;
+          document.getElementById('medianSun').textContent = sun;
+          document.getElementById('medianLate').textContent = late;
+    
+          document.getElementById('workPatternNote').hidden = false;
+    
+          scheduleApplyScale();
+        })
+        .catch(err => {
+          console.warn(
+            'Work-pattern medians fetch failed:',
+            err.message
+          );
         });
     }
 
