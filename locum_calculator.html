@@ -275,11 +275,33 @@
     }
 
     #results {
+      position: relative;
       display: none;
       margin-top: 12px;
       padding-top: 22px;
       border-top: 1px solid var(--track);
       text-align: left;
+    }
+    
+    #resultsStatus {
+      display: none;
+      position: absolute;
+      top: -12px;
+      right: 0;
+      left: 0;
+      color: var(--muted);
+      background: #fff;
+      font-size: 14px;
+      line-height: 1.45;
+      text-align: left;
+    }
+    
+    #results.show-status {
+      border-top-color: transparent;
+    }
+    
+    #results.show-status #resultsStatus {
+      display: block;
     }
 
     .results-section-label {
@@ -361,6 +383,7 @@
       color: var(--ink);
       font-size: 13px;
       font-weight: 400;
+      font-variant-numeric: tabular-nums;
       line-height: 1;
       white-space: nowrap;
     }
@@ -487,6 +510,8 @@
           <div id="out" aria-live="polite"></div>
 
           <section id="results" aria-live="polite">
+            <div id="resultsStatus" aria-live="polite"></div>
+          
             <div class="results-section-label">
               Estimated hourly weekday rate
             </div>
@@ -536,7 +561,13 @@
 
       const out = document.getElementById('out');
       const estimateBtn = document.getElementById('estimateBtn');
-      const AUFMT = new Intl.NumberFormat('en-AU');   
+      const resultsStatus = document.getElementById('resultsStatus');
+      const AUFMT = new Intl.NumberFormat('en-AU');
+      
+      let hasPreviousResults = false;
+      let numberAnimationToken = 0;
+      
+      const NUMBER_ANIMATION_MS = 500;
          
       function round0(x) {
         if (x === null || x === undefined || isNaN(x)) return '–';
@@ -599,27 +630,88 @@
         });
       }
 
-      function renderPercentileScale(res) {
+      function animateNumber(
+        elementId,
+        targetValue,
+        formatter,
+        animate,
+        token
+      ) {
+        const element = document.getElementById(elementId);
+        const target = Number(targetValue);
+      
+        if (!Number.isFinite(target)) {
+          element.textContent = '–';
+          delete element.dataset.numericValue;
+          return;
+        }
+      
+        const start = Number(element.dataset.numericValue);
+      
+        const reduceMotion =
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      
+        const shouldAnimate =
+          animate &&
+          Number.isFinite(start) &&
+          start !== target &&
+          !reduceMotion;
+      
+        if (!shouldAnimate) {
+          element.textContent = formatter(target);
+          element.dataset.numericValue = String(target);
+          return;
+        }
+      
+        const startedAt = performance.now();
+      
+        function frame(now) {
+          if (token !== numberAnimationToken) return;
+      
+          const progress = Math.min(
+            (now - startedAt) / NUMBER_ANIMATION_MS,
+            1
+          );
+      
+          const eased = 1 - Math.pow(1 - progress, 3);
+          const current = start + (target - start) * eased;
+      
+          element.textContent = formatter(current);
+          element.dataset.numericValue = String(current);
+      
+          if (progress < 1) {
+            requestAnimationFrame(frame);
+          } else {
+            element.textContent = formatter(target);
+            element.dataset.numericValue = String(target);
+          }
+        }
+      
+        requestAnimationFrame(frame);
+      }
+      
+      function renderPercentileScale(res, animateNumbers = false) {
         const [p05, p20, p50, p80, p95] =
           [res.p05, res.p20, res.p50, res.p80, res.p95].map(Number);
-
-        const P_MIN = 5, P_MAX = 95, P_SPAN = P_MAX - P_MIN;
+      
+        const P_MIN = 5;
+        const P_MAX = 95;
+        const P_SPAN = P_MAX - P_MIN;
+      
         const posPct = p => ((p - P_MIN) / P_SPAN) * 100;
-
-        document.querySelector('.t5') .style.left = posPct(5)  + '%';
+        const token = ++numberAnimationToken;
+      
+        document.querySelector('.t5').style.left = posPct(5) + '%';
         document.querySelector('.t20').style.left = posPct(20) + '%';
         document.querySelector('.t50').style.left = posPct(50) + '%';
         document.querySelector('.t80').style.left = posPct(80) + '%';
         document.querySelector('.t95').style.left = posPct(95) + '%';
-
-        const n0 = x => round0(x);
-        const usd = x => fmtDollarsInt(x);
-
-        document.getElementById('p05v').textContent = n0(p05);
-        document.getElementById('p20v').textContent = n0(p20);
-        document.getElementById('p50v').textContent = usd(p50);
-        document.getElementById('p80v').textContent = n0(p80);
-        document.getElementById('p95v').textContent = n0(p95);
+      
+        animateNumber('p05v', p05, round0, animateNumbers, token);
+        animateNumber('p20v', p20, round0, animateNumbers, token);
+        animateNumber('p50v', p50, fmtDollarsInt, animateNumbers, token);
+        animateNumber('p80v', p80, round0, animateNumbers, token);
+        animateNumber('p95v', p95, round0, animateNumbers, token);
       }
 
       async function loadModel() {
@@ -636,38 +728,80 @@
       }
 
       async function estimate() {
-        const years = parseFloat(document.getElementById('years').value);
-        const mmm = parseInt(document.getElementById('mmm').value, 10);
-
+        const years = parseFloat(
+          document.getElementById('years').value
+        );
+      
+        const mmm = parseInt(
+          document.getElementById('mmm').value,
+          10
+        );
+      
         if (!isFinite(years) || !isFinite(mmm)) {
           alert('Please enter valid numbers for years and MMM (1–7).');
           return;
         }
-
+      
         const resultsEl = document.getElementById('results');
-        resultsEl.style.display = 'none';
-        out.textContent = 'Calculating…';
-        scheduleApplyScale();
-
+        const hadPreviousResults = hasPreviousResults;
+      
+        if (!hadPreviousResults) {
+          /*
+           * First calculation: retain the original status behaviour.
+           */
+          resultsEl.style.display = 'none';
+          out.textContent = 'Calculating…';
+        } else {
+          /*
+           * Recalculation: retain the existing results and replace
+           * the grey divider with the status message.
+           */
+          out.textContent = '';
+          resultsStatus.textContent = 'Calculating…';
+          resultsEl.classList.add('show-status');
+        }
+      
         estimateBtn.disabled = true;
-        estimateBtn.textContent = 'Calculating…';
-
+      
+        scheduleApplyScale();
+      
         try {
           const res = await callEstimatorBackend('predict', {
             years: String(years),
             mmm: String(mmm)
           });
-
-          document.getElementById('results').style.display = 'block';
-          renderPercentileScale(res);
-
+      
+          /*
+           * Restore the divider before animating the updated values.
+           */
+          resultsEl.classList.remove('show-status');
+          resultsStatus.textContent = '';
           out.textContent = '';
+      
+          resultsEl.style.display = 'block';
+      
+          renderPercentileScale(res, hadPreviousResults);
+          hasPreviousResults = true;
+      
           scheduleApplyScale();
+      
           estimateBtn.disabled = false;
           estimateBtn.textContent = 'Calculate';
         } catch (err) {
-          out.textContent = '⚠ ' + err.message;
+          if (hadPreviousResults) {
+            /*
+             * Keep the previous results stationary and display the
+             * error where the divider normally appears.
+             */
+            out.textContent = '';
+            resultsStatus.textContent = '⚠ ' + err.message;
+            resultsEl.classList.add('show-status');
+          } else {
+            out.textContent = '⚠ ' + err.message;
+          }
+      
           scheduleApplyScale();
+      
           estimateBtn.disabled = false;
           estimateBtn.textContent = 'Calculate';
         }
