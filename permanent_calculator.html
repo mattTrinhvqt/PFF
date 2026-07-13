@@ -259,19 +259,21 @@
       border-color: var(--ink);
       outline: none;
     }
-    
+        
     .help-tooltip {
-      position: absolute;
-      bottom: calc(100% + 8px);
-      left: 50%;
-      z-index: 30;
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 9999;
       width: max-content;
-      max-width: min(280px, calc(100vw - 48px));
+      max-width: min(280px, calc(100vw - 24px));
+      max-height: calc(100vh - 24px);
       padding: 8px 10px;
-      transform: translateX(-50%);
+      overflow-y: auto;
       color: #fff;
       background: var(--ink);
       border-radius: 5px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
       font-size: 11px;
       font-weight: 400;
       line-height: 1.35;
@@ -285,20 +287,14 @@
         visibility 120ms ease;
     }
     
-    .help-tooltip::after {
-      content: "";
-      position: absolute;
-      top: 100%;
-      left: 50%;
-      transform: translateX(-50%);
-      border: 5px solid transparent;
-      border-top-color: var(--ink);
-    }
-    
-    .help-tooltip-wrap:hover .help-tooltip,
-    .help-tooltip-wrap.is-open .help-tooltip {
+    .help-tooltip.is-visible {
       opacity: 1;
       visibility: visible;
+    }
+    
+    /* Position is calculated dynamically, so no arrow is needed. */
+    .help-tooltip::after {
+      display: none;
     }
     
     .field label small a {
@@ -779,7 +775,7 @@
                 class="help-tooltip"
                 role="tooltip"
               >
-                Pre-tax, excl. super and sales bonuses, incl. location and weekend/night loadings
+                Pre-tax; excl. super and sales bonuses, incl. location and weekend/night loadings
               </span>
             </span>
           </div>
@@ -1581,43 +1577,188 @@
       const salaryHelpBtn =
         document.getElementById('salaryHelpBtn');
       
-      const salaryHelpWrap =
-        salaryHelpBtn.closest('.help-tooltip-wrap');
+      const salaryHelpTooltip =
+        document.getElementById('salaryHelpTooltip');
       
-      function closeSalaryHelp() {
-        salaryHelpWrap.classList.remove('is-open');
-        salaryHelpBtn.setAttribute('aria-expanded', 'false');
+      let salaryHelpPinned = false;
+      
+      /*
+       * Move the tooltip outside #app so its fixed positioning is
+       * relative to the visible iframe/web-app viewport.
+       */
+      document.body.appendChild(salaryHelpTooltip);
+      
+      function positionSalaryHelp() {
+        const viewportMargin = 12;
+        const buttonGap = 8;
+      
+        const buttonRect =
+          salaryHelpBtn.getBoundingClientRect();
+      
+        /*
+         * Temporarily position at the origin so its rendered
+         * dimensions can be measured accurately.
+         */
+        salaryHelpTooltip.style.left = '0px';
+        salaryHelpTooltip.style.top = '0px';
+      
+        const tooltipRect =
+          salaryHelpTooltip.getBoundingClientRect();
+      
+        let left =
+          buttonRect.left +
+          buttonRect.width / 2 -
+          tooltipRect.width / 2;
+      
+        left = Math.max(
+          viewportMargin,
+          Math.min(
+            left,
+            window.innerWidth -
+            tooltipRect.width -
+            viewportMargin
+          )
+        );
+      
+        /*
+         * Prefer placing the tooltip below the question mark.
+         */
+        let top =
+          buttonRect.bottom +
+          buttonGap;
+      
+        /*
+         * If it would be cut off at the bottom, place it above.
+         */
+        if (
+          top + tooltipRect.height >
+          window.innerHeight - viewportMargin
+        ) {
+          top =
+            buttonRect.top -
+            buttonGap -
+            tooltipRect.height;
+        }
+      
+        /*
+         * Final safeguard to keep it entirely inside the viewport.
+         */
+        top = Math.max(
+          viewportMargin,
+          Math.min(
+            top,
+            window.innerHeight -
+            tooltipRect.height -
+            viewportMargin
+          )
+        );
+      
+        salaryHelpTooltip.style.left =
+          `${Math.round(left)}px`;
+      
+        salaryHelpTooltip.style.top =
+          `${Math.round(top)}px`;
       }
       
-      salaryHelpBtn.addEventListener('click', event => {
-        event.stopPropagation();
-      
-        const willOpen =
-          !salaryHelpWrap.classList.contains('is-open');
-      
-        salaryHelpWrap.classList.toggle(
-          'is-open',
-          willOpen
+      function setSalaryHelpOpen(open) {
+        salaryHelpTooltip.classList.toggle(
+          'is-visible',
+          open
         );
       
         salaryHelpBtn.setAttribute(
           'aria-expanded',
-          String(willOpen)
+          String(open)
         );
-      });
       
-      document.addEventListener('click', event => {
-        if (!salaryHelpWrap.contains(event.target)) {
-          closeSalaryHelp();
+        if (open) {
+          requestAnimationFrame(positionSalaryHelp);
         }
-      });
+      }
       
-      document.addEventListener('keydown', event => {
-        if (event.key === 'Escape') {
-          closeSalaryHelp();
+      function closeSalaryHelp(returnFocus = false) {
+        salaryHelpPinned = false;
+        setSalaryHelpOpen(false);
+      
+        if (returnFocus) {
           salaryHelpBtn.focus();
         }
-      });    
+      }
+      
+      /* Hover support */
+      salaryHelpBtn.addEventListener('mouseenter', () => {
+        setSalaryHelpOpen(true);
+      });
+      
+      salaryHelpBtn.addEventListener('mouseleave', () => {
+        if (!salaryHelpPinned) {
+          setSalaryHelpOpen(false);
+        }
+      });
+      
+      /* Keyboard-focus support */
+      salaryHelpBtn.addEventListener('focus', () => {
+        setSalaryHelpOpen(true);
+      });
+      
+      salaryHelpBtn.addEventListener('blur', () => {
+        if (!salaryHelpPinned) {
+          setSalaryHelpOpen(false);
+        }
+      });
+      
+      /* Click/tap support */
+      salaryHelpBtn.addEventListener('click', event => {
+        event.stopPropagation();
+      
+        salaryHelpPinned = !salaryHelpPinned;
+      
+        setSalaryHelpOpen(salaryHelpPinned);
+      });
+      
+      /* Clicking elsewhere closes a pinned tooltip */
+      document.addEventListener('click', event => {
+        if (
+          !salaryHelpBtn.contains(event.target)
+        ) {
+          closeSalaryHelp();
+        }
+      });
+      
+      /* Escape closes it */
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          closeSalaryHelp(true);
+        }
+      });
+      
+      /*
+       * Keep it inside the visible iframe if the viewport changes
+       * or the page is scrolled.
+       */
+      window.addEventListener('resize', () => {
+        if (
+          salaryHelpTooltip.classList.contains(
+            'is-visible'
+          )
+        ) {
+          positionSalaryHelp();
+        }
+      });
+      
+      window.addEventListener(
+        'scroll',
+        () => {
+          if (
+            salaryHelpTooltip.classList.contains(
+              'is-visible'
+            )
+          ) {
+            positionSalaryHelp();
+          }
+        },
+        true
+      );   
     loadModel();
   </script>
 </body>
