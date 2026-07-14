@@ -90,8 +90,8 @@
       --ink: #151515;
       --muted: #69718a;
       --track: #e8eaf0;
+      --error-red: #b42318;
     }
-
     * {
       box-sizing: border-box;
     }
@@ -273,6 +273,12 @@
     #out:empty {
       display: none;
     }
+    
+    /* Inline calculator errors */
+    #out.is-error,
+    #resultsStatus.is-error {
+      color: var(--error-red);
+    }
 
     #results {
       position: relative;
@@ -426,7 +432,7 @@
     }
 
     .warn {
-      color: #b42318;
+      color: var(--error-red);
     }
 
     @media (max-width: 430px) {
@@ -562,6 +568,93 @@
       const out = document.getElementById('out');
       const estimateBtn = document.getElementById('estimateBtn');
       const resultsStatus = document.getElementById('resultsStatus');
+      
+      /*
+       * Shows a normal grey message or a red error message.
+       */
+      function setInlineMessage(
+        element,
+        message = '',
+        isError = false
+      ) {
+        element.textContent = message;
+      
+        element.classList.toggle(
+          'is-error',
+          isError && Boolean(message)
+        );
+      }
+      
+      /*
+       * Shows a message below the Calculate button.
+       */
+      function setFormMessage(
+        message = '',
+        isError = false
+      ) {
+        setInlineMessage(out, message, isError);
+        scheduleApplyScale();
+      }
+      
+      /*
+       * Shows a message above existing results, where the divider
+       * normally appears.
+       */
+      function setResultsMessage(
+        message = '',
+        isError = false
+      ) {
+        const resultsEl =
+          document.getElementById('results');
+      
+        setInlineMessage(
+          resultsStatus,
+          message,
+          isError
+        );
+      
+        resultsEl.classList.toggle(
+          'show-status',
+          Boolean(message)
+        );
+      
+        scheduleApplyScale();
+      }
+      
+      /*
+       * Removes final full stops from backend error messages.
+       */
+      function cleanErrorMessage(message) {
+        return String(
+          message || 'Request failed'
+        )
+          .trim()
+          .replace(/\.+$/, '');
+      }
+      
+      /*
+       * Clears a form error when the user begins correcting a field.
+       */
+      function clearFormErrorOnEdit() {
+        if (out.classList.contains('is-error')) {
+          setFormMessage();
+        }
+      }
+      
+      document
+        .querySelector('.calculator-form')
+        .addEventListener(
+          'input',
+          clearFormErrorOnEdit
+        );
+      
+      document
+        .querySelector('.calculator-form')
+        .addEventListener(
+          'change',
+          clearFormErrorOnEdit
+        );
+      
       const AUFMT = new Intl.NumberFormat('en-AU');
       
       let hasPreviousResults = false;
@@ -722,7 +815,9 @@
           scheduleApplyScale();
         } catch (err) {
           document.getElementById('modelMeta').innerHTML =
-            '<span class="warn">Model error: ' + err.message + '</span>';
+            '<span class="warn">Model error: ' +
+            cleanErrorMessage(err?.message) +
+            '</span>';
           scheduleApplyScale();
         }
       }
@@ -737,8 +832,18 @@
           10
         );
       
-        if (!isFinite(years) || !isFinite(mmm)) {
-          alert('Please enter valid numbers for years and MMM (1–7).');
+        if (
+          !isFinite(years) ||
+          years < 0 ||
+          !isFinite(mmm) ||
+          mmm < 1 ||
+          mmm > 7
+        ) {
+          setFormMessage(
+            '⚠ Please complete all fields',
+            true
+          );
+        
           return;
         }
       
@@ -747,18 +852,16 @@
       
         if (!hadPreviousResults) {
           /*
-           * First calculation: retain the original status behaviour.
+           * First calculation: show the status below Calculate.
            */
           resultsEl.style.display = 'none';
-          out.textContent = 'Calculating…';
+          setFormMessage('Calculating…');
         } else {
           /*
-           * Recalculation: retain the existing results and replace
-           * the grey divider with the status message.
+           * Keep the existing results stationary while recalculating.
            */
-          out.textContent = '';
-          resultsStatus.textContent = 'Recalculating…';
-          resultsEl.classList.add('show-status');
+          setFormMessage();
+          setResultsMessage('Recalculating…');
         }
       
         estimateBtn.disabled = true;
@@ -774,9 +877,8 @@
           /*
            * Restore the divider before animating the updated values.
            */
-          resultsEl.classList.remove('show-status');
-          resultsStatus.textContent = '';
-          out.textContent = '';
+          setResultsMessage();
+          setFormMessage();
       
           resultsEl.style.display = 'block';
       
@@ -787,26 +889,30 @@
       
           estimateBtn.disabled = false;
           estimateBtn.textContent = 'Recalculate';
-        } catch (err) {
-          if (hadPreviousResults) {
-            /*
-             * Keep the previous results stationary and display the
-             * error where the divider normally appears.
-             */
-            out.textContent = '';
-            resultsStatus.textContent = '⚠ ' + err.message;
-            resultsEl.classList.add('show-status');
-          } else {
-            out.textContent = '⚠ ' + err.message;
+          } catch (err) {
+            const message =
+              '⚠ ' + cleanErrorMessage(err?.message);
+          
+            if (hadPreviousResults) {
+              /*
+               * Keep the previous results stationary and show the error
+               * above them.
+               */
+              setFormMessage();
+              setResultsMessage(message, true);
+            } else {
+              /*
+               * No results exist yet, so show the error below Calculate.
+               */
+              setFormMessage(message, true);
+            }
+          
+            estimateBtn.disabled = false;
+          
+            estimateBtn.textContent = hadPreviousResults
+              ? 'Recalculate'
+              : 'Calculate';
           }
-      
-          scheduleApplyScale();
-      
-          estimateBtn.disabled = false;
-          estimateBtn.textContent = hadPreviousResults
-            ? 'Recalculate'
-            : 'Calculate';
-        }
       }
 
       document.getElementById('estimateBtn').addEventListener('click', estimate);
