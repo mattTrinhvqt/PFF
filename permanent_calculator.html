@@ -404,6 +404,12 @@
     #out:empty {
       display: none;
     }
+    
+    /* Same red used by the permanent tracker */
+    #out.is-error,
+    #resultsStatus.is-error {
+      color: var(--benchmark-red);
+    }
 
     #results {
       position: relative;
@@ -1062,7 +1068,94 @@
     const toggleBtn = document.getElementById('toggleBtn');
     const resultsHeading = document.getElementById('resultsHeading');
     const resultsStatus = document.getElementById('resultsStatus');
-
+    
+    /*
+     * Shows a normal grey message or a red error message.
+     */
+    function setInlineMessage(
+      element,
+      message = '',
+      isError = false
+    ) {
+      element.textContent = message;
+    
+      element.classList.toggle(
+        'is-error',
+        isError && Boolean(message)
+      );
+    }
+    
+    /*
+     * Shows a message below the Calculate button.
+     */
+    function setFormMessage(
+      message = '',
+      isError = false
+    ) {
+      setInlineMessage(out, message, isError);
+      scheduleApplyScale();
+    }
+    
+    /*
+     * Shows a message above existing results, where the divider
+     * normally appears.
+     */
+    function setResultsMessage(
+      message = '',
+      isError = false
+    ) {
+      const resultsEl =
+        document.getElementById('results');
+    
+      setInlineMessage(
+        resultsStatus,
+        message,
+        isError
+      );
+    
+      resultsEl.classList.toggle(
+        'show-status',
+        Boolean(message)
+      );
+    
+      scheduleApplyScale();
+    }
+    
+    /*
+     * Removes a final full stop from backend error messages.
+     */
+    function cleanErrorMessage(message) {
+      return String(
+        message || 'Request failed'
+      )
+        .trim()
+        .replace(/\.+$/, '');
+    }
+    
+    /*
+     * Clear a form-validation error when the user starts
+     * correcting any field.
+     */
+    function clearFormErrorOnEdit() {
+      if (out.classList.contains('is-error')) {
+        setFormMessage();
+      }
+    }
+    
+    document
+      .querySelector('.calculator-form')
+      .addEventListener(
+        'input',
+        clearFormErrorOnEdit
+      );
+    
+    document
+      .querySelector('.calculator-form')
+      .addEventListener(
+        'change',
+        clearFormErrorOnEdit
+      );
+    
     const AUFMT = new Intl.NumberFormat('en-AU');
 
     function round0(x) {
@@ -1101,10 +1194,25 @@
       const displayRes = showHourly ? toHourly(lastRes) : lastRes;
     
       if (showHourly && !displayRes) {
-        alert('Still fetching FTE hours… please try again in a moment.');
+        /*
+         * Keep the internal view set to salary so the next click
+         * can retry the hourly conversion normally.
+         */
+        viewMode = 'salary';
+      
+        setResultsMessage(
+          '⚠ Please try again in a moment',
+          true
+        );
+      
         return;
       }
-    
+      
+      /*
+       * Clear a previous hourly-conversion warning.
+       */
+      setResultsMessage();
+      
       renderPercentileScale(displayRes, animateNumbers);
       renderBenchmarkMarker(lastRes, benchmarkSalary);
     
@@ -1392,7 +1500,7 @@
         .catch(err => {
           document.getElementById('modelMeta').innerHTML =
             '<span class="warn">Model error: ' +
-            err.message +
+            cleanErrorMessage(err?.message) +
             '</span>';
     
           scheduleApplyScale();
@@ -1455,16 +1563,17 @@
         years < 0 ||
         !isFinite(mmm) ||
         mmm < 1 ||
-        mmm > 7
+        mmm > 7 ||
+        !state
       ) {
-        alert('Please enter valid years and MMM (1–7).');
+        setFormMessage(
+          '⚠ Please complete all fields',
+          true
+        );
+      
         return;
       }
-    
-      if (!state) {
-        alert('Please select a State/territory.');
-        return;
-      }
+      
       if (
         enteredBenchmarkSalary !== null &&
         (
@@ -1472,12 +1581,13 @@
           enteredBenchmarkSalary <= 0
         )
       ) {
-        alert(
-          'Please enter a valid current FTE salary or leave it blank.'
+        setFormMessage(
+          '⚠ Please enter a valid FTE salary or leave it blank',
+          true
         );
       
         return;
-      }    
+      }
       const payload = {
         years: String(years),
         mmm: String(mmm),
@@ -1490,18 +1600,17 @@
       if (!hadPreviousResults) {
         /*
          * The first calculation has no visible results section yet,
-         * so use the normal message underneath the button.
+         * so show the status underneath the button.
          */
         resultsEl.style.display = 'none';
-        out.textContent = 'Calculating…';
+      
+        setFormMessage('Calculating…');
       } else {
         /*
-         * On recalculation, replace the divider line with the status
-         * without adding another row or moving the results.
+         * Keep the existing results stationary while recalculating.
          */
-        out.textContent = '';
-        resultsStatus.textContent = 'Recalculating…';
-        resultsEl.classList.add('show-status');
+        setFormMessage();
+        setResultsMessage('Recalculating…');
       }
     
       estimateBtn.disabled = true;
@@ -1513,9 +1622,8 @@
           /*
            * Restore the divider line before displaying the new values.
            */
-          resultsEl.classList.remove('show-status');
-          resultsStatus.textContent = '';
-          out.textContent = '';
+          setResultsMessage();
+          setFormMessage();
     
           resultsEl.style.display = 'block';
     
@@ -1531,21 +1639,25 @@
           estimateBtn.textContent = 'Recalculate';
         })
         .catch(err => {
+          const message =
+            '⚠ ' + cleanErrorMessage(err?.message);
+        
           if (hadPreviousResults) {
             /*
              * Keep the previous results stationary and show the error
-             * where the divider line normally appears.
+             * above them.
              */
-            out.textContent = '';
-            resultsStatus.textContent = '⚠ ' + err.message;
-            resultsEl.classList.add('show-status');
+            setFormMessage();
+            setResultsMessage(message, true);
           } else {
-            out.textContent = '⚠ ' + err.message;
+            /*
+             * No results exist yet, so show the error below Calculate.
+             */
+            setFormMessage(message, true);
           }
-    
-          scheduleApplyScale();
-    
+        
           estimateBtn.disabled = false;
+        
           estimateBtn.textContent = hadPreviousResults
             ? 'Recalculate'
             : 'Calculate';
