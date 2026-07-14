@@ -90,6 +90,7 @@
       --ink: #151515;
       --muted: #69718a;
       --track: #e8eaf0;
+      --error-red: #b42318;
     }
 
     * {
@@ -273,6 +274,12 @@
     #out:empty {
       display: none;
     }
+    
+    /* Inline calculator errors */
+    #out.is-error,
+    #resultsStatus.is-error {
+      color: var(--error-red);
+    }
 
     #results {
       position: relative;
@@ -427,7 +434,7 @@
     }
 
     .warn {
-      color: #b42318;
+      color: var(--error-red);
     }
 
     @media (max-width: 430px) {
@@ -594,6 +601,94 @@
     const out = document.getElementById('out');
     const estimateBtn = document.getElementById('estimateBtn');
     const resultsStatus = document.getElementById('resultsStatus');
+    
+    /*
+     * Shows a normal grey message or a red error message.
+     */
+    function setInlineMessage(
+      element,
+      message = '',
+      isError = false
+    ) {
+      element.textContent = message;
+    
+      element.classList.toggle(
+        'is-error',
+        isError && Boolean(message)
+      );
+    }
+    
+    /*
+     * Shows a message below the Calculate button.
+     */
+    function setFormMessage(
+      message = '',
+      isError = false
+    ) {
+      setInlineMessage(out, message, isError);
+      scheduleApplyScale();
+    }
+    
+    /*
+     * Shows a message above existing results, where the divider
+     * normally appears.
+     */
+    function setResultsMessage(
+      message = '',
+      isError = false
+    ) {
+      const resultsEl =
+        document.getElementById('results');
+    
+      setInlineMessage(
+        resultsStatus,
+        message,
+        isError
+      );
+    
+      resultsEl.classList.toggle(
+        'show-status',
+        Boolean(message)
+      );
+    
+      scheduleApplyScale();
+    }
+    
+    /*
+     * Removes final full stops from error messages.
+     */
+    function cleanErrorMessage(message) {
+      return String(
+        message || 'Calculation failed'
+      )
+        .trim()
+        .replace(/\.+$/, '');
+    }
+    
+    /*
+     * Clears an inline form error when the user begins correcting
+     * any field.
+     */
+    function clearFormErrorOnEdit() {
+      if (out.classList.contains('is-error')) {
+        setFormMessage();
+      }
+    }
+    
+    document
+      .querySelector('.calculator-form')
+      .addEventListener(
+        'input',
+        clearFormErrorOnEdit
+      );
+    
+    document
+      .querySelector('.calculator-form')
+      .addEventListener(
+        'change',
+        clearFormErrorOnEdit
+      );
+    
     const AUFMT = new Intl.NumberFormat('en-AU');
     
     let cachedModel = null;
@@ -792,7 +887,9 @@
           cachedModel = null;
 
           document.getElementById('modelMeta').innerHTML =
-            '<span class="warn">Model error: ' + err.message + '</span>';
+            '<span class="warn">Model error: ' +
+            cleanErrorMessage(err?.message) +
+            '</span>';
 
           scheduleApplyScale();
         });
@@ -816,14 +913,14 @@
         years < 0 ||
         !isFinite(mmm) ||
         mmm < 1 ||
-        mmm > 7
+        mmm > 7 ||
+        !state
       ) {
-        alert('Please enter valid years and MMM (1–7).');
-        return;
-      }
-    
-      if (!state) {
-        alert('Please select a State/territory.');
+        setFormMessage(
+          '⚠ Please complete all fields',
+          true
+        );
+      
         return;
       }
     
@@ -831,12 +928,17 @@
       const hadPreviousResults = hasPreviousResults;
     
       if (!hadPreviousResults) {
+        /*
+         * First calculation: show the status below Calculate.
+         */
         resultsEl.style.display = 'none';
-        out.textContent = 'Calculating…';
+        setFormMessage('Calculating…');
       } else {
-        out.textContent = '';
-        resultsStatus.textContent = 'Recalculating…';
-        resultsEl.classList.add('show-status');
+        /*
+         * Keep the existing results stationary while recalculating.
+         */
+        setFormMessage();
+        setResultsMessage('Recalculating…');
       }
     
       estimateBtn.disabled = true;
@@ -864,9 +966,8 @@
           state
         }, cachedModel);
     
-        resultsEl.classList.remove('show-status');
-        resultsStatus.textContent = '';
-        out.textContent = '';
+        setResultsMessage();
+        setFormMessage();
     
         resultsEl.style.display = 'block';
     
@@ -878,17 +979,25 @@
         estimateBtn.disabled = false;
         estimateBtn.textContent = 'Recalculate';
       } catch (err) {
+        const message =
+          '⚠ ' + cleanErrorMessage(err?.message);
+      
         if (hadPreviousResults) {
-          out.textContent = '';
-          resultsStatus.textContent = '⚠ ' + err.message;
-          resultsEl.classList.add('show-status');
+          /*
+           * Keep the previous results stationary and show the error
+           * above them.
+           */
+          setFormMessage();
+          setResultsMessage(message, true);
         } else {
-          out.textContent = '⚠ ' + err.message;
+          /*
+           * No results exist yet, so show the error below Calculate.
+           */
+          setFormMessage(message, true);
         }
-    
-        scheduleApplyScale();
-    
+      
         estimateBtn.disabled = false;
+      
         estimateBtn.textContent = hadPreviousResults
           ? 'Recalculate'
           : 'Calculate';
