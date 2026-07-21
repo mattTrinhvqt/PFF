@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <meta
+    name="referrer"
+    content="strict-origin-when-cross-origin"
+  >
+
+  <title>PFF Admin</title>
+
+  <!-- Google Identity Services -->
+  <script
+    src="https://accounts.google.com/gsi/client"
+    async
+    defer>
+  </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      min-height: 100%;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #ffffff;
+      color: #222222;
+    }
+
+    .page {
+      min-height: 450px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 420px;
+      padding: 40px;
+      text-align: center;
+      background: #ffffff;
+      border: 1px solid #dddddd;
+      border-radius: 12px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
+    }
+
+    h1 {
+      margin: 0 0 12px 0;
+      font-size: 28px;
+    }
+
+    p {
+      margin: 0;
+      color: #666666;
+      line-height: 1.5;
+    }
+
+    #googleSignInButton {
+      display: flex;
+      justify-content: center;
+      margin-top: 28px;
+    }
+
+    #loadingMessage {
+      margin-top: 20px;
+      color: #666666;
+      font-size: 14px;
+    }
+
+    #errorMessage {
+      display: none;
+      margin-top: 20px;
+      padding: 12px;
+      color: #b00020;
+      background: #fff5f5;
+      border-radius: 6px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    #adminContent {
+      display: none;
+    }
+  </style>
+</head>
+
+
+<body>
+
+  <div class="page">
+
+    <!-- LOGIN SCREEN -->
+    <div
+      id="loginCard"
+      class="card"
+    >
+
+      <h1>PFF Admin</h1>
+
+      <p>
+        Sign in with your authorised Google account.
+      </p>
+
+      <div id="loadingMessage">
+        Loading Google Sign-In...
+      </div>
+
+      <div id="googleSignInButton"></div>
+
+      <div id="errorMessage"></div>
+
+    </div>
+
+
+    <!-- ADMIN PAGE -->
+    <div
+      id="adminContent"
+      class="card"
+    >
+
+      <h1>Hello</h1>
+
+    </div>
+
+  </div>
+
+
+  <script>
+
+    /************************************************************
+     * SETTINGS
+     ************************************************************/
+
+    /*
+     * STEP 1:
+     *
+     * Replace the text below with your Google OAuth Web Client ID.
+     *
+     * Example:
+     *
+     * 123456789012-abcdefgh123456789.apps.googleusercontent.com
+     */
+
+    const GOOGLE_CLIENT_ID =
+      "PASTE_YOUR_GOOGLE_CLIENT_ID_HERE";
+
+
+    /*
+     * For this first test, ONLY this Google account is allowed.
+     */
+
+    const ALLOWED_EMAIL =
+      "matthew.vqt@gmail.com";
+
+
+    /************************************************************
+     * LOAD GOOGLE SIGN-IN
+     ************************************************************/
+
+    window.addEventListener(
+      "load",
+      waitForGoogle
+    );
+
+
+    function waitForGoogle() {
+
+      /*
+       * The Google Identity script loads asynchronously,
+       * so wait until it is ready.
+       */
+
+      if (
+        typeof google === "undefined" ||
+        !google.accounts ||
+        !google.accounts.id
+      ) {
+
+        setTimeout(
+          waitForGoogle,
+          250
+        );
+
+        return;
+      }
+
+
+      initialiseGoogleSignIn();
+
+    }
+
+
+    function initialiseGoogleSignIn() {
+
+      document
+        .getElementById("loadingMessage")
+        .style
+        .display = "none";
+
+
+      /*
+       * Initialise Google Identity Services.
+       */
+
+      google.accounts.id.initialize({
+
+        client_id:
+          GOOGLE_CLIENT_ID,
+
+        callback:
+          handleGoogleCredential,
+
+        auto_select:
+          false,
+
+        ux_mode:
+          "popup",
+
+        /*
+         * Keep FedCM disabled for now because this page
+         * will eventually be embedded cross-origin
+         * inside a Google Site.
+         */
+
+        use_fedcm_for_button:
+          false
+
+      });
+
+
+      /*
+       * Display Google's official sign-in button.
+       */
+
+      google.accounts.id.renderButton(
+
+        document.getElementById(
+          "googleSignInButton"
+        ),
+
+        {
+          type:
+            "standard",
+
+          theme:
+            "outline",
+
+          size:
+            "large",
+
+          text:
+            "signin_with",
+
+          shape:
+            "rectangular",
+
+          logo_alignment:
+            "left",
+
+          width:
+            280
+        }
+
+      );
+
+    }
+
+
+    /************************************************************
+     * HANDLE GOOGLE LOGIN
+     ************************************************************/
+
+    function handleGoogleCredential(response) {
+
+      hideError();
+
+
+      try {
+
+        /*
+         * Google returns an ID token in:
+         *
+         * response.credential
+         *
+         * For this prototype we decode the token in the browser.
+         */
+
+        const payload =
+          decodeJwtPayload(
+            response.credential
+          );
+
+
+        if (!payload) {
+
+          showError(
+            "Unable to read your Google account."
+          );
+
+          return;
+
+        }
+
+
+        /*
+         * Read the email address returned by Google.
+         */
+
+        const email =
+          String(
+            payload.email || ""
+          )
+          .trim()
+          .toLowerCase();
+
+
+        /*
+         * Check that Google says the email is verified.
+         */
+
+        const emailVerified =
+          payload.email_verified === true;
+
+
+        if (!emailVerified) {
+
+          showError(
+            "Your Google email address could not be verified."
+          );
+
+          return;
+
+        }
+
+
+        /*
+         * Check that the token was issued for this OAuth client.
+         */
+
+        if (
+          payload.aud !==
+          GOOGLE_CLIENT_ID
+        ) {
+
+          showError(
+            "This login could not be validated for this website."
+          );
+
+          return;
+
+        }
+
+
+        /*
+         * Check token issuer.
+         */
+
+        if (
+          payload.iss !== "https://accounts.google.com" &&
+          payload.iss !== "accounts.google.com"
+        ) {
+
+          showError(
+            "Invalid Google login."
+          );
+
+          return;
+
+        }
+
+
+        /*
+         * Check token has not expired.
+         */
+
+        const currentTime =
+          Math.floor(
+            Date.now() / 1000
+          );
+
+
+        if (
+          !payload.exp ||
+          payload.exp < currentTime
+        ) {
+
+          showError(
+            "Your Google login has expired. Please sign in again."
+          );
+
+          return;
+
+        }
+
+
+        /*
+         * TEMPORARY ACCESS RULE:
+         *
+         * Allow ONLY:
+         *
+         * matthew.vqt@gmail.com
+         */
+
+        if (
+          email !==
+          ALLOWED_EMAIL.toLowerCase()
+        ) {
+
+          showError(
+            "Access denied. " +
+            email +
+            " is not authorised to access PFF Admin."
+          );
+
+          return;
+
+        }
+
+
+        /*
+         * Login successful.
+         */
+
+        showAdminPage();
+
+      }
+
+      catch (error) {
+
+        console.error(
+          "Google login error:",
+          error
+        );
+
+
+        showError(
+          "There was a problem signing you in."
+        );
+
+      }
+
+    }
+
+
+    /************************************************************
+     * DECODE GOOGLE ID TOKEN
+     *
+     * This is sufficient for the initial frontend test.
+     *
+     * For the real admin system, the token should instead be
+     * verified securely by a backend.
+     ************************************************************/
+
+    function decodeJwtPayload(token) {
+
+      const parts =
+        token.split(".");
+
+
+      if (
+        parts.length !== 3
+      ) {
+
+        throw new Error(
+          "Invalid Google ID token."
+        );
+
+      }
+
+
+      let base64 =
+        parts[1]
+          .replace(/-/g, "+")
+          .replace(/_/g, "/");
+
+
+      /*
+       * Restore Base64 padding.
+       */
+
+      while (
+        base64.length % 4
+      ) {
+
+        base64 += "=";
+
+      }
+
+
+      const binary =
+        atob(base64);
+
+
+      const bytes =
+        Uint8Array.from(
+
+          binary,
+
+          character =>
+            character.charCodeAt(0)
+
+        );
+
+
+      const json =
+        new TextDecoder(
+          "utf-8"
+        ).decode(bytes);
+
+
+      return JSON.parse(json);
+
+    }
+
+
+    /************************************************************
+     * SHOW ADMIN PAGE
+     ************************************************************/
+
+    function showAdminPage() {
+
+      document
+        .getElementById(
+          "loginCard"
+        )
+        .style
+        .display = "none";
+
+
+      document
+        .getElementById(
+          "adminContent"
+        )
+        .style
+        .display = "block";
+
+    }
+
+
+    /************************************************************
+     * ERROR MESSAGES
+     ************************************************************/
+
+    function showError(message) {
+
+      const errorBox =
+        document.getElementById(
+          "errorMessage"
+        );
+
+
+      errorBox.textContent =
+        message;
+
+
+      errorBox.style.display =
+        "block";
+
+    }
+
+
+    function hideError() {
+
+      const errorBox =
+        document.getElementById(
+          "errorMessage"
+        );
+
+
+      errorBox.textContent =
+        "";
+
+
+      errorBox.style.display =
+        "none";
+
+    }
+
+  </script>
+
+</body>
+
+</html>
