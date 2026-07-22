@@ -443,11 +443,15 @@
 
 
     /*
-     * For this first test, ONLY this Google account is allowed.
+     * Separate PFF Admin authentication backend.
+     *
+     * The backend allows:
+     * - matthew.vqt@gmail.com
+     * - members of pff-adminsmods@googlegroups.com
      */
-
-    const ALLOWED_EMAIL =
-      "matthew.vqt@gmail.com";
+    
+    const ADMIN_AUTH_URL =
+      "https://script.google.com/macros/s/AKfycbzbROSGAyhOFcU5N3cKB-ntmYep2DY84qQt8E0mcEQ4WTtNZ_kOQDfOwts51uz3qctl/exec";
 
 
     /************************************************************
@@ -569,7 +573,7 @@
      * HANDLE GOOGLE LOGIN
      ************************************************************/
 
-    function handleGoogleCredential(response) {
+    async function handleGoogleCredential(response) {
 
       hideError();
 
@@ -665,29 +669,36 @@
 
 
         /*
-         * TEMPORARY ACCESS RULE:
+         * Send Google's actual login credential to the
+         * PFF Admin authentication backend.
          *
-         * Allow ONLY:
-         *
-         * matthew.vqt@gmail.com
+         * The backend decides whether the user is:
+         * - matthew.vqt@gmail.com, or
+         * - a member of the PFF admin Google group.
          */
-
-        if (
-          email !==
-          ALLOWED_EMAIL.toLowerCase()
-        ) {
-
+        
+        const access =
+          await verifyAdminAccess(
+            response.credential
+          );
+        
+        
+        if (!access.allowed) {
+        
           showError(
             "Access denied. " +
-            email +
+            (
+              access.email ||
+              email
+            ) +
             " is not authorised to access PFF Admin."
           );
-
+        
           return;
-
+        
         }
-
-
+        
+        
         showAdminPage();
 
       }
@@ -708,7 +719,301 @@
 
     }
 
+/************************************************************
+ * CHECK ADMIN ACCESS WITH BACKEND
+ ************************************************************/
 
+function newAuthRequestId() {
+
+  if (
+    window.crypto &&
+    typeof crypto.randomUUID ===
+      "function"
+  ) {
+
+    return crypto.randomUUID();
+
+  }
+
+
+  return (
+    Date.now().toString(36) +
+    "-" +
+    Math.random()
+      .toString(36)
+      .slice(2) +
+    "-" +
+    Math.random()
+      .toString(36)
+      .slice(2)
+  );
+
+}
+
+
+function sleep(ms) {
+
+  return new Promise(
+    resolve =>
+      setTimeout(
+        resolve,
+        ms
+      )
+  );
+
+}
+
+
+async function postAdminAuth(
+  requestId,
+  credential
+) {
+
+  await fetch(
+    ADMIN_AUTH_URL,
+    {
+      method:
+        "POST",
+
+      mode:
+        "no-cors",
+
+      cache:
+        "no-store",
+
+      body:
+        new URLSearchParams({
+
+          action:
+            "verifyAdmin",
+
+          requestId:
+            requestId,
+
+          credential:
+            credential
+
+        })
+    }
+  );
+
+}
+
+
+function getAdminAuthStatus(
+  requestId
+) {
+
+  return new Promise(
+    (resolve, reject) => {
+
+      const callbackName =
+        "pffAdminAuth_" +
+        Date.now() +
+        "_" +
+        Math.floor(
+          Math.random() *
+          1000000
+        );
+
+
+      const script =
+        document.createElement(
+          "script"
+        );
+
+
+      const timeout =
+        window.setTimeout(
+          () => {
+
+            cleanup();
+
+            reject(
+              new Error(
+                "Admin access check timed out."
+              )
+            );
+
+          },
+          30000
+        );
+
+
+      function cleanup() {
+
+        window.clearTimeout(
+          timeout
+        );
+
+
+        try {
+
+          delete window[
+            callbackName
+          ];
+
+        } catch (_) {
+
+          window[
+            callbackName
+          ] = undefined;
+
+        }
+
+
+        if (
+          script.parentNode
+        ) {
+
+          script.parentNode
+            .removeChild(
+              script
+            );
+
+        }
+
+      }
+
+
+      window[
+        callbackName
+      ] = result => {
+
+        cleanup();
+
+        resolve(
+          result
+        );
+
+      };
+
+
+      script.onerror =
+        () => {
+
+          cleanup();
+
+          reject(
+            new Error(
+              "Could not contact the admin authentication server."
+            )
+          );
+
+        };
+
+
+      const query =
+        new URLSearchParams({
+
+          action:
+            "authStatus",
+
+          requestId:
+            requestId,
+
+          callback:
+            callbackName
+
+        });
+
+
+      script.src =
+        ADMIN_AUTH_URL +
+        "?" +
+        query.toString();
+
+
+      document.body
+        .appendChild(
+          script
+        );
+
+    }
+  );
+
+}
+
+
+async function verifyAdminAccess(
+  credential
+) {
+
+  const requestId =
+    newAuthRequestId();
+
+
+  /*
+   * Send Google's ID token to the backend.
+   */
+  await postAdminAuth(
+    requestId,
+    credential
+  );
+
+
+  const started =
+    Date.now();
+
+
+  /*
+   * Poll until the backend has finished checking:
+   * 1. the Google login; and
+   * 2. PFF admin group membership.
+   */
+  while (
+    Date.now() -
+    started <
+    30000
+  ) {
+
+    const result =
+      await getAdminAuthStatus(
+        requestId
+      );
+
+
+    if (
+      result &&
+      result.status ===
+        "complete"
+    ) {
+
+      return result;
+
+    }
+
+
+    if (
+      result &&
+      (
+        result.status ===
+          "error" ||
+        result.ok ===
+          false
+      )
+    ) {
+
+      throw new Error(
+        result.message ||
+        "Admin access could not be verified."
+      );
+
+    }
+
+
+    await sleep(
+      500
+    );
+
+  }
+
+
+  throw new Error(
+    "Admin access check timed out."
+  );
+
+}
     /************************************************************
      * DECODE GOOGLE ID TOKEN
      ************************************************************/
