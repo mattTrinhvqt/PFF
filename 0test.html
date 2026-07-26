@@ -895,6 +895,39 @@
       color: var(--delisted-grey) !important;
     }
 
+    .has-full-text {
+      cursor: help;
+    }
+
+    .has-full-text:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: -2px;
+    }
+
+    .full-text-popover {
+      position: fixed;
+      z-index: 200;
+      display: none;
+      max-width: min(320px, calc(100vw - 16px));
+      padding: 7px 9px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--track);
+      border-radius: 4px;
+      box-shadow: 0 7px 20px rgba(21, 21, 21, 0.16);
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.35;
+      text-align: left;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      pointer-events: none;
+    }
+
+    .full-text-popover.is-visible {
+      display: block;
+    }
+
     .data-table tr.is-hidden {
       display: none;
     }
@@ -1472,6 +1505,13 @@
     </section>
   </main>
 
+  <div
+    id="full-text-popover"
+    class="full-text-popover"
+    role="tooltip"
+    aria-hidden="true"
+  ></div>
+
   <script>
     const CONFIG = {
       SPREADSHEET_ID:
@@ -1499,6 +1539,7 @@
       SUBURB_COLUMN: 8,
       STATE_COLUMN: 9,
       MM_COLUMN: 11,
+      EMPLOYMENT_TYPE_COLUMN: 12,
       CONTACT_LENS_COLUMN: 19,
       PAEDIATRIC_COLUMN: 20,
       OCULAR_PATHOLOGY_COLUMN: 21,
@@ -1632,11 +1673,17 @@
     const errorState =
       document.getElementById('error-state');
 
+    const fullTextPopover =
+      document.getElementById('full-text-popover');
+
+    let fullTextAnchor = null;
+
     const visibleCountElement =
       document.getElementById('visible-count');
 
     const totalCountElement =
       document.getElementById('total-count');
+
 
     const lastUpdatedDateElement =
       document.getElementById('last-updated-date');
@@ -1719,6 +1766,7 @@
       )
     ];
 
+
     function normaliseText(value) {
       return String(value ?? '')
         .replace(/\u00A0/g, ' ')
@@ -1747,6 +1795,14 @@
       const normalised =
         normaliseText(text);
 
+      if (normalised === 'yes') {
+        return '✓';
+      }
+
+      if (normalised === 'no') {
+        return '✕';
+      }
+
       if (
         normalised.startsWith('ophthal') ||
         normalised.startsWith('opthal')
@@ -1757,11 +1813,17 @@
       return text;
     }
 
+    function formatEmploymentTypeText(value) {
+      return cleanText(value)
+        .replace(/\s*;\s*/g, '; ')
+        .replace(/\blocum\s*\/\s*temp\b/gi, 'Temp');
+    }
+
     function formatTableCellText(value) {
       const text = formatDisplayText(value);
 
-      return text.length > 20
-        ? `${text.slice(0, 20)}...`
+      return text.length > 15
+        ? `${text.slice(0, 15)}...`
         : text;
     }
 
@@ -2251,6 +2313,7 @@
       return `${day}/${month}/${year}`;
     }
 
+
     function formatDateDayMonth(date) {
       if (
         !(date instanceof Date) ||
@@ -2364,6 +2427,7 @@
           )
         : 0;
     }
+
 
     function canBuildJobLink(
       employer,
@@ -2785,11 +2849,22 @@
                     text:
                       columnNumber === CONFIG.DATE_COLUMN
                         ? formatDateDayMonth(dateValue)
-                        : getGvizCellDisplay(
-                            cells[
-                              columnNumber -
-                                1
-                            ]
+                        : (
+                            columnNumber === CONFIG.EMPLOYMENT_TYPE_COLUMN
+                              ? formatEmploymentTypeText(
+                                  getGvizCellDisplay(
+                                    cells[
+                                      columnNumber -
+                                        1
+                                    ]
+                                  )
+                                )
+                              : getGvizCellDisplay(
+                                  cells[
+                                    columnNumber -
+                                      1
+                                  ]
+                                )
                           ),
 
                     link: '',
@@ -3714,6 +3789,127 @@
       updateSalaryControls();
     }
 
+    function markTruncatedText(
+      element,
+      fullText,
+      displayText
+    ) {
+      if (displayText === fullText) {
+        return;
+      }
+
+      element.title = fullText;
+      element.dataset.fullText = fullText;
+      element.classList.add('has-full-text');
+      element.tabIndex = 0;
+      element.setAttribute(
+        'aria-label',
+        fullText
+      );
+    }
+
+    function closeFullTextPopover() {
+      fullTextPopover.classList.remove(
+        'is-visible'
+      );
+
+      fullTextPopover.setAttribute(
+        'aria-hidden',
+        'true'
+      );
+
+      fullTextPopover.textContent = '';
+      fullTextAnchor = null;
+    }
+
+    function showFullTextPopover(element) {
+      const fullText =
+        element.dataset.fullText;
+
+      if (!fullText) {
+        return;
+      }
+
+      if (
+        fullTextAnchor === element &&
+        fullTextPopover.classList.contains(
+          'is-visible'
+        )
+      ) {
+        closeFullTextPopover();
+        return;
+      }
+
+      fullTextAnchor = element;
+      fullTextPopover.textContent = fullText;
+      fullTextPopover.classList.add(
+        'is-visible'
+      );
+      fullTextPopover.setAttribute(
+        'aria-hidden',
+        'false'
+      );
+
+      fullTextPopover.style.visibility =
+        'hidden';
+
+      fullTextPopover.style.left = '0px';
+      fullTextPopover.style.top = '0px';
+
+      const anchorRect =
+        element.getBoundingClientRect();
+
+      const popoverRect =
+        fullTextPopover.getBoundingClientRect();
+
+      const margin = 8;
+      const gap = 5;
+
+      let left =
+        anchorRect.left;
+
+      left = Math.max(
+        margin,
+        Math.min(
+          left,
+          window.innerWidth -
+            popoverRect.width -
+            margin
+        )
+      );
+
+      let top =
+        anchorRect.bottom + gap;
+
+      if (
+        top + popoverRect.height >
+        window.innerHeight - margin
+      ) {
+        top =
+          anchorRect.top -
+          popoverRect.height -
+          gap;
+      }
+
+      top = Math.max(
+        margin,
+        Math.min(
+          top,
+          window.innerHeight -
+            popoverRect.height -
+            margin
+        )
+      );
+
+      fullTextPopover.style.left =
+        `${Math.round(left)}px`;
+
+      fullTextPopover.style.top =
+        `${Math.round(top)}px`;
+
+      fullTextPopover.style.visibility = '';
+    }
+
     function appendCellContent(
       cellElement,
       cellModel
@@ -3728,10 +3924,11 @@
           cellModel.text
         );
 
-      if (displayText !== fullDisplayText) {
-        cellElement.title =
-          fullDisplayText;
-      }
+      markTruncatedText(
+        cellElement,
+        fullDisplayText,
+        displayText
+      );
 
       if (cellModel.link) {
         const anchor =
@@ -3839,7 +4036,9 @@
 
           let measuredWidth =
             measureTextWidth(
-              header.text,
+              formatTableCellText(
+                header.text
+              ),
               headerFont
             );
 
@@ -4004,11 +4203,27 @@
               header.sourceColumn
             );
 
-          th.textContent =
-            header.text ||
-            columnNumberToLetter(
-              header.sourceColumn
+          const fullHeaderText =
+            formatDisplayText(
+              header.text ||
+              columnNumberToLetter(
+                header.sourceColumn
+              )
             );
+
+          const displayedHeaderText =
+            formatTableCellText(
+              fullHeaderText
+            );
+
+          th.textContent =
+            displayedHeaderText;
+
+          markTruncatedText(
+            th,
+            fullHeaderText,
+            displayedHeaderText
+          );
 
           headerRow.appendChild(
             th
@@ -5018,9 +5233,6 @@
             .replace(/\D/g, '')
             .slice(0, 6);
 
-        /*
-         * Remove unnecessary leading zeroes, so 01 becomes 1.
-         */
         digits =
           digits.replace(
             /^0+(?=\d)/,
@@ -5109,6 +5321,17 @@
       'pointerdown',
       event => {
         if (
+          fullTextPopover.classList.contains(
+            'is-visible'
+          ) &&
+          !event.target.closest(
+            '.has-full-text'
+          )
+        ) {
+          closeFullTextPopover();
+        }
+
+        if (
           state.openMenu &&
           !event.target.closest(
             '.filter-control'
@@ -5119,6 +5342,59 @@
             false
           );
         }
+      }
+    );
+
+    dataTable.addEventListener(
+      'click',
+      event => {
+        const textElement =
+          event.target.closest(
+            '.has-full-text'
+          );
+
+        if (
+          !textElement ||
+          !dataTable.contains(
+            textElement
+          ) ||
+          event.target.closest('a')
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        showFullTextPopover(
+          textElement
+        );
+      }
+    );
+
+    dataTable.addEventListener(
+      'keydown',
+      event => {
+        if (
+          event.key !== 'Enter' &&
+          event.key !== ' '
+        ) {
+          return;
+        }
+
+        const textElement =
+          event.target.closest(
+            '.has-full-text'
+          );
+
+        if (!textElement) {
+          return;
+        }
+
+        event.preventDefault();
+        showFullTextPopover(
+          textElement
+        );
       }
     );
 
@@ -5133,6 +5409,8 @@
             null,
             false
           );
+
+          closeFullTextPopover();
         }
       }
     );
@@ -5143,11 +5421,23 @@
         if (state.openMenu) {
           setMenuOpen(null, false);
         }
+
+        closeFullTextPopover();
       },
       {
         passive: true
       }
     );
+
+    document
+      .querySelector('.table-scroll')
+      .addEventListener(
+        'scroll',
+        closeFullTextPopover,
+        {
+          passive: true
+        }
+      );
 
     window.addEventListener(
       'resize',
@@ -5157,6 +5447,7 @@
           false
         );
 
+        closeFullTextPopover();
         scheduleTightColumnWidths();
       }
     );
@@ -5172,3 +5463,4 @@
   </script>
 </body>
 </html>
+
