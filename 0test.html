@@ -1222,4 +1222,2187 @@
 
       /*
        * Leave blank to use the spreadsheet's first worksheet tab.
-       *
+       * Enter the exact tab name here only if required.
+       */
+      SHEET_NAME: '',
+
+      HEADER_ROW: 2,
+      FIRST_COLUMN: 1,  // A
+      LAST_COLUMN: 25,  // Y
+
+      HIDDEN_COLUMNS: new Set([2, 3, 5]), // B, C and E
+
+      REPEAT_FLAG_COLUMN: 2,   // B
+      SOURCE_COLUMN: 3,        // C
+      DATE_COLUMN: 4,          // D
+      EMPLOYER_COLUMN: 6,      // F
+      EMPLOYER_TYPE_COLUMN: 7, // G
+      SUBURB_COLUMN: 8,        // H
+      STATE_COLUMN: 9,         // I
+      MM_COLUMN: 11,           // K
+
+      FETCH_TIMEOUT_MS: 20000,
+
+      /*
+       * This retains compatibility with settings saved by
+       * the previous version of the tracker.
+       */
+      STORAGE_KEY: 'pff-job-tracker-filters-v3'
+    };
+
+    const RURALITY_OPTIONS = [
+      'metro',
+      'nonmetro'
+    ];
+
+    const STATE_OPTIONS = [
+      'NSW',
+      'QLD',
+      'VIC',
+      'ACT',
+      'SA',
+      'NT',
+      'WA',
+      'TAS'
+    ];
+
+    const STATE_COLOURS = {
+      NSW: '#5bb4f0',
+      QLD: '#6b1436',
+      ACT: '#7561f4',
+      VIC: '#2f3a89',
+      SA: '#dd4b4c',
+      NT: '#b36324',
+      WA: '#000000',
+      TAS: '#4fa171'
+    };
+
+    const DEFAULT_FILTERS = {
+      showRepeats: true,
+      showCorporates: true,
+      selectedRurality: [
+        'metro',
+        'nonmetro'
+      ],
+      selectedStates: [
+        ...STATE_OPTIONS
+      ],
+      showDelisted: true
+    };
+
+    const state = {
+      filters: loadSavedFilters(),
+      rows: [],
+      openMenu: null,
+
+      dateCutoff: subtractCalendarMonths(
+        getSydneyToday(),
+        2
+      )
+    };
+
+    const app =
+      document.getElementById('app');
+
+    const loadingState =
+      document.getElementById('loading-state');
+
+    const dataTable =
+      document.getElementById('data-table');
+
+    const tableShell =
+      document.getElementById('table-shell');
+
+    const tableStatus =
+      document.getElementById('table-status');
+
+    const emptyState =
+      document.getElementById('empty-state');
+
+    const errorState =
+      document.getElementById('error-state');
+
+    const repeatToggle =
+      document.getElementById('repeat-toggle');
+
+    const corporateToggle =
+      document.getElementById('corporate-toggle');
+
+    const delistedToggle =
+      document.getElementById('delisted-toggle');
+
+    const ruralityButton =
+      document.getElementById('rurality-button');
+
+    const ruralityMenu =
+      document.getElementById('rurality-menu');
+
+    const ruralityAllCheckbox =
+      document.getElementById('rurality-all');
+
+    const ruralityCheckboxes = [
+      ...document.querySelectorAll(
+        '.rurality-checkbox'
+      )
+    ];
+
+    const stateButton =
+      document.getElementById('state-button');
+
+    const stateMenu =
+      document.getElementById('state-menu');
+
+    const stateAllCheckbox =
+      document.getElementById('state-all');
+
+    const stateCheckboxes = [
+      ...document.querySelectorAll(
+        '.state-checkbox'
+      )
+    ];
+
+    function normaliseText(value) {
+      return String(value ?? '')
+        .replace(/\u00A0/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+    }
+
+    function cleanText(value) {
+      return String(value ?? '')
+        .replace(/\u00A0/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
+    }
+
+    function isRepeatValue(value) {
+      return normaliseText(value) === 'yes';
+    }
+
+    function isDelistedValue(value) {
+      return normaliseText(value)
+        .startsWith('delisted');
+    }
+
+    function isCorporateValue(value) {
+      const text =
+        normaliseText(value);
+
+      return (
+        text === 'corporate' ||
+        text.startsWith('corporate ') ||
+        text.startsWith('corporate(') ||
+        text
+          .split(/[;,|/]/)
+          .some(
+            part =>
+              normaliseText(part) ===
+              'corporate'
+          )
+      );
+    }
+
+    function getEmployerTypeClass(value) {
+      const text =
+        normaliseText(value);
+
+      if (
+        text === 'corporate' ||
+        text.startsWith('corporate ') ||
+        text.startsWith('corporate(')
+      ) {
+        return 'category-corporate';
+      }
+
+      if (
+        text === 'independent' ||
+        text.startsWith('independent ') ||
+        text.startsWith('independent(')
+      ) {
+        return 'category-independent';
+      }
+
+      if (
+        text.includes('ophthal') ||
+        text.includes('opthal')
+      ) {
+        return 'category-ophthal';
+      }
+
+      if (
+        text === 'other' ||
+        text.startsWith('other ') ||
+        text.startsWith('other(')
+      ) {
+        return 'category-other';
+      }
+
+      return '';
+    }
+
+    function getStateCodes(value) {
+      const text =
+        cleanText(value).toUpperCase();
+
+      const matches =
+        text.match(
+          /\b(?:NSW|QLD|VIC|ACT|SA|NT|WA|TAS)\b/g
+        ) || [];
+
+      return [
+        ...new Set(matches)
+      ];
+    }
+
+    function getStateClass(value) {
+      const stateCode =
+        getStateCodes(value)[0] || '';
+
+      return stateCode
+        ? `state-${stateCode.toLowerCase()}`
+        : '';
+    }
+
+    function getMMCodes(value) {
+      const text =
+        cleanText(value).toUpperCase();
+
+      const matches = [
+        ...text.matchAll(
+          /\bMM\s*([1-7])\b/g
+        )
+      ];
+
+      return [
+        ...new Set(
+          matches.map(
+            match => `MM${match[1]}`
+          )
+        )
+      ];
+    }
+
+    function columnNumberToLetter(
+      columnNumber
+    ) {
+      let number = columnNumber;
+      let letters = '';
+
+      while (number > 0) {
+        const remainder =
+          (number - 1) % 26;
+
+        letters =
+          String.fromCharCode(
+            65 + remainder
+          ) + letters;
+
+        number =
+          Math.floor(
+            (number - 1) / 26
+          );
+      }
+
+      return letters;
+    }
+
+    function getVisibleColumnNumbers() {
+      const columns = [];
+
+      for (
+        let column =
+          CONFIG.FIRST_COLUMN;
+        column <=
+          CONFIG.LAST_COLUMN;
+        column++
+      ) {
+        if (
+          !CONFIG.HIDDEN_COLUMNS.has(
+            column
+          )
+        ) {
+          columns.push(column);
+        }
+      }
+
+      return columns;
+    }
+
+    function getGvizCellDisplay(cell) {
+      if (!cell) {
+        return '';
+      }
+
+      return cleanText(
+        cell.f ??
+        cell.v ??
+        ''
+      );
+    }
+
+    function getSydneyToday() {
+      try {
+        const parts =
+          new Intl.DateTimeFormat(
+            'en-AU',
+            {
+              timeZone:
+                'Australia/Sydney',
+
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            }
+          ).formatToParts(
+            new Date()
+          );
+
+        const values =
+          Object.fromEntries(
+            parts
+              .filter(
+                part =>
+                  part.type !==
+                  'literal'
+              )
+              .map(
+                part => [
+                  part.type,
+                  Number(part.value)
+                ]
+              )
+          );
+
+        return new Date(
+          Date.UTC(
+            values.year,
+            values.month - 1,
+            values.day
+          )
+        );
+      } catch (error) {
+        const now = new Date();
+
+        return new Date(
+          Date.UTC(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate()
+          )
+        );
+      }
+    }
+
+    function subtractCalendarMonths(
+      date,
+      months
+    ) {
+      const targetFirstDay =
+        new Date(
+          Date.UTC(
+            date.getUTCFullYear(),
+            date.getUTCMonth() -
+              months,
+            1
+          )
+        );
+
+      const finalDayOfTargetMonth =
+        new Date(
+          Date.UTC(
+            targetFirstDay
+              .getUTCFullYear(),
+
+            targetFirstDay
+              .getUTCMonth() + 1,
+
+            0
+          )
+        ).getUTCDate();
+
+      return new Date(
+        Date.UTC(
+          targetFirstDay
+            .getUTCFullYear(),
+
+          targetFirstDay
+            .getUTCMonth(),
+
+          Math.min(
+            date.getUTCDate(),
+            finalDayOfTargetMonth
+          )
+        )
+      );
+    }
+
+    function parseDateValue(value) {
+      if (
+        value instanceof Date &&
+        !Number.isNaN(
+          value.getTime()
+        )
+      ) {
+        return new Date(
+          Date.UTC(
+            value.getFullYear(),
+            value.getMonth(),
+            value.getDate()
+          )
+        );
+      }
+
+      const text =
+        cleanText(value);
+
+      if (!text) {
+        return null;
+      }
+
+      let match =
+        text.match(
+          /^Date\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\)$/i
+        );
+
+      if (match) {
+        return new Date(
+          Date.UTC(
+            Number(match[1]),
+            Number(match[2]),
+            Number(match[3])
+          )
+        );
+      }
+
+      match =
+        text.match(
+          /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/
+        );
+
+      if (match) {
+        let year =
+          Number(match[3]);
+
+        if (year < 100) {
+          year +=
+            year >= 70
+              ? 1900
+              : 2000;
+        }
+
+        return new Date(
+          Date.UTC(
+            year,
+            Number(match[2]) - 1,
+            Number(match[1])
+          )
+        );
+      }
+
+      match =
+        text.match(
+          /^(\d{4})-(\d{1,2})-(\d{1,2})$/
+        );
+
+      if (match) {
+        return new Date(
+          Date.UTC(
+            Number(match[1]),
+            Number(match[2]) - 1,
+            Number(match[3])
+          )
+        );
+      }
+
+      const parsed =
+        new Date(text);
+
+      if (
+        !Number.isNaN(
+          parsed.getTime()
+        )
+      ) {
+        return new Date(
+          Date.UTC(
+            parsed.getFullYear(),
+            parsed.getMonth(),
+            parsed.getDate()
+          )
+        );
+      }
+
+      return null;
+    }
+
+    function getDateFromGvizCell(cell) {
+      return (
+        parseDateValue(cell?.v) ||
+        parseDateValue(cell?.f)
+      );
+    }
+
+    function getMondayWeekKey(dateValue) {
+      const date =
+        parseDateValue(dateValue);
+
+      if (!date) {
+        return '';
+      }
+
+      const daysSinceMonday =
+        (date.getUTCDay() + 6) %
+        7;
+
+      date.setUTCDate(
+        date.getUTCDate() -
+          daysSinceMonday
+      );
+
+      const year =
+        date.getUTCFullYear();
+
+      const month =
+        String(
+          date.getUTCMonth() + 1
+        ).padStart(2, '0');
+
+      const day =
+        String(
+          date.getUTCDate()
+        ).padStart(2, '0');
+
+      return `${year}-${month}-${day}`;
+    }
+
+    function formatDate(date) {
+      return new Intl.DateTimeFormat(
+        'en-AU',
+        {
+          timeZone: 'UTC',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        }
+      ).format(date);
+    }
+
+    function canBuildJobLink(
+      employer,
+      suburb,
+      stateCode
+    ) {
+      if (!cleanText(employer)) {
+        return false;
+      }
+
+      if (
+        normaliseText(suburb) ===
+        'xxx'
+      ) {
+        return (
+          cleanText(stateCode) !== ''
+        );
+      }
+
+      return cleanText(suburb) !== '';
+    }
+
+    function buildColumnALink(
+      sourceMarker,
+      employerValue,
+      suburbValue,
+      stateValue
+    ) {
+      const sourceMarkerText =
+        cleanText(sourceMarker);
+
+      const employer =
+        cleanText(employerValue);
+
+      const suburb =
+        cleanText(suburbValue);
+
+      const stateCode =
+        cleanText(stateValue);
+
+      if (
+        !canBuildJobLink(
+          employer,
+          suburb,
+          stateCode
+        )
+      ) {
+        return null;
+      }
+
+      const keywords =
+        `"Optometrist" ${employer}`;
+
+      const isIndeed =
+        normaliseText(
+          sourceMarkerText
+        ).endsWith('indeed|');
+
+      const employerWithoutSpaces =
+        employer
+          .replace(/\s+/g, '')
+          .toLowerCase();
+
+      const isEssiLux =
+        /(opsm|eyeq|laubman&pank)/i
+          .test(
+            employerWithoutSpaces
+          );
+
+      if (isIndeed) {
+        const location =
+          normaliseText(suburb) ===
+          'xxx'
+            ? stateCode
+            : `${suburb} ${stateCode}`
+                .trim();
+
+        return {
+          text: 'Indeed',
+
+          url:
+            `https://au.indeed.com/jobs?q=${encodeURIComponent(keywords)}` +
+            `&l=${encodeURIComponent(location)}` +
+            '&radius=0' +
+            '&sort=date',
+
+          className:
+            'link-indeed'
+        };
+      }
+
+      if (isEssiLux) {
+        return {
+          text: 'EssiLux',
+
+          url:
+            'https://careers.essilorluxottica.com/search/' +
+            '?createNewAlert=false' +
+            '&q=optometrist' +
+            '&optionsFacetsDD_country=AU' +
+            '&optionsFacetsDD_city=' +
+            '&optionsFacetsDD_customfield1=' +
+            '&optionsFacetsDD_customfield2=' +
+            '&optionsFacetsDD_customfield3=' +
+            '&optionsFacetsDD_customfield4=',
+
+          className:
+            'link-essilux'
+        };
+      }
+
+      const firstSuburb =
+        suburb
+          .split(';')[0]
+          .trim();
+
+      const location =
+        normaliseText(suburb) ===
+        'xxx'
+          ? stateCode
+          : `${firstSuburb} ${stateCode}`
+              .trim();
+
+      return {
+        text: 'SEEK',
+
+        url:
+          `https://www.seek.com.au/jobs?keywords=${encodeURIComponent(keywords)}` +
+          `&where=${encodeURIComponent(location)}` +
+          '&distance=0',
+
+        className:
+          'link-seek'
+      };
+    }
+
+    function buildModelFromGviz(
+      response
+    ) {
+      if (
+        response?.status === 'error'
+      ) {
+        throw new Error(
+          response?.errors?.[0]
+            ?.detailed_message ||
+          response?.errors?.[0]
+            ?.message ||
+          'Google Sheets returned an error.'
+        );
+      }
+
+      const visibleColumns =
+        getVisibleColumnNumbers();
+
+      const columns =
+        response?.table?.cols || [];
+
+      const sourceRows =
+        response?.table?.rows || [];
+
+      const headers =
+        visibleColumns.map(
+          columnNumber => ({
+            sourceColumn:
+              columnNumber,
+
+            text:
+              cleanText(
+                columns?.[
+                  columnNumber - 1
+                ]?.label
+              ) ||
+              columnNumberToLetter(
+                columnNumber
+              )
+          })
+        );
+
+      const rows = [];
+
+      sourceRows.forEach(
+        (
+          sourceRow,
+          rowOffset
+        ) => {
+          const cells =
+            sourceRow?.c || [];
+
+          const sourceAText =
+            getGvizCellDisplay(
+              cells[0]
+            );
+
+          /*
+           * Rows whose displayed column-A
+           * formula result is blank are excluded.
+           */
+          if (!sourceAText) {
+            return;
+          }
+
+          const dateValue =
+            getDateFromGvizCell(
+              cells[
+                CONFIG.DATE_COLUMN -
+                  1
+              ]
+            );
+
+          /*
+           * Only include rows dated within
+           * the last two calendar months.
+           */
+          if (
+            !dateValue ||
+            dateValue <
+              state.dateCutoff
+          ) {
+            return;
+          }
+
+          const repeatValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG
+                  .REPEAT_FLAG_COLUMN -
+                  1
+              ]
+            );
+
+          const sourceMarker =
+            getGvizCellDisplay(
+              cells[
+                CONFIG.SOURCE_COLUMN -
+                  1
+              ]
+            );
+
+          const employerValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG.EMPLOYER_COLUMN -
+                  1
+              ]
+            );
+
+          const employerTypeValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG
+                  .EMPLOYER_TYPE_COLUMN -
+                  1
+              ]
+            );
+
+          const suburbValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG.SUBURB_COLUMN -
+                  1
+              ]
+            );
+
+          const stateValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG.STATE_COLUMN -
+                  1
+              ]
+            );
+
+          const mmValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG.MM_COLUMN - 1
+              ]
+            );
+
+          const isDelisted =
+            isDelistedValue(
+              sourceAText
+            );
+
+          const columnALink =
+            isDelisted
+              ? null
+              : buildColumnALink(
+                  sourceMarker,
+                  employerValue,
+                  suburbValue,
+                  stateValue
+                );
+
+          const stateCodes =
+            getStateCodes(
+              stateValue
+            );
+
+          const mmCodes =
+            getMMCodes(
+              mmValue
+            );
+
+          rows.push({
+            sourceRow:
+              CONFIG.HEADER_ROW +
+              1 +
+              rowOffset,
+
+            isRepeat:
+              isRepeatValue(
+                repeatValue
+              ),
+
+            isCorporate:
+              isCorporateValue(
+                employerTypeValue
+              ),
+
+            isDelisted,
+
+            hasMM1:
+              mmCodes.includes(
+                'MM1'
+              ),
+
+            hasNonMetroMM:
+              mmCodes.some(
+                code =>
+                  code !== 'MM1'
+              ),
+
+            stateCodes,
+
+            weekKey:
+              getMondayWeekKey(
+                dateValue
+              ),
+
+            cells:
+              visibleColumns.map(
+                columnNumber => {
+                  if (
+                    columnNumber === 1
+                  ) {
+                    if (isDelisted) {
+                      return {
+                        sourceColumn: 1,
+                        text: sourceAText,
+                        link: '',
+                        linkClass: ''
+                      };
+                    }
+
+                    return {
+                      sourceColumn: 1,
+
+                      text:
+                        columnALink?.text ||
+                        sourceAText,
+
+                      link:
+                        columnALink?.url ||
+                        '',
+
+                      linkClass:
+                        columnALink
+                          ?.className ||
+                        ''
+                    };
+                  }
+
+                  return {
+                    sourceColumn:
+                      columnNumber,
+
+                    text:
+                      getGvizCellDisplay(
+                        cells[
+                          columnNumber -
+                            1
+                        ]
+                      ),
+
+                    link: '',
+                    linkClass: ''
+                  };
+                }
+              )
+          });
+        }
+      );
+
+      return {
+        headers,
+        rows
+      };
+    }
+
+    function loadGvizModel() {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          const callbackName =
+            `pffJobTrackerCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled = false;
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                cleanup();
+
+                reject(
+                  new Error(
+                    'The live Google Sheets feed timed out.'
+                  )
+                );
+              },
+              CONFIG
+                .FETCH_TIMEOUT_MS
+            );
+
+          function cleanup() {
+            if (settled) {
+              return;
+            }
+
+            settled = true;
+
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (error) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(
+                  script
+                );
+            }
+          }
+
+          window[callbackName] =
+            response => {
+              try {
+                const model =
+                  buildModelFromGviz(
+                    response
+                  );
+
+                cleanup();
+                resolve(model);
+              } catch (error) {
+                cleanup();
+                reject(error);
+              }
+            };
+
+          script.onerror = () => {
+            cleanup();
+
+            reject(
+              new Error(
+                'The live Google Sheets feed could not be loaded.'
+              )
+            );
+          };
+
+          const params =
+            new URLSearchParams({
+              range:
+                `A${CONFIG.HEADER_ROW}:Y`,
+
+              headers: '1',
+
+              tqx:
+                `responseHandler:${callbackName}`,
+
+              _:
+                String(Date.now())
+            });
+
+          if (CONFIG.SHEET_NAME) {
+            params.set(
+              'sheet',
+              CONFIG.SHEET_NAME
+            );
+          }
+
+          script.src =
+            `https://docs.google.com/spreadsheets/d/${CONFIG.SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+
+          document.body
+            .appendChild(script);
+        }
+      );
+    }
+
+    function uniqueValidValues(
+      values,
+      allowedValues
+    ) {
+      if (!Array.isArray(values)) {
+        return [];
+      }
+
+      return [
+        ...new Set(
+          values.filter(
+            value =>
+              allowedValues.includes(
+                value
+              )
+          )
+        )
+      ];
+    }
+
+    function loadSavedFilters() {
+      try {
+        const saved =
+          JSON.parse(
+            localStorage.getItem(
+              CONFIG.STORAGE_KEY
+            ) || '{}'
+          );
+
+        /*
+         * Migrate the previous single-value
+         * rurality filter if present.
+         */
+        let selectedRurality =
+          uniqueValidValues(
+            saved.selectedRurality,
+            RURALITY_OPTIONS
+          );
+
+        if (
+          !Array.isArray(
+            saved.selectedRurality
+          )
+        ) {
+          if (
+            saved.locationMode ===
+            'metro'
+          ) {
+            selectedRurality = [
+              'metro'
+            ];
+          } else if (
+            saved.locationMode ===
+            'nonmetro'
+          ) {
+            selectedRurality = [
+              'nonmetro'
+            ];
+          } else {
+            selectedRurality = [
+              ...RURALITY_OPTIONS
+            ];
+          }
+        }
+
+        /*
+         * Migrate the previous single-value
+         * state filter if present.
+         */
+        let selectedStates =
+          uniqueValidValues(
+            saved.selectedStates,
+            STATE_OPTIONS
+          );
+
+        if (
+          !Array.isArray(
+            saved.selectedStates
+          )
+        ) {
+          if (
+            saved.stateFilter &&
+            saved.stateFilter !==
+              'ALL' &&
+            STATE_OPTIONS.includes(
+              saved.stateFilter
+            )
+          ) {
+            selectedStates = [
+              saved.stateFilter
+            ];
+          } else {
+            selectedStates = [
+              ...STATE_OPTIONS
+            ];
+          }
+        }
+
+        return {
+          showRepeats:
+            typeof saved
+              .showRepeats ===
+            'boolean'
+              ? saved.showRepeats
+              : DEFAULT_FILTERS
+                  .showRepeats,
+
+          showCorporates:
+            typeof saved
+              .showCorporates ===
+            'boolean'
+              ? saved
+                  .showCorporates
+              : DEFAULT_FILTERS
+                  .showCorporates,
+
+          selectedRurality,
+
+          selectedStates,
+
+          showDelisted:
+            typeof saved
+              .showDelisted ===
+            'boolean'
+              ? saved.showDelisted
+              : DEFAULT_FILTERS
+                  .showDelisted
+        };
+      } catch (error) {
+        return {
+          showRepeats:
+            DEFAULT_FILTERS
+              .showRepeats,
+
+          showCorporates:
+            DEFAULT_FILTERS
+              .showCorporates,
+
+          selectedRurality: [
+            ...DEFAULT_FILTERS
+              .selectedRurality
+          ],
+
+          selectedStates: [
+            ...DEFAULT_FILTERS
+              .selectedStates
+          ],
+
+          showDelisted:
+            DEFAULT_FILTERS
+              .showDelisted
+        };
+      }
+    }
+
+    function saveFilters() {
+      try {
+        localStorage.setItem(
+          CONFIG.STORAGE_KEY,
+          JSON.stringify({
+            showRepeats:
+              state.filters
+                .showRepeats,
+
+            showCorporates:
+              state.filters
+                .showCorporates,
+
+            selectedRurality:
+              state.filters
+                .selectedRurality,
+
+            selectedStates:
+              state.filters
+                .selectedStates,
+
+            showDelisted:
+              state.filters
+                .showDelisted
+          })
+        );
+      } catch (error) {
+        console.warn(
+          'The browser could not save the filter settings.',
+          error
+        );
+      }
+    }
+
+    function setBooleanButton(
+      button,
+      isOn
+    ) {
+      button.classList.toggle(
+        'is-on',
+        isOn
+      );
+
+      button.setAttribute(
+        'aria-checked',
+        String(isOn)
+      );
+
+      button
+        .querySelector(
+          '.filter-value'
+        )
+        .textContent =
+          isOn
+            ? 'ON'
+            : 'OFF';
+    }
+
+    function setMenuOpen(
+      menuName,
+      shouldOpen
+    ) {
+      const menuPairs = {
+        rurality: {
+          button:
+            ruralityButton,
+          menu:
+            ruralityMenu
+        },
+
+        state: {
+          button:
+            stateButton,
+          menu:
+            stateMenu
+        }
+      };
+
+      Object.entries(
+        menuPairs
+      ).forEach(
+        ([
+          name,
+          controls
+        ]) => {
+          const isOpen =
+            shouldOpen &&
+            name === menuName;
+
+          controls.menu
+            .classList.toggle(
+              'is-open',
+              isOpen
+            );
+
+          controls.button
+            .setAttribute(
+              'aria-expanded',
+              String(isOpen)
+            );
+        }
+      );
+
+      state.openMenu =
+        shouldOpen
+          ? menuName
+          : null;
+    }
+
+    function toggleMenu(menuName) {
+      const shouldOpen =
+        state.openMenu !==
+        menuName;
+
+      setMenuOpen(
+        menuName,
+        shouldOpen
+      );
+    }
+
+    function getRuralitySummary() {
+      const selected =
+        state.filters
+          .selectedRurality;
+
+      if (
+        selected.length ===
+        RURALITY_OPTIONS.length
+      ) {
+        return 'ALL';
+      }
+
+      if (
+        selected.length === 0
+      ) {
+        return 'NONE';
+      }
+
+      if (
+        selected.includes(
+          'metro'
+        )
+      ) {
+        return 'METRO';
+      }
+
+      return 'NON-METRO';
+    }
+
+    function getStateSummary() {
+      const selected =
+        STATE_OPTIONS.filter(
+          stateCode =>
+            state.filters
+              .selectedStates
+              .includes(
+                stateCode
+              )
+        );
+
+      if (
+        selected.length ===
+        STATE_OPTIONS.length
+      ) {
+        return 'ALL';
+      }
+
+      if (
+        selected.length === 0
+      ) {
+        return 'NONE';
+      }
+
+      if (
+        selected.length <= 2
+      ) {
+        return selected.join(' + ');
+      }
+
+      return `${selected.length} STATES`;
+    }
+
+    function updateRuralityControls() {
+      const selected =
+        state.filters
+          .selectedRurality;
+
+      ruralityCheckboxes
+        .forEach(
+          checkbox => {
+            checkbox.checked =
+              selected.includes(
+                checkbox.value
+              );
+          }
+        );
+
+      ruralityAllCheckbox.checked =
+        selected.length ===
+        RURALITY_OPTIONS.length;
+
+      ruralityAllCheckbox.indeterminate =
+        selected.length > 0 &&
+        selected.length <
+          RURALITY_OPTIONS.length;
+
+      ruralityButton
+        .querySelector(
+          '.filter-value'
+        )
+        .textContent =
+          getRuralitySummary();
+    }
+
+    function updateStateControls() {
+      const selected =
+        state.filters
+          .selectedStates;
+
+      stateCheckboxes.forEach(
+        checkbox => {
+          checkbox.checked =
+            selected.includes(
+              checkbox.value
+            );
+        }
+      );
+
+      stateAllCheckbox.checked =
+        selected.length ===
+        STATE_OPTIONS.length;
+
+      stateAllCheckbox.indeterminate =
+        selected.length > 0 &&
+        selected.length <
+          STATE_OPTIONS.length;
+
+      const summaryElement =
+        stateButton.querySelector(
+          '.filter-value'
+        );
+
+      summaryElement.textContent =
+        getStateSummary();
+
+      if (
+        selected.length === 1
+      ) {
+        summaryElement.style.color =
+          STATE_COLOURS[
+            selected[0]
+          ];
+      } else {
+        summaryElement.style.color =
+          'var(--purple)';
+      }
+    }
+
+    function updateAllControls() {
+      setBooleanButton(
+        repeatToggle,
+        state.filters
+          .showRepeats
+      );
+
+      setBooleanButton(
+        corporateToggle,
+        state.filters
+          .showCorporates
+      );
+
+      setBooleanButton(
+        delistedToggle,
+        state.filters
+          .showDelisted
+      );
+
+      updateRuralityControls();
+      updateStateControls();
+    }
+
+    function appendCellContent(
+      cellElement,
+      cellModel
+    ) {
+      const displayText =
+        cellModel.text || '—';
+
+      if (cellModel.link) {
+        const anchor =
+          document.createElement(
+            'a'
+          );
+
+        anchor.href =
+          cellModel.link;
+
+        anchor.target =
+          '_blank';
+
+        anchor.rel =
+          'noopener noreferrer';
+
+        anchor.textContent =
+          displayText;
+
+        anchor.setAttribute(
+          'aria-label',
+          `${displayText} — opens in a new tab`
+        );
+
+        if (
+          cellModel.linkClass
+        ) {
+          anchor.classList.add(
+            cellModel.linkClass
+          );
+        }
+
+        cellElement.appendChild(
+          anchor
+        );
+
+        return;
+      }
+
+      cellElement.textContent =
+        displayText;
+    }
+
+    function renderTable(model) {
+      const thead =
+        dataTable.querySelector(
+          'thead'
+        );
+
+      const tbody =
+        dataTable.querySelector(
+          'tbody'
+        );
+
+      thead.textContent = '';
+      tbody.textContent = '';
+
+      const headerRow =
+        document.createElement(
+          'tr'
+        );
+
+      model.headers.forEach(
+        header => {
+          const th =
+            document.createElement(
+              'th'
+            );
+
+          th.scope = 'col';
+
+          th.dataset.sourceColumn =
+            columnNumberToLetter(
+              header.sourceColumn
+            );
+
+          th.textContent =
+            header.text ||
+            columnNumberToLetter(
+              header.sourceColumn
+            );
+
+          headerRow.appendChild(
+            th
+          );
+        }
+      );
+
+      thead.appendChild(
+        headerRow
+      );
+
+      const fragment =
+        document.createDocumentFragment();
+
+      state.rows = [];
+
+      model.rows.forEach(
+        rowModel => {
+          const tr =
+            document.createElement(
+              'tr'
+            );
+
+          tr.dataset.sourceRow =
+            String(
+              rowModel.sourceRow
+            );
+
+          tr.dataset.week =
+            rowModel.weekKey || '';
+
+          if (
+            rowModel.isRepeat
+          ) {
+            tr.classList.add(
+              'repeat-row'
+            );
+          }
+
+          if (
+            rowModel.isDelisted
+          ) {
+            tr.classList.add(
+              'delisted-row'
+            );
+          }
+
+          rowModel.cells.forEach(
+            cellModel => {
+              const td =
+                document.createElement(
+                  'td'
+                );
+
+              td.dataset.sourceColumn =
+                columnNumberToLetter(
+                  cellModel
+                    .sourceColumn
+                );
+
+              appendCellContent(
+                td,
+                cellModel
+              );
+
+              if (
+                cellModel
+                  .sourceColumn ===
+                CONFIG
+                  .EMPLOYER_TYPE_COLUMN
+              ) {
+                const categoryClass =
+                  getEmployerTypeClass(
+                    cellModel.text
+                  );
+
+                if (
+                  categoryClass
+                ) {
+                  td.classList.add(
+                    categoryClass
+                  );
+                }
+              }
+
+              if (
+                cellModel
+                  .sourceColumn ===
+                CONFIG.STATE_COLUMN
+              ) {
+                const stateClass =
+                  getStateClass(
+                    cellModel.text
+                  );
+
+                if (stateClass) {
+                  td.classList.add(
+                    stateClass
+                  );
+                }
+              }
+
+              tr.appendChild(td);
+            }
+          );
+
+          fragment.appendChild(
+            tr
+          );
+
+          state.rows.push({
+            element: tr,
+
+            isRepeat:
+              rowModel.isRepeat,
+
+            isCorporate:
+              rowModel.isCorporate,
+
+            isDelisted:
+              rowModel.isDelisted,
+
+            hasMM1:
+              rowModel.hasMM1,
+
+            hasNonMetroMM:
+              rowModel
+                .hasNonMetroMM,
+
+            stateCodes:
+              rowModel.stateCodes,
+
+            weekKey:
+              rowModel.weekKey ||
+              '',
+
+            isHidden: false
+          });
+        }
+      );
+
+      tbody.appendChild(
+        fragment
+      );
+
+      applyFilters();
+    }
+
+    function rowMatchesRurality(
+      row
+    ) {
+      const selected =
+        state.filters
+          .selectedRurality;
+
+      if (
+        selected.length === 0
+      ) {
+        return false;
+      }
+
+      const matchesMetro =
+        selected.includes(
+          'metro'
+        ) &&
+        row.hasMM1;
+
+      const matchesNonMetro =
+        selected.includes(
+          'nonmetro'
+        ) &&
+        row.hasNonMetroMM;
+
+      return (
+        matchesMetro ||
+        matchesNonMetro
+      );
+    }
+
+    function rowMatchesState(row) {
+      const selected =
+        state.filters
+          .selectedStates;
+
+      if (
+        selected.length === 0
+      ) {
+        return false;
+      }
+
+      return row.stateCodes.some(
+        stateCode =>
+          selected.includes(
+            stateCode
+          )
+      );
+    }
+
+    function refreshWeekDividers() {
+      state.rows.forEach(
+        row => {
+          row.element
+            .classList.remove(
+              'week-divider'
+            );
+        }
+      );
+
+      const visibleRows =
+        state.rows.filter(
+          row =>
+            !row.isHidden
+        );
+
+      for (
+        let index = 0;
+        index <
+          visibleRows.length - 1;
+        index++
+      ) {
+        const currentRow =
+          visibleRows[index];
+
+        const nextRow =
+          visibleRows[
+            index + 1
+          ];
+
+        if (
+          currentRow.weekKey &&
+          nextRow.weekKey &&
+          currentRow.weekKey !==
+            nextRow.weekKey
+        ) {
+          currentRow.element
+            .classList.add(
+              'week-divider'
+            );
+        }
+      }
+    }
+
+    function applyFilters() {
+      let visibleCount = 0;
+
+      state.rows.forEach(
+        row => {
+          const hidden =
+            (
+              !state.filters
+                .showRepeats &&
+              row.isRepeat
+            ) ||
+            (
+              !state.filters
+                .showCorporates &&
+              row.isCorporate
+            ) ||
+            (
+              !state.filters
+                .showDelisted &&
+              row.isDelisted
+            ) ||
+            !rowMatchesRurality(
+              row
+            ) ||
+            !rowMatchesState(
+              row
+            );
+
+          row.isHidden = hidden;
+
+          row.element
+            .classList.toggle(
+              'is-hidden',
+              hidden
+            );
+
+          if (!hidden) {
+            visibleCount++;
+          }
+        }
+      );
+
+      refreshWeekDividers();
+
+      const totalCount =
+        state.rows.length;
+
+      tableStatus.textContent =
+        `Showing ${visibleCount.toLocaleString('en-AU')} of ` +
+        `${totalCount.toLocaleString('en-AU')} jobs since ` +
+        `${formatDate(state.dateCutoff)}`;
+
+      emptyState.classList.toggle(
+        'is-visible',
+        visibleCount === 0
+      );
+
+      dataTable.style.display =
+        visibleCount === 0
+          ? 'none'
+          : '';
+    }
+
+    function commitFilterChange() {
+      saveFilters();
+      updateAllControls();
+      applyFilters();
+    }
+
+    function hideLoadingState() {
+      app.classList.remove(
+        'is-loading'
+      );
+
+      loadingState.setAttribute(
+        'aria-hidden',
+        'true'
+      );
+    }
+
+    function showError(error) {
+      console.error(error);
+
+      hideLoadingState();
+
+      tableShell.style.display =
+        'none';
+
+      tableStatus.textContent =
+        'Could not load jobs';
+
+      errorState.textContent =
+        `${
+          error?.message ||
+          'Could not load the spreadsheet.'
+        } ` +
+        'Ensure the spreadsheet is shared as “Anyone with the link can view” and, if required, set the exact worksheet tab in CONFIG.SHEET_NAME.';
+
+      errorState.classList.add(
+        'is-visible'
+      );
+    }
+
+    async function loadTableData() {
+      try {
+        const model =
+          await loadGvizModel();
+
+        renderTable(model);
+        hideLoadingState();
+      } catch (error) {
+        showError(error);
+      }
+    }
+
+    repeatToggle.addEventListener(
+      'click',
+      () => {
+        state.filters
+          .showRepeats =
+          !state.filters
+            .showRepeats;
+
+        commitFilterChange();
+      }
+    );
+
+    corporateToggle.addEventListener(
+      'click',
+      () => {
+        state.filters
+          .showCorporates =
+          !state.filters
+            .showCorporates;
+
+        commitFilterChange();
+      }
+    );
+
+    delistedToggle.addEventListener(
+      'click',
+      () => {
+        state.filters
+          .showDelisted =
+          !state.filters
+            .showDelisted;
+
+        commitFilterChange();
+      }
+    );
+
+    ruralityButton.addEventListener(
+      'click',
+      event => {
+        event.stopPropagation();
+
+        toggleMenu(
+          'rurality'
+        );
+      }
+    );
+
+    stateButton.addEventListener(
+      'click',
+      event => {
+        event.stopPropagation();
+
+        toggleMenu(
+          'state'
+        );
+      }
+    );
+
+    ruralityMenu.addEventListener(
+      'click',
+      event => {
+        event.stopPropagation();
+      }
+    );
+
+    stateMenu.addEventListener(
+      'click',
+      event => {
+        event.stopPropagation();
+      }
+    );
+
+    ruralityAllCheckbox
+      .addEventListener(
+        'change',
+        () => {
+          state.filters
+            .selectedRurality =
+            ruralityAllCheckbox
+              .checked
+              ? [
+                  ...RURALITY_OPTIONS
+                ]
+              : [];
+
+          commitFilterChange();
+        }
+      );
+
+    ruralityCheckboxes.forEach(
+      checkbox => {
+        checkbox.addEventListener(
+          'change',
+          () => {
+            const selected =
+              new Set(
+                state.filters
+                  .selectedRurality
+              );
+
+            if (
+              checkbox.checked
+            ) {
+              selected.add(
+                checkbox.value
+              );
+            } else {
+              selected.delete(
+                checkbox.value
+              );
+            }
+
+            state.filters
+              .selectedRurality =
+              RURALITY_OPTIONS
+                .filter(
+                  value =>
+                    selected.has(
+                      value
+                    )
+                );
+
+            commitFilterChange();
+          }
+        );
+      }
+    );
+
+    stateAllCheckbox
+      .addEventListener(
+        'change',
+        () => {
+          state.filters
+            .selectedStates =
+            stateAllCheckbox
+              .checked
+              ? [
+                  ...STATE_OPTIONS
+                ]
+              : [];
+
+          commitFilterChange();
+        }
+      );
+
+    stateCheckboxes.forEach(
+      checkbox => {
+        checkbox.addEventListener(
+          'change',
+          () => {
+            const selected =
+              new Set(
+                state.filters
+                  .selectedStates
+              );
+
+            if (
+              checkbox.checked
+            ) {
+              selected.add(
+                checkbox.value
+              );
+            } else {
+              selected.delete(
+                checkbox.value
+              );
+            }
+
+            state.filters
+              .selectedStates =
+              STATE_OPTIONS.filter(
+                value =>
+                  selected.has(
+                    value
+                  )
+              );
+
+            commitFilterChange();
+          }
+        );
+      }
+    );
+
+    document.addEventListener(
+      'click',
+      () => {
+        setMenuOpen(
+          null,
+          false
+        );
+      }
+    );
+
+    document.addEventListener(
+      'keydown',
+      event => {
+        if (
+          event.key ===
+          'Escape'
+        ) {
+          setMenuOpen(
+            null,
+            false
+          );
+        }
+      }
+    );
+
+    window.addEventListener(
+      'resize',
+      () => {
+        setMenuOpen(
+          null,
+          false
+        );
+      }
+    );
+
+    updateAllControls();
+    loadTableData();
+  </script>
+</body>
+</html>
