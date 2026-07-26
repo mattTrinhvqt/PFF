@@ -1,1446 +1,3298 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <script>
-      /* --- Visual scale toggle (set true/false) --- */
-      const ENABLE_SCALE = false;
+  <title>PFF Job Tracker</title>
 
-      let scaleTimer = null;
+  <link
+    href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap"
+    rel="stylesheet"
+  >
 
-      function scheduleApplyScale() {
-        if (!ENABLE_SCALE) return;
-        clearTimeout(scaleTimer);
+  <!-- Reads the Google Sheets workbook export, including formula results and hyperlinks. -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-        scaleTimer = setTimeout(() => {
-          requestAnimationFrame(applyScale);
-        }, 80);
-      }
+  <style>
+    :root {
+      --purple: #6600ff;
+      --ink: #151515;
+      --muted: #69718a;
+      --track: #e8eaf0;
+      --row-line: #f4f5f7;
+      --soft: #f7f7f9;
+      --repeat-red: #7a1111;
 
-      function applyScale() {
-        const app = document.getElementById('app');
-        const fit = document.getElementById('fit');
-        if (!app || !fit) return;
+      --seek-pink: #e5007d;
+      --indeed-blue: #2557a7;
+      --essilux-blue: #39a9dc;
 
-        if (!ENABLE_SCALE) {
-          app.style.transform = 'none';
-          fit.style.minHeight = '100vh';
-          fit.style.width = '100%';
-          return;
-        }
+      --blue-cone: rgba(74, 86, 255, 0.82);
+      --green-cone: rgba(36, 210, 116, 0.78);
+      --red-cone: rgba(255, 92, 48, 0.76);
 
-        const prevTransform = app.style.transform;
-        app.style.transform = 'none';
+      --corporate: #8dc4af;
+      --independent: #c3bce9;
+      --ophthal: #ffe9b8;
+      --other: #eaebec;
 
-        let sizer = document.getElementById('appSizer');
-        if (!sizer) {
-          sizer = app.cloneNode(true);
-          sizer.id = 'appSizer';
-          document.body.appendChild(sizer);
-        } else {
-          sizer.innerHTML = app.innerHTML;
-        }
+      --first-column-width: 155px;
+    }
 
-        Object.assign(sizer.style, {
-          position: 'absolute',
-          left: '-99999px',
-          top: '0',
-          transform: 'none',
-          visibility: 'hidden',
-          pointerEvents: 'none',
-          display: 'block',
-          width: getComputedStyle(app).width
-        });
+    * {
+      box-sizing: border-box;
+    }
 
-        const sResults = sizer.querySelector('#results');
-        const sOut = sizer.querySelector('#out');
-        if (sResults) sResults.style.display = 'block';
-        if (sOut) sOut.textContent = 'Calculating…';
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      padding: 0;
+    }
 
-        const NAT_W = sizer.offsetWidth || app.offsetWidth || 1;
-        const NAT_H = sizer.offsetHeight || app.offsetHeight || 1;
+    body {
+      font-family: 'Lato', sans-serif;
+      color: var(--ink);
+      background: #fff;
+    }
 
-        app.style.transform = prevTransform;
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
 
-        const vw =
-          document.documentElement.clientWidth ||
-          window.innerWidth;
+    #app {
+      width: 100%;
+      margin: 0;
+      padding: 18px 10px 24px;
+    }
 
-        const vh = window.innerHeight;
+    #app.is-loading .content {
+      display: none;
+    }
 
-        const scale = Math.min(
-          vw / NAT_W,
-          vh / NAT_H,
-          1
-        );
+    #app:not(.is-loading) .app-loading {
+      display: none;
+    }
 
-        app.style.transform = `scale(${scale})`;
-        fit.style.width = '100%';
+    .app-loading {
+      width: 100%;
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
 
-        fit.style.minHeight =
-          Math.max(
-            Math.ceil(NAT_H * scale),
-            vh
-          ) + 'px';
-      }
+    .cone-loader {
+      position: relative;
+      width: 176px;
+      height: 78px;
+      margin: 0 auto;
+      overflow: visible;
+      isolation: isolate;
+    }
 
-      window.addEventListener(
-        'load',
-        scheduleApplyScale
+    .cone {
+      position: absolute;
+      bottom: 8px;
+      width: 58px;
+      height: 68px;
+      opacity: 0;
+      clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      -webkit-clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      mix-blend-mode: normal;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      transform: translateZ(0);
+      will-change: opacity;
+    }
+
+    .cone.blue {
+      left: 33px;
+      background: var(--blue-cone);
+      animation: blueConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .cone.green {
+      left: 69px;
+      background: var(--green-cone);
+      animation: greenConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .cone.red {
+      left: 85px;
+      background: var(--red-cone);
+      animation: redConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .loader-text {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: center;
+      animation: loadingTextPulse 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    @keyframes blueConeCycle {
+      0% { opacity: 0; }
+      12% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes greenConeCycle {
+      0% { opacity: 0; }
+      20% { opacity: 0; }
+      32% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes redConeCycle {
+      0% { opacity: 0; }
+      40% { opacity: 0; }
+      52% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes loadingTextPulse {
+      0% { opacity: 0.45; }
+      52% { opacity: 0.78; }
+      76% { opacity: 0.78; }
+      87% { opacity: 0.45; }
+      100% { opacity: 0.45; }
+    }
+
+    .content {
+      width: 100%;
+      max-width: 1800px;
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 0 0 12px;
+    }
+
+    .heading-group {
+      min-width: 0;
+      text-align: left;
+    }
+
+    .heading-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--ink);
+      font-size: clamp(20px, 3vw, 28px);
+      font-weight: 700;
+      line-height: 1.15;
+    }
+
+    .live-data-inline {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      flex: 0 0 auto;
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .live-data-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      border-radius: 50%;
+      background: #e53935;
+    }
+
+    .table-status {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .toggle-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 38px;
+      padding: 7px 9px 7px 12px;
+      border: 1px solid var(--track);
+      border-radius: 999px;
+      color: var(--ink);
+      background: #fff;
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(21, 21, 21, 0.04);
+      transition:
+        border-color 160ms ease,
+        background 160ms ease,
+        box-shadow 160ms ease,
+        transform 160ms ease;
+    }
+
+    .toggle-button:hover {
+      border-color: rgba(102, 0, 255, 0.30);
+      box-shadow: 0 3px 10px rgba(21, 21, 21, 0.08);
+    }
+
+    .toggle-button:active {
+      transform: translateY(1px);
+    }
+
+    .toggle-button:focus-visible {
+      outline: 3px solid rgba(102, 0, 255, 0.20);
+      outline-offset: 2px;
+    }
+
+    .toggle-label {
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .toggle-track {
+      position: relative;
+      width: 37px;
+      height: 21px;
+      flex: 0 0 37px;
+      border-radius: 999px;
+      background: #c9cdd5;
+      transition: background 160ms ease;
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.28);
+      transition: transform 160ms ease;
+    }
+
+    .toggle-state {
+      min-width: 24px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      line-height: 1;
+      text-align: center;
+    }
+
+    .toggle-button.is-on {
+      border-color: rgba(102, 0, 255, 0.24);
+      background: rgba(102, 0, 255, 0.035);
+    }
+
+    .toggle-button.is-on .toggle-track {
+      background: var(--purple);
+    }
+
+    .toggle-button.is-on .toggle-thumb {
+      transform: translateX(16px);
+    }
+
+    .toggle-button.is-on .toggle-state {
+      color: var(--purple);
+    }
+
+    .notice {
+      display: none;
+      margin: 0 0 10px;
+      padding: 9px 11px;
+      border: 1px solid #f0dfaa;
+      border-radius: 8px;
+      color: #67551b;
+      background: #fff9e8;
+      font-size: 12px;
+      line-height: 1.35;
+      text-align: left;
+    }
+
+    .notice.is-visible {
+      display: block;
+    }
+
+    .table-shell {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--track);
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 5px 22px rgba(21, 21, 21, 0.06);
+      isolation: isolate;
+    }
+
+    /* Gradient divider after the sticky first visible column. */
+    .table-shell::after {
+      content: "";
+      position: absolute;
+      z-index: 9;
+      top: 0;
+      bottom: 0;
+      left: var(--first-column-width);
+      width: 1px;
+      pointer-events: none;
+      background: linear-gradient(
+        to bottom,
+        #fff 0%,
+        rgba(21, 21, 21, 0.16) 10%,
+        var(--ink) 18%,
+        rgba(21, 21, 21, 0.16) 78%,
+        #fff 100%
       );
+    }
 
-      window.addEventListener(
-        'resize',
-        scheduleApplyScale
+    .table-scroll {
+      width: 100%;
+      max-height: calc(100vh - 150px);
+      overflow: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+
+    .data-table {
+      width: max-content;
+      min-width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      table-layout: auto;
+    }
+
+    .data-table thead {
+      position: sticky;
+      z-index: 5;
+      top: 0;
+      background: #fff;
+    }
+
+    /* Black horizontal gradient below the header row. */
+    .data-table thead::after {
+      content: "";
+      position: absolute;
+      z-index: 8;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 1px;
+      pointer-events: none;
+      background: linear-gradient(
+        to right,
+        #fff 0%,
+        rgba(21, 21, 21, 0.16) 8%,
+        var(--ink) 18%,
+        var(--ink) 82%,
+        rgba(21, 21, 21, 0.16) 92%,
+        #fff 100%
       );
+    }
 
-      window.addEventListener(
-        'orientationchange',
-        scheduleApplyScale
-      );
+    .data-table th,
+    .data-table td {
+      position: relative;
+      min-width: 120px;
+      max-width: 300px;
+      padding: 9px 8px;
+      border-right: 1px solid var(--track);
+      border-bottom: 1px solid var(--row-line);
+      line-height: 1.25;
+      text-align: center;
+      vertical-align: middle;
+      overflow-wrap: anywhere;
+      white-space: pre-line;
+    }
 
-      window.addEventListener(
-        'pageshow',
-        scheduleApplyScale
-      );
-    </script>
+    .data-table th {
+      color: var(--muted);
+      background: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: normal;
+    }
 
-    <meta charset="utf-8">
+    .data-table td {
+      color: var(--ink);
+      background: #fff;
+      font-size: 12px;
+      font-weight: 400;
+    }
 
-    <title>Casual & Locum Optom Income Estimator</title>
+    .data-table th:first-child,
+    .data-table td:first-child {
+      position: sticky;
+      left: 0;
+      width: var(--first-column-width);
+      min-width: var(--first-column-width);
+      max-width: 230px;
+    }
 
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1"
-    >
+    .data-table th:first-child {
+      z-index: 7;
+    }
 
-    <meta
-      name="theme-color"
-      content="#ffffff"
-    >
+    .data-table td:first-child {
+      z-index: 2;
+      font-weight: 700;
+    }
 
-    <link
-      href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap"
-      rel="stylesheet"
-    >
+    .data-table th:last-child,
+    .data-table td:last-child {
+      border-right: 0;
+    }
 
-    <style>
+    .data-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .data-table tbody tr:hover td {
+      filter: brightness(0.985);
+    }
+
+    /* Light grey divider after the last visible row of each Monday-starting week. */
+    .data-table tbody tr.week-divider td {
+      border-bottom-color: var(--track);
+      box-shadow: inset 0 -1px 0 var(--track);
+    }
+
+    .data-table a {
+      color: var(--purple);
+      font-weight: 700;
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+
+    .data-table a:hover {
+      text-decoration-thickness: 2px;
+    }
+
+    .data-table a.link-seek {
+      color: var(--seek-pink);
+    }
+
+    .data-table a.link-indeed {
+      color: var(--indeed-blue);
+    }
+
+    .data-table a.link-essilux {
+      color: var(--essilux-blue);
+    }
+
+    .data-table td.category-corporate {
+      background: var(--corporate);
+    }
+
+    .data-table td.category-independent {
+      background: var(--independent);
+    }
+
+    .data-table td.category-ophthal {
+      background: var(--ophthal);
+    }
+
+    .data-table td.category-other {
+      background: var(--other);
+    }
+
+    /* Repeat status overrides every normal and hyperlink colour in the row. */
+    .data-table tr.repeat-row td,
+    .data-table tr.repeat-row td a,
+    .data-table tr.repeat-row td a.link-seek,
+    .data-table tr.repeat-row td a.link-indeed,
+    .data-table tr.repeat-row td a.link-essilux {
+      color: var(--repeat-red);
+    }
+
+    .data-table tr.is-hidden {
+      display: none;
+    }
+
+    .empty-state {
+      display: none;
+      padding: 42px 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+      text-align: center;
+    }
+
+    .empty-state.is-visible {
+      display: block;
+    }
+
+    .error-state {
+      display: none;
+      max-width: 720px;
+      margin: 20px auto;
+      padding: 18px;
+      border: 1px solid var(--track);
+      border-radius: 10px;
+      color: var(--muted);
+      background: var(--soft);
+      font-size: 14px;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    .error-state.is-visible {
+      display: block;
+    }
+
+    @media (max-width: 760px) {
       :root {
-        --purple: #6600ff;
-        --ink: #151515;
-        --muted: #69718a;
-        --muted-light: #9a9fab;
-        --track: #e8eaf0;
-        --divider: #ececf1;
-        --error-red: #b42318;
-        --focus-ring: rgba(102, 0, 255, 0.12);
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-        min-height: 100%;
-      }
-
-      body {
-        font-family: 'Lato', sans-serif;
-        color: var(--ink);
-        background: #fff;
-        overflow-x: hidden;
-        overflow-y: auto;
-      }
-
-      button,
-      input,
-      select {
-        font-family: inherit;
-      }
-
-      button,
-      input,
-      select,
-      a {
-        -webkit-tap-highlight-color: transparent;
-      }
-
-      #fit {
-        display: flex;
-        justify-content: center;
-        align-items: flex-start;
-        min-height: 100dvh;
-        width: 100%;
-      }
-
-      .box {
-        width: min(calc(100% - 24px), 520px);
-        max-width: 100%;
-        min-width: 0;
-        margin-inline: auto;
-        padding: 24px 20px 30px;
-        text-align: center;
+        --first-column-width: 135px;
       }
 
       #app {
-        transform-origin: top center;
-        will-change: transform;
+        padding: 12px 5px 18px;
       }
 
-      .calculator-notice {
-        width: 100%;
-        margin: 0 0 10px;
-        padding: 0 4px 16px;
-        border-bottom: 1px solid var(--divider);
-        color: var(--muted);
-        font-size: 13px;
-        line-height: 1.45;
-        text-align: center;
-      }
-
-      .calculator-notice p {
-        margin: 0;
-      }
-
-      .calculator-notice p:first-child {
-        color: var(--ink);
-        font-weight: 700;
-      }
-
-      .calculator-notice p + p {
-        margin-top: 3px;
-      }
-
-      #modelMeta {
-        color: var(--muted);
-        font-size: 12px;
-        line-height: 1.45;
-      }
-
-      .calculator-form {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 20px;
-        margin-top: 16px;
-        text-align: left;
-      }
-
-      .field {
-        margin: 0;
-      }
-
-      .field label {
-        display: flex;
+      .topbar {
+        align-items: stretch;
         flex-direction: column;
-        align-items: center;
+        gap: 10px;
+      }
+
+      .controls {
         justify-content: flex-start;
-        margin: 0;
-        color: var(--muted);
-        font-size: 13px;
-        font-weight: 400;
-        letter-spacing: 0.005em;
-        line-height: 1.3;
-        text-align: center;
       }
 
-      .field label small {
-        display: block;
-        margin-top: 4px;
-        color: var(--muted);
-        font-size: 12px;
-        font-weight: 400;
-        line-height: 1.3;
+      .toggle-button {
+        min-height: 36px;
       }
 
-      .field label small a {
-        color: var(--purple);
-        font-family: inherit;
-        font-size: 12px;
-        font-weight: 700;
-        line-height: 1.3;
-        text-decoration: underline;
-        text-decoration-thickness: 1px;
-        text-underline-offset: 2px;
+      .table-scroll {
+        max-height: calc(100vh - 250px);
       }
 
-      .field input[type="number"],
-      .field select {
-        display: block;
-        width: 100%;
-        height: 42px;
-        margin: 7px auto 0;
-        padding: 0 8px;
-        color: var(--ink);
-        background: transparent;
-        border: 0;
-        border-bottom: 1px solid #b8bcc6;
-        border-radius: 0;
-        font: inherit;
-        font-size: 16px;
-        text-align: center;
-        outline: none;
-        transition:
-          border-color 150ms ease,
-          box-shadow 150ms ease;
-      }
-
-      .field input[type="number"]:hover,
-      .field select:hover {
-        border-bottom-color: #777d8b;
-      }
-
-      .field input[type="number"]:focus,
-      .field select:focus {
-        border-bottom-color: var(--purple);
-        box-shadow: 0 2px 0 -1px var(--purple);
-      }
-
-      .field input[type="number"]:focus-visible,
-      .field select:focus-visible {
-        outline: 3px solid var(--focus-ring);
-        outline-offset: 3px;
-      }
-
-      select {
-        text-align-last: center;
-        -moz-text-align-last: center;
-        cursor: pointer;
-      }
-
-      input[type="number"]::-webkit-inner-spin-button,
-      input[type="number"]::-webkit-outer-spin-button {
-        margin: 0;
-        -webkit-appearance: none;
-      }
-
-      #estimateBtn {
-        display: block;
-        width: 100%;
-        min-height: 42px;
-        margin: 1px auto 0;
-        padding: 0 14px;
-        color: var(--ink);
-        background: transparent;
-        border: 1px solid var(--ink);
-        border-radius: 8px;
-        font: inherit;
-        font-size: 14px;
-        font-weight: 700;
-        cursor: pointer;
-        transition:
-          color 150ms ease,
-          background-color 150ms ease,
-          border-color 150ms ease,
-          box-shadow 150ms ease,
-          transform 150ms ease;
-      }
-
-      #estimateBtn:hover:not(:disabled) {
-        color: #fff;
-        background: var(--ink);
-        box-shadow:
-          0 5px 12px rgba(21, 21, 21, 0.12);
-        transform: translateY(-1px);
-      }
-
-      #estimateBtn:active:not(:disabled) {
-        box-shadow: none;
-        transform: translateY(0);
-      }
-
-      #estimateBtn:focus-visible {
-        outline: 3px solid var(--focus-ring);
-        outline-offset: 3px;
-      }
-
-      #estimateBtn:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-        transform: none;
-      }
-
-      #out {
-        min-height: 0;
-        margin: -4px 1px 0;
-        color: var(--muted);
-        font-size: 13px;
-        line-height: 1.45;
-        text-align: left;
-      }
-
-      #out:empty {
-        display: none;
-      }
-
-      /* Inline calculator errors */
-      #out.is-error,
-      #resultsStatus.is-error {
-        color: var(--error-red);
-      }
-
-      #results {
-        position: relative;
-        display: none;
-        margin-top: 14px;
-        padding-top: 24px;
-        border-top: 1px solid var(--divider);
-        text-align: left;
-      }
-
-      #resultsStatus {
-        display: none;
-        position: absolute;
-        top: -11px;
-        right: 0;
-        left: 0;
-        width: fit-content;
-        max-width: 100%;
-        padding-right: 10px;
-        color: var(--muted);
-        background: #fff;
-        font-size: 13px;
-        line-height: 1.45;
-        text-align: left;
-      }
-
-      #results.show-status {
-        border-top-color: transparent;
-      }
-
-      #results.show-status #resultsStatus {
-        display: block;
-      }
-
-      .results-section-label {
-        color: var(--ink);
-        font-size: 14px;
-        font-weight: 700;
-        letter-spacing: -0.005em;
-        line-height: 1.35;
-        text-align: center;
-      }
-
-      .scale {
-        --trackY: 34px;
-        --barH: 6px;
-        --gapValue: 7px;
-        --gapLabel: 8px;
-
-        position: relative;
-        width: calc(100% - 20px);
-        margin: 17px 10px 0;
-        padding: 42px 0 47px;
-      }
-
-      .scale .track {
-        position: absolute;
-        top: var(--trackY);
-        right: 0;
-        left: 0;
-        height: var(--barH);
-        background: var(--track);
-        border-radius: 999px;
-      }
-
-      .scale .tick {
-        --stemUp: 20px;
-        --stemDown: 18px;
-
-        position: absolute;
-        top: calc(
-          var(--trackY) +
-          var(--barH) / 2
-        );
-        transform: translateX(-50%);
-        text-align: center;
-      }
-
-      .scale .t20,
-      .scale .t80 {
-        --stemUp: 17px;
-        --stemDown: 16px;
-      }
-
-      .scale .t5,
-      .scale .t95 {
-        --stemUp: 14px;
-        --stemDown: 14px;
-      }
-
-      .scale .tick .stem {
-        position: absolute;
-        top: calc(-1 * var(--stemUp));
-        left: 50%;
-        width: 2px;
-        height: calc(
-          var(--stemUp) +
-          var(--stemDown)
-        );
-        background: var(--muted);
-        border-radius: 999px;
-        transform: translateX(-50%);
-      }
-
-      .scale .t50 .stem {
-        width: 4px;
-        background: var(--purple);
-        box-shadow:
-          0 0 0 3px rgba(102, 0, 255, 0.07);
-      }
-
-      .scale .t5 .stem,
-      .scale .t95 .stem {
-        width: 1px;
-        background: var(--muted-light);
-      }
-
-      .scale .tick .value {
-        position: absolute;
-        top: 0;
-        left: 50%;
-        transform:
-          translate(
-            -50%,
-            calc(
-              -100% -
-              var(--stemUp) -
-              var(--gapValue)
-            )
-          );
-        color: var(--ink);
-        font-size: 13px;
-        font-weight: 400;
-        font-variant-numeric: tabular-nums;
-        line-height: 1;
-        white-space: nowrap;
-      }
-
-      .scale .tick .label {
-        position: absolute;
-        top: 0;
-        left: 50%;
-        transform:
-          translate(
-            -50%,
-            calc(
-              var(--stemDown) +
-              var(--gapLabel)
-            )
-          );
-        color: var(--muted);
-        font-size: 12px;
-        font-weight: 400;
-        line-height: 1;
-        white-space: nowrap;
-      }
-
-      .scale .t50 .value,
-      .scale .t50 .label {
-        color: var(--purple);
-        font-size: 16px;
-        font-weight: 700;
-      }
-
-      .scale .t20 .value,
-      .scale .t80 .value {
-        font-size: 12px;
-      }
-
-      .scale .t5 .value,
-      .scale .t95 .value {
-        color: var(--muted);
+      .data-table th,
+      .data-table td {
+        min-width: 108px;
+        max-width: 230px;
+        padding: 8px 6px;
         font-size: 11px;
       }
 
-      .caption {
-        margin-top: 7px;
-        color: var(--muted);
-        font-size: 12px;
-        line-height: 1.4;
-        text-align: center;
+      .data-table th:first-child,
+      .data-table td:first-child {
+        width: var(--first-column-width);
+        min-width: var(--first-column-width);
+        max-width: 185px;
       }
 
-      .warn {
-        color: var(--error-red);
+      .app-loading {
+        min-height: 180px;
       }
 
-      @media (max-width: 430px) {
-        .box {
-          width: calc(100% - 24px);
-          padding: 20px 14px 27px;
-        }
-
-        .calculator-notice {
-          padding-bottom: 15px;
-        }
-
-        .calculator-form {
-          gap: 18px;
-          margin-top: 14px;
-        }
-
-        .field label {
-          font-size: 12px;
-        }
-
-        .field label small,
-        .field label small a {
-          font-size: 11px;
-        }
-
-        .field input[type="number"],
-        .field select {
-          height: 40px;
-          margin-top: 6px;
-          font-size: 15px;
-        }
-
-        #estimateBtn {
-          min-height: 40px;
-        }
-
-        .scale {
-          width: calc(100% - 16px);
-          margin-right: 8px;
-          margin-left: 8px;
-        }
+      .cone-loader {
+        width: 160px;
+        height: 70px;
       }
 
-      @media (prefers-reduced-motion: reduce) {
-        *,
-        *::before,
-        *::after {
-          animation-duration: 0.01ms !important;
-          animation-iteration-count: 1 !important;
-          transition-duration: 0.01ms !important;
-          scroll-behavior: auto !important;
-        }
+      .cone {
+        width: 52px;
+        height: 61px;
       }
-    </style>
-  </head>
 
-  <body>
-    <div id="fit">
-      <div id="app" class="box">
-        <aside
-          class="calculator-notice"
-          role="note"
-        >
-          <p>Shows what locums charge</p>
+      .cone.blue { left: 30px; }
+      .cone.green { left: 64px; }
+      .cone.red { left: 78px; }
+    }
 
-          <p
-            id="modelMeta"
-            aria-live="polite"
-          >
-            Loading model…
-          </p>
-        </aside>
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
 
-        <main class="calculator-form">
-          <div class="field">
-            <label for="years">
-              Years since graduating
-            </label>
+      .cone.blue,
+      .cone.green,
+      .cone.red {
+        animation: none;
+        opacity: 1;
+      }
 
-            <input
-              id="years"
-              type="number"
-              inputmode="decimal"
-              enterkeyhint="next"
-              min="0"
-              max="50"
-              step="0.5"
-              required
-            >
-          </div>
+      .loader-text {
+        animation: none;
+        opacity: 0.72;
+      }
+    }
+  </style>
+</head>
 
-          <div class="field">
-            <label for="mmm">
-              Rurality of practice (MMM)
-
-              <small>
-                <a
-                  href="https://www.health.gov.au/resources/apps-and-tools/health-workforce-locator/health-workforce-locator"
-                  target="_blank"
-                  rel="noopener"
-                >
-                  Find my MMM
-                </a>
-              </small>
-            </label>
-
-            <select id="mmm" required>
-              <option
-                value=""
-                selected
-                disabled
-              >
-                Select MMM…
-              </option>
-
-              <option value="1">
-                MM1 (Metropolitan areas)
-              </option>
-
-              <option value="2">
-                MM2 (Regional centres)
-              </option>
-
-              <option value="3">
-                MM3 (Large rural towns)
-              </option>
-
-              <option value="4">
-                MM4 (Medium rural towns)
-              </option>
-
-              <option value="5">
-                MM5 (Small rural towns)
-              </option>
-
-              <option value="6">
-                MM6 (Remote communities)
-              </option>
-
-              <option value="7">
-                MM7 (Very remote communities)
-              </option>
-            </select>
-          </div>
-
-          <button
-            id="estimateBtn"
-            type="button"
-          >
-            Calculate
-          </button>
-
-          <div
-            id="out"
-            aria-live="polite"
-          ></div>
-
-          <section
-            id="results"
-            aria-live="polite"
-          >
-            <div
-              id="resultsStatus"
-              aria-live="polite"
-            ></div>
-
-            <div class="results-section-label">
-              Estimated hourly weekday rate
-            </div>
-
-            <div
-              id="pctScale"
-              class="scale"
-            >
-              <div class="track"></div>
-
-              <div class="tick t5">
-                <span
-                  class="value"
-                  id="p05v"
-                >
-                  –
-                </span>
-
-                <span class="stem"></span>
-
-                <span class="label">
-                  5<sup>th</sup>
-                </span>
-              </div>
-
-              <div class="tick t20">
-                <span
-                  class="value"
-                  id="p20v"
-                >
-                  –
-                </span>
-
-                <span class="stem"></span>
-
-                <span class="label">
-                  20<sup>th</sup>
-                </span>
-              </div>
-
-              <div class="tick t50">
-                <span
-                  class="value"
-                  id="p50v"
-                >
-                  –
-                </span>
-
-                <span class="stem"></span>
-
-                <span class="label">
-                  Median
-                </span>
-              </div>
-
-              <div class="tick t80">
-                <span
-                  class="value"
-                  id="p80v"
-                >
-                  –
-                </span>
-
-                <span class="stem"></span>
-
-                <span class="label">
-                  80<sup>th</sup>
-                </span>
-              </div>
-
-              <div class="tick t95">
-                <span
-                  class="value"
-                  id="p95v"
-                >
-                  –
-                </span>
-
-                <span class="stem"></span>
-
-                <span class="label">
-                  95<sup>th</sup>
-                </span>
-              </div>
-            </div>
-
-            <div class="caption">
-              Prediction percentiles
-            </div>
-          </section>
-        </main>
+<body>
+  <main id="app" class="is-loading">
+    <div
+      id="loading-state"
+      class="app-loading"
+      role="status"
+      aria-label="Loading job tracker"
+    >
+      <div class="cone-loader">
+        <div class="cone blue" aria-hidden="true"></div>
+        <div class="cone green" aria-hidden="true"></div>
+        <div class="cone red" aria-hidden="true"></div>
       </div>
+
+      <div class="loader-text">Loading jobs...</div>
     </div>
 
-    <script>
-      const SCRIPT_URL =
-        'https://script.google.com/macros/s/AKfycbyJKRhC3WEDrX9j323MOwEccI3Iv1_O-pEb7PJhPBpQHKFvAqPwrz3il7t-xPFv8D7htg/exec';
+    <section class="content" aria-label="PFF job tracker">
+      <div class="topbar">
+        <div class="heading-group">
+          <div class="heading-row">
+            <h1>Optometry job tracker</h1>
 
-      const out =
-        document.getElementById('out');
+            <span class="live-data-inline" aria-label="Live data">
+              <span class="live-data-dot" aria-hidden="true"></span>
+              <span>LIVE data</span>
+            </span>
+          </div>
 
-      const estimateBtn =
-        document.getElementById('estimateBtn');
+          <p
+            id="table-status"
+            class="table-status"
+            aria-live="polite"
+          >
+            Loading jobs...
+          </p>
+        </div>
 
-      const resultsStatus =
-        document.getElementById('resultsStatus');
+        <div class="controls" aria-label="Table filters">
+          <button
+            id="repeat-toggle"
+            class="toggle-button is-on"
+            type="button"
+            role="switch"
+            aria-checked="true"
+            aria-label="Include job ad repeats"
+          >
+            <span class="toggle-label">Job ad repeats</span>
+
+            <span class="toggle-track" aria-hidden="true">
+              <span class="toggle-thumb"></span>
+            </span>
+
+            <span class="toggle-state">ON</span>
+          </button>
+
+          <button
+            id="corporate-toggle"
+            class="toggle-button is-on"
+            type="button"
+            role="switch"
+            aria-checked="true"
+            aria-label="Include corporate jobs"
+          >
+            <span class="toggle-label">Corporates</span>
+
+            <span class="toggle-track" aria-hidden="true">
+              <span class="toggle-thumb"></span>
+            </span>
+
+            <span class="toggle-state">ON</span>
+          </button>
+
+          <button
+            id="non-metro-toggle"
+            class="toggle-button is-on"
+            type="button"
+            role="switch"
+            aria-checked="true"
+            aria-label="Include non-metro jobs"
+          >
+            <span class="toggle-label">Non-metro included</span>
+
+            <span class="toggle-track" aria-hidden="true">
+              <span class="toggle-thumb"></span>
+            </span>
+
+            <span class="toggle-state">ON</span>
+          </button>
+        </div>
+      </div>
+
+      <div
+        id="fallback-notice"
+        class="notice"
+        role="status"
+      ></div>
+
+      <div id="table-shell" class="table-shell">
+        <div class="table-scroll">
+          <table id="data-table" class="data-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div id="empty-state" class="empty-state">
+          No rows match the current filters.
+        </div>
+      </div>
+
+      <div
+        id="error-state"
+        class="error-state"
+        role="alert"
+      ></div>
+    </section>
+  </main>
+
+  <script>
+    const CONFIG = {
+      SPREADSHEET_ID: '1gdLoeP2VKwv6ctpLsmXKZiMWybCgc987ucFgTIU4jEc',
 
       /*
-       * Shows a normal grey message or a red error message.
+       * Leave blank to use the first visible worksheet tab.
+       * Enter the exact tab name here only if the tracker is on another tab.
        */
-      function setInlineMessage(
-        element,
-        message = '',
-        isError = false
+      SHEET_NAME: '',
+
+      HEADER_ROW: 2,
+
+      FIRST_COLUMN: 1,  // A
+      LAST_COLUMN: 25,  // Y
+
+      /*
+       * These columns remain available for filtering and hyperlink
+       * reconstruction but are not displayed.
+       */
+      HIDDEN_COLUMNS: new Set([2, 3, 5]), // B, C and E
+
+      REPEAT_FLAG_COLUMN: 2,   // B
+      DATE_COLUMN: 4,          // D
+      EMPLOYER_TYPE_COLUMN: 7, // G
+      METRO_COLUMN: 11,        // K
+
+      FETCH_TIMEOUT_MS: 20000
+    };
+
+    const state = {
+      showRepeats: true,
+      showCorporates: true,
+      showNonMetro: true,
+      rows: []
+    };
+
+    const app = document.getElementById('app');
+    const loadingState = document.getElementById('loading-state');
+    const dataTable = document.getElementById('data-table');
+    const tableShell = document.getElementById('table-shell');
+    const tableStatus = document.getElementById('table-status');
+    const emptyState = document.getElementById('empty-state');
+    const errorState = document.getElementById('error-state');
+    const fallbackNotice = document.getElementById('fallback-notice');
+
+    const repeatToggle = document.getElementById('repeat-toggle');
+    const corporateToggle = document.getElementById('corporate-toggle');
+    const nonMetroToggle = document.getElementById('non-metro-toggle');
+
+    function normaliseText(value) {
+      return String(value ?? '')
+        .replace(/\u00A0/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+    }
+
+    function isRepeatValue(value) {
+      return normaliseText(value) === 'yes';
+    }
+
+    function includesMM1(value) {
+      return /(^|[^a-z0-9])mm1([^a-z0-9]|$)/i.test(
+        String(value ?? '')
+      );
+    }
+
+    function isCorporateValue(value) {
+      const text = normaliseText(value);
+
+      return (
+        text === 'corporate' ||
+        text.startsWith('corporate ') ||
+        text.startsWith('corporate(') ||
+        text
+          .split(/[;,|/]/)
+          .some(part => normaliseText(part) === 'corporate')
+      );
+    }
+
+    function getEmployerTypeClass(value) {
+      const text = normaliseText(value);
+
+      if (
+        text === 'corporate' ||
+        text.startsWith('corporate ') ||
+        text.startsWith('corporate(')
       ) {
-        element.textContent = message;
-
-        element.classList.toggle(
-          'is-error',
-          isError && Boolean(message)
-        );
+        return 'category-corporate';
       }
 
-      /*
-       * Shows a message below the Calculate button.
-       */
-      function setFormMessage(
-        message = '',
-        isError = false
+      if (
+        text === 'independent' ||
+        text.startsWith('independent ') ||
+        text.startsWith('independent(')
       ) {
-        setInlineMessage(
-          out,
-          message,
-          isError
-        );
-
-        scheduleApplyScale();
+        return 'category-independent';
       }
 
-      /*
-       * Shows a message above existing results, where the divider
-       * normally appears.
-       */
-      function setResultsMessage(
-        message = '',
-        isError = false
+      if (
+        text.includes('ophthal') ||
+        text.includes('opthal')
       ) {
-        const resultsEl =
-          document.getElementById('results');
-
-        setInlineMessage(
-          resultsStatus,
-          message,
-          isError
-        );
-
-        resultsEl.classList.toggle(
-          'show-status',
-          Boolean(message)
-        );
-
-        scheduleApplyScale();
+        return 'category-ophthal';
       }
 
-      /*
-       * Removes final full stops from backend error messages.
-       */
-      function cleanErrorMessage(message) {
-        return String(
-          message || 'Request failed'
-        )
-          .trim()
-          .replace(/\.+$/, '');
+      if (
+        text === 'other' ||
+        text.startsWith('other ') ||
+        text.startsWith('other(')
+      ) {
+        return 'category-other';
       }
 
-      /*
-       * Clears a form error when the user begins correcting a field.
-       */
-      function clearFormErrorOnEdit() {
-        if (
-          out.classList.contains('is-error')
-        ) {
-          setFormMessage();
+      return '';
+    }
+
+    function getBrandLinkClass(displayText, linkUrl) {
+      const text = normaliseText(displayText);
+      const url = normaliseText(linkUrl);
+
+      if (
+        text.includes('seek') ||
+        url.includes('seek.com')
+      ) {
+        return 'link-seek';
+      }
+
+      if (
+        text.includes('indeed') ||
+        url.includes('indeed.com')
+      ) {
+        return 'link-indeed';
+      }
+
+      if (
+        text.includes('essilux') ||
+        text.includes('essilorluxottica') ||
+        text.includes('essilor luxottica') ||
+        url.includes('essilorluxottica') ||
+        url.includes('essilor-luxottica')
+      ) {
+        return 'link-essilux';
+      }
+
+      return '';
+    }
+
+    function columnNumberToLetter(columnNumber) {
+      let number = columnNumber;
+      let letters = '';
+
+      while (number > 0) {
+        const remainder = (number - 1) % 26;
+
+        letters =
+          String.fromCharCode(65 + remainder) +
+          letters;
+
+        number = Math.floor((number - 1) / 26);
+      }
+
+      return letters;
+    }
+
+    function getVisibleColumnNumbers() {
+      const columns = [];
+
+      for (
+        let column = CONFIG.FIRST_COLUMN;
+        column <= CONFIG.LAST_COLUMN;
+        column++
+      ) {
+        if (!CONFIG.HIDDEN_COLUMNS.has(column)) {
+          columns.push(column);
+        }
+      }
+
+      return columns;
+    }
+
+    function getWorksheetName(workbook) {
+      if (CONFIG.SHEET_NAME) {
+        if (!workbook.Sheets[CONFIG.SHEET_NAME]) {
+          throw new Error(
+            `Worksheet tab “${CONFIG.SHEET_NAME}” was not found.`
+          );
         }
 
-        if (
-          resultsStatus.classList.contains(
-            'is-error'
-          )
-        ) {
-          setResultsMessage();
-        }
+        return CONFIG.SHEET_NAME;
       }
 
-      document
-        .querySelector('.calculator-form')
-        .addEventListener(
-          'input',
-          clearFormErrorOnEdit
+      const workbookSheetInfo =
+        workbook?.Workbook?.Sheets || [];
+
+      const firstVisibleSheet =
+        workbookSheetInfo.find(
+          sheet => Number(sheet?.Hidden || 0) === 0
         );
 
-      document
-        .querySelector('.calculator-form')
-        .addEventListener(
-          'change',
-          clearFormErrorOnEdit
-        );
-
-      const AUFMT =
-        new Intl.NumberFormat('en-AU');
-
-      let hasPreviousResults = false;
-      let numberAnimationToken = 0;
-
-      const NUMBER_ANIMATION_MS = 1000;
-
-      function round0(x) {
-        if (
-          x === null ||
-          x === undefined ||
-          isNaN(x)
-        ) {
-          return '–';
-        }
-
-        return AUFMT.format(
-          Math.round(Number(x))
-        );
-      }
-
-      function fmtDollarsInt(x) {
-        if (
-          x === null ||
-          x === undefined ||
-          isNaN(x)
-        ) {
-          return '–';
-        }
-
-        return (
-          '$' +
-          AUFMT.format(
-            Math.round(Number(x))
-          )
-        );
-      }
-
-      function callEstimatorBackend(
-        action,
-        params = {}
+      if (
+        firstVisibleSheet?.name &&
+        workbook.Sheets[firstVisibleSheet.name]
       ) {
-        return new Promise(
-          (resolve, reject) => {
-            const callbackName =
-              `locumEstimatorCallback_${Date.now()}_${Math.floor(
-                Math.random() * 100000
-              )}`;
+        return firstVisibleSheet.name;
+      }
 
-            const script =
-              document.createElement('script');
+      const firstSheetName =
+        workbook.SheetNames?.[0];
 
-            const timeout =
-              window.setTimeout(() => {
-                cleanup();
+      if (!firstSheetName) {
+        throw new Error(
+          'The spreadsheet does not contain a worksheet.'
+        );
+      }
 
-                reject(
-                  new Error(
-                    'Request timed out.'
-                  )
-                );
-              }, 30000);
+      return firstSheetName;
+    }
 
-            function cleanup() {
-              window.clearTimeout(timeout);
+    function getCellDisplayValue(cell) {
+      if (!cell) {
+        return '';
+      }
 
-              try {
-                delete window[callbackName];
-              } catch (error) {
-                window[callbackName] =
-                  undefined;
-              }
+      if (
+        typeof XLSX !== 'undefined' &&
+        XLSX?.utils?.format_cell
+      ) {
+        try {
+          return String(
+            XLSX.utils.format_cell(cell) ?? ''
+          ).trim();
+        } catch (error) {
+          /*
+           * Fall back to the stored formatted or
+           * calculated value below.
+           */
+        }
+      }
 
-              if (script.parentNode) {
-                script.parentNode.removeChild(
-                  script
-                );
-              }
+      return String(
+        cell.w ??
+        cell.v ??
+        ''
+      ).trim();
+    }
+
+    function extractAnchorFromHtml(html) {
+      if (
+        !html ||
+        typeof html !== 'string' ||
+        !/<a\b/i.test(html)
+      ) {
+        return null;
+      }
+
+      const template =
+        document.createElement('template');
+
+      template.innerHTML = html;
+
+      const anchor =
+        template.content.querySelector('a[href]');
+
+      if (!anchor) {
+        return null;
+      }
+
+      return {
+        text: anchor.textContent?.trim() || '',
+        url: anchor.getAttribute('href') || ''
+      };
+    }
+
+    function sanitiseLinkUrl(value) {
+      const raw = String(value ?? '').trim();
+
+      if (!raw) {
+        return '';
+      }
+
+      let candidate = raw;
+
+      if (/^www\./i.test(candidate)) {
+        candidate = `https://${candidate}`;
+      } else if (
+        /^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(candidate)
+      ) {
+        candidate = `https://${candidate}`;
+      } else if (
+        !/^(https?:|mailto:|tel:)/i.test(candidate)
+      ) {
+        return '';
+      }
+
+      try {
+        const url = new URL(candidate);
+
+        const allowedProtocols = new Set([
+          'http:',
+          'https:',
+          'mailto:',
+          'tel:'
+        ]);
+
+        return allowedProtocols.has(url.protocol)
+          ? url.href
+          : '';
+      } catch (error) {
+        return '';
+      }
+    }
+
+    /*
+     * The functions below evaluate the most common formula components
+     * used inside Google Sheets HYPERLINK formulas. This allows links
+     * generated through concatenation, cell references, IF, ENCODEURL,
+     * REGEXEXTRACT and similar functions to remain clickable.
+     */
+
+    function stripOuterParentheses(expression) {
+      let text =
+        String(expression ?? '').trim();
+
+      while (
+        text.startsWith('(') &&
+        text.endsWith(')')
+      ) {
+        let depth = 0;
+        let inString = false;
+        let enclosesWholeExpression = true;
+
+        for (
+          let index = 0;
+          index < text.length;
+          index++
+        ) {
+          const character = text[index];
+
+          if (character === '"') {
+            if (
+              inString &&
+              text[index + 1] === '"'
+            ) {
+              index++;
+              continue;
             }
 
-            window[callbackName] =
-              response => {
-                cleanup();
-
-                if (
-                  !response ||
-                  !response.ok
-                ) {
-                  reject(
-                    new Error(
-                      response?.message ||
-                      'Unable to load model.'
-                    )
-                  );
-
-                  return;
-                }
-
-                resolve(response);
-              };
-
-            script.onerror = () => {
-              cleanup();
-
-              reject(
-                new Error('Network error.')
-              );
-            };
-
-            const query =
-              new URLSearchParams({
-                callback: callbackName,
-                action,
-                ...params
-              });
-
-            script.src =
-              `${SCRIPT_URL}?${query.toString()}`;
-
-            document.body.appendChild(
-              script
-            );
+            inString = !inString;
+            continue;
           }
+
+          if (inString) {
+            continue;
+          }
+
+          if (character === '(') {
+            depth++;
+          }
+
+          if (character === ')') {
+            depth--;
+          }
+
+          if (
+            depth === 0 &&
+            index < text.length - 1
+          ) {
+            enclosesWholeExpression = false;
+            break;
+          }
+        }
+
+        if (!enclosesWholeExpression) {
+          break;
+        }
+
+        text = text
+          .slice(1, -1)
+          .trim();
+      }
+
+      return text;
+    }
+
+    function splitTopLevel(expression, separators) {
+      const text =
+        String(expression ?? '');
+
+      const parts = [];
+
+      let start = 0;
+      let depth = 0;
+      let inString = false;
+
+      for (
+        let index = 0;
+        index < text.length;
+        index++
+      ) {
+        const character = text[index];
+
+        if (character === '"') {
+          if (
+            inString &&
+            text[index + 1] === '"'
+          ) {
+            index++;
+            continue;
+          }
+
+          inString = !inString;
+          continue;
+        }
+
+        if (inString) {
+          continue;
+        }
+
+        if (character === '(') {
+          depth++;
+          continue;
+        }
+
+        if (character === ')') {
+          depth--;
+          continue;
+        }
+
+        if (
+          depth === 0 &&
+          separators.includes(character)
+        ) {
+          parts.push(
+            text.slice(start, index).trim()
+          );
+
+          start = index + 1;
+        }
+      }
+
+      parts.push(
+        text.slice(start).trim()
+      );
+
+      return parts;
+    }
+
+    function findTopLevelComparison(expression) {
+      const text =
+        String(expression ?? '');
+
+      const operators = [
+        '<>',
+        '<=',
+        '>=',
+        '=',
+        '<',
+        '>'
+      ];
+
+      let depth = 0;
+      let inString = false;
+
+      for (
+        let index = 0;
+        index < text.length;
+        index++
+      ) {
+        const character = text[index];
+
+        if (character === '"') {
+          if (
+            inString &&
+            text[index + 1] === '"'
+          ) {
+            index++;
+            continue;
+          }
+
+          inString = !inString;
+          continue;
+        }
+
+        if (inString) {
+          continue;
+        }
+
+        if (character === '(') {
+          depth++;
+        }
+
+        if (character === ')') {
+          depth--;
+        }
+
+        if (depth !== 0) {
+          continue;
+        }
+
+        for (const operator of operators) {
+          if (
+            text.slice(
+              index,
+              index + operator.length
+            ) === operator
+          ) {
+            return {
+              operator,
+              left: text
+                .slice(0, index)
+                .trim(),
+              right: text
+                .slice(index + operator.length)
+                .trim()
+            };
+          }
+        }
+      }
+
+      return null;
+    }
+
+    function unquoteFormulaString(expression) {
+      const text =
+        String(expression ?? '').trim();
+
+      if (
+        !text.startsWith('"') ||
+        !text.endsWith('"')
+      ) {
+        return null;
+      }
+
+      return text
+        .slice(1, -1)
+        .replace(/""/g, '"');
+    }
+
+    function parseCellReference(expression) {
+      const text =
+        String(expression ?? '').trim();
+
+      const match = text.match(
+        /^(?:(?:'((?:[^']|'')+)'|([^!]+))!)?\$?([A-Z]{1,3})\$?(\d+)$/i
+      );
+
+      if (!match) {
+        return null;
+      }
+
+      return {
+        sheetName: (
+          match[1] ||
+          match[2] ||
+          ''
+        )
+          .replace(/''/g, "'")
+          .trim(),
+
+        columnLetters:
+          match[3].toUpperCase(),
+
+        rowNumber:
+          Number(match[4])
+      };
+    }
+
+    function getReferencedCellValue(
+      reference,
+      context,
+      depth
+    ) {
+      const targetSheetName =
+        reference.sheetName ||
+        context.sheetName;
+
+      const worksheet =
+        context.workbook.Sheets[targetSheetName];
+
+      if (!worksheet) {
+        return '';
+      }
+
+      const address =
+        `${reference.columnLetters}${reference.rowNumber}`;
+
+      const key =
+        `${targetSheetName}!${address}`;
+
+      if (context.visited.has(key)) {
+        return getCellDisplayValue(
+          worksheet[address]
         );
       }
 
-      function animateNumber(
-        elementId,
-        targetValue,
-        formatter,
-        animate,
-        token
+      const cell = worksheet[address];
+
+      if (!cell) {
+        return '';
+      }
+
+      if (
+        cell.f &&
+        depth < 12
       ) {
-        const element =
-          document.getElementById(elementId);
+        const nextVisited =
+          new Set(context.visited);
 
-        const target =
-          Number(targetValue);
+        nextVisited.add(key);
 
-        if (!Number.isFinite(target)) {
-          element.textContent = '–';
+        try {
+          const calculated =
+            evaluateFormulaExpression(
+              cell.f,
+              {
+                ...context,
+                sheetName: targetSheetName,
+                currentAddress: address,
+                visited: nextVisited
+              },
+              depth + 1
+            );
 
-          delete element.dataset.numericValue;
-          return;
+          if (
+            calculated !== null &&
+            calculated !== undefined &&
+            calculated !== ''
+          ) {
+            return calculated;
+          }
+        } catch (error) {
+          /*
+           * Use the cached displayed result below.
+           */
+        }
+      }
+
+      if (
+        cell.v !== undefined &&
+        cell.v !== null &&
+        typeof cell.v !== 'object'
+      ) {
+        return cell.v;
+      }
+
+      return getCellDisplayValue(cell);
+    }
+
+    function toFormulaBoolean(value) {
+      if (typeof value === 'boolean') {
+        return value;
+      }
+
+      if (typeof value === 'number') {
+        return value !== 0;
+      }
+
+      const text = normaliseText(value);
+
+      return (
+        text !== '' &&
+        text !== 'false' &&
+        text !== '0'
+      );
+    }
+
+    function evaluateFormulaFunction(
+      functionName,
+      args,
+      context,
+      depth
+    ) {
+      const name = functionName
+        .replace(/^_xlfn\./i, '')
+        .replace(/^_xlws\./i, '')
+        .toUpperCase();
+
+      const value = index =>
+        evaluateFormulaExpression(
+          args[index] ?? '',
+          context,
+          depth + 1
+        );
+
+      const stringValue = index =>
+        String(value(index) ?? '');
+
+      switch (name) {
+        case 'HYPERLINK':
+          return value(0);
+
+        case 'IF':
+          return toFormulaBoolean(value(0))
+            ? value(1)
+            : value(2);
+
+        case 'IFERROR':
+        case 'IFNA': {
+          try {
+            const result = value(0);
+
+            return result ?? value(1);
+          } catch (error) {
+            return value(1);
+          }
         }
 
-        const start =
-          Number(
-            element.dataset.numericValue
+        case 'AND':
+          return args.every(
+            (_, index) =>
+              toFormulaBoolean(value(index))
           );
 
-        const reduceMotion =
-          window.matchMedia(
-            '(prefers-reduced-motion: reduce)'
-          ).matches;
+        case 'OR':
+          return args.some(
+            (_, index) =>
+              toFormulaBoolean(value(index))
+          );
 
-        const shouldAnimate =
-          animate &&
-          Number.isFinite(start) &&
-          start !== target &&
-          !reduceMotion;
+        case 'NOT':
+          return !toFormulaBoolean(value(0));
 
-        if (!shouldAnimate) {
-          element.textContent =
-            formatter(target);
+        case 'ENCODEURL':
+          return encodeURIComponent(
+            stringValue(0)
+          );
 
-          element.dataset.numericValue =
-            String(target);
+        case 'CHAR':
+          return String.fromCharCode(
+            Number(value(0)) || 0
+          );
 
-          return;
+        case 'LOWER':
+          return stringValue(0)
+            .toLowerCase();
+
+        case 'UPPER':
+          return stringValue(0)
+            .toUpperCase();
+
+        case 'TRIM':
+          return stringValue(0)
+            .trim()
+            .replace(/\s+/g, ' ');
+
+        case 'LEN':
+          return stringValue(0).length;
+
+        case 'CONCAT':
+        case 'CONCATENATE':
+          return args
+            .map(
+              (_, index) =>
+                stringValue(index)
+            )
+            .join('');
+
+        case 'TEXTJOIN': {
+          const delimiter =
+            stringValue(0);
+
+          const ignoreEmpty =
+            toFormulaBoolean(value(1));
+
+          const pieces = args
+            .slice(2)
+            .map(
+              (_, index) =>
+                stringValue(index + 2)
+            );
+
+          return pieces
+            .filter(
+              piece =>
+                !ignoreEmpty ||
+                piece !== ''
+            )
+            .join(delimiter);
         }
 
-        const startedAt =
-          performance.now();
+        case 'SUBSTITUTE': {
+          const source =
+            stringValue(0);
 
-        function frame(now) {
+          const findText =
+            stringValue(1);
+
+          const replacement =
+            stringValue(2);
+
+          const occurrence =
+            Number(value(3));
+
+          if (!findText) {
+            return source;
+          }
+
           if (
-            token !== numberAnimationToken
+            !Number.isFinite(occurrence) ||
+            occurrence < 1
+          ) {
+            return source
+              .split(findText)
+              .join(replacement);
+          }
+
+          let seen = 0;
+
+          return source.replaceAll(
+            findText,
+            match => {
+              seen++;
+
+              return seen === occurrence
+                ? replacement
+                : match;
+            }
+          );
+        }
+
+        case 'LEFT':
+          return stringValue(0).slice(
+            0,
+            Number(value(1) ?? 1)
+          );
+
+        case 'RIGHT': {
+          const count =
+            Number(value(1) ?? 1);
+
+          return count <= 0
+            ? ''
+            : stringValue(0).slice(-count);
+        }
+
+        case 'MID': {
+          const source =
+            stringValue(0);
+
+          const start =
+            Math.max(
+              1,
+              Number(value(1)) || 1
+            ) - 1;
+
+          const count =
+            Math.max(
+              0,
+              Number(value(2)) || 0
+            );
+
+          return source.slice(
+            start,
+            start + count
+          );
+        }
+
+        case 'REGEXEXTRACT': {
+          const source =
+            stringValue(0);
+
+          const pattern =
+            stringValue(1);
+
+          const match =
+            source.match(
+              new RegExp(pattern, 'i')
+            );
+
+          return (
+            match?.[1] ??
+            match?.[0] ??
+            ''
+          );
+        }
+
+        case 'ISBLANK':
+          return (
+            stringValue(0).trim() === ''
+          );
+
+        case 'TEXT':
+          return stringValue(0);
+
+        default:
+          throw new Error(
+            `Unsupported formula function: ${name}`
+          );
+      }
+    }
+
+    function evaluateFormulaExpression(
+      expression,
+      context,
+      depth = 0
+    ) {
+      if (depth > 14) {
+        throw new Error(
+          'Formula nesting is too deep.'
+        );
+      }
+
+      let text =
+        String(expression ?? '').trim();
+
+      if (text.startsWith('=')) {
+        text = text
+          .slice(1)
+          .trim();
+      }
+
+      text =
+        stripOuterParentheses(text);
+
+      const quoted =
+        unquoteFormulaString(text);
+
+      if (quoted !== null) {
+        return quoted;
+      }
+
+      if (/^(TRUE|FALSE)$/i.test(text)) {
+        return /^TRUE$/i.test(text);
+      }
+
+      if (/^-?\d+(?:\.\d+)?$/.test(text)) {
+        return Number(text);
+      }
+
+      const comparison =
+        findTopLevelComparison(text);
+
+      if (comparison) {
+        const left =
+          evaluateFormulaExpression(
+            comparison.left,
+            context,
+            depth + 1
+          );
+
+        const right =
+          evaluateFormulaExpression(
+            comparison.right,
+            context,
+            depth + 1
+          );
+
+        const leftNumber =
+          Number(left);
+
+        const rightNumber =
+          Number(right);
+
+        const bothNumeric =
+          Number.isFinite(leftNumber) &&
+          Number.isFinite(rightNumber) &&
+          String(left).trim() !== '' &&
+          String(right).trim() !== '';
+
+        const a = bothNumeric
+          ? leftNumber
+          : String(left ?? '');
+
+        const b = bothNumeric
+          ? rightNumber
+          : String(right ?? '');
+
+        switch (comparison.operator) {
+          case '=':
+            return a === b;
+
+          case '<>':
+            return a !== b;
+
+          case '<=':
+            return a <= b;
+
+          case '>=':
+            return a >= b;
+
+          case '<':
+            return a < b;
+
+          case '>':
+            return a > b;
+
+          default:
+            return false;
+        }
+      }
+
+      const concatenatedParts =
+        splitTopLevel(text, ['&']);
+
+      if (concatenatedParts.length > 1) {
+        return concatenatedParts
+          .map(
+            part =>
+              String(
+                evaluateFormulaExpression(
+                  part,
+                  context,
+                  depth + 1
+                ) ?? ''
+              )
+          )
+          .join('');
+      }
+
+      const functionMatch = text.match(
+        /^([A-Z_][A-Z0-9._]*)\s*\((.*)\)$/is
+      );
+
+      if (functionMatch) {
+        const args =
+          splitTopLevel(
+            functionMatch[2],
+            [',', ';']
+          );
+
+        return evaluateFormulaFunction(
+          functionMatch[1],
+          args,
+          context,
+          depth
+        );
+      }
+
+      const reference =
+        parseCellReference(text);
+
+      if (reference) {
+        return getReferencedCellValue(
+          reference,
+          context,
+          depth
+        );
+      }
+
+      throw new Error(
+        `Unsupported formula expression: ${text}`
+      );
+    }
+
+    function findUrlInFormulaReferences(
+      formula,
+      context
+    ) {
+      const referencePattern =
+        /(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9 _.-]+))!)?\$?([A-Z]{1,3})\$?(\d+)/g;
+
+      const text =
+        String(formula ?? '');
+
+      let match;
+
+      while (
+        (match = referencePattern.exec(text)) !== null
+      ) {
+        const reference = {
+          sheetName: (
+            match[1] ||
+            match[2] ||
+            ''
+          )
+            .replace(/''/g, "'")
+            .trim(),
+
+          columnLetters:
+            match[3].toUpperCase(),
+
+          rowNumber:
+            Number(match[4])
+        };
+
+        const value =
+          getReferencedCellValue(
+            reference,
+            context,
+            0
+          );
+
+        const directUrl =
+          sanitiseLinkUrl(value);
+
+        if (directUrl) {
+          return directUrl;
+        }
+      }
+
+      return '';
+    }
+
+    function getXlsxCellLink(
+      workbook,
+      sheetName,
+      worksheet,
+      address,
+      cell,
+      displayValue
+    ) {
+      const directLink =
+        sanitiseLinkUrl(
+          cell?.l?.Target ||
+          cell?.l?.target ||
+          ''
+        );
+
+      if (directLink) {
+        return directLink;
+      }
+
+      const htmlAnchor =
+        extractAnchorFromHtml(
+          cell?.h || ''
+        );
+
+      const htmlLink =
+        sanitiseLinkUrl(
+          htmlAnchor?.url || ''
+        );
+
+      if (htmlLink) {
+        return htmlLink;
+      }
+
+      /*
+       * Formula evaluation is restricted to HYPERLINK formulas.
+       * This prevents ordinary formula cells from being made clickable.
+       */
+      if (
+        cell?.f &&
+        /HYPERLINK\s*\(/i.test(cell.f)
+      ) {
+        const context = {
+          workbook,
+          sheetName,
+          currentAddress: address,
+          visited: new Set([
+            `${sheetName}!${address}`
+          ])
+        };
+
+        try {
+          const calculatedLink =
+            sanitiseLinkUrl(
+              evaluateFormulaExpression(
+                cell.f,
+                context
+              )
+            );
+
+          if (calculatedLink) {
+            return calculatedLink;
+          }
+        } catch (error) {
+          /*
+           * Try referenced cells below.
+           */
+        }
+
+        const referencedLink =
+          findUrlInFormulaReferences(
+            cell.f,
+            context
+          );
+
+        if (referencedLink) {
+          return referencedLink;
+        }
+      }
+
+      return sanitiseLinkUrl(displayValue);
+    }
+
+    function parseDateValue(value) {
+      if (
+        value instanceof Date &&
+        !Number.isNaN(value.getTime())
+      ) {
+        return new Date(
+          Date.UTC(
+            value.getFullYear(),
+            value.getMonth(),
+            value.getDate()
+          )
+        );
+      }
+
+      const text =
+        String(value ?? '').trim();
+
+      if (!text) {
+        return null;
+      }
+
+      let match = text.match(
+        /^Date\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\)$/i
+      );
+
+      if (match) {
+        return new Date(
+          Date.UTC(
+            Number(match[1]),
+            Number(match[2]),
+            Number(match[3])
+          )
+        );
+      }
+
+      match = text.match(
+        /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/
+      );
+
+      if (match) {
+        let year =
+          Number(match[3]);
+
+        if (year < 100) {
+          year += year >= 70
+            ? 1900
+            : 2000;
+        }
+
+        return new Date(
+          Date.UTC(
+            year,
+            Number(match[2]) - 1,
+            Number(match[1])
+          )
+        );
+      }
+
+      match = text.match(
+        /^(\d{4})-(\d{1,2})-(\d{1,2})$/
+      );
+
+      if (match) {
+        return new Date(
+          Date.UTC(
+            Number(match[1]),
+            Number(match[2]) - 1,
+            Number(match[3])
+          )
+        );
+      }
+
+      const parsed =
+        new Date(text);
+
+      if (!Number.isNaN(parsed.getTime())) {
+        return new Date(
+          Date.UTC(
+            parsed.getFullYear(),
+            parsed.getMonth(),
+            parsed.getDate()
+          )
+        );
+      }
+
+      return null;
+    }
+
+    function getDateFromXlsxCell(
+      cell,
+      displayValue
+    ) {
+      if (
+        cell?.t === 'd' &&
+        cell.v instanceof Date
+      ) {
+        return parseDateValue(cell.v);
+      }
+
+      if (
+        typeof cell?.v === 'number' &&
+        typeof XLSX !== 'undefined' &&
+        XLSX?.SSF?.parse_date_code
+      ) {
+        const parsed =
+          XLSX.SSF.parse_date_code(
+            cell.v
+          );
+
+        if (
+          parsed?.y &&
+          parsed?.m &&
+          parsed?.d
+        ) {
+          return new Date(
+            Date.UTC(
+              parsed.y,
+              parsed.m - 1,
+              parsed.d
+            )
+          );
+        }
+      }
+
+      return parseDateValue(displayValue);
+    }
+
+    function getMondayWeekKey(dateValue) {
+      const date =
+        parseDateValue(dateValue);
+
+      if (!date) {
+        return '';
+      }
+
+      const day =
+        date.getUTCDay();
+
+      const daysSinceMonday =
+        (day + 6) % 7;
+
+      date.setUTCDate(
+        date.getUTCDate() -
+        daysSinceMonday
+      );
+
+      const year =
+        date.getUTCFullYear();
+
+      const month =
+        String(
+          date.getUTCMonth() + 1
+        ).padStart(2, '0');
+
+      const dayOfMonth =
+        String(
+          date.getUTCDate()
+        ).padStart(2, '0');
+
+      return `${year}-${month}-${dayOfMonth}`;
+    }
+
+    function buildModelFromWorkbook(workbook) {
+      const worksheetName =
+        getWorksheetName(workbook);
+
+      const worksheet =
+        workbook.Sheets[worksheetName];
+
+      const visibleColumns =
+        getVisibleColumnNumbers();
+
+      const headerRowIndex =
+        CONFIG.HEADER_ROW - 1;
+
+      const headers = [];
+
+      for (
+        const columnNumber of visibleColumns
+      ) {
+        const address =
+          XLSX.utils.encode_cell({
+            r: headerRowIndex,
+            c: columnNumber - 1
+          });
+
+        const cell =
+          worksheet[address];
+
+        headers.push({
+          sourceColumn: columnNumber,
+          text:
+            getCellDisplayValue(cell) ||
+            columnNumberToLetter(columnNumber)
+        });
+      }
+
+      const usedRange =
+        worksheet['!ref']
+          ? XLSX.utils.decode_range(
+              worksheet['!ref']
+            )
+          : {
+              s: {
+                r: headerRowIndex,
+                c: 0
+              },
+              e: {
+                r: headerRowIndex,
+                c: CONFIG.LAST_COLUMN - 1
+              }
+            };
+
+      const lastRowIndex =
+        Math.max(
+          usedRange.e.r,
+          headerRowIndex
+        );
+
+      const rows = [];
+
+      for (
+        let rowIndex = headerRowIndex + 1;
+        rowIndex <= lastRowIndex;
+        rowIndex++
+      ) {
+        const allCells =
+          new Map();
+
+        for (
+          let columnNumber =
+            CONFIG.FIRST_COLUMN;
+          columnNumber <=
+            CONFIG.LAST_COLUMN;
+          columnNumber++
+        ) {
+          const address =
+            XLSX.utils.encode_cell({
+              r: rowIndex,
+              c: columnNumber - 1
+            });
+
+          const sourceCell =
+            worksheet[address];
+
+          const displayValue =
+            getCellDisplayValue(
+              sourceCell
+            );
+
+          allCells.set(
+            columnNumber,
+            {
+              sourceCell,
+              address,
+              text: displayValue,
+
+              link: getXlsxCellLink(
+                workbook,
+                worksheetName,
+                worksheet,
+                address,
+                sourceCell,
+                displayValue
+              )
+            }
+          );
+        }
+
+        /*
+         * Column A controls output.
+         * Formula rows whose displayed result is blank are excluded.
+         */
+        if (
+          !normaliseText(
+            allCells.get(1)?.text
+          )
+        ) {
+          continue;
+        }
+
+        const repeatValue =
+          allCells.get(
+            CONFIG.REPEAT_FLAG_COLUMN
+          )?.text || '';
+
+        const employerTypeValue =
+          allCells.get(
+            CONFIG.EMPLOYER_TYPE_COLUMN
+          )?.text || '';
+
+        const metroValue =
+          allCells.get(
+            CONFIG.METRO_COLUMN
+          )?.text || '';
+
+        const dateCell =
+          allCells.get(
+            CONFIG.DATE_COLUMN
+          );
+
+        const dateValue =
+          getDateFromXlsxCell(
+            dateCell?.sourceCell,
+            dateCell?.text || ''
+          );
+
+        rows.push({
+          sourceRow: rowIndex + 1,
+
+          isRepeat:
+            isRepeatValue(
+              repeatValue
+            ),
+
+          isCorporate:
+            isCorporateValue(
+              employerTypeValue
+            ),
+
+          hasMM1:
+            includesMM1(
+              metroValue
+            ),
+
+          employerType:
+            employerTypeValue,
+
+          weekKey:
+            getMondayWeekKey(
+              dateValue
+            ),
+
+          cells:
+            visibleColumns.map(
+              columnNumber => ({
+                sourceColumn:
+                  columnNumber,
+
+                text:
+                  allCells.get(
+                    columnNumber
+                  )?.text || '',
+
+                link:
+                  allCells.get(
+                    columnNumber
+                  )?.link || ''
+              })
+            )
+        });
+      }
+
+      return {
+        headers,
+        rows,
+        source: 'xlsx'
+      };
+    }
+
+    async function fetchWithTimeout(
+      url,
+      options = {}
+    ) {
+      const controller =
+        new AbortController();
+
+      const timeout =
+        window.setTimeout(
+          () => controller.abort(),
+          CONFIG.FETCH_TIMEOUT_MS
+        );
+
+      try {
+        return await fetch(
+          url,
+          {
+            ...options,
+            signal: controller.signal
+          }
+        );
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    async function loadWorkbookModel() {
+      if (typeof XLSX === 'undefined') {
+        throw new Error(
+          'The workbook reader did not load.'
+        );
+      }
+
+      const exportUrl =
+        new URL(
+          `https://docs.google.com/spreadsheets/d/${CONFIG.SPREADSHEET_ID}/export`
+        );
+
+      exportUrl.searchParams.set(
+        'format',
+        'xlsx'
+      );
+
+      exportUrl.searchParams.set(
+        '_',
+        String(Date.now())
+      );
+
+      const response =
+        await fetchWithTimeout(
+          exportUrl.href,
+          {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'omit',
+            cache: 'no-store',
+            redirect: 'follow'
+          }
+        );
+
+      if (!response.ok) {
+        throw new Error(
+          `Workbook export returned HTTP ${response.status}.`
+        );
+      }
+
+      const arrayBuffer =
+        await response.arrayBuffer();
+
+      const firstBytes =
+        new Uint8Array(
+          arrayBuffer.slice(0, 2)
+        );
+
+      const looksLikeZip =
+        firstBytes[0] === 0x50 &&
+        firstBytes[1] === 0x4B;
+
+      if (!looksLikeZip) {
+        throw new Error(
+          'Google did not return a readable workbook export.'
+        );
+      }
+
+      const workbook =
+        XLSX.read(
+          arrayBuffer,
+          {
+            type: 'array',
+            cellDates: true,
+            cellFormula: true,
+            cellHTML: true,
+            cellNF: true,
+            cellStyles: false,
+            cellText: true
+          }
+        );
+
+      return buildModelFromWorkbook(
+        workbook
+      );
+    }
+
+    function getGvizCellDisplay(cell) {
+      if (!cell) {
+        return '';
+      }
+
+      const formatted =
+        cell.f ??
+        cell.v ??
+        '';
+
+      const anchor =
+        extractAnchorFromHtml(
+          String(formatted)
+        );
+
+      return String(
+        anchor?.text ||
+        formatted ||
+        ''
+      ).trim();
+    }
+
+    function findUrlInObject(
+      value,
+      depth = 0
+    ) {
+      if (
+        depth > 4 ||
+        value == null
+      ) {
+        return '';
+      }
+
+      if (typeof value === 'string') {
+        return sanitiseLinkUrl(value);
+      }
+
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          const found =
+            findUrlInObject(
+              item,
+              depth + 1
+            );
+
+          if (found) {
+            return found;
+          }
+        }
+
+        return '';
+      }
+
+      if (typeof value === 'object') {
+        const preferredKeys = [
+          'href',
+          'hyperlink',
+          'link',
+          'url',
+          'target'
+        ];
+
+        for (
+          const key of preferredKeys
+        ) {
+          if (key in value) {
+            const found =
+              findUrlInObject(
+                value[key],
+                depth + 1
+              );
+
+            if (found) {
+              return found;
+            }
+          }
+        }
+
+        for (
+          const nestedValue of
+            Object.values(value)
+        ) {
+          const found =
+            findUrlInObject(
+              nestedValue,
+              depth + 1
+            );
+
+          if (found) {
+            return found;
+          }
+        }
+      }
+
+      return '';
+    }
+
+    function getGvizCellLink(
+      cell,
+      displayValue
+    ) {
+      const formattedAnchor =
+        extractAnchorFromHtml(
+          String(cell?.f ?? '')
+        );
+
+      const formattedLink =
+        sanitiseLinkUrl(
+          formattedAnchor?.url || ''
+        );
+
+      if (formattedLink) {
+        return formattedLink;
+      }
+
+      const propertyLink =
+        findUrlInObject(
+          cell?.p
+        );
+
+      if (propertyLink) {
+        return propertyLink;
+      }
+
+      return sanitiseLinkUrl(
+        displayValue
+      );
+    }
+
+    function buildModelFromGviz(response) {
+      if (response?.status === 'error') {
+        throw new Error(
+          response?.errors?.[0]
+            ?.detailed_message ||
+          response?.errors?.[0]
+            ?.message ||
+          'Google Sheets returned an error.'
+        );
+      }
+
+      const visibleColumns =
+        getVisibleColumnNumbers();
+
+      const cols =
+        response?.table?.cols || [];
+
+      const sourceRows =
+        response?.table?.rows || [];
+
+      const headers =
+        visibleColumns.map(
+          columnNumber => ({
+            sourceColumn:
+              columnNumber,
+
+            text:
+              String(
+                cols?.[columnNumber - 1]
+                  ?.label ||
+                columnNumberToLetter(
+                  columnNumber
+                )
+              ).trim()
+          })
+        );
+
+      const rows = [];
+
+      sourceRows.forEach(
+        (sourceRow, rowOffset) => {
+          const cells =
+            sourceRow?.c || [];
+
+          const firstColumnText =
+            getGvizCellDisplay(
+              cells[0]
+            );
+
+          if (
+            !normaliseText(
+              firstColumnText
+            )
           ) {
             return;
           }
 
-          const progress = Math.min(
-            (now - startedAt) /
-              NUMBER_ANIMATION_MS,
-            1
-          );
-
-          const eased =
-            1 -
-            Math.pow(
-              1 - progress,
-              3
+          const repeatValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG.REPEAT_FLAG_COLUMN -
+                1
+              ]
             );
 
-          const current =
-            start +
-            (target - start) *
-              eased;
+          const employerTypeValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG.EMPLOYER_TYPE_COLUMN -
+                1
+              ]
+            );
 
-          element.textContent =
-            formatter(current);
+          const metroValue =
+            getGvizCellDisplay(
+              cells[
+                CONFIG.METRO_COLUMN -
+                1
+              ]
+            );
 
-          element.dataset.numericValue =
-            String(current);
+          const dateCell =
+            cells[
+              CONFIG.DATE_COLUMN -
+              1
+            ];
 
-          if (progress < 1) {
-            requestAnimationFrame(frame);
-          } else {
-            element.textContent =
-              formatter(target);
+          const dateValue =
+            dateCell?.f ||
+            dateCell?.v ||
+            '';
 
-            element.dataset.numericValue =
-              String(target);
+          rows.push({
+            sourceRow:
+              CONFIG.HEADER_ROW +
+              1 +
+              rowOffset,
+
+            isRepeat:
+              isRepeatValue(
+                repeatValue
+              ),
+
+            isCorporate:
+              isCorporateValue(
+                employerTypeValue
+              ),
+
+            hasMM1:
+              includesMM1(
+                metroValue
+              ),
+
+            employerType:
+              employerTypeValue,
+
+            weekKey:
+              getMondayWeekKey(
+                dateValue
+              ),
+
+            cells:
+              visibleColumns.map(
+                columnNumber => {
+                  const cell =
+                    cells[
+                      columnNumber - 1
+                    ];
+
+                  const displayValue =
+                    getGvizCellDisplay(
+                      cell
+                    );
+
+                  return {
+                    sourceColumn:
+                      columnNumber,
+
+                    text:
+                      displayValue,
+
+                    link:
+                      getGvizCellLink(
+                        cell,
+                        displayValue
+                      )
+                  };
+                }
+              )
+          });
+        }
+      );
+
+      return {
+        headers,
+        rows,
+        source: 'gviz'
+      };
+    }
+
+    function loadGvizModel() {
+      return new Promise(
+        (resolve, reject) => {
+          const callbackName =
+            `pffJobTrackerCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled = false;
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                cleanup();
+
+                reject(
+                  new Error(
+                    'The live Google Sheets feed timed out.'
+                  )
+                );
+              },
+              CONFIG.FETCH_TIMEOUT_MS
+            );
+
+          function cleanup() {
+            if (settled) {
+              return;
+            }
+
+            settled = true;
+
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (error) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+
+            if (script.parentNode) {
+              script.parentNode
+                .removeChild(script);
+            }
           }
+
+          window[callbackName] =
+            response => {
+              try {
+                const model =
+                  buildModelFromGviz(
+                    response
+                  );
+
+                cleanup();
+                resolve(model);
+              } catch (error) {
+                cleanup();
+                reject(error);
+              }
+            };
+
+          script.onerror = () => {
+            cleanup();
+
+            reject(
+              new Error(
+                'The live Google Sheets feed could not be loaded.'
+              )
+            );
+          };
+
+          const params =
+            new URLSearchParams({
+              range:
+                `A${CONFIG.HEADER_ROW}:Y`,
+
+              headers: '1',
+
+              tqx:
+                `responseHandler:${callbackName}`,
+
+              _:
+                String(Date.now())
+            });
+
+          if (CONFIG.SHEET_NAME) {
+            params.set(
+              'sheet',
+              CONFIG.SHEET_NAME
+            );
+          }
+
+          script.src =
+            `https://docs.google.com/spreadsheets/d/${CONFIG.SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+
+          document.body
+            .appendChild(script);
+        }
+      );
+    }
+
+    function setToggleState(
+      button,
+      isOn
+    ) {
+      button.classList.toggle(
+        'is-on',
+        isOn
+      );
+
+      button.setAttribute(
+        'aria-checked',
+        String(isOn)
+      );
+
+      button
+        .querySelector(
+          '.toggle-state'
+        )
+        .textContent =
+          isOn
+            ? 'ON'
+            : 'OFF';
+    }
+
+    function appendCellContent(
+      cellElement,
+      cellModel
+    ) {
+      const displayText =
+        cellModel.text || '—';
+
+      if (cellModel.link) {
+        const anchor =
+          document.createElement(
+            'a'
+          );
+
+        anchor.href =
+          cellModel.link;
+
+        anchor.target =
+          '_blank';
+
+        anchor.rel =
+          'noopener noreferrer';
+
+        anchor.textContent =
+          displayText;
+
+        anchor.setAttribute(
+          'aria-label',
+          `${displayText} (opens in a new tab)`
+        );
+
+        const brandClass =
+          getBrandLinkClass(
+            displayText,
+            cellModel.link
+          );
+
+        if (brandClass) {
+          anchor.classList.add(
+            brandClass
+          );
         }
 
-        requestAnimationFrame(frame);
+        cellElement.appendChild(
+          anchor
+        );
+
+        return;
       }
 
-      function renderPercentileScale(
-        res,
-        animateNumbers = false
+      cellElement.textContent =
+        displayText;
+    }
+
+    function renderTable(model) {
+      const thead =
+        dataTable.querySelector(
+          'thead'
+        );
+
+      const tbody =
+        dataTable.querySelector(
+          'tbody'
+        );
+
+      thead.textContent = '';
+      tbody.textContent = '';
+
+      const headerRow =
+        document.createElement(
+          'tr'
+        );
+
+      model.headers.forEach(
+        header => {
+          const th =
+            document.createElement(
+              'th'
+            );
+
+          th.scope = 'col';
+
+          th.dataset.sourceColumn =
+            columnNumberToLetter(
+              header.sourceColumn
+            );
+
+          th.textContent =
+            header.text ||
+            columnNumberToLetter(
+              header.sourceColumn
+            );
+
+          headerRow.appendChild(
+            th
+          );
+        }
+      );
+
+      thead.appendChild(
+        headerRow
+      );
+
+      const fragment =
+        document.createDocumentFragment();
+
+      state.rows = [];
+
+      model.rows.forEach(
+        rowModel => {
+          const tr =
+            document.createElement(
+              'tr'
+            );
+
+          tr.dataset.sourceRow =
+            String(
+              rowModel.sourceRow
+            );
+
+          tr.dataset.repeat =
+            String(
+              rowModel.isRepeat
+            );
+
+          tr.dataset.corporate =
+            String(
+              rowModel.isCorporate
+            );
+
+          tr.dataset.mm1 =
+            String(
+              rowModel.hasMM1
+            );
+
+          tr.dataset.week =
+            rowModel.weekKey || '';
+
+          if (rowModel.isRepeat) {
+            tr.classList.add(
+              'repeat-row'
+            );
+          }
+
+          rowModel.cells.forEach(
+            cellModel => {
+              const td =
+                document.createElement(
+                  'td'
+                );
+
+              td.dataset.sourceColumn =
+                columnNumberToLetter(
+                  cellModel.sourceColumn
+                );
+
+              appendCellContent(
+                td,
+                cellModel
+              );
+
+              if (
+                cellModel.sourceColumn ===
+                CONFIG.EMPLOYER_TYPE_COLUMN
+              ) {
+                const categoryClass =
+                  getEmployerTypeClass(
+                    cellModel.text
+                  );
+
+                if (categoryClass) {
+                  td.classList.add(
+                    categoryClass
+                  );
+                }
+              }
+
+              tr.appendChild(td);
+            }
+          );
+
+          fragment.appendChild(tr);
+
+          state.rows.push({
+            element: tr,
+
+            isRepeat:
+              rowModel.isRepeat,
+
+            isCorporate:
+              rowModel.isCorporate,
+
+            hasMM1:
+              rowModel.hasMM1,
+
+            weekKey:
+              rowModel.weekKey || '',
+
+            isHidden: false
+          });
+        }
+      );
+
+      tbody.appendChild(
+        fragment
+      );
+
+      applyFilters();
+    }
+
+    function refreshWeekDividers() {
+      state.rows.forEach(
+        row => {
+          row.element.classList.remove(
+            'week-divider'
+          );
+        }
+      );
+
+      const visibleRows =
+        state.rows.filter(
+          row => !row.isHidden
+        );
+
+      for (
+        let index = 0;
+        index < visibleRows.length - 1;
+        index++
       ) {
-        const [
-          p05,
-          p20,
-          p50,
-          p80,
-          p95
-        ] = [
-          res.p05,
-          res.p20,
-          res.p50,
-          res.p80,
-          res.p95
-        ].map(Number);
+        const currentRow =
+          visibleRows[index];
 
-        const P_MIN = 5;
-        const P_MAX = 95;
-        const P_SPAN =
-          P_MAX - P_MIN;
-
-        const posPct = p =>
-          ((p - P_MIN) / P_SPAN) *
-          100;
-
-        const token =
-          ++numberAnimationToken;
-
-        document.querySelector(
-          '.t5'
-        ).style.left =
-          posPct(5) + '%';
-
-        document.querySelector(
-          '.t20'
-        ).style.left =
-          posPct(20) + '%';
-
-        document.querySelector(
-          '.t50'
-        ).style.left =
-          posPct(50) + '%';
-
-        document.querySelector(
-          '.t80'
-        ).style.left =
-          posPct(80) + '%';
-
-        document.querySelector(
-          '.t95'
-        ).style.left =
-          posPct(95) + '%';
-
-        animateNumber(
-          'p05v',
-          p05,
-          round0,
-          animateNumbers,
-          token
-        );
-
-        animateNumber(
-          'p20v',
-          p20,
-          round0,
-          animateNumbers,
-          token
-        );
-
-        animateNumber(
-          'p50v',
-          p50,
-          fmtDollarsInt,
-          animateNumbers,
-          token
-        );
-
-        animateNumber(
-          'p80v',
-          p80,
-          round0,
-          animateNumbers,
-          token
-        );
-
-        animateNumber(
-          'p95v',
-          p95,
-          round0,
-          animateNumbers,
-          token
-        );
-      }
-
-      async function loadModel() {
-        try {
-          await callEstimatorBackend(
-            'summary'
-          );
-
-          document.getElementById(
-            'modelMeta'
-          ).textContent =
-            'MLR (OLS) model loaded';
-
-          scheduleApplyScale();
-        } catch (err) {
-          document.getElementById(
-            'modelMeta'
-          ).innerHTML =
-            '<span class="warn">Model error: ' +
-            cleanErrorMessage(
-              err?.message
-            ) +
-            '</span>';
-
-          scheduleApplyScale();
-        }
-      }
-
-      async function estimate() {
-        const years = parseFloat(
-          document.getElementById(
-            'years'
-          ).value
-        );
-
-        const mmm = parseInt(
-          document.getElementById(
-            'mmm'
-          ).value,
-          10
-        );
-
-        const resultsEl =
-          document.getElementById(
-            'results'
-          );
-
-        const hadPreviousResults =
-          hasPreviousResults;
-
-        /*
-         * Before the first calculation, show validation errors below
-         * Calculate. After results exist, replace the results divider
-         * with the error so nothing moves.
-         */
-        function showInputError(message) {
-          if (hadPreviousResults) {
-            setFormMessage();
-
-            setResultsMessage(
-              message,
-              true
-            );
-          } else {
-            setFormMessage(
-              message,
-              true
-            );
-          }
-        }
+        const nextRow =
+          visibleRows[index + 1];
 
         if (
-          !isFinite(years) ||
-          years < 0 ||
-          !isFinite(mmm) ||
-          mmm < 1 ||
-          mmm > 7
+          currentRow.weekKey &&
+          nextRow.weekKey &&
+          currentRow.weekKey !==
+            nextRow.weekKey
         ) {
-          showInputError(
-            '⚠ Please complete all fields'
-          );
-
-          return;
-        }
-
-        if (!hadPreviousResults) {
-          /*
-           * First calculation: show the status below Calculate.
-           */
-          resultsEl.style.display =
-            'none';
-
-          setFormMessage(
-            'Calculating…'
-          );
-        } else {
-          /*
-           * Keep the existing results stationary while recalculating.
-           */
-          setFormMessage();
-
-          setResultsMessage(
-            'Recalculating…'
-          );
-        }
-
-        estimateBtn.disabled = true;
-
-        scheduleApplyScale();
-
-        try {
-          const res =
-            await callEstimatorBackend(
-              'predict',
-              {
-                years: String(years),
-                mmm: String(mmm)
-              }
+          currentRow.element
+            .classList.add(
+              'week-divider'
             );
-
-          /*
-           * Restore the divider before animating the updated values.
-           */
-          setResultsMessage();
-          setFormMessage();
-
-          resultsEl.style.display =
-            'block';
-
-          renderPercentileScale(
-            res,
-            hadPreviousResults
-          );
-
-          hasPreviousResults = true;
-
-          scheduleApplyScale();
-
-          estimateBtn.disabled = false;
-          estimateBtn.textContent =
-            'Recalculate';
-        } catch (err) {
-          const message =
-            '⚠ ' +
-            cleanErrorMessage(
-              err?.message
-            );
-
-          if (hadPreviousResults) {
-            /*
-             * Keep the previous results stationary and show the error
-             * above them.
-             */
-            setFormMessage();
-
-            setResultsMessage(
-              message,
-              true
-            );
-          } else {
-            /*
-             * No results exist yet, so show the error below Calculate.
-             */
-            setFormMessage(
-              message,
-              true
-            );
-          }
-
-          estimateBtn.disabled = false;
-
-          estimateBtn.textContent =
-            hadPreviousResults
-              ? 'Recalculate'
-              : 'Calculate';
         }
       }
+    }
 
-      document
-        .getElementById('estimateBtn')
-        .addEventListener(
-          'click',
-          estimate
+    function applyFilters() {
+      let visibleCount = 0;
+
+      state.rows.forEach(
+        row => {
+          const hiddenByRepeats =
+            !state.showRepeats &&
+            row.isRepeat;
+
+          const hiddenByCorporates =
+            !state.showCorporates &&
+            row.isCorporate;
+
+          /*
+           * When "Non-metro included" is OFF,
+           * only rows whose column K contains MM1 remain.
+           */
+          const hiddenByMetro =
+            !state.showNonMetro &&
+            !row.hasMM1;
+
+          const isHidden =
+            hiddenByRepeats ||
+            hiddenByCorporates ||
+            hiddenByMetro;
+
+          row.isHidden =
+            isHidden;
+
+          row.element.classList.toggle(
+            'is-hidden',
+            isHidden
+          );
+
+          if (!isHidden) {
+            visibleCount++;
+          }
+        }
+      );
+
+      refreshWeekDividers();
+
+      const totalCount =
+        state.rows.length;
+
+      tableStatus.textContent =
+        `Showing ${visibleCount.toLocaleString('en-AU')} of ${totalCount.toLocaleString('en-AU')} jobs`;
+
+      emptyState.classList.toggle(
+        'is-visible',
+        visibleCount === 0
+      );
+
+      dataTable.style.display =
+        visibleCount === 0
+          ? 'none'
+          : '';
+    }
+
+    function hideLoadingState() {
+      app.classList.remove(
+        'is-loading'
+      );
+
+      loadingState.setAttribute(
+        'aria-hidden',
+        'true'
+      );
+    }
+
+    function showFallbackNotice() {
+      fallbackNotice.textContent =
+        'Loaded through the live table fallback. Displayed values are current, but formula-generated hyperlinks may depend on what Google exposes in the fallback feed.';
+
+      fallbackNotice.classList.add(
+        'is-visible'
+      );
+    }
+
+    function showError(error) {
+      console.error(error);
+
+      hideLoadingState();
+
+      tableShell.style.display =
+        'none';
+
+      tableStatus.textContent =
+        'Could not load jobs';
+
+      errorState.textContent =
+        `${error?.message || 'Could not load the spreadsheet.'} Ensure the spreadsheet is shared as “Anyone with the link can view” and that the correct worksheet tab is selected in CONFIG.SHEET_NAME.`;
+
+      errorState.classList.add(
+        'is-visible'
+      );
+    }
+
+    async function loadTableData() {
+      let workbookError = null;
+
+      try {
+        const workbookModel =
+          await loadWorkbookModel();
+
+        renderTable(
+          workbookModel
         );
 
-      loadModel();
-    </script>
-  </body>
+        hideLoadingState();
+        return;
+      } catch (error) {
+        workbookError = error;
+
+        console.warn(
+          'Workbook export failed; trying the Google Visualization fallback.',
+          error
+        );
+      }
+
+      try {
+        const fallbackModel =
+          await loadGvizModel();
+
+        renderTable(
+          fallbackModel
+        );
+
+        showFallbackNotice();
+        hideLoadingState();
+      } catch (fallbackError) {
+        const combinedError =
+          new Error(
+            `Could not load the spreadsheet. Workbook export: ${workbookError?.message || 'failed'}. Live feed: ${fallbackError?.message || 'failed'}`
+          );
+
+        showError(
+          combinedError
+        );
+      }
+    }
+
+    repeatToggle.addEventListener(
+      'click',
+      () => {
+        state.showRepeats =
+          !state.showRepeats;
+
+        setToggleState(
+          repeatToggle,
+          state.showRepeats
+        );
+
+        applyFilters();
+      }
+    );
+
+    corporateToggle.addEventListener(
+      'click',
+      () => {
+        state.showCorporates =
+          !state.showCorporates;
+
+        setToggleState(
+          corporateToggle,
+          state.showCorporates
+        );
+
+        applyFilters();
+      }
+    );
+
+    nonMetroToggle.addEventListener(
+      'click',
+      () => {
+        state.showNonMetro =
+          !state.showNonMetro;
+
+        setToggleState(
+          nonMetroToggle,
+          state.showNonMetro
+        );
+
+        applyFilters();
+      }
+    );
+
+    setToggleState(
+      repeatToggle,
+      state.showRepeats
+    );
+
+    setToggleState(
+      corporateToggle,
+      state.showCorporates
+    );
+
+    setToggleState(
+      nonMetroToggle,
+      state.showNonMetro
+    );
+
+    loadTableData();
+  </script>
+</body>
 </html>
