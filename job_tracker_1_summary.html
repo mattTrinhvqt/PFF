@@ -233,6 +233,7 @@
         opacity: 0.72;
       }
     }
+
     .table-section {
       width: 100%;
       margin-top: 0;
@@ -334,29 +335,30 @@
       vertical-align: super;
     }
 
-  .live-data-inline {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    width: 100%;
-    margin: 0;
-    padding: 0;
-    color: var(--muted);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    line-height: 1;
-    white-space: nowrap;
-  }
+    .live-data-inline {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      line-height: 1;
+      white-space: nowrap;
+    }
 
-  .live-data-dot {
-    width: 6px;
-    height: 6px;
-    flex: 0 0 6px;
-    border-radius: 50%;
-    background: #e53935;
-  }
+    .live-data-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      border-radius: 50%;
+      background: #e53935;
+    }
+
     .data-table th:first-child,
     .data-table td:first-child {
       width: 24%;
@@ -366,6 +368,7 @@
       font-weight: 700;
       white-space: nowrap;
     }
+
     .data-table td.category-corporate {
       background: #8dc4af;
     }
@@ -393,7 +396,8 @@
 
     .loading-text.is-hidden {
       display: none;
-    }    
+    }
+
     .error {
       color: var(--muted);
       font-size: 14px;
@@ -416,6 +420,7 @@
       .data-table td {
         font-size: 12px;
       }
+
       .app-loading {
         min-height: 155px;
       }
@@ -444,7 +449,7 @@
 
       .loader-text {
         font-size: 10px;
-      }      
+      }
     }
   </style>
 </head>
@@ -474,8 +479,6 @@
             <tbody></tbody>
           </table>
         </div>
-
-
       </section>
     </main>
   </div>
@@ -486,6 +489,11 @@
     const TABLE_RANGE = 'J1:L5';
     const EXPECTED_ROWS = 5;
     const EXPECTED_COLS = 3;
+
+    const FETCH_TIMEOUT_MS = 15000;
+    const FETCH_MAX_ATTEMPTS = 2;
+    const FETCH_RETRY_DELAY_MS = 1000;
+    const TABLE_STORAGE_KEY = 'pff-clinical-optom-summary-table-v1';
 
     const app = document.getElementById('app');
     const dataTable = document.getElementById('data-table');
@@ -507,6 +515,7 @@
       liveData.appendChild(text);
       cell.appendChild(liveData);
     }
+
     function appendHeaderText(cell, value) {
       const text = String(value || '—');
       const suffixMatch = text.match(/^(.*?)(th)$/i);
@@ -561,12 +570,16 @@
 
       return '';
     }
+
     function hideLoadingState() {
       app.classList.remove('is-loading');
       loadingState.setAttribute('aria-hidden', 'true');
     }
+
     function renderTable(values) {
       hideLoadingState();
+      dataTable.classList.remove('error');
+
       const thead = dataTable.querySelector('thead');
       const tbody = dataTable.querySelector('tbody');
 
@@ -667,80 +680,250 @@
       if (response?.status === 'error') {
         throw new Error(response?.errors?.[0]?.detailed_message || 'Could not load Google Sheet data');
       }
-    
+
       const cols = response?.table?.cols || [];
       const rows = response?.table?.rows || [];
       const values = [];
-    
+
       // Header row from J1:L1
       const headerRow = [];
-    
+
       for (let c = 0; c < EXPECTED_COLS; c++) {
         headerRow.push(String(cols?.[c]?.label ?? '').trim());
       }
-    
+
       values.push(headerRow);
-    
+
       // Data rows from J2:L5
       for (let r = 0; r < EXPECTED_ROWS - 1; r++) {
         const row = [];
-    
+
         for (let c = 0; c < EXPECTED_COLS; c++) {
           row.push(getCellDisplayValue(rows?.[r]?.c?.[c]));
         }
-    
+
         values.push(row);
       }
-    
+
       return values;
     }
 
-    function loadTableData() {
-      const callbackName = `pffJobTracker1Callback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-      const script = document.createElement('script');
+    function saveStoredTable(values) {
+      try {
+        localStorage.setItem(
+          TABLE_STORAGE_KEY,
+          JSON.stringify(values)
+        );
+      } catch (error) {
+        console.warn(
+          'The latest table could not be stored.',
+          error
+        );
+      }
+    }
 
-      const timeout = window.setTimeout(() => {
-        cleanup();
-        showError(new Error('Could not load data'));
-      }, 10000);
+    function loadStoredTable() {
+      try {
+        const values =
+          JSON.parse(
+            localStorage.getItem(
+              TABLE_STORAGE_KEY
+            ) ||
+            'null'
+          );
+
+        const isValid =
+          Array.isArray(values) &&
+          values.length ===
+            EXPECTED_ROWS &&
+          values.every(
+            row =>
+              Array.isArray(row) &&
+              row.length ===
+                EXPECTED_COLS
+          );
+
+        return isValid
+          ? values
+          : null;
+      } catch (error) {
+        console.warn(
+          'The stored table could not be read.',
+          error
+        );
+
+        return null;
+      }
+    }
+
+    function loadTableData(attempt = 1) {
+      const callbackName =
+        `pffJobTracker1Callback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+      const script =
+        document.createElement(
+          'script'
+        );
+
+      let settled =
+        false;
+
+      const timeout =
+        window.setTimeout(
+          () => {
+            finish(
+              new Error(
+                'Could not load data'
+              )
+            );
+          },
+          FETCH_TIMEOUT_MS
+        );
 
       function cleanup() {
-        window.clearTimeout(timeout);
+        window.clearTimeout(
+          timeout
+        );
 
         try {
-          delete window[callbackName];
+          delete window[
+            callbackName
+          ];
         } catch (error) {
-          window[callbackName] = undefined;
+          window[
+            callbackName
+          ] = undefined;
         }
 
-        if (script.parentNode) {
-          script.parentNode.removeChild(script);
+        if (
+          script.parentNode
+        ) {
+          script.parentNode
+            .removeChild(
+              script
+            );
         }
       }
 
-      window[callbackName] = response => {
+      function retryOrUseStoredTable(
+        error
+      ) {
+        if (
+          attempt <
+            FETCH_MAX_ATTEMPTS
+        ) {
+          window.setTimeout(
+            () => {
+              loadTableData(
+                attempt + 1
+              );
+            },
+            FETCH_RETRY_DELAY_MS
+          );
+
+          return;
+        }
+
+        const storedValues =
+          loadStoredTable();
+
+        if (storedValues) {
+          renderTable(
+            storedValues
+          );
+
+          return;
+        }
+
+        showError(
+          error
+        );
+      }
+
+      function finish(
+        error,
+        response
+      ) {
+        if (settled) {
+          return;
+        }
+
+        settled =
+          true;
+
         cleanup();
+
+        if (error) {
+          retryOrUseStoredTable(
+            error
+          );
+
+          return;
+        }
 
         try {
-          renderTable(normaliseGvizTable(response));
-        } catch (error) {
-          showError(error);
+          const values =
+            normaliseGvizTable(
+              response
+            );
+
+          saveStoredTable(
+            values
+          );
+
+          renderTable(
+            values
+          );
+        } catch (normaliseError) {
+          retryOrUseStoredTable(
+            normaliseError
+          );
         }
-      };
+      }
 
-      script.onerror = () => {
-        cleanup();
-        showError(new Error('Could not load data'));
-      };
+      window[callbackName] =
+        response => {
+          finish(
+            null,
+            response
+          );
+        };
 
-      const params = new URLSearchParams({
-        sheet: SHEET_NAME,
-        range: TABLE_RANGE,
-        headers: '1',
-        tqx: `responseHandler:${callbackName}`
-      });
-      script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
-      document.body.appendChild(script);
+      script.onerror =
+        () => {
+          finish(
+            new Error(
+              'Could not load data'
+            )
+          );
+        };
+
+      const params =
+        new URLSearchParams({
+          sheet:
+            SHEET_NAME,
+
+          range:
+            TABLE_RANGE,
+
+          headers:
+            '1',
+
+          tqx:
+            `responseHandler:${callbackName}`,
+
+          _:
+            String(
+              Date.now()
+            )
+        });
+
+      script.src =
+        `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+
+      document.body.appendChild(
+        script
+      );
     }
 
     loadTableData();
