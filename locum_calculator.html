@@ -92,6 +92,7 @@
       --track: #e8eaf0;
       --error-red: #b42318;
     }
+
     * {
       box-sizing: border-box;
     }
@@ -273,7 +274,7 @@
     #out:empty {
       display: none;
     }
-    
+
     /* Inline calculator errors */
     #out.is-error,
     #resultsStatus.is-error {
@@ -288,7 +289,7 @@
       border-top: 1px solid var(--track);
       text-align: left;
     }
-    
+
     #resultsStatus {
       display: none;
       position: absolute;
@@ -301,11 +302,11 @@
       line-height: 1.45;
       text-align: left;
     }
-    
+
     #results.show-status {
       border-top-color: transparent;
     }
-    
+
     #results.show-status #resultsStatus {
       display: block;
     }
@@ -461,7 +462,7 @@
         font-size: 15px;
       }
     }
-    </style>    
+    </style>
   </head>
 
   <body>
@@ -517,7 +518,7 @@
 
           <section id="results" aria-live="polite">
             <div id="resultsStatus" aria-live="polite"></div>
-          
+
             <div class="results-section-label">
               Estimated hourly weekday rate
             </div>
@@ -563,12 +564,57 @@
     </div>
 
     <script>
-      const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyJKRhC3WEDrX9j323MOwEccI3Iv1_O-pEb7PJhPBpQHKFvAqPwrz3il7t-xPFv8D7htg/exec';
+      /**********************
+       * CONFIG
+       **********************/
+      const SPREADSHEET_ID =
+        '1wmrmNS4cz-_aPKnyBVg7-SShbhs6czMNh07UjyLo04s';
 
-      const out = document.getElementById('out');
-      const estimateBtn = document.getElementById('estimateBtn');
-      const resultsStatus = document.getElementById('resultsStatus');
-      
+      const SHEET_NAME =
+        'Data';
+
+      const MMM_TREAT_AS_CATEGORICAL =
+        false;
+
+      const MS_PER_YEAR =
+        365.25 * 24 * 60 * 60 * 1000;
+
+      const Z_TWO_SIDED_95 =
+        1.96;
+
+      const Z_P05 =
+        -1.64485;
+
+      const Z_P20 =
+        -0.84162;
+
+      const Z_P50 =
+        0.00000;
+
+      const Z_P80 =
+        0.84162;
+
+      const Z_P95 =
+        1.64485;
+
+      const out =
+        document.getElementById('out');
+
+      const estimateBtn =
+        document.getElementById('estimateBtn');
+
+      const resultsStatus =
+        document.getElementById('resultsStatus');
+
+      let hasPreviousResults =
+        false;
+
+      let numberAnimationToken =
+        0;
+
+      const NUMBER_ANIMATION_MS =
+        1000;
+
       /*
        * Shows a normal grey message or a red error message.
        */
@@ -577,14 +623,15 @@
         message = '',
         isError = false
       ) {
-        element.textContent = message;
-      
+        element.textContent =
+          message;
+
         element.classList.toggle(
           'is-error',
           isError && Boolean(message)
         );
       }
-      
+
       /*
        * Shows a message below the Calculate button.
        */
@@ -592,10 +639,15 @@
         message = '',
         isError = false
       ) {
-        setInlineMessage(out, message, isError);
+        setInlineMessage(
+          out,
+          message,
+          isError
+        );
+
         scheduleApplyScale();
       }
-      
+
       /*
        * Shows a message above existing results, where the divider
        * normally appears.
@@ -606,23 +658,23 @@
       ) {
         const resultsEl =
           document.getElementById('results');
-      
+
         setInlineMessage(
           resultsStatus,
           message,
           isError
         );
-      
+
         resultsEl.classList.toggle(
           'show-status',
           Boolean(message)
         );
-      
+
         scheduleApplyScale();
       }
-      
+
       /*
-       * Removes final full stops from backend error messages.
+       * Removes final full stops from error messages.
        */
       function cleanErrorMessage(message) {
         return String(
@@ -631,100 +683,71 @@
           .trim()
           .replace(/\.+$/, '');
       }
-      
+
       /*
        * Clears a form error when the user begins correcting a field.
        */
       function clearFormErrorOnEdit() {
-        if (out.classList.contains('is-error')) {
+        if (
+          out.classList.contains(
+            'is-error'
+          )
+        ) {
           setFormMessage();
         }
-      
-        if (resultsStatus.classList.contains('is-error')) {
+
+        if (
+          resultsStatus.classList.contains(
+            'is-error'
+          )
+        ) {
           setResultsMessage();
         }
       }
-      
+
       document
         .querySelector('.calculator-form')
         .addEventListener(
           'input',
           clearFormErrorOnEdit
         );
-      
+
       document
         .querySelector('.calculator-form')
         .addEventListener(
           'change',
           clearFormErrorOnEdit
         );
-      
-      const AUFMT = new Intl.NumberFormat('en-AU');
-      
-      let hasPreviousResults = false;
-      let numberAnimationToken = 0;
-      
-      const NUMBER_ANIMATION_MS = 1000;
-         
+
+      const AUFMT =
+        new Intl.NumberFormat('en-AU');
+
       function round0(x) {
-        if (x === null || x === undefined || isNaN(x)) return '–';
-        return AUFMT.format(Math.round(Number(x)));
+        if (
+          x === null ||
+          x === undefined ||
+          isNaN(x)
+        ) {
+          return '–';
+        }
+
+        return AUFMT.format(
+          Math.round(Number(x))
+        );
       }
 
       function fmtDollarsInt(x) {
-        if (x === null || x === undefined || isNaN(x)) return '–';
-        return '$' + AUFMT.format(Math.round(Number(x)));
-      }
+        if (
+          x === null ||
+          x === undefined ||
+          isNaN(x)
+        ) {
+          return '–';
+        }
 
-      function callEstimatorBackend(action, params = {}) {
-        return new Promise((resolve, reject) => {
-          const callbackName = `locumEstimatorCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-          const script = document.createElement('script');
-
-          const timeout = window.setTimeout(() => {
-            cleanup();
-            reject(new Error('Request timed out.'));
-          }, 30000);
-
-          function cleanup() {
-            window.clearTimeout(timeout);
-
-            try {
-              delete window[callbackName];
-            } catch (error) {
-              window[callbackName] = undefined;
-            }
-
-            if (script.parentNode) {
-              script.parentNode.removeChild(script);
-            }
-          }
-
-          window[callbackName] = response => {
-            cleanup();
-
-            if (!response || !response.ok) {
-              reject(new Error(response?.message || 'Unable to load model.'));
-              return;
-            }
-
-            resolve(response);
-          };
-
-          script.onerror = () => {
-            cleanup();
-            reject(new Error('Network error.'));
-          };
-
-          const query = new URLSearchParams({
-            callback: callbackName,
-            action,
-            ...params
-          });
-
-          script.src = `${SCRIPT_URL}?${query.toString()}`;
-          document.body.appendChild(script);
-        });
+        return '$' + AUFMT.format(
+          Math.round(Number(x))
+        );
       }
 
       function animateNumber(
@@ -734,128 +757,535 @@
         animate,
         token
       ) {
-        const element = document.getElementById(elementId);
-        const target = Number(targetValue);
-      
+        const element =
+          document.getElementById(
+            elementId
+          );
+
+        const target =
+          Number(targetValue);
+
         if (!Number.isFinite(target)) {
-          element.textContent = '–';
+          element.textContent =
+            '–';
+
           delete element.dataset.numericValue;
+
           return;
         }
-      
-        const start = Number(element.dataset.numericValue);
-      
+
+        const start =
+          Number(
+            element.dataset.numericValue
+          );
+
         const reduceMotion =
-          window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      
+          window.matchMedia(
+            '(prefers-reduced-motion: reduce)'
+          ).matches;
+
         const shouldAnimate =
           animate &&
           Number.isFinite(start) &&
           start !== target &&
           !reduceMotion;
-      
+
         if (!shouldAnimate) {
-          element.textContent = formatter(target);
-          element.dataset.numericValue = String(target);
+          element.textContent =
+            formatter(target);
+
+          element.dataset.numericValue =
+            String(target);
+
           return;
         }
-      
-        const startedAt = performance.now();
-      
+
+        const startedAt =
+          performance.now();
+
         function frame(now) {
-          if (token !== numberAnimationToken) return;
-      
-          const progress = Math.min(
-            (now - startedAt) / NUMBER_ANIMATION_MS,
-            1
-          );
-      
-          const eased = 1 - Math.pow(1 - progress, 3);
-          const current = start + (target - start) * eased;
-      
-          element.textContent = formatter(current);
-          element.dataset.numericValue = String(current);
-      
+          if (
+            token !==
+            numberAnimationToken
+          ) {
+            return;
+          }
+
+          const progress =
+            Math.min(
+              (
+                now -
+                startedAt
+              ) /
+              NUMBER_ANIMATION_MS,
+              1
+            );
+
+          const eased =
+            1 -
+            Math.pow(
+              1 - progress,
+              3
+            );
+
+          const current =
+            start +
+            (
+              target -
+              start
+            ) *
+            eased;
+
+          element.textContent =
+            formatter(current);
+
+          element.dataset.numericValue =
+            String(current);
+
           if (progress < 1) {
-            requestAnimationFrame(frame);
+            requestAnimationFrame(
+              frame
+            );
           } else {
-            element.textContent = formatter(target);
-            element.dataset.numericValue = String(target);
+            element.textContent =
+              formatter(target);
+
+            element.dataset.numericValue =
+              String(target);
           }
         }
-      
-        requestAnimationFrame(frame);
-      }
-      
-      function renderPercentileScale(res, animateNumbers = false) {
-        const [p05, p20, p50, p80, p95] =
-          [res.p05, res.p20, res.p50, res.p80, res.p95].map(Number);
-      
-        const P_MIN = 5;
-        const P_MAX = 95;
-        const P_SPAN = P_MAX - P_MIN;
-      
-        const posPct = p => ((p - P_MIN) / P_SPAN) * 100;
-        const token = ++numberAnimationToken;
-      
-        document.querySelector('.t5').style.left = posPct(5) + '%';
-        document.querySelector('.t20').style.left = posPct(20) + '%';
-        document.querySelector('.t50').style.left = posPct(50) + '%';
-        document.querySelector('.t80').style.left = posPct(80) + '%';
-        document.querySelector('.t95').style.left = posPct(95) + '%';
-      
-        animateNumber('p05v', p05, round0, animateNumbers, token);
-        animateNumber('p20v', p20, round0, animateNumbers, token);
-        animateNumber('p50v', p50, fmtDollarsInt, animateNumbers, token);
-        animateNumber('p80v', p80, round0, animateNumbers, token);
-        animateNumber('p95v', p95, round0, animateNumbers, token);
+
+        requestAnimationFrame(
+          frame
+        );
       }
 
-      async function loadModel() {
-        try {
-          await callEstimatorBackend('summary');
+      function renderPercentileScale(
+        res,
+        animateNumbers = false
+      ) {
+        const [
+          p05,
+          p20,
+          p50,
+          p80,
+          p95
+        ] =
+          [
+            res.p05,
+            res.p20,
+            res.p50,
+            res.p80,
+            res.p95
+          ].map(Number);
 
-          document.getElementById('modelMeta').textContent = 'MLR (OLS) model loaded';
-          scheduleApplyScale();
-        } catch (err) {
-          document.getElementById('modelMeta').innerHTML =
-            '<span class="warn">Model error: ' +
-            cleanErrorMessage(err?.message) +
-            '</span>';
-          scheduleApplyScale();
+        const P_MIN =
+          5;
+
+        const P_MAX =
+          95;
+
+        const P_SPAN =
+          P_MAX - P_MIN;
+
+        const posPct =
+          p =>
+            (
+              (
+                p -
+                P_MIN
+              ) /
+              P_SPAN
+            ) *
+            100;
+
+        const token =
+          ++numberAnimationToken;
+
+        document
+          .querySelector('.t5')
+          .style.left =
+            posPct(5) + '%';
+
+        document
+          .querySelector('.t20')
+          .style.left =
+            posPct(20) + '%';
+
+        document
+          .querySelector('.t50')
+          .style.left =
+            posPct(50) + '%';
+
+        document
+          .querySelector('.t80')
+          .style.left =
+            posPct(80) + '%';
+
+        document
+          .querySelector('.t95')
+          .style.left =
+            posPct(95) + '%';
+
+        animateNumber(
+          'p05v',
+          p05,
+          round0,
+          animateNumbers,
+          token
+        );
+
+        animateNumber(
+          'p20v',
+          p20,
+          round0,
+          animateNumbers,
+          token
+        );
+
+        animateNumber(
+          'p50v',
+          p50,
+          fmtDollarsInt,
+          animateNumbers,
+          token
+        );
+
+        animateNumber(
+          'p80v',
+          p80,
+          round0,
+          animateNumbers,
+          token
+        );
+
+        animateNumber(
+          'p95v',
+          p95,
+          round0,
+          animateNumbers,
+          token
+        );
+      }
+
+      function loadGvizData() {
+        return new Promise(
+          (
+            resolve,
+            reject
+          ) => {
+            const callbackName =
+              `locumEstimatorSheetCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+            const script =
+              document.createElement(
+                'script'
+              );
+
+            const timeout =
+              window.setTimeout(
+                () => {
+                  cleanup();
+
+                  reject(
+                    new Error(
+                      'Could not load Google Sheet data'
+                    )
+                  );
+                },
+                30000
+              );
+
+            function cleanup() {
+              window.clearTimeout(
+                timeout
+              );
+
+              try {
+                delete window[
+                  callbackName
+                ];
+              } catch (error) {
+                window[
+                  callbackName
+                ] = undefined;
+              }
+
+              if (
+                script.parentNode
+              ) {
+                script.parentNode
+                  .removeChild(
+                    script
+                  );
+              }
+            }
+
+            window[
+              callbackName
+            ] =
+              response => {
+                cleanup();
+
+                if (
+                  !response ||
+                  response.status ===
+                    'error'
+                ) {
+                  reject(
+                    new Error(
+                      response
+                        ?.errors
+                        ?.[0]
+                        ?.detailed_message ||
+                      'Could not load Google Sheet data'
+                    )
+                  );
+
+                  return;
+                }
+
+                resolve(
+                  response
+                );
+              };
+
+            script.onerror =
+              () => {
+                cleanup();
+
+                reject(
+                  new Error(
+                    'Network error'
+                  )
+                );
+              };
+
+            /*
+             * Pull only the needed columns:
+             * A = timestamp
+             * B = rate
+             * C = years
+             * E = MMM
+             */
+            const tq =
+              'select A,B,C,E where B is not null';
+
+            const params =
+              new URLSearchParams({
+                sheet:
+                  SHEET_NAME,
+
+                headers:
+                  '1',
+
+                tq,
+
+                tqx:
+                  `responseHandler:${callbackName}`
+              });
+
+            script.src =
+              `https://docs.google.com/spreadsheets/d/` +
+              `${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+
+            document.body
+              .appendChild(
+                script
+              );
+          }
+        );
+      }
+
+      function getCellRawValue(
+        cell
+      ) {
+        if (!cell) {
+          return '';
         }
+
+        return (
+          cell.v ??
+          cell.f ??
+          ''
+        );
+      }
+
+      function getDateMsFromCell(
+        cell
+      ) {
+        const rawMs =
+          toDateMs(
+            cell?.v
+          );
+
+        if (
+          Number.isFinite(
+            rawMs
+          )
+        ) {
+          return rawMs;
+        }
+
+        return toDateMs(
+          cell?.f
+        );
+      }
+
+      function normaliseRowsFromGviz(
+        response
+      ) {
+        const rows =
+          response
+            ?.table
+            ?.rows ||
+          [];
+
+        return rows.map(
+          row => {
+            const cells =
+              row?.c ||
+              [];
+
+            return {
+              timestampMs:
+                getDateMsFromCell(
+                  cells[0]
+                ),
+
+              rate:
+                toNum(
+                  getCellRawValue(
+                    cells[1]
+                  )
+                ),
+
+              yearsRaw:
+                toNum(
+                  getCellRawValue(
+                    cells[2]
+                  )
+                ),
+
+              mmm:
+                toInt(
+                  getCellRawValue(
+                    cells[3]
+                  )
+                )
+            };
+          }
+        );
+      }
+
+      function loadLocumModel() {
+        return loadGvizData()
+          .then(
+            response => {
+              const rawRows =
+                normaliseRowsFromGviz(
+                  response
+                );
+
+              return buildModel(
+                rawRows
+              );
+            }
+          );
+      }
+
+      function loadModel() {
+        document
+          .getElementById(
+            'modelMeta'
+          )
+          .textContent =
+            'Loading model…';
+
+        loadLocumModel()
+          .then(
+            () => {
+              document
+                .getElementById(
+                  'modelMeta'
+                )
+                .textContent =
+                  'MLR (OLS) model loaded';
+
+              scheduleApplyScale();
+            }
+          )
+          .catch(
+            err => {
+              document
+                .getElementById(
+                  'modelMeta'
+                )
+                .innerHTML =
+                  '<span class="warn">Model error: ' +
+                  cleanErrorMessage(
+                    err?.message
+                  ) +
+                  '</span>';
+
+              scheduleApplyScale();
+            }
+          );
       }
 
       async function estimate() {
-        const years = parseFloat(
-          document.getElementById('years').value
-        );
-      
-        const mmm = parseInt(
-          document.getElementById('mmm').value,
-          10
-        );
-      
+        const years =
+          parseFloat(
+            document
+              .getElementById(
+                'years'
+              )
+              .value
+          );
+
+        const mmm =
+          parseInt(
+            document
+              .getElementById(
+                'mmm'
+              )
+              .value,
+            10
+          );
+
         const resultsEl =
-          document.getElementById('results');
-      
+          document.getElementById(
+            'results'
+          );
+
         const hadPreviousResults =
           hasPreviousResults;
-      
+
         /*
          * Before the first calculation, show validation errors below
          * Calculate. After results exist, replace the results divider
          * with the error so nothing moves.
          */
-        function showInputError(message) {
-          if (hadPreviousResults) {
+        function showInputError(
+          message
+        ) {
+          if (
+            hadPreviousResults
+          ) {
             setFormMessage();
-            setResultsMessage(message, true);
+
+            setResultsMessage(
+              message,
+              true
+            );
           } else {
-            setFormMessage(message, true);
+            setFormMessage(
+              message,
+              true
+            );
           }
         }
-      
+
         if (
           !isFinite(years) ||
           years < 0 ||
@@ -866,76 +1296,1119 @@
           showInputError(
             '⚠ Please complete all fields'
           );
-      
+
           return;
         }
-      
-        if (!hadPreviousResults) {
+
+        if (
+          !hadPreviousResults
+        ) {
           /*
            * First calculation: show the status below Calculate.
            */
-          resultsEl.style.display = 'none';
-          setFormMessage('Calculating…');
+          resultsEl
+            .style
+            .display =
+              'none';
+
+          setFormMessage(
+            'Calculating…'
+          );
         } else {
           /*
            * Keep the existing results stationary while recalculating.
            */
           setFormMessage();
-          setResultsMessage('Recalculating…');
+
+          setResultsMessage(
+            'Recalculating…'
+          );
         }
-      
-        estimateBtn.disabled = true;
-      
+
+        estimateBtn.disabled =
+          true;
+
         scheduleApplyScale();
-      
+
         try {
-          const res = await callEstimatorBackend('predict', {
-            years: String(years),
-            mmm: String(mmm)
-          });
-      
+          /*
+           * Re-read the Google Sheet and refit on every calculation,
+           * matching the previous backend behaviour.
+           */
+          const model =
+            await loadLocumModel();
+
+          const res =
+            predict(
+              {
+                years,
+                mmm
+              },
+              model
+            );
+
           /*
            * Restore the divider before animating the updated values.
            */
           setResultsMessage();
           setFormMessage();
-      
-          resultsEl.style.display = 'block';
-      
-          renderPercentileScale(res, hadPreviousResults);
-          hasPreviousResults = true;
-      
+
+          resultsEl
+            .style
+            .display =
+              'block';
+
+          renderPercentileScale(
+            res,
+            hadPreviousResults
+          );
+
+          hasPreviousResults =
+            true;
+
           scheduleApplyScale();
-      
-          estimateBtn.disabled = false;
-          estimateBtn.textContent = 'Recalculate';
-          } catch (err) {
-            const message =
-              '⚠ ' + cleanErrorMessage(err?.message);
-          
-            if (hadPreviousResults) {
-              /*
-               * Keep the previous results stationary and show the error
-               * above them.
-               */
-              setFormMessage();
-              setResultsMessage(message, true);
-            } else {
-              /*
-               * No results exist yet, so show the error below Calculate.
-               */
-              setFormMessage(message, true);
-            }
-          
-            estimateBtn.disabled = false;
-          
-            estimateBtn.textContent = hadPreviousResults
+
+          estimateBtn.disabled =
+            false;
+
+          estimateBtn.textContent =
+            'Recalculate';
+        } catch (err) {
+          const message =
+            '⚠ ' +
+            cleanErrorMessage(
+              err?.message
+            );
+
+          if (
+            hadPreviousResults
+          ) {
+            /*
+             * Keep the previous results stationary and show the error
+             * above them.
+             */
+            setFormMessage();
+
+            setResultsMessage(
+              message,
+              true
+            );
+          } else {
+            /*
+             * No results exist yet, so show the error below Calculate.
+             */
+            setFormMessage(
+              message,
+              true
+            );
+          }
+
+          estimateBtn.disabled =
+            false;
+
+          estimateBtn.textContent =
+            hadPreviousResults
               ? 'Recalculate'
               : 'Calculate';
-          }
+        }
       }
 
-      document.getElementById('estimateBtn').addEventListener('click', estimate);
+      /**********************
+       * MODEL
+       **********************/
+      function buildModel(
+        rawRows
+      ) {
+        const rows =
+          [];
+
+        rawRows.forEach(
+          r => {
+            const timestampMs =
+              toDateMs(
+                r.timestampMs
+              );
+
+            const rate =
+              toNum(
+                r.rate
+              );
+
+            const yearsRaw =
+              toNum(
+                r.yearsRaw
+              );
+
+            const yearsLog =
+              Number.isFinite(
+                yearsRaw
+              ) &&
+              yearsRaw >= 0
+                ? Math.log(
+                    1 +
+                    yearsRaw
+                  )
+                : NaN;
+
+            const mmm =
+              toInt(
+                r.mmm
+              );
+
+            const numericOk =
+              [
+                timestampMs,
+                rate,
+                yearsLog,
+                mmm
+              ].every(
+                Number.isFinite
+              ) &&
+              mmm >= 1 &&
+              mmm <= 7;
+
+            if (numericOk) {
+              rows.push({
+                timestampMs,
+                rate,
+                years:
+                  yearsLog,
+                mmm
+              });
+            }
+          }
+        );
+
+        if (
+          rows.length < 10
+        ) {
+          throw new Error(
+            'Not enough valid rows (need ≥10).'
+          );
+        }
+
+        /*
+         * Centre submission time around the average timestamp.
+         *
+         * 0 = average submission date
+         * 1 = approximately one year later
+         * -1 = approximately one year earlier
+         */
+        const timeOriginMs =
+          rows.reduce(
+            (
+              sum,
+              row
+            ) =>
+              sum +
+              row.timestampMs,
+            0
+          ) /
+          rows.length;
+
+        rows.forEach(
+          row => {
+            row.timeYears =
+              (
+                row.timestampMs -
+                timeOriginMs
+              ) /
+              MS_PER_YEAR;
+          }
+        );
+
+        const designInfo =
+          makeDesignInfo(
+            timeOriginMs
+          );
+
+        const X =
+          [];
+
+        const y =
+          [];
+
+        rows.forEach(
+          r => {
+            y.push(
+              r.rate
+            );
+
+            X.push(
+              buildXRow(
+                r,
+                designInfo
+              )
+            );
+          }
+        );
+
+        const n =
+          y.length;
+
+        const p =
+          X[0].length;
+
+        if (n <= p) {
+          throw new Error(
+            `Insufficient data (n=${n}, p=${p}).`
+          );
+        }
+
+        const Xt =
+          transpose(X);
+
+        const XtX =
+          multiply(
+            Xt,
+            X
+          );
+
+        const XtX_inv =
+          invert(
+            XtX
+          );
+
+        const Xty =
+          multiplyVec(
+            Xt,
+            y
+          );
+
+        const beta =
+          multiplyMatVec(
+            XtX_inv,
+            Xty
+          );
+
+        const yhat =
+          X.map(
+            row =>
+              dot(
+                row,
+                beta
+              )
+          );
+
+        const resid =
+          y.map(
+            (
+              v,
+              i
+            ) =>
+              v -
+              yhat[i]
+          );
+
+        const sse =
+          dot(
+            resid,
+            resid
+          );
+
+        const ybar =
+          y.reduce(
+            (
+              a,
+              b
+            ) =>
+              a +
+              b,
+            0
+          ) /
+          n;
+
+        const sst =
+          y.reduce(
+            (
+              acc,
+              v
+            ) =>
+              acc +
+              Math.pow(
+                v -
+                ybar,
+                2
+              ),
+            0
+          );
+
+        const r2 =
+          1 -
+          (
+            sse /
+            sst
+          );
+
+        const df =
+          n -
+          p;
+
+        const s2 =
+          sse /
+          df;
+
+        return {
+          beta,
+          XtX_inv,
+          s2,
+          r2,
+          n,
+          p,
+          df,
+          designInfo
+        };
+      }
+
+      function predict(
+        input,
+        model
+      ) {
+        const x0 =
+          buildX0(
+            input,
+            model.designInfo
+          );
+
+        const yhat =
+          dot(
+            x0,
+            model.beta
+          );
+
+        const h =
+          quadForm(
+            model.XtX_inv,
+            x0
+          );
+
+        const se_pred =
+          Math.sqrt(
+            model.s2 *
+            (
+              1 +
+              h
+            )
+          );
+
+        const p05 =
+          yhat +
+          Z_P05 *
+          se_pred;
+
+        const p20 =
+          yhat +
+          Z_P20 *
+          se_pred;
+
+        const p50 =
+          yhat +
+          Z_P50 *
+          se_pred;
+
+        const p80 =
+          yhat +
+          Z_P80 *
+          se_pred;
+
+        const p95 =
+          yhat +
+          Z_P95 *
+          se_pred;
+
+        const predLo =
+          yhat -
+          Z_TWO_SIDED_95 *
+          se_pred;
+
+        const predHi =
+          yhat +
+          Z_TWO_SIDED_95 *
+          se_pred;
+
+        return {
+          yhat,
+          p05,
+          p20,
+          p50,
+          p80,
+          p95,
+          predLo,
+          predHi,
+          n:
+            model.n,
+          r2:
+            model.r2
+        };
+      }
+
+      function makeDesignInfo(
+        timeOriginMs
+      ) {
+        const terms = [
+          'Intercept',
+          'logYears',
+          'timeYears'
+        ];
+
+        if (
+          MMM_TREAT_AS_CATEGORICAL
+        ) {
+          for (
+            let k = 2;
+            k <= 7;
+            k++
+          ) {
+            terms.push(
+              `MM${k}`
+            );
+          }
+        } else {
+          terms.push(
+            'MM_ordinal'
+          );
+        }
+
+        return {
+          terms,
+          timeOriginMs,
+          mmmCategorical:
+            MMM_TREAT_AS_CATEGORICAL
+        };
+      }
+
+      function buildXRow(
+        r,
+        designInfo
+      ) {
+        const row = [
+          1,
+          r.years,
+          r.timeYears
+        ];
+
+        if (
+          designInfo
+            .mmmCategorical
+        ) {
+          for (
+            let k = 2;
+            k <= 7;
+            k++
+          ) {
+            row.push(
+              r.mmm === k
+                ? 1
+                : 0
+            );
+          }
+        } else {
+          row.push(
+            r.mmm
+          );
+        }
+
+        return row;
+      }
+
+      function buildX0(
+        input,
+        designInfo
+      ) {
+        const yearsRaw =
+          toNum(
+            input.years
+          );
+
+        const yearsLog =
+          Number.isFinite(
+            yearsRaw
+          ) &&
+          yearsRaw >= 0
+            ? Math.log(
+                1 +
+                yearsRaw
+              )
+            : NaN;
+
+        const mmm =
+          Math.max(
+            1,
+            Math.min(
+              7,
+              Math.round(
+                toNum(
+                  input.mmm
+                )
+              )
+            )
+          );
+
+        /*
+         * New predictions are calculated for the current date.
+         */
+        const predictionTimestampMs =
+          Date.now();
+
+        const timeYears =
+          (
+            predictionTimestampMs -
+            designInfo.timeOriginMs
+          ) /
+          MS_PER_YEAR;
+
+        const row = [
+          1,
+          yearsLog,
+          timeYears
+        ];
+
+        if (
+          designInfo
+            .mmmCategorical
+        ) {
+          for (
+            let k = 2;
+            k <= 7;
+            k++
+          ) {
+            row.push(
+              mmm === k
+                ? 1
+                : 0
+            );
+          }
+        } else {
+          row.push(
+            mmm
+          );
+        }
+
+        return row;
+      }
+
+      /**********************
+       * HELPERS
+       **********************/
+      function toNum(v) {
+        const n =
+          typeof v ===
+            'string'
+            ? parseFloat(v)
+            : Number(v);
+
+        return Number.isFinite(n)
+          ? n
+          : NaN;
+      }
+
+      function toInt(v) {
+        const n =
+          typeof v ===
+            'string'
+            ? parseInt(
+                v,
+                10
+              )
+            : Math.floor(
+                Number(v)
+              );
+
+        return Number.isFinite(n)
+          ? n
+          : NaN;
+      }
+
+      function toDateMs(v) {
+        if (
+          v instanceof Date
+        ) {
+          const ms =
+            v.getTime();
+
+          return Number.isFinite(ms)
+            ? ms
+            : NaN;
+        }
+
+        if (
+          typeof v === 'number' &&
+          Number.isFinite(v)
+        ) {
+          if (
+            v >
+            100000000000
+          ) {
+            return v;
+          }
+
+          if (v > 0) {
+            return (
+              Date.UTC(
+                1899,
+                11,
+                30
+              ) +
+              v *
+              24 *
+              60 *
+              60 *
+              1000
+            );
+          }
+
+          return NaN;
+        }
+
+        const text =
+          String(
+            v ??
+            ''
+          ).trim();
+
+        if (!text) {
+          return NaN;
+        }
+
+        const googleDateMatch =
+          text.match(
+            /^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,(\d{1,2}),(\d{1,2}),(\d{1,2}))?\)$/
+          );
+
+        if (
+          googleDateMatch
+        ) {
+          return Date.UTC(
+            Number(
+              googleDateMatch[1]
+            ),
+            Number(
+              googleDateMatch[2]
+            ),
+            Number(
+              googleDateMatch[3]
+            ),
+            Number(
+              googleDateMatch[4] ||
+              0
+            ),
+            Number(
+              googleDateMatch[5] ||
+              0
+            ),
+            Number(
+              googleDateMatch[6] ||
+              0
+            )
+          );
+        }
+
+        const australianDateMatch =
+          text.match(
+            /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+          );
+
+        if (
+          australianDateMatch
+        ) {
+          const day =
+            Number(
+              australianDateMatch[1]
+            );
+
+          const month =
+            Number(
+              australianDateMatch[2]
+            );
+
+          const year =
+            Number(
+              australianDateMatch[3]
+            );
+
+          const hour =
+            Number(
+              australianDateMatch[4] ||
+              0
+            );
+
+          const minute =
+            Number(
+              australianDateMatch[5] ||
+              0
+            );
+
+          const second =
+            Number(
+              australianDateMatch[6] ||
+              0
+            );
+
+          const ms =
+            Date.UTC(
+              year,
+              month -
+              1,
+              day,
+              hour,
+              minute,
+              second
+            );
+
+          const parsed =
+            new Date(ms);
+
+          const valid =
+            parsed
+              .getUTCFullYear() ===
+                year &&
+            parsed
+              .getUTCMonth() ===
+                month -
+                1 &&
+            parsed
+              .getUTCDate() ===
+                day &&
+            parsed
+              .getUTCHours() ===
+                hour &&
+            parsed
+              .getUTCMinutes() ===
+                minute &&
+            parsed
+              .getUTCSeconds() ===
+                second;
+
+          return valid
+            ? ms
+            : NaN;
+        }
+
+        const parsedMs =
+          Date.parse(
+            text
+          );
+
+        return Number.isFinite(
+          parsedMs
+        )
+          ? parsedMs
+          : NaN;
+      }
+
+      function transpose(A) {
+        return A[0].map(
+          (
+            _,
+            i
+          ) =>
+            A.map(
+              r =>
+                r[i]
+            )
+        );
+      }
+
+      function multiply(
+        A,
+        B
+      ) {
+        const r =
+          A.length;
+
+        const c =
+          B[0].length;
+
+        const m =
+          B.length;
+
+        const out =
+          Array.from(
+            {
+              length:
+                r
+            },
+            () =>
+              Array(c).fill(
+                0
+              )
+          );
+
+        for (
+          let i = 0;
+          i < r;
+          i++
+        ) {
+          for (
+            let k = 0;
+            k < m;
+            k++
+          ) {
+            const aik =
+              A[i][k];
+
+            for (
+              let j = 0;
+              j < c;
+              j++
+            ) {
+              out[i][j] +=
+                aik *
+                B[k][j];
+            }
+          }
+        }
+
+        return out;
+      }
+
+      function multiplyVec(
+        A,
+        v
+      ) {
+        const r =
+          A.length;
+
+        const c =
+          A[0].length;
+
+        const out =
+          Array(r).fill(
+            0
+          );
+
+        for (
+          let i = 0;
+          i < r;
+          i++
+        ) {
+          let s =
+            0;
+
+          for (
+            let j = 0;
+            j < c;
+            j++
+          ) {
+            s +=
+              A[i][j] *
+              v[j];
+          }
+
+          out[i] =
+            s;
+        }
+
+        return out;
+      }
+
+      function multiplyMatVec(
+        A,
+        v
+      ) {
+        return multiplyVec(
+          A,
+          v
+        );
+      }
+
+      function dot(
+        a,
+        b
+      ) {
+        let s =
+          0;
+
+        for (
+          let i = 0;
+          i < a.length;
+          i++
+        ) {
+          s +=
+            a[i] *
+            b[i];
+        }
+
+        return s;
+      }
+
+      function identity(n) {
+        const I =
+          Array.from(
+            {
+              length:
+                n
+            },
+            () =>
+              Array(n).fill(
+                0
+              )
+          );
+
+        for (
+          let i = 0;
+          i < n;
+          i++
+        ) {
+          I[i][i] =
+            1;
+        }
+
+        return I;
+      }
+
+      function invert(A) {
+        const n =
+          A.length;
+
+        const M =
+          A.map(
+            r =>
+              r.slice()
+          );
+
+        const I =
+          identity(
+            n
+          );
+
+        for (
+          let c = 0;
+          c < n;
+          c++
+        ) {
+          let pivot =
+            c;
+
+          let maxAbs =
+            Math.abs(
+              M[c][c]
+            );
+
+          for (
+            let r =
+              c + 1;
+            r < n;
+            r++
+          ) {
+            const v =
+              Math.abs(
+                M[r][c]
+              );
+
+            if (
+              v >
+              maxAbs
+            ) {
+              maxAbs =
+                v;
+
+              pivot =
+                r;
+            }
+          }
+
+          if (
+            maxAbs === 0
+          ) {
+            throw new Error(
+              'Design matrix is singular (perfect multicollinearity).'
+            );
+          }
+
+          if (
+            pivot !== c
+          ) {
+            [
+              M[c],
+              M[pivot]
+            ] =
+              [
+                M[pivot],
+                M[c]
+              ];
+
+            [
+              I[c],
+              I[pivot]
+            ] =
+              [
+                I[pivot],
+                I[c]
+              ];
+          }
+
+          const diag =
+            M[c][c];
+
+          for (
+            let j = 0;
+            j < n;
+            j++
+          ) {
+            M[c][j] /=
+              diag;
+
+            I[c][j] /=
+              diag;
+          }
+
+          for (
+            let r = 0;
+            r < n;
+            r++
+          ) {
+            if (
+              r !== c
+            ) {
+              const f =
+                M[r][c];
+
+              for (
+                let j = 0;
+                j < n;
+                j++
+              ) {
+                M[r][j] -=
+                  f *
+                  M[c][j];
+
+                I[r][j] -=
+                  f *
+                  I[c][j];
+              }
+            }
+          }
+        }
+
+        return I;
+      }
+
+      function quadForm(
+        invXtX,
+        x
+      ) {
+        const tmp =
+          multiplyMatVec(
+            invXtX,
+            x
+          );
+
+        return dot(
+          x,
+          tmp
+        );
+      }
+
+      document
+        .getElementById(
+          'estimateBtn'
+        )
+        .addEventListener(
+          'click',
+          estimate
+        );
+
       loadModel();
     </script>
   </body>
