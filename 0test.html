@@ -1040,7 +1040,7 @@
         spreadsheetId: DATA_SHEET_ID,
         sheetName: DATA_SHEET_NAME,
         headers: '1',
-        query: 'select A, C, E, I, AY'
+        query: 'select A,C,E,I,AY where AY is not null'
       }).then(response => {
         return buildModelFromTable_(response?.table);
       });
@@ -1508,7 +1508,7 @@
       }
 
       const googleDateMatch = text.match(
-        /^Date(\d{4}),(\d{1,2}),(\d{1,2})(?:,(\d{1,2}),(\d{1,2}),(\d{1,2}))?$/
+        /^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,(\d{1,2}),(\d{1,2}),(\d{1,2}))?\)$/
       );
 
       if (googleDateMatch) {
@@ -2041,4 +2041,554 @@
         predictionSe <= 0
       ) {
         return null;
-     
+      }
+
+      const z = (salaryValue - p50) / predictionSe;
+      const percentile = normalCdf(z) * 100;
+
+      return Math.max(0, Math.min(100, percentile));
+    }
+
+    function formatBenchmarkPercentile(percentile) {
+      if (percentile < 1) {
+        return '&lt;1<sup>st</sup> percentile';
+      }
+
+      if (percentile > 99) {
+        return '&gt;99<sup>th</sup> percentile';
+      }
+
+      const ordinal = ordinalNumber(percentile);
+
+      const match = ordinal.match(
+        /^(\d+)(st|nd|rd|th)$/
+      );
+
+      if (!match) {
+        return `${ordinal} percentile`;
+      }
+
+      return (
+        `${match[1]}` +
+        `<sup>${match[2]}</sup> percentile`
+      );
+    }
+
+    function renderBenchmarkMarker(res, salary) {
+      const marker =
+        document.getElementById('userMarker');
+
+      const percentileText =
+        document.getElementById('userPercentile');
+
+      const percentile =
+        calculateBenchmarkPercentile(res, salary);
+
+      if (
+        percentile === null ||
+        !marker ||
+        !percentileText
+      ) {
+        if (marker) {
+          marker.hidden = true;
+        }
+
+        return;
+      }
+
+      /*
+       * The visible scale runs from the 5th percentile at the
+       * left edge to the 95th percentile at the right edge.
+       */
+      const rawPosition =
+        ((percentile - 5) / (95 - 5)) * 100;
+
+      const boundedPosition =
+        Math.max(0, Math.min(100, rawPosition));
+
+      marker.style.left = `${boundedPosition}%`;
+
+      marker.classList.toggle(
+        'edge-left',
+        boundedPosition <= 10
+      );
+
+      marker.classList.toggle(
+        'edge-right',
+        boundedPosition >= 90
+      );
+
+      percentileText.innerHTML =
+        formatBenchmarkPercentile(percentile);
+
+      marker.hidden = false;
+    }
+
+    function renderPercentileScale(res, animateNumbers = false) {
+      const [p05, p20, p50, p80, p95] =
+        [res.p05, res.p20, res.p50, res.p80, res.p95].map(Number);
+
+      const P_MIN = 5;
+      const P_MAX = 95;
+      const P_SPAN = P_MAX - P_MIN;
+
+      const posPct = p => ((p - P_MIN) / P_SPAN) * 100;
+      const token = ++numberAnimationToken;
+
+      document.querySelector('.t5').style.left = posPct(5) + '%';
+      document.querySelector('.t20').style.left = posPct(20) + '%';
+      document.querySelector('.t50').style.left = posPct(50) + '%';
+      document.querySelector('.t80').style.left = posPct(80) + '%';
+      document.querySelector('.t95').style.left = posPct(95) + '%';
+
+      animateNumber('p05v', p05, round0, animateNumbers, token);
+      animateNumber('p20v', p20, round0, animateNumbers, token);
+      animateNumber('p50v', p50, fmtDollarsInt, animateNumbers, token);
+      animateNumber('p80v', p80, round0, animateNumbers, token);
+      animateNumber('p95v', p95, round0, animateNumbers, token);
+    }
+
+    function loadModel() {
+      loadPermanentModel()
+        .then(() => {
+          document.getElementById('modelMeta').textContent =
+            'MLR (OLS) model loaded';
+
+          scheduleApplyScale();
+        })
+        .catch(err => {
+          document.getElementById('modelMeta').innerHTML =
+            '<span class="warn">Model error: ' +
+            cleanErrorMessage(err?.message) +
+            '</span>';
+
+          scheduleApplyScale();
+        });
+
+      loadFTEHours()
+        .then(value => {
+          fteHours = value;
+        })
+        .catch(err => {
+          console.warn(
+            'FTE hours fetch failed:',
+            err.message
+          );
+        });
+
+      loadWorkPatternMedians()
+        .then(({ sat, sun, late }) => {
+          document.getElementById('medianSat').textContent = sat;
+          document.getElementById('medianSun').textContent = sun;
+          document.getElementById('medianLate').textContent = late;
+
+          document.getElementById('workPatternNote').hidden = false;
+
+          scheduleApplyScale();
+        })
+        .catch(err => {
+          console.warn(
+            'Work-pattern medians fetch failed:',
+            err.message
+          );
+        });
+    }
+
+    function estimate() {
+      const years = parseFloat(
+        document.getElementById('years').value
+      );
+
+      const mmm = parseInt(
+        document.getElementById('mmm').value,
+        10
+      );
+
+      const state =
+        document.getElementById('state').value.trim();
+
+      const currentSalaryText =
+        document.getElementById('currentSalary').value.trim();
+
+      const enteredBenchmarkSalary =
+        currentSalaryText === ''
+          ? null
+          : Number(currentSalaryText);
+
+      const resultsEl =
+        document.getElementById('results');
+
+      const hadPreviousResults =
+        Boolean(lastRes);
+
+      /*
+       * Before the first calculation, show validation errors below
+       * Calculate. After results exist, replace the results divider
+       * with the error so nothing moves.
+       */
+      function showInputError(message) {
+        if (hadPreviousResults) {
+          setFormMessage();
+          setResultsMessage(message, true);
+        } else {
+          setFormMessage(message, true);
+        }
+      }
+
+      if (
+        !isFinite(years) ||
+        years < 0 ||
+        !isFinite(mmm) ||
+        mmm < 1 ||
+        mmm > 7 ||
+        !state
+      ) {
+        showInputError(
+          '⚠ Please complete all fields'
+        );
+
+        return;
+      }
+
+      if (
+        enteredBenchmarkSalary !== null &&
+        (
+          !Number.isFinite(enteredBenchmarkSalary) ||
+          enteredBenchmarkSalary <= 0
+        )
+      ) {
+        showInputError(
+          '⚠ Please enter valid FTE salary or leave blank'
+        );
+
+        return;
+      }
+
+      const payload = {
+        years: String(years),
+        mmm: String(mmm),
+        state
+      };
+
+      if (!hadPreviousResults) {
+        /*
+         * The first calculation has no visible results section yet,
+         * so show the status underneath the button.
+         */
+        resultsEl.style.display = 'none';
+
+        setFormMessage('Calculating…');
+      } else {
+        /*
+         * Keep the existing results stationary while recalculating.
+         */
+        setFormMessage();
+        setResultsMessage('Recalculating…');
+      }
+
+      estimateBtn.disabled = true;
+
+      scheduleApplyScale();
+
+      /*
+       * Re-read the Google Sheet and refit on every calculation,
+       * matching the previous backend behaviour.
+       */
+      loadPermanentModel()
+        .then(model => api_predict(payload, model))
+        .then(res => {
+          /*
+           * Restore the divider line before displaying the new values.
+           */
+          setResultsMessage();
+          setFormMessage();
+
+          resultsEl.style.display = 'block';
+
+          lastRes = res;
+          benchmarkSalary = enteredBenchmarkSalary;
+
+          /*
+           * Animate only when replacing existing displayed values.
+           */
+          updateView(hadPreviousResults);
+
+          estimateBtn.disabled = false;
+          estimateBtn.textContent = 'Recalculate';
+        })
+        .catch(err => {
+          const message =
+            '⚠ ' + cleanErrorMessage(err?.message);
+
+          if (hadPreviousResults) {
+            /*
+             * Keep the previous results stationary and show the error
+             * above them.
+             */
+            setFormMessage();
+            setResultsMessage(message, true);
+          } else {
+            /*
+             * No results exist yet, so show the error below Calculate.
+             */
+            setFormMessage(message, true);
+          }
+
+          estimateBtn.disabled = false;
+
+          estimateBtn.textContent = hadPreviousResults
+            ? 'Recalculate'
+            : 'Calculate';
+        });
+    }
+
+    document
+      .getElementById('estimateBtn')
+      .addEventListener('click', estimate);
+
+    toggleBtn.addEventListener('click', () => {
+      viewMode = viewMode === 'salary' ? 'hourly' : 'salary';
+      updateView();
+    });
+
+    document
+      .getElementById('currentSalary')
+      .addEventListener('input', event => {
+        const rawValue = event.target.value.trim();
+
+        if (rawValue === '') {
+          benchmarkSalary = null;
+
+          const marker =
+            document.getElementById('userMarker');
+
+          if (marker) {
+            marker.hidden = true;
+          }
+
+          return;
+        }
+
+        const value = Number(rawValue);
+
+        if (
+          Number.isFinite(value) &&
+          value > 0
+        ) {
+          benchmarkSalary = value;
+
+          if (lastRes) {
+            renderBenchmarkMarker(
+              lastRes,
+              benchmarkSalary
+            );
+          }
+        } else {
+          benchmarkSalary = null;
+
+          const marker =
+            document.getElementById('userMarker');
+
+          if (marker) {
+            marker.hidden = true;
+          }
+        }
+      });
+
+    const salaryHelpBtn =
+      document.getElementById('salaryHelpBtn');
+
+    const salaryHelpTooltip =
+      document.getElementById('salaryHelpTooltip');
+
+    let salaryHelpPinned = false;
+
+    /*
+     * Move the tooltip outside #app so its fixed positioning is
+     * relative to the visible iframe/web-app viewport.
+     */
+    document.body.appendChild(salaryHelpTooltip);
+
+    function positionSalaryHelp() {
+      const viewportMargin = 12;
+      const buttonGap = 8;
+
+      const buttonRect =
+        salaryHelpBtn.getBoundingClientRect();
+
+      /*
+       * Temporarily position at the origin so its rendered
+       * dimensions can be measured accurately.
+       */
+      salaryHelpTooltip.style.left = '0px';
+      salaryHelpTooltip.style.top = '0px';
+
+      const tooltipRect =
+        salaryHelpTooltip.getBoundingClientRect();
+
+      let left =
+        buttonRect.left +
+        buttonRect.width / 2 -
+        tooltipRect.width / 2;
+
+      left = Math.max(
+        viewportMargin,
+        Math.min(
+          left,
+          window.innerWidth -
+          tooltipRect.width -
+          viewportMargin
+        )
+      );
+
+      /*
+       * Prefer placing the tooltip below the question mark.
+       */
+      let top =
+        buttonRect.bottom +
+        buttonGap;
+
+      /*
+       * If it would be cut off at the bottom, place it above.
+       */
+      if (
+        top + tooltipRect.height >
+        window.innerHeight - viewportMargin
+      ) {
+        top =
+          buttonRect.top -
+          buttonGap -
+          tooltipRect.height;
+      }
+
+      /*
+       * Final safeguard to keep it entirely inside the viewport.
+       */
+      top = Math.max(
+        viewportMargin,
+        Math.min(
+          top,
+          window.innerHeight -
+          tooltipRect.height -
+          viewportMargin
+        )
+      );
+
+      salaryHelpTooltip.style.left =
+        `${Math.round(left)}px`;
+
+      salaryHelpTooltip.style.top =
+        `${Math.round(top)}px`;
+    }
+
+    function setSalaryHelpOpen(open) {
+      if (open) {
+        /*
+         * Position it while still hidden, then reveal it.
+         */
+        positionSalaryHelp();
+
+        salaryHelpTooltip.classList.add(
+          'is-visible'
+        );
+      } else {
+        salaryHelpTooltip.classList.remove(
+          'is-visible'
+        );
+      }
+
+      salaryHelpBtn.setAttribute(
+        'aria-expanded',
+        String(open)
+      );
+    }
+
+    function closeSalaryHelp(returnFocus = false) {
+      salaryHelpPinned = false;
+      setSalaryHelpOpen(false);
+
+      if (returnFocus) {
+        salaryHelpBtn.focus();
+      }
+    }
+
+    /* Hover support */
+    salaryHelpBtn.addEventListener('mouseenter', () => {
+      setSalaryHelpOpen(true);
+    });
+
+    salaryHelpBtn.addEventListener('mouseleave', () => {
+      if (!salaryHelpPinned) {
+        setSalaryHelpOpen(false);
+      }
+    });
+
+    /* Keyboard-focus support */
+    salaryHelpBtn.addEventListener('focus', () => {
+      setSalaryHelpOpen(true);
+    });
+
+    salaryHelpBtn.addEventListener('blur', () => {
+      if (!salaryHelpPinned) {
+        setSalaryHelpOpen(false);
+      }
+    });
+
+    /* Click/tap support */
+    salaryHelpBtn.addEventListener('click', event => {
+      event.stopPropagation();
+
+      salaryHelpPinned = !salaryHelpPinned;
+
+      setSalaryHelpOpen(salaryHelpPinned);
+    });
+
+    /* Clicking elsewhere closes a pinned tooltip */
+    document.addEventListener('click', event => {
+      if (
+        !salaryHelpBtn.contains(event.target)
+      ) {
+        closeSalaryHelp();
+      }
+    });
+
+    /* Escape closes it */
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        closeSalaryHelp();
+        salaryHelpBtn.blur();
+      }
+    });
+
+    /*
+     * Keep it inside the visible iframe if the viewport changes
+     * or the page is scrolled.
+     */
+    window.addEventListener('resize', () => {
+      if (
+        salaryHelpTooltip.classList.contains(
+          'is-visible'
+        )
+      ) {
+        positionSalaryHelp();
+      }
+    });
+
+    window.addEventListener(
+      'scroll',
+      () => {
+        if (
+          salaryHelpTooltip.classList.contains(
+            'is-visible'
+          )
+        ) {
+          positionSalaryHelp();
+        }
+      },
+      true
+    );
+
+    loadModel();
+  </script>
+</body>
+</html>
