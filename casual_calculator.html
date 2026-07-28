@@ -590,6 +590,9 @@
     const MMM_TREAT_AS_CATEGORICAL = false;
     const STATE_LEVELS = ['NSW', 'QLD', 'ACT', 'VIC', 'SA', 'NT', 'WA', 'TAS'];
 
+    const MS_PER_YEAR =
+      365.25 * 24 * 60 * 60 * 1000;
+
     const Z_TWO_SIDED_95 = 1.96;
 
     const Z_P05 = -1.64485;
@@ -797,7 +800,9 @@
 
     function loadGvizData() {
       return new Promise((resolve, reject) => {
-        const callbackName = `casualEstimatorSheetCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+        const callbackName =
+          `casualEstimatorSheetCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
         const script = document.createElement('script');
 
         const timeout = window.setTimeout(() => {
@@ -823,7 +828,13 @@
           cleanup();
 
           if (response?.status === 'error') {
-            reject(new Error(response?.errors?.[0]?.detailed_message || 'Could not load Google Sheet data'));
+            reject(
+              new Error(
+                response?.errors?.[0]?.detailed_message ||
+                'Could not load Google Sheet data'
+              )
+            );
+
             return;
           }
 
@@ -836,8 +847,8 @@
         };
 
         // Pull only the needed columns:
-        // B = rate, C = years, E = MMM, I = state.
-        const tq = 'select B,C,E,I where B is not null';
+        // A = timestamp, B = rate, C = years, E = MMM, I = state.
+        const tq = 'select A,B,C,E,I where B is not null';
 
         const params = new URLSearchParams({
           sheet: SHEET_NAME,
@@ -846,7 +857,10 @@
           tqx: `responseHandler:${callbackName}`
         });
 
-        script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+        script.src =
+          `https://docs.google.com/spreadsheets/d/` +
+          `${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+
         document.body.appendChild(script);
       });
     }
@@ -861,6 +875,16 @@
       return cell.v ?? cell.f ?? '';
     }
 
+    function getDateMsFromCell(cell) {
+      const rawMs = toDateMs(cell?.v);
+
+      if (Number.isFinite(rawMs)) {
+        return rawMs;
+      }
+
+      return toDateMs(cell?.f);
+    }
+
     function normaliseRowsFromGviz(response) {
       const rows = response?.table?.rows || [];
 
@@ -868,23 +892,30 @@
         const cells = row?.c || [];
 
         return {
-          rate: toNum(getCellRawValue(cells[0])),
-          yearsRaw: toNum(getCellRawValue(cells[1])),
-          mmm: toInt(getCellRawValue(cells[2])),
-          state: getCellDisplayValue(cells[3]).trim().toUpperCase()
+          timestampMs: getDateMsFromCell(cells[0]),
+          rate: toNum(getCellRawValue(cells[1])),
+          yearsRaw: toNum(getCellRawValue(cells[2])),
+          mmm: toInt(getCellRawValue(cells[3])),
+          state: getCellDisplayValue(cells[4]).trim().toUpperCase()
         };
       });
     }
 
     function loadModel() {
-      document.getElementById('modelMeta').textContent = 'Loading model…';
+      document.getElementById('modelMeta').textContent =
+        'Loading model…';
 
       loadGvizData()
         .then(response => {
-          const rawRows = normaliseRowsFromGviz(response);
-          cachedModel = buildModel(rawRows);
+          const rawRows =
+            normaliseRowsFromGviz(response);
 
-          document.getElementById('modelMeta').textContent = 'MLR (OLS) model loaded';
+          cachedModel =
+            buildModel(rawRows);
+
+          document.getElementById('modelMeta').textContent =
+            'MLR (OLS) model loaded';
+
           scheduleApplyScale();
         })
         .catch(err => {
@@ -991,7 +1022,11 @@
     
         resultsEl.style.display = 'block';
     
-        renderPercentileScale(res, hadPreviousResults);
+        renderPercentileScale(
+          res,
+          hadPreviousResults
+        );
+
         hasPreviousResults = true;
     
         scheduleApplyScale();
@@ -1023,6 +1058,7 @@
           : 'Calculate';
       }
     }
+
     /**********************
      * MODEL
      **********************/
@@ -1030,25 +1066,37 @@
       const rows = [];
 
       rawRows.forEach(r => {
-        const rate = toNum(r.rate);
+        const timestampMs =
+          toDateMs(r.timestampMs);
 
-        const yearsRaw = toNum(r.yearsRaw);
-        const yearsLog = Number.isFinite(yearsRaw) && yearsRaw >= 0
-          ? Math.log(1 + yearsRaw)
-          : NaN;
+        const rate =
+          toNum(r.rate);
 
-        const mmm = toInt(r.mmm);
-        const state = String(r.state ?? '').trim().toUpperCase();
+        const yearsRaw =
+          toNum(r.yearsRaw);
+
+        const yearsLog =
+          Number.isFinite(yearsRaw) && yearsRaw >= 0
+            ? Math.log(1 + yearsRaw)
+            : NaN;
+
+        const mmm =
+          toInt(r.mmm);
+
+        const state =
+          String(r.state ?? '').trim().toUpperCase();
 
         const numericOk =
-          [rate, yearsLog, mmm].every(Number.isFinite) &&
+          [timestampMs, rate, yearsLog, mmm].every(Number.isFinite) &&
           mmm >= 1 &&
           mmm <= 7;
 
-        const stateOk = STATE_LEVELS.includes(state);
+        const stateOk =
+          STATE_LEVELS.includes(state);
 
         if (numericOk && stateOk) {
           rows.push({
+            timestampMs,
             rate,
             years: yearsLog,
             mmm,
@@ -1058,65 +1106,132 @@
       });
 
       if (rows.length < 10) {
-        throw new Error('Not enough valid rows (need ≥10).');
+        throw new Error(
+          'Not enough valid rows (need ≥10).'
+        );
       }
+
+      /*
+       * Centre submission time around the average timestamp.
+       *
+       * 0 represents the average submission date.
+       * 1 represents approximately one year later.
+       * -1 represents approximately one year earlier.
+       */
+      const timeOriginMs =
+        rows.reduce(
+          (sum, row) => sum + row.timestampMs,
+          0
+        ) / rows.length;
+
+      rows.forEach(row => {
+        row.timeYears =
+          (
+            row.timestampMs -
+            timeOriginMs
+          ) / MS_PER_YEAR;
+      });
 
       const n = rows.length;
 
       const stateCounts = countBy(
-        rows.map(r => r.state).filter(s => s && s !== STATE_LEVELS[0])
+        rows
+          .map(r => r.state)
+          .filter(
+            s => s && s !== STATE_LEVELS[0]
+          )
       );
 
-      let stateKeep = sortKeysByCountDesc(stateCounts);
+      let stateKeep =
+        sortKeysByCountDesc(stateCounts);
 
       function baseP() {
-        return 1 + 1 + (MMM_TREAT_AS_CATEGORICAL ? 6 : 1);
+        return (
+          1 +
+          1 +
+          1 +
+          (MMM_TREAT_AS_CATEGORICAL ? 6 : 1)
+        );
       }
 
-      let p = baseP() + stateKeep.length;
+      let p =
+        baseP() + stateKeep.length;
 
-      while (n <= p && stateKeep.length > 0) {
+      while (
+        n <= p &&
+        stateKeep.length > 0
+      ) {
         stateKeep.pop();
         p = baseP() + stateKeep.length;
       }
 
       if (n <= p) {
-        throw new Error(`Insufficient data (n=${n}, p=${p}) after pruning states.`);
+        throw new Error(
+          `Insufficient data (n=${n}, p=${p}) after pruning states.`
+        );
       }
 
-      const designInfo = makeDesignInfo(stateKeep);
+      const designInfo =
+        makeDesignInfo(
+          stateKeep,
+          timeOriginMs
+        );
 
       const X = [];
       const y = [];
 
       rows.forEach(r => {
         y.push(r.rate);
-        X.push(buildXRow(r, designInfo));
+        X.push(
+          buildXRow(r, designInfo)
+        );
       });
 
       const nFinal = y.length;
       const pFinal = X[0].length;
 
       if (nFinal <= pFinal) {
-        throw new Error(`Insufficient data (n=${nFinal}, p=${pFinal}).`);
+        throw new Error(
+          `Insufficient data (n=${nFinal}, p=${pFinal}).`
+        );
       }
 
       const Xt = transpose(X);
       const XtX = multiply(Xt, X);
       const XtX_inv = invert(XtX);
       const Xty = multiplyVec(Xt, y);
-      const beta = multiplyMatVec(XtX_inv, Xty);
+      const beta = multiplyMatVec(
+        XtX_inv,
+        Xty
+      );
 
-      const yhat = X.map(row => dot(row, beta));
-      const resid = y.map((v, i) => v - yhat[i]);
+      const yhat =
+        X.map(row => dot(row, beta));
 
-      const sse = dot(resid, resid);
-      const ybar = y.reduce((a, b) => a + b, 0) / n;
-      const sst = y.reduce((acc, v) => acc + Math.pow(v - ybar, 2), 0);
+      const resid =
+        y.map((v, i) => v - yhat[i]);
 
-      const r2 = 1 - (sse / sst);
-      const df = n - p;
-      const s2 = sse / df;
+      const sse =
+        dot(resid, resid);
+
+      const ybar =
+        y.reduce((a, b) => a + b, 0) / n;
+
+      const sst =
+        y.reduce(
+          (acc, v) =>
+            acc + Math.pow(v - ybar, 2),
+          0
+        );
+
+      const r2 =
+        1 - (sse / sst);
+
+      const df =
+        n - p;
+
+      const s2 =
+        sse / df;
 
       return {
         beta,
@@ -1131,21 +1246,48 @@
     }
 
     function predict(input, model) {
-      const x0 = buildX0(input, model.designInfo);
+      const x0 =
+        buildX0(
+          input,
+          model.designInfo
+        );
 
-      const yhat = dot(x0, model.beta);
-      const h = quadForm(model.XtX_inv, x0);
+      const yhat =
+        dot(x0, model.beta);
 
-      const se_pred = Math.sqrt(model.s2 * (1 + h));
+      const h =
+        quadForm(
+          model.XtX_inv,
+          x0
+        );
 
-      const p05 = yhat + Z_P05 * se_pred;
-      const p20 = yhat + Z_P20 * se_pred;
-      const p50 = yhat + Z_P50 * se_pred;
-      const p80 = yhat + Z_P80 * se_pred;
-      const p95 = yhat + Z_P95 * se_pred;
+      const se_pred =
+        Math.sqrt(
+          model.s2 * (1 + h)
+        );
 
-      const predLo = yhat - Z_TWO_SIDED_95 * se_pred;
-      const predHi = yhat + Z_TWO_SIDED_95 * se_pred;
+      const p05 =
+        yhat + Z_P05 * se_pred;
+
+      const p20 =
+        yhat + Z_P20 * se_pred;
+
+      const p50 =
+        yhat + Z_P50 * se_pred;
+
+      const p80 =
+        yhat + Z_P80 * se_pred;
+
+      const p95 =
+        yhat + Z_P95 * se_pred;
+
+      const predLo =
+        yhat -
+        Z_TWO_SIDED_95 * se_pred;
+
+      const predHi =
+        yhat +
+        Z_TWO_SIDED_95 * se_pred;
 
       return {
         yhat,
@@ -1161,8 +1303,15 @@
       };
     }
 
-    function makeDesignInfo(stateKeep) {
-      const terms = ['Intercept', 'logYears'];
+    function makeDesignInfo(
+      stateKeep,
+      timeOriginMs
+    ) {
+      const terms = [
+        'Intercept',
+        'logYears',
+        'timeYears'
+      ];
 
       if (MMM_TREAT_AS_CATEGORICAL) {
         for (let k = 2; k <= 7; k++) {
@@ -1172,8 +1321,11 @@
         terms.push('MMM_ordinal');
       }
 
-      const stateRef = STATE_LEVELS[0];
-      const stateDummies = (stateKeep || []).slice();
+      const stateRef =
+        STATE_LEVELS[0];
+
+      const stateDummies =
+        (stateKeep || []).slice();
 
       stateDummies.forEach(s => {
         terms.push(`State_${s}`);
@@ -1181,54 +1333,107 @@
 
       return {
         terms,
-        mmmCategorical: MMM_TREAT_AS_CATEGORICAL,
+        timeOriginMs,
+        mmmCategorical:
+          MMM_TREAT_AS_CATEGORICAL,
         stateRef,
         stateDummies
       };
     }
 
-    function buildXRow(r, designInfo) {
-      const row = [1, r.years];
+    function buildXRow(
+      r,
+      designInfo
+    ) {
+      const row = [
+        1,
+        r.years,
+        r.timeYears
+      ];
 
       if (designInfo.mmmCategorical) {
         for (let k = 2; k <= 7; k++) {
-          row.push(r.mmm === k ? 1 : 0);
+          row.push(
+            r.mmm === k ? 1 : 0
+          );
         }
       } else {
         row.push(r.mmm);
       }
 
       designInfo.stateDummies.forEach(s => {
-        row.push(r.state === s ? 1 : 0);
+        row.push(
+          r.state === s ? 1 : 0
+        );
       });
 
       return row;
     }
 
-    function buildX0(input, designInfo) {
-      const yearsRaw = toNum(input.years);
-      const yearsLog = Number.isFinite(yearsRaw) && yearsRaw >= 0
-        ? Math.log(1 + yearsRaw)
-        : NaN;
+    function buildX0(
+      input,
+      designInfo
+    ) {
+      const yearsRaw =
+        toNum(input.years);
 
-      const mmm = Math.max(1, Math.min(7, Math.round(toNum(input.mmm))));
+      const yearsLog =
+        Number.isFinite(yearsRaw) &&
+        yearsRaw >= 0
+          ? Math.log(1 + yearsRaw)
+          : NaN;
 
-      const stateIn = String(input.state || designInfo.stateRef)
-        .trim()
-        .toUpperCase();
+      const mmm =
+        Math.max(
+          1,
+          Math.min(
+            7,
+            Math.round(
+              toNum(input.mmm)
+            )
+          )
+        );
 
-      const row = [1, yearsLog];
+      const stateIn =
+        String(
+          input.state ||
+          designInfo.stateRef
+        )
+          .trim()
+          .toUpperCase();
+
+      /*
+       * New calculator estimates are predicted for the current date.
+       */
+      const predictionTimestampMs =
+        Date.now();
+
+      const timeYears =
+        (
+          predictionTimestampMs -
+          designInfo.timeOriginMs
+        ) / MS_PER_YEAR;
+
+      const row = [
+        1,
+        yearsLog,
+        timeYears
+      ];
 
       if (designInfo.mmmCategorical) {
         for (let k = 2; k <= 7; k++) {
-          row.push(mmm === k ? 1 : 0);
+          row.push(
+            mmm === k ? 1 : 0
+          );
         }
       } else {
         row.push(mmm);
       }
 
       designInfo.stateDummies.forEach(s => {
-        row.push(stateIn === s ? 1 : 0);
+        row.push(
+          stateIn === s ? 1 : 0
+        );
       });
 
       return row;
@@ -1238,17 +1443,139 @@
      * MATRIX HELPERS
      **********************/
     function toNum(v) {
-      const n = typeof v === 'string' ? parseFloat(v) : Number(v);
-      return Number.isFinite(n) ? n : NaN;
+      const n =
+        typeof v === 'string'
+          ? parseFloat(v)
+          : Number(v);
+
+      return Number.isFinite(n)
+        ? n
+        : NaN;
     }
 
     function toInt(v) {
-      const n = typeof v === 'string' ? parseInt(v, 10) : Math.floor(Number(v));
-      return Number.isFinite(n) ? n : NaN;
+      const n =
+        typeof v === 'string'
+          ? parseInt(v, 10)
+          : Math.floor(Number(v));
+
+      return Number.isFinite(n)
+        ? n
+        : NaN;
+    }
+
+    function toDateMs(v) {
+      if (v instanceof Date) {
+        const ms = v.getTime();
+
+        return Number.isFinite(ms)
+          ? ms
+          : NaN;
+      }
+
+      if (
+        typeof v === 'number' &&
+        Number.isFinite(v)
+      ) {
+        if (v > 100000000000) {
+          return v;
+        }
+
+        if (v > 0) {
+          return (
+            Date.UTC(1899, 11, 30) +
+            v * 24 * 60 * 60 * 1000
+          );
+        }
+
+        return NaN;
+      }
+
+      const text =
+        String(v ?? '').trim();
+
+      if (!text) {
+        return NaN;
+      }
+
+      const googleDateMatch =
+        text.match(
+          /^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,(\d{1,2}),(\d{1,2}),(\d{1,2}))?\)$/
+        );
+
+      if (googleDateMatch) {
+        return Date.UTC(
+          Number(googleDateMatch[1]),
+          Number(googleDateMatch[2]),
+          Number(googleDateMatch[3]),
+          Number(googleDateMatch[4] || 0),
+          Number(googleDateMatch[5] || 0),
+          Number(googleDateMatch[6] || 0)
+        );
+      }
+
+      const australianDateMatch =
+        text.match(
+          /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+        );
+
+      if (australianDateMatch) {
+        const day =
+          Number(australianDateMatch[1]);
+
+        const month =
+          Number(australianDateMatch[2]);
+
+        const year =
+          Number(australianDateMatch[3]);
+
+        const hour =
+          Number(australianDateMatch[4] || 0);
+
+        const minute =
+          Number(australianDateMatch[5] || 0);
+
+        const second =
+          Number(australianDateMatch[6] || 0);
+
+        const ms =
+          Date.UTC(
+            year,
+            month - 1,
+            day,
+            hour,
+            minute,
+            second
+          );
+
+        const parsed =
+          new Date(ms);
+
+        const valid =
+          parsed.getUTCFullYear() === year &&
+          parsed.getUTCMonth() === month - 1 &&
+          parsed.getUTCDate() === day &&
+          parsed.getUTCHours() === hour &&
+          parsed.getUTCMinutes() === minute &&
+          parsed.getUTCSeconds() === second;
+
+        return valid
+          ? ms
+          : NaN;
+      }
+
+      const parsedMs =
+        Date.parse(text);
+
+      return Number.isFinite(parsedMs)
+        ? parsedMs
+        : NaN;
     }
 
     function transpose(A) {
-      return A[0].map((_, i) => A.map(r => r[i]));
+      return A[0].map(
+        (_, i) => A.map(r => r[i])
+      );
     }
 
     function multiply(A, B) {
@@ -1256,14 +1583,18 @@
       const c = B[0].length;
       const m = B.length;
 
-      const out = Array.from({ length: r }, () => Array(c).fill(0));
+      const out = Array.from(
+        { length: r },
+        () => Array(c).fill(0)
+      );
 
       for (let i = 0; i < r; i++) {
         for (let k = 0; k < m; k++) {
           const aik = A[i][k];
 
           for (let j = 0; j < c; j++) {
-            out[i][j] += aik * B[k][j];
+            out[i][j] +=
+              aik * B[k][j];
           }
         }
       }
@@ -1275,7 +1606,8 @@
       const r = A.length;
       const c = A[0].length;
 
-      const out = Array(r).fill(0);
+      const out =
+        Array(r).fill(0);
 
       for (let i = 0; i < r; i++) {
         let s = 0;
@@ -1305,7 +1637,10 @@
     }
 
     function identity(n) {
-      const I = Array.from({ length: n }, () => Array(n).fill(0));
+      const I = Array.from(
+        { length: n },
+        () => Array(n).fill(0)
+      );
 
       for (let i = 0; i < n; i++) {
         I[i][i] = 1;
@@ -1321,10 +1656,12 @@
 
       for (let c = 0; c < n; c++) {
         let pivot = c;
-        let maxAbs = Math.abs(M[c][c]);
+        let maxAbs =
+          Math.abs(M[c][c]);
 
         for (let r = c + 1; r < n; r++) {
-          const v = Math.abs(M[r][c]);
+          const v =
+            Math.abs(M[r][c]);
 
           if (v > maxAbs) {
             maxAbs = v;
@@ -1333,15 +1670,21 @@
         }
 
         if (maxAbs === 0) {
-          throw new Error('Design matrix is singular (perfect multicollinearity).');
+          throw new Error(
+            'Design matrix is singular (perfect multicollinearity).'
+          );
         }
 
         if (pivot !== c) {
-          [M[c], M[pivot]] = [M[pivot], M[c]];
-          [I[c], I[pivot]] = [I[pivot], I[c]];
+          [M[c], M[pivot]] =
+            [M[pivot], M[c]];
+
+          [I[c], I[pivot]] =
+            [I[pivot], I[c]];
         }
 
-        const diag = M[c][c];
+        const diag =
+          M[c][c];
 
         for (let j = 0; j < n; j++) {
           M[c][j] /= diag;
@@ -1350,11 +1693,15 @@
 
         for (let r = 0; r < n; r++) {
           if (r !== c) {
-            const f = M[r][c];
+            const f =
+              M[r][c];
 
             for (let j = 0; j < n; j++) {
-              M[r][j] -= f * M[c][j];
-              I[r][j] -= f * I[c][j];
+              M[r][j] -=
+                f * M[c][j];
+
+              I[r][j] -=
+                f * I[c][j];
             }
           }
         }
@@ -1363,26 +1710,44 @@
       return I;
     }
 
-    function quadForm(invXtX, x) {
-      const tmp = multiplyMatVec(invXtX, x);
+    function quadForm(
+      invXtX,
+      x
+    ) {
+      const tmp =
+        multiplyMatVec(
+          invXtX,
+          x
+        );
+
       return dot(x, tmp);
     }
 
     function countBy(arr) {
-      const c = Object.create(null);
+      const c =
+        Object.create(null);
 
       arr.forEach(v => {
-        c[v] = (c[v] || 0) + 1;
+        c[v] =
+          (c[v] || 0) + 1;
       });
 
       return c;
     }
 
     function sortKeysByCountDesc(counts) {
-      return Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+      return Object.keys(counts).sort(
+        (a, b) =>
+          counts[b] - counts[a]
+      );
     }
 
-    document.getElementById('estimateBtn').addEventListener('click', estimate);
+    document
+      .getElementById('estimateBtn')
+      .addEventListener(
+        'click',
+        estimate
+      );
 
     loadModel();
   </script>
