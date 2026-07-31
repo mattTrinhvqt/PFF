@@ -239,7 +239,8 @@
       bottom: auto;
       left: 0;
       display: block;
-      width: 100% !important;
+      width: 100%;
+      touch-action: manipulation;
       height: 585px !important;
       min-height: 585px !important;
       max-height: 585px !important;
@@ -282,16 +283,16 @@
       }
 
       .chart-shell {
-        height: 585px;
-        min-height: 585px;
-        max-height: 585px;
-        flex-basis: 585px;
+        height: 450px;
+        min-height: 450px;
+        max-height: 450px;
+        flex-basis: 450px;
       }
 
       #promoterChart {
-        height: 585px !important;
-        min-height: 585px !important;
-        max-height: 585px !important;
+        height: 450px !important;
+        min-height: 450px !important;
+        max-height: 450px !important;
       }
     }
 
@@ -306,16 +307,16 @@
       }
 
       .chart-shell {
-        height: 585px;
-        min-height: 585px;
-        max-height: 585px;
-        flex-basis: 585px;
+        height: 420px;
+        min-height: 420px;
+        max-height: 420px;
+        flex-basis: 420px;
       }
 
       #promoterChart {
-        height: 585px !important;
-        min-height: 585px !important;
-        max-height: 585px !important;
+        height: 420px !important;
+        min-height: 420px !important;
+        max-height: 420px !important;
       }
     }
 
@@ -467,7 +468,7 @@
       0.98;
 
     const RAW_POINT_RADIUS =
-      4.8;
+      3.8;
 
     /*
      * Initial rise happens once.
@@ -487,6 +488,29 @@
      */
     const HOVER_ANIMATION_MS =
       170;
+
+    /*
+     * Maximum interval between two clicks or taps for splitting.
+     */
+    const DOUBLE_ACTIVATION_MS =
+      420;
+
+    /*
+     * Aggregate bubbles become more transparent whenever at
+     * least one employer is displaying raw scores.
+     */
+    const DIMMED_AGGREGATE_OPACITY =
+      0.50;
+
+    const DIMMED_AGGREGATE_HOVER_OPACITY =
+      0.62;
+
+    /*
+     * Employer labels fade proportionally with the aggregate
+     * bubbles whenever raw scores are displayed.
+     */
+    const DIMMED_AGGREGATE_LABEL_OPACITY =
+      0.55;
 
 
     /************************************************************
@@ -521,6 +545,23 @@
       null;
 
     let mergeProgress =
+      0;
+
+    /*
+     * 0 = normal aggregate opacity
+     * 1 = fully dimmed aggregate opacity
+     */
+    let aggregateDimProgress =
+      0;
+
+    /*
+     * Used to distinguish a single click/tap from a second
+     * click/tap on the same aggregate bubble.
+     */
+    let lastAggregateClickKey =
+      null;
+
+    let lastAggregateClickTime =
       0;
 
     const splitEmployers =
@@ -2193,6 +2234,130 @@
 
 
     /************************************************************
+     * Y-AXIS DESCRIPTIONS
+     ************************************************************/
+
+    const axisDescriptionPlugin = {
+      id:
+        'axisDescriptionPlugin',
+
+
+      afterDraw(
+        chart
+      ) {
+        const yScale =
+          chart.scales.y;
+
+
+        if (
+          !yScale
+        ) {
+          return;
+        }
+
+
+        const context =
+          chart.ctx;
+
+        const tickLength =
+          Number(
+            yScale.options
+              .grid
+              ?.tickLength ??
+            0
+          );
+
+        const tickPadding =
+          Number(
+            yScale.options
+              .ticks
+              ?.padding ??
+            0
+          );
+
+
+        /*
+         * Position the descriptions against the same right edge
+         * as the normal numerical tick labels.
+         */
+        const textX =
+          yScale.right -
+          tickLength -
+          tickPadding +
+          1;
+
+
+        const descriptions = [
+          {
+            value:
+              0,
+
+            text:
+              '(not at all)',
+
+            offsetY:
+              -13
+          },
+
+          {
+            value:
+              5,
+
+            text:
+              '(unsure)',
+
+            offsetY:
+              13
+          },
+
+          {
+            value:
+              10,
+
+            text:
+              '(extremely)',
+
+            offsetY:
+              13
+          }
+        ];
+
+
+        context.save();
+
+        context.font =
+          '400 10px Lato, sans-serif';
+
+        context.fillStyle =
+          '#69718a';
+
+        context.textAlign =
+          'right';
+
+        context.textBaseline =
+          'middle';
+
+
+        descriptions.forEach(
+          description => {
+            context.fillText(
+              description.text,
+              textX,
+              yScale.getPixelForValue(
+                description.value
+              ) +
+              description.offsetY
+            );
+          }
+        );
+
+
+        context.restore();
+      }
+    };
+
+
+    /************************************************************
      * BUBBLE LABELS
      ************************************************************/
 
@@ -2253,6 +2418,19 @@
                 raw.canonicalKey
               );
 
+            /*
+             * Gradually fade all remaining aggregate labels while
+             * raw scores are displayed, then restore them during
+             * re-aggregation.
+             */
+            const labelOpacity =
+              1 +
+              (
+                DIMMED_AGGREGATE_LABEL_OPACITY -
+                1
+              ) *
+              aggregateDimProgress;
+
 
             if (
               visibility <=
@@ -2288,7 +2466,8 @@
             context.save();
 
             context.globalAlpha =
-              visibility;
+              visibility *
+              labelOpacity;
 
             context.textAlign =
               'center';
@@ -2454,6 +2633,14 @@
       }
 
 
+      /*
+       * Only the first split needs to dim all aggregate bubbles.
+       * Additional splits begin while they are already dimmed.
+       */
+      const shouldAnimateAggregateDimming =
+        splitEmployers.size ===
+        0;
+
       interactionLocked =
         true;
 
@@ -2520,6 +2707,13 @@
             progress
           );
 
+          if (
+            shouldAnimateAggregateDimming
+          ) {
+            aggregateDimProgress =
+              progress;
+          }
+
 
           newPoints.forEach(
             point => {
@@ -2562,6 +2756,13 @@
           splitProgress.delete(
             employerKey
           );
+
+          if (
+            shouldAnimateAggregateDimming
+          ) {
+            aggregateDimProgress =
+              1;
+          }
 
 
           promoterChart.update(
@@ -2658,6 +2859,13 @@
           mergeProgress =
             progress;
 
+          /*
+           * Gradually return aggregate bubbles to normal opacity.
+           */
+          aggregateDimProgress =
+            1 -
+            progress;
+
 
           rawDisplayPoints.forEach(
             point => {
@@ -2708,6 +2916,9 @@
           mergeProgress =
             0;
 
+          aggregateDimProgress =
+            0;
+
 
           promoterChart.update(
             'none'
@@ -2742,7 +2953,15 @@
         canvas.parentElement;
 
       const fixedChartHeight =
-        585;
+        window.matchMedia(
+          '(max-width: 350px)'
+        ).matches
+          ? 420
+          : window.matchMedia(
+              '(max-width: 430px)'
+            ).matches
+              ? 450
+              : 585;
 
       const fixedChartWidth =
         Math.max(
@@ -2868,12 +3087,20 @@
                           )
                         : 0;
 
+                    const opacity =
+                      BUBBLE_OPACITY +
+                      (
+                        DIMMED_AGGREGATE_OPACITY -
+                        BUBBLE_OPACITY
+                      ) *
+                      aggregateDimProgress;
+
 
                     return hexToRgba(
                       raw?.colour ||
                       '#777777',
 
-                      BUBBLE_OPACITY *
+                      opacity *
                       visibility
                     );
                   },
@@ -2892,12 +3119,20 @@
                           )
                         : 0;
 
+                    const opacity =
+                      BUBBLE_HOVER_OPACITY +
+                      (
+                        DIMMED_AGGREGATE_HOVER_OPACITY -
+                        BUBBLE_HOVER_OPACITY
+                      ) *
+                      aggregateDimProgress;
+
 
                     return hexToRgba(
                       raw?.colour ||
                       '#777777',
 
-                      BUBBLE_HOVER_OPACITY *
+                      opacity *
                       visibility
                     );
                   },
@@ -2965,7 +3200,7 @@
 
                     return (
                       radius +
-                      1.1
+                      0.7
                     );
                   },
 
@@ -3024,11 +3259,11 @@
                 false,
 
               /*
-               * Render at twice the displayed resolution for
-               * sharper text, circles, gridlines and axes.
+               * Match high-density screens while limiting the
+               * maximum resolution to avoid excessive memory use.
                */
               devicePixelRatio:
-                2,
+                4,
 
 
               /*
@@ -3093,8 +3328,16 @@
                   bottom:
                     0,
 
+                  /*
+                   * Moves the y-axis and plotting area right so
+                   * the descriptive labels remain inside the canvas.
+                   */
                   left:
-                    0
+                    window.matchMedia(
+                      '(max-width: 430px)'
+                    ).matches
+                      ? 32
+                      : 36
                 }
               },
 
@@ -3164,23 +3407,13 @@
                 const selectedElement =
                   elements[0];
 
-
-                /*
-                 * Raw points are hoverable but not clickable.
-                 */
-                if (
-                  selectedElement
-                    .datasetIndex !==
-                  0
-                ) {
-                  return;
-                }
-
-
                 const point =
                   chart
                     .data
-                    .datasets[0]
+                    .datasets[
+                      selectedElement
+                        .datasetIndex
+                    ]
                     ?.data
                     ?.[
                       selectedElement
@@ -3188,7 +3421,72 @@
                     ];
 
 
+                const renderedElement =
+                  chart
+                    .getDatasetMeta(
+                      selectedElement
+                        .datasetIndex
+                    )
+                    ?.data
+                    ?.[
+                      selectedElement
+                        .index
+                    ];
+
+
+                /*
+                 * One click or tap displays and retains the tooltip.
+                 * This also works for raw-score points.
+                 */
+                chart.tooltip
+                  .setActiveElements(
+                    [
+                      {
+                        datasetIndex:
+                          selectedElement
+                            .datasetIndex,
+
+                        index:
+                          selectedElement
+                            .index
+                      }
+                    ],
+
+                    {
+                      x:
+                        Number.isFinite(
+                          event.x
+                        )
+                          ? event.x
+                          : renderedElement
+                              ?.x ??
+                            0,
+
+                      y:
+                        Number.isFinite(
+                          event.y
+                        )
+                          ? event.y
+                          : renderedElement
+                              ?.y ??
+                            0
+                    }
+                  );
+
+
+                chart.update(
+                  'none'
+                );
+
+
+                /*
+                 * Only aggregate bubbles can be split. Raw bubbles
+                 * retain normal single-tap tooltip behaviour.
+                 */
                 if (
+                  selectedElement
+                    .datasetIndex !==
+                    0 ||
                   point?.kind !==
                     'aggregate' ||
                   !point.canSplit ||
@@ -3196,15 +3494,75 @@
                     point.canonicalKey
                   )
                 ) {
+                  lastAggregateClickKey =
+                    null;
+
+                  lastAggregateClickTime =
+                    0;
+
                   return;
                 }
 
 
-                animateEmployerSplit(
-                  point.canonicalKey
-                );
-              },
+                const clickedAt =
+                  performance.now();
 
+                const isSecondActivation =
+                  lastAggregateClickKey ===
+                    point.canonicalKey &&
+                  (
+                    clickedAt -
+                    lastAggregateClickTime
+                  ) <=
+                    DOUBLE_ACTIVATION_MS;
+
+
+                if (
+                  isSecondActivation
+                ) {
+                  lastAggregateClickKey =
+                    null;
+
+                  lastAggregateClickTime =
+                    0;
+
+
+                  chart.tooltip
+                    .setActiveElements(
+                      [],
+                      {
+                        x:
+                          0,
+
+                        y:
+                          0
+                      }
+                    );
+
+
+                  chart.update(
+                    'none'
+                  );
+
+
+                  animateEmployerSplit(
+                    point.canonicalKey
+                  );
+
+                  return;
+                }
+
+
+                /*
+                 * This was the first click or tap. Keep the tooltip
+                 * open and wait to see whether another follows.
+                 */
+                lastAggregateClickKey =
+                  point.canonicalKey;
+
+                lastAggregateClickTime =
+                  clickedAt;
+              },
 
               plugins: {
                 legend: {
@@ -3321,7 +3679,7 @@
                         `Median score: ${formatStatistic(raw?.targetY)}`,
                         `Respondents: ${formatNumber(raw?.respondents ?? 0)}`,
                         raw?.canSplit
-                          ? 'Click to show raw scores'
+                          ? 'Double-tap for raw scores'
                           : ''
                       ].filter(
                         Boolean
@@ -3371,7 +3729,7 @@
                       true,
 
                     text:
-                      'Score',
+                      '\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0Score',
 
                     color:
                       '#151515',
@@ -3389,7 +3747,7 @@
 
                     padding: {
                       bottom:
-                        3
+                        0
                     }
                   },
 
@@ -3400,9 +3758,9 @@
 
                     color:
                       '#151515',
-
+                    
                     padding:
-                      5,
+                      2,
 
                     autoSkip:
                       false,
@@ -3428,44 +3786,10 @@
                     callback(
                       value
                     ) {
-                      const number =
+                      return String(
                         Number(
                           value
-                        );
-
-
-                      if (
-                        number ===
-                        0
-                      ) {
-                        return (
-                          '(not at all) 0'
-                        );
-                      }
-
-
-                      if (
-                        number ===
-                        5
-                      ) {
-                        return (
-                          '(unsure) 5'
-                        );
-                      }
-
-
-                      if (
-                        number ===
-                        10
-                      ) {
-                        return (
-                          '(extremely) 10'
-                        );
-                      }
-
-
-                      return String(
-                        number
+                        )
                       );
                     }
                   },
@@ -3508,6 +3832,7 @@
 
 
             plugins: [
+              axisDescriptionPlugin,
               bubbleLabelPlugin
             ]
           }
