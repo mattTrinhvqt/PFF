@@ -488,6 +488,22 @@
     const HOVER_ANIMATION_MS =
       170;
 
+    /*
+     * Maximum interval between two clicks or taps for splitting.
+     */
+    const DOUBLE_ACTIVATION_MS =
+      420;
+
+    /*
+     * Aggregate bubbles become more transparent whenever at
+     * least one employer is displaying raw scores.
+     */
+    const DIMMED_AGGREGATE_OPACITY =
+      0.50;
+
+    const DIMMED_AGGREGATE_HOVER_OPACITY =
+      0.62;
+
 
     /************************************************************
      * STATE
@@ -521,6 +537,16 @@
       null;
 
     let mergeProgress =
+      0;
+
+    /*
+     * Used to distinguish a single click/tap from a second
+     * click/tap on the same aggregate bubble.
+     */
+    let lastAggregateClickKey =
+      null;
+
+    let lastAggregateClickTime =
       0;
 
     const splitEmployers =
@@ -3000,12 +3026,23 @@
                           )
                         : 0;
 
+                    const anyEmployerSplit =
+                      splitEmployers.size >
+                        0 ||
+                      mergingEmployers.size >
+                        0;
+
+                    const opacity =
+                      anyEmployerSplit
+                        ? DIMMED_AGGREGATE_OPACITY
+                        : BUBBLE_OPACITY;
+
 
                     return hexToRgba(
                       raw?.colour ||
                       '#777777',
 
-                      BUBBLE_OPACITY *
+                      opacity *
                       visibility
                     );
                   },
@@ -3024,12 +3061,23 @@
                           )
                         : 0;
 
+                    const anyEmployerSplit =
+                      splitEmployers.size >
+                        0 ||
+                      mergingEmployers.size >
+                        0;
+
+                    const opacity =
+                      anyEmployerSplit
+                        ? DIMMED_AGGREGATE_HOVER_OPACITY
+                        : BUBBLE_HOVER_OPACITY;
+
 
                     return hexToRgba(
                       raw?.colour ||
                       '#777777',
 
-                      BUBBLE_HOVER_OPACITY *
+                      opacity *
                       visibility
                     );
                   },
@@ -3304,23 +3352,13 @@
                 const selectedElement =
                   elements[0];
 
-
-                /*
-                 * Raw points are hoverable but not clickable.
-                 */
-                if (
-                  selectedElement
-                    .datasetIndex !==
-                  0
-                ) {
-                  return;
-                }
-
-
                 const point =
                   chart
                     .data
-                    .datasets[0]
+                    .datasets[
+                      selectedElement
+                        .datasetIndex
+                    ]
                     ?.data
                     ?.[
                       selectedElement
@@ -3328,7 +3366,72 @@
                     ];
 
 
+                const renderedElement =
+                  chart
+                    .getDatasetMeta(
+                      selectedElement
+                        .datasetIndex
+                    )
+                    ?.data
+                    ?.[
+                      selectedElement
+                        .index
+                    ];
+
+
+                /*
+                 * One click or tap displays and retains the tooltip.
+                 * This also works for raw-score points.
+                 */
+                chart.tooltip
+                  .setActiveElements(
+                    [
+                      {
+                        datasetIndex:
+                          selectedElement
+                            .datasetIndex,
+
+                        index:
+                          selectedElement
+                            .index
+                      }
+                    ],
+
+                    {
+                      x:
+                        Number.isFinite(
+                          event.x
+                        )
+                          ? event.x
+                          : renderedElement
+                              ?.x ??
+                            0,
+
+                      y:
+                        Number.isFinite(
+                          event.y
+                        )
+                          ? event.y
+                          : renderedElement
+                              ?.y ??
+                            0
+                    }
+                  );
+
+
+                chart.update(
+                  'none'
+                );
+
+
+                /*
+                 * Only aggregate bubbles can be split. Raw bubbles
+                 * retain normal single-tap tooltip behaviour.
+                 */
                 if (
+                  selectedElement
+                    .datasetIndex !==
+                    0 ||
                   point?.kind !==
                     'aggregate' ||
                   !point.canSplit ||
@@ -3336,15 +3439,75 @@
                     point.canonicalKey
                   )
                 ) {
+                  lastAggregateClickKey =
+                    null;
+
+                  lastAggregateClickTime =
+                    0;
+
                   return;
                 }
 
 
-                animateEmployerSplit(
-                  point.canonicalKey
-                );
-              },
+                const clickedAt =
+                  performance.now();
 
+                const isSecondActivation =
+                  lastAggregateClickKey ===
+                    point.canonicalKey &&
+                  (
+                    clickedAt -
+                    lastAggregateClickTime
+                  ) <=
+                    DOUBLE_ACTIVATION_MS;
+
+
+                if (
+                  isSecondActivation
+                ) {
+                  lastAggregateClickKey =
+                    null;
+
+                  lastAggregateClickTime =
+                    0;
+
+
+                  chart.tooltip
+                    .setActiveElements(
+                      [],
+                      {
+                        x:
+                          0,
+
+                        y:
+                          0
+                      }
+                    );
+
+
+                  chart.update(
+                    'none'
+                  );
+
+
+                  animateEmployerSplit(
+                    point.canonicalKey
+                  );
+
+                  return;
+                }
+
+
+                /*
+                 * This was the first click or tap. Keep the tooltip
+                 * open and wait to see whether another follows.
+                 */
+                lastAggregateClickKey =
+                  point.canonicalKey;
+
+                lastAggregateClickTime =
+                  clickedAt;
+              },
 
               plugins: {
                 legend: {
