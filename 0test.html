@@ -579,6 +579,9 @@
     let aggregatePositions =
       new Map();
 
+    let payPositions =
+      new Map();
+
     let rawEmployerData =
       new Map();
 
@@ -1091,6 +1094,14 @@
               )
             );
 
+      return Number.isFinite(
+        number
+      )
+        ? number
+        : NaN;
+    }
+
+
     function toPercentage(
       value
     ) {
@@ -1116,8 +1127,6 @@
           ? number * 100
           : number;
     }
-
-
     function clamp(
       value,
       minimum,
@@ -1712,7 +1721,92 @@
         }
       );
 
+    function normalisePayRows(
+      rows
+    ) {
+      const employers =
+        new Map();
 
+
+      rows.forEach(
+        row => {
+          const employerName =
+            String(
+              getCellValue(
+                row?.c?.[0]
+              ) || ''
+            ).trim();
+
+          const percentage =
+            toPercentage(
+              getCellValue(
+                row?.c?.[1]
+              )
+            );
+
+          const respondents =
+            toNumber(
+              getCellValue(
+                row?.c?.[2]
+              )
+            );
+
+
+          if (
+            !employerName ||
+            !Number.isFinite(
+              percentage
+            ) ||
+            percentage < 0 ||
+            percentage > 100 ||
+            !Number.isFinite(
+              respondents
+            ) ||
+            respondents <= 0
+          ) {
+            return;
+          }
+
+
+          const appearance =
+            getEmployerAppearance(
+              employerName
+            );
+
+
+          employers.set(
+            appearance.key,
+            {
+              canonicalKey:
+                appearance.key,
+
+              sourceName:
+                employerName,
+
+              score:
+                percentage,
+
+              respondents,
+
+              label:
+                appearance.label,
+
+              fullName:
+                appearance.fullName,
+
+              colour:
+                appearance.colour
+            }
+          );
+        }
+      );
+
+
+      return [
+        ...employers.values()
+      ];
+    }
+      
       return [
         ...employers.values()
       ];
@@ -1966,9 +2060,7 @@
 
             const payValue =
               payItem
-                ? toPercentage(
-                    payItem.score
-                  )
+                ? payItem.score
                 : item.score *
                   10;
 
@@ -2677,7 +2769,27 @@
           ? point.payRespondents
           : point.overallRespondents;
 
+      const x =
+        isPay
+          ? (
+              payPositions.get(
+                point.canonicalKey
+              ) ??
+              aggregatePositions.get(
+                point.canonicalKey
+              ) ??
+              point.x
+            )
+          : (
+              aggregatePositions.get(
+                point.canonicalKey
+              ) ??
+              point.x
+            );
+
       return {
+        x,
+
         y:
           isPay
             ? metricValue
@@ -2758,11 +2870,17 @@
               nextView
             );
 
+          point.viewStartX =
+            point.x;
+
           point.viewStartY =
             point.y;
 
           point.viewStartRadius =
             point.baseRadius;
+
+          point.viewTargetX =
+            targets.x;
 
           point.viewTargetY =
             targets.y;
@@ -2832,6 +2950,14 @@
         ) {
           aggregatePoints.forEach(
             point => {
+              point.x =
+                point.viewStartX +
+                (
+                  point.viewTargetX -
+                  point.viewStartX
+                ) *
+                progress;
+
               point.y =
                 point.viewStartY +
                 (
@@ -2868,6 +2994,9 @@
         onComplete() {
           aggregatePoints.forEach(
             point => {
+              point.x =
+                point.viewTargetX;
+
               point.y =
                 point.viewTargetY;
 
@@ -4386,7 +4515,7 @@
           );
 
         payItems =
-          normaliseAggregateRows(
+          normalisePayRows(
             payRows
           );
 
@@ -4413,6 +4542,12 @@
         aggregatePositions =
           buildAggregatePositions(
             aggregateItems
+          );
+
+
+        payPositions =
+          buildAggregatePositions(
+            payItems
           );
 
 
