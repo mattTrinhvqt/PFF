@@ -76,7 +76,7 @@
       display: flex;
       align-items: flex-end;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       width: 100%;
       margin: 0 0 5px;
       border-bottom: 1px solid var(--track);
@@ -103,11 +103,19 @@
       cursor: default;
     }
 
+    .module-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 5px;
+      margin: 0 1px 7px 0;
+    }
+
     .live-data {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      margin: 0 1px 8px 0;
+      margin: 0;
       color: var(--muted);
       font-family: 'Lato', sans-serif;
       font-size: 9px;
@@ -123,6 +131,39 @@
       flex: 0 0 6px;
       border-radius: 50%;
       background: var(--live-red);
+    }
+
+    .reaggregate-button {
+      min-height: 27px;
+      padding: 0 9px;
+      color: #fff;
+      background: var(--purple);
+      border: 1px solid var(--purple);
+      border-radius: 4px;
+      font-family: 'Lato', sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      transition:
+        opacity 140ms ease,
+        transform 140ms ease;
+    }
+
+    .reaggregate-button:hover {
+      opacity: 0.86;
+    }
+
+    .reaggregate-button:active {
+      transform: translateY(1px);
+    }
+
+    .reaggregate-button:focus-visible {
+      outline: none;
+    }
+
+    .reaggregate-button[hidden] {
+      display: none;
     }
 
     #status {
@@ -166,9 +207,19 @@
         font-size: 12px;
       }
 
-      .live-data {
+      .module-actions {
         margin-right: 3px;
+      }
+
+      .live-data {
         font-size: 8px;
+      }
+
+      .reaggregate-button {
+        min-height: 25px;
+        padding-right: 7px;
+        padding-left: 7px;
+        font-size: 9px;
       }
 
       .chart-shell {
@@ -213,16 +264,29 @@
           </button>
         </div>
 
-        <div
-          class="live-data"
-          aria-label="Live data"
-        >
-          <span
-            class="live-data-dot"
-            aria-hidden="true"
-          ></span>
+        <div class="module-actions">
 
-          <span>LIVE data</span>
+          <div
+            class="live-data"
+            aria-label="Live data"
+          >
+            <span
+              class="live-data-dot"
+              aria-hidden="true"
+            ></span>
+
+            <span>LIVE data</span>
+          </div>
+
+          <button
+            id="reaggregateButton"
+            class="reaggregate-button"
+            type="button"
+            hidden
+          >
+            Re-aggregate
+          </button>
+
         </div>
 
       </div>
@@ -234,7 +298,10 @@
       ></div>
 
       <div class="chart-shell">
-        <canvas id="promoterChart"></canvas>
+        <canvas
+          id="promoterChart"
+          aria-label="Workplace promoter score chart"
+        ></canvas>
       </div>
 
     </main>
@@ -263,15 +330,28 @@
       'Data';
 
     /*
+     * Aggregate data:
+     *
      * AM = employer
      * AN = median score
-     * AO = number of respondents
+     * AO = respondent count
      */
-    const QUERY =
+    const AGGREGATE_QUERY =
       'select AM, AN, AO ' +
       'where AM is not null ' +
       'and AN is not null ' +
       'and AO is not null';
+
+    /*
+     * Raw response data:
+     *
+     * B = employer
+     * C = recommendation score
+     */
+    const RAW_QUERY =
+      'select B, C ' +
+      'where B is not null ' +
+      'and C is not null';
 
     const MIN_RADIUS =
       8;
@@ -279,10 +359,6 @@
     const MAX_RADIUS =
       50;
 
-    /*
-     * Bubble-area differences are deliberately noticeable,
-     * while remaining restrained enough to limit overlap.
-     */
     const BUBBLE_EXPONENT =
       0.80;
 
@@ -293,312 +369,342 @@
       4;
 
     /*
-     * Higher opacity means less transparency.
+     * More opaque than the previous version.
      */
-    const BUBBLE_OPACITY =
-      0.82;
+    const AGGREGATE_OPACITY =
+      0.91;
 
-    const BUBBLE_HOVER_OPACITY =
-      0.94;
+    const AGGREGATE_HOVER_OPACITY =
+      0.98;
+
+    const RAW_OPACITY =
+      0.88;
+
+    const RAW_HOVER_OPACITY =
+      0.98;
+
+    const RAW_POINT_RADIUS =
+      4.6;
 
     let promoterChart =
       null;
+
+    let aggregateItems =
+      [];
+
+    let aggregatePositions =
+      new Map();
+
+    let rawEmployerData =
+      new Map();
+
+    const splitEmployers =
+      new Set();
 
     const statusElement =
       document.getElementById(
         'status'
       );
 
+    const reaggregateButton =
+      document.getElementById(
+        'reaggregateButton'
+      );
+
 
     /************************************************************
-     * EMPLOYER NAMES AND COLOURS
+     * EMPLOYER DEFINITIONS
      ************************************************************/
 
-    const EMPLOYER_LOOKUP = {
-
-      'the optical superstore': {
+    const EMPLOYERS = [
+      {
+        key: 'toss',
         label: 'TOSS',
         fullName: 'The Optical Super Store',
-        colour: '#ff2401'
+        colour: '#ff2401',
+        aliases: [
+          'TOSS',
+          'The Optical Superstore',
+          'The Optical Super Store'
+        ]
       },
-
-      'the optical super store': {
-        label: 'TOSS',
-        fullName: 'The Optical Super Store',
-        colour: '#ff2401'
-      },
-
-      'toss': {
-        label: 'TOSS',
-        fullName: 'The Optical Super Store',
-        colour: '#ff2401'
-      },
-
-      'teachers health': {
+      {
+        key: 'th',
         label: 'TH',
         fullName: "Teacher's Health",
-        colour: '#007781'
+        colour: '#007781',
+        aliases: [
+          'TH',
+          'THF',
+          'Teachers Health',
+          'Teachers Health Fund',
+          "Teacher's Health",
+          "Teacher's Health Fund",
+          'Teacher’s Health Fund'
+        ]
       },
-
-      "teacher's health": {
-        label: 'TH',
-        fullName: "Teacher's Health",
-        colour: '#007781'
-      },
-
-      'teachers health fund': {
-        label: 'TH',
-        fullName: "Teacher's Health",
-        colour: '#007781'
-      },
-
-      'thf': {
-        label: 'TH',
-        fullName: "Teacher's Health",
-        colour: '#007781'
-      },
-
-      'th': {
-        label: 'TH',
-        fullName: "Teacher's Health",
-        colour: '#007781'
-      },
-
-      'costco optical': {
+      {
+        key: 'costco',
         label: 'Costco',
         fullName: 'Costco Optical',
-        colour: '#e32a36'
+        colour: '#e32a36',
+        aliases: [
+          'Costco',
+          'Costco Optical'
+        ]
       },
-
-      'costco': {
-        label: 'Costco',
-        fullName: 'Costco Optical',
-        colour: '#e32a36'
-      },
-
-      'oscar wylee': {
+      {
+        key: 'ow',
         label: 'OW',
         fullName: 'Oscar Wylee',
-        colour: '#f16c20'
+        colour: '#f16c20',
+        aliases: [
+          'OW',
+          'Oscar Wylee'
+        ]
       },
-
-      'ow': {
-        label: 'OW',
-        fullName: 'Oscar Wylee',
-        colour: '#f16c20'
-      },
-
-      'bailey nelson': {
+      {
+        key: 'bn',
         label: 'BN',
         fullName: 'Bailey Nelson',
-        colour: '#002e5a'
+        colour: '#002e5a',
+        aliases: [
+          'BN',
+          'Bailey Nelson'
+        ]
       },
-
-      'bn': {
-        label: 'BN',
-        fullName: 'Bailey Nelson',
-        colour: '#002e5a'
-      },
-
-      '1001 optometry': {
+      {
+        key: '1001',
         label: '1001',
         fullName: '1001 Optometry',
-        colour: '#000000'
+        colour: '#000000',
+        aliases: [
+          '1001',
+          '1001 Optometry'
+        ]
       },
-
-      '1001': {
-        label: '1001',
-        fullName: '1001 Optometry',
-        colour: '#000000'
-      },
-
-      'chemist warehouse optometry': {
+      {
+        key: 'cw',
         label: 'CW',
         fullName: 'Chemist Warehouse Optometry',
-        colour: '#ea0f0f'
+        colour: '#ea0f0f',
+        aliases: [
+          'CW',
+          'Chemist Warehouse',
+          'Chemist Warehouse Optometry',
+          'Chemist/Optometrist Warehouse'
+        ]
       },
-
-      'chemist warehouse': {
-        label: 'CW',
-        fullName: 'Chemist Warehouse Optometry',
-        colour: '#ea0f0f'
-      },
-
-      'cw': {
-        label: 'CW',
-        fullName: 'Chemist Warehouse Optometry',
-        colour: '#ea0f0f'
-      },
-
-      'independent': {
+      {
+        key: 'indie',
         label: 'Indie',
         fullName: 'Independent',
-        colour: '#5a3be7'
+        colour: '#5a3be7',
+        aliases: [
+          'Indie',
+          'Independent'
+        ]
       },
-
-      'indie': {
-        label: 'Indie',
-        fullName: 'Independent',
-        colour: '#5a3be7'
-      },
-
-      'hcf eyecare': {
+      {
+        key: 'hcf',
         label: 'HCF',
         fullName: 'HCF Eyecare',
-        colour: '#da1c5c'
+        colour: '#da1c5c',
+        aliases: [
+          'HCF',
+          'HCF Eyecare'
+        ]
       },
-
-      'hcf': {
-        label: 'HCF',
-        fullName: 'HCF Eyecare',
-        colour: '#da1c5c'
-      },
-
-      'ophthalmologist': {
+      {
+        key: 'ophthal',
         label: 'Ophthal',
         fullName: 'Ophthalmologist',
-        colour: '#ffb000'
+        colour: '#ffb000',
+        aliases: [
+          'Ophthal',
+          'Ophthalmologist'
+        ]
       },
-
-      'ophthal': {
-        label: 'Ophthal',
-        fullName: 'Ophthalmologist',
-        colour: '#ffb000'
-      },
-
-      'nib': {
+      {
+        key: 'toc',
         label: 'TOC',
         fullName: 'The Optical Company',
-        colour: '#13543c'
+        colour: '#13543c',
+        aliases: [
+          'NIB',
+          'TOC',
+          'The Optical Company',
+          'The Optical Company (incl. NIB)',
+          'NIB (incl. the Optical Company)'
+        ]
       },
-
-      'the optical company': {
-        label: 'TOC',
-        fullName: 'The Optical Company',
-        colour: '#13543c'
-      },
-
-      'the optical company (incl. nib)': {
-        label: 'TOC',
-        fullName: 'The Optical Company',
-        colour: '#13543c'
-      },
-
-      'specsavers': {
+      {
+        key: 'ss',
         label: 'SS',
         fullName: 'Specsavers',
-        colour: '#009552'
+        colour: '#009552',
+        aliases: [
+          'SS',
+          'Specsavers'
+        ]
       },
-
-      'ss': {
-        label: 'SS',
-        fullName: 'Specsavers',
-        colour: '#009552'
-      },
-
-      'bupa optical': {
+      {
+        key: 'bupa',
         label: 'Bupa',
         fullName: 'Bupa Optical',
-        colour: '#0075c2'
+        colour: '#0075c2',
+        aliases: [
+          'Bupa',
+          'Bupa Optical'
+        ]
       },
-
-      'bupa': {
-        label: 'Bupa',
-        fullName: 'Bupa Optical',
-        colour: '#0075c2'
-      },
-
-      'other': {
+      {
+        key: 'other',
         label: 'Other',
         fullName: 'Other',
-        colour: '#bfc3c7'
+        colour: '#bfc3c7',
+        aliases: [
+          'Other',
+          'Other (e.g., uni, hospital, govt, not-for-profit)'
+        ]
       },
-
-      'opsm': {
+      {
+        key: 'opsm',
         label: 'OPSM',
         fullName: 'OPSM',
-        colour: '#6fb0d4'
+        colour: '#6fb0d4',
+        aliases: [
+          'OPSM',
+          'OPSM (incl. L&P, EyeQ)'
+        ]
       },
-
-      'opsm (incl. l&p, eyeq)': {
-        label: 'OPSM',
-        fullName: 'OPSM',
-        colour: '#6fb0d4'
-      },
-
-      'dresden vision': {
+      {
+        key: 'dresden',
         label: 'Dresden',
         fullName: 'Dresden Vision',
-        colour: '#999999'
+        colour: '#999999',
+        aliases: [
+          'Dresden',
+          'Dresden Vision'
+        ]
       },
-
-      'dresden': {
-        label: 'Dresden',
-        fullName: 'Dresden Vision',
-        colour: '#999999'
-      },
-
-      'optical by national pharmacies': {
+      {
+        key: 'obnp',
         label: 'ObNP',
         fullName: 'Optical by National Pharmacies',
-        colour: '#2cb4a6'
+        colour: '#2cb4a6',
+        aliases: [
+          'ObNP',
+          'Optical by National Pharmacies'
+        ]
       },
-
-      'obnp': {
-        label: 'ObNP',
-        fullName: 'Optical by National Pharmacies',
-        colour: '#2cb4a6'
-      },
-
-      'george & matilda eyecare': {
+      {
+        key: 'gm',
         label: 'G&M',
         fullName: 'George & Matilda Eyecare',
-        colour: '#000000'
-      },
-
-      'george & matilda': {
-        label: 'G&M',
-        fullName: 'George & Matilda Eyecare',
-        colour: '#000000'
-      },
-
-      'g&m': {
-        label: 'G&M',
-        fullName: 'George & Matilda Eyecare',
-        colour: '#000000'
+        colour: '#000000',
+        aliases: [
+          'G&M',
+          'George & Matilda',
+          'George & Matilda Eyecare'
+        ]
       }
+    ];
 
-    };
+
+    function normaliseEmployerName(
+      value
+    ) {
+      return String(
+        value || ''
+      )
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(
+          /[’‘]/g,
+          "'"
+        )
+        .replace(
+          /&/g,
+          ' and '
+        )
+        .replace(
+          /[^a-z0-9]+/g,
+          ' '
+        )
+        .trim()
+        .replace(
+          /\s+/g,
+          ' '
+        );
+    }
+
+
+    const EMPLOYER_ALIAS_MAP =
+      new Map();
+
+
+    EMPLOYERS.forEach(
+      employer => {
+        [
+          employer.label,
+          employer.fullName,
+          ...employer.aliases
+        ].forEach(
+          alias => {
+            EMPLOYER_ALIAS_MAP.set(
+              normaliseEmployerName(
+                alias
+              ),
+              employer
+            );
+          }
+        );
+      }
+    );
 
 
     function getEmployerAppearance(
-      employer
+      employerName
     ) {
       const original =
         String(
-          employer || ''
+          employerName || ''
         ).trim();
 
-      const key =
-        original
-          .toLowerCase()
-          .replace(/\s+/g, ' ');
+      const normalised =
+        normaliseEmployerName(
+          original
+        );
+
+      const knownEmployer =
+        EMPLOYER_ALIAS_MAP.get(
+          normalised
+        );
 
       if (
-        EMPLOYER_LOOKUP[key]
+        knownEmployer
       ) {
-        return EMPLOYER_LOOKUP[key];
+        return knownEmployer;
       }
+
+      const fallbackKey =
+        normalised ||
+        `unknown-${Math.random()}`;
 
       if (
         original.length <= 10
       ) {
         return {
+          key:
+            fallbackKey,
+
           label:
             original || '—',
 
           fullName:
-            original || 'Unknown employer',
+            original ||
+            'Unknown employer',
 
           colour:
             '#777777'
@@ -617,6 +723,9 @@
           .slice(0, 6);
 
       return {
+        key:
+          fallbackKey,
+
         label:
           initials ||
           original.slice(
@@ -656,6 +765,36 @@
     }
 
 
+    function formatStatistic(
+      value
+    ) {
+      if (
+        !Number.isFinite(
+          value
+        )
+      ) {
+        return '—';
+      }
+
+      if (
+        Number.isInteger(
+          value
+        )
+      ) {
+        return String(
+          value
+        );
+      }
+
+      return value
+        .toFixed(1)
+        .replace(
+          /\.0$/,
+          ''
+        );
+    }
+
+
     function getCellValue(
       cell
     ) {
@@ -678,11 +817,12 @@
         typeof value === 'number'
           ? value
           : parseFloat(
-              String(value)
-                .replace(
-                  /[^\d.-]/g,
-                  ''
-                )
+              String(
+                value
+              ).replace(
+                /[^\d.-]/g,
+                ''
+              )
             );
 
       return Number.isFinite(
@@ -713,8 +853,13 @@
       opacity
     ) {
       const cleaned =
-        String(hex)
-          .replace('#', '')
+        String(
+          hex
+        )
+          .replace(
+            '#',
+            ''
+          )
           .trim();
 
       if (
@@ -729,19 +874,28 @@
 
       const red =
         parseInt(
-          cleaned.slice(0, 2),
+          cleaned.slice(
+            0,
+            2
+          ),
           16
         );
 
       const green =
         parseInt(
-          cleaned.slice(2, 4),
+          cleaned.slice(
+            2,
+            4
+          ),
           16
         );
 
       const blue =
         parseInt(
-          cleaned.slice(4, 6),
+          cleaned.slice(
+            4,
+            6
+          ),
           16
         );
 
@@ -790,11 +944,119 @@
     }
 
 
+    function percentile(
+      sortedValues,
+      probability
+    ) {
+      if (
+        !sortedValues.length
+      ) {
+        return NaN;
+      }
+
+      if (
+        sortedValues.length === 1
+      ) {
+        return sortedValues[0];
+      }
+
+      const index =
+        (
+          sortedValues.length -
+          1
+        ) *
+        probability;
+
+      const lowerIndex =
+        Math.floor(
+          index
+        );
+
+      const upperIndex =
+        Math.ceil(
+          index
+        );
+
+      if (
+        lowerIndex ===
+        upperIndex
+      ) {
+        return sortedValues[
+          lowerIndex
+        ];
+      }
+
+      const fraction =
+        index -
+        lowerIndex;
+
+      return (
+        sortedValues[
+          lowerIndex
+        ] +
+        (
+          sortedValues[
+            upperIndex
+          ] -
+          sortedValues[
+            lowerIndex
+          ]
+        ) *
+        fraction
+      );
+    }
+
+
+    function calculateScoreStatistics(
+      scores
+    ) {
+      const sorted =
+        scores
+          .filter(
+            Number.isFinite
+          )
+          .slice()
+          .sort(
+            (
+              first,
+              second
+            ) =>
+              first -
+              second
+          );
+
+      return {
+        count:
+          sorted.length,
+
+        median:
+          percentile(
+            sorted,
+            0.50
+          ),
+
+        q1:
+          percentile(
+            sorted,
+            0.25
+          ),
+
+        q3:
+          percentile(
+            sorted,
+            0.75
+          )
+      };
+    }
+
+
     /************************************************************
      * GOOGLE SHEETS JSONP
      ************************************************************/
 
-    function loadSheetRows() {
+    function loadSheetQuery(
+      query
+    ) {
       return new Promise(
         (
           resolve,
@@ -908,13 +1170,15 @@
                 '1',
 
               tq:
-                QUERY,
+                query,
 
               tqx:
                 `responseHandler:${callbackName}`,
 
               _:
-                String(Date.now())
+                String(
+                  Date.now()
+                )
             });
 
 
@@ -933,69 +1197,204 @@
 
 
     /************************************************************
-     * NORMALISE DATA
+     * NORMALISE AGGREGATE DATA
      ************************************************************/
 
-    function normaliseRows(
+    function normaliseAggregateRows(
       rows
     ) {
-      return rows
-        .map(
-          row => {
-            const employer =
-              String(
-                getCellValue(
-                  row?.c?.[0]
-                ) || ''
-              ).trim();
+      const employers =
+        new Map();
 
-            const score =
-              toNumber(
-                getCellValue(
-                  row?.c?.[1]
-                )
-              );
 
-            const respondents =
-              toNumber(
-                getCellValue(
-                  row?.c?.[2]
-                )
-              );
+      rows.forEach(
+        row => {
+          const employerName =
+            String(
+              getCellValue(
+                row?.c?.[0]
+              ) || ''
+            ).trim();
 
-            return {
-              employer,
-              score,
+          const score =
+            toNumber(
+              getCellValue(
+                row?.c?.[1]
+              )
+            );
+
+          const respondents =
+            toNumber(
+              getCellValue(
+                row?.c?.[2]
+              )
+            );
+
+
+          if (
+            !employerName ||
+            !Number.isFinite(
+              score
+            ) ||
+            score < 0 ||
+            score > 10 ||
+            !Number.isFinite(
               respondents
-            };
+            ) ||
+            respondents <= 0
+          ) {
+            return;
           }
-        )
-        .filter(
-          item =>
-            item.employer &&
-            Number.isFinite(
-              item.score
-            ) &&
-            item.score >= 0 &&
-            item.score <= 10 &&
-            Number.isFinite(
-              item.respondents
-            ) &&
-            item.respondents > 0
-        );
+
+
+          const appearance =
+            getEmployerAppearance(
+              employerName
+            );
+
+
+          employers.set(
+            appearance.key,
+            {
+              canonicalKey:
+                appearance.key,
+
+              sourceName:
+                employerName,
+
+              score,
+
+              respondents,
+
+              label:
+                appearance.label,
+
+              fullName:
+                appearance.fullName,
+
+              colour:
+                appearance.colour
+            }
+          );
+        }
+      );
+
+
+      return [
+        ...employers.values()
+      ];
     }
 
 
     /************************************************************
-     * BUBBLE LAYOUT
-     *
-     * The score with the greatest number of tied employers defines
-     * the horizontal positions used throughout the chart.
-     *
-     * Every other score uses those same positions from left to right.
+     * NORMALISE RAW DATA
      ************************************************************/
 
-    function buildChartPoints(
+    function normaliseRawRows(
+      rows
+    ) {
+      const employerMap =
+        new Map();
+
+
+      rows.forEach(
+        row => {
+          const employerName =
+            String(
+              getCellValue(
+                row?.c?.[0]
+              ) || ''
+            ).trim();
+
+          const score =
+            toNumber(
+              getCellValue(
+                row?.c?.[1]
+              )
+            );
+
+
+          if (
+            !employerName ||
+            !Number.isFinite(
+              score
+            ) ||
+            score < 0 ||
+            score > 10
+          ) {
+            return;
+          }
+
+
+          const appearance =
+            getEmployerAppearance(
+              employerName
+            );
+
+
+          if (
+            !employerMap.has(
+              appearance.key
+            )
+          ) {
+            employerMap.set(
+              appearance.key,
+              {
+                canonicalKey:
+                  appearance.key,
+
+                label:
+                  appearance.label,
+
+                fullName:
+                  appearance.fullName,
+
+                colour:
+                  appearance.colour,
+
+                scores:
+                  []
+              }
+            );
+          }
+
+
+          employerMap
+            .get(
+              appearance.key
+            )
+            .scores
+            .push(
+              score
+            );
+        }
+      );
+
+
+      employerMap.forEach(
+        employer => {
+          employer.statistics =
+            calculateScoreStatistics(
+              employer.scores
+            );
+        }
+      );
+
+
+      return employerMap;
+    }
+
+
+    /************************************************************
+     * AGGREGATE POSITIONS
+     *
+     * The score with the most tied employers defines one shared
+     * set of horizontal positions.
+     *
+     * All other scores follow the same positions from left to right.
+     ************************************************************/
+
+    function buildAggregatePositions(
       items
     ) {
       const groups =
@@ -1045,10 +1444,6 @@
         );
 
 
-      /*
-       * Create one shared set of positions based on the score
-       * containing the most tied employers.
-       */
       const leftPosition =
         12;
 
@@ -1085,83 +1480,201 @@
             );
 
 
-      const scores = [
-        ...groups.keys()
-      ]
-        .map(Number)
-        .sort(
-          (
-            first,
-            second
-          ) =>
-            second - first
-        );
+      const positions =
+        new Map();
+
+
+      groups.forEach(
+        group => {
+          group
+            .slice()
+            .sort(
+              (
+                first,
+                second
+              ) =>
+                second.respondents -
+                  first.respondents ||
+                first.fullName.localeCompare(
+                  second.fullName
+                )
+            )
+            .forEach(
+              (
+                item,
+                index
+              ) => {
+                positions.set(
+                  item.canonicalKey,
+                  sharedPositions[
+                    index
+                  ]
+                );
+              }
+            );
+        }
+      );
+
+
+      return positions;
+    }
+
+
+    /************************************************************
+     * RAW-SCORE POSITIONING
+     ************************************************************/
+
+    function buildRawEmployerPoints(
+      aggregateItem,
+      rawEmployer,
+      aggregateX
+    ) {
+      const scoreGroups =
+        new Map();
+
+
+      rawEmployer.scores.forEach(
+        score => {
+          const scoreKey =
+            String(
+              score
+            );
+
+          if (
+            !scoreGroups.has(
+              scoreKey
+            )
+          ) {
+            scoreGroups.set(
+              scoreKey,
+              []
+            );
+          }
+
+          scoreGroups
+            .get(
+              scoreKey
+            )
+            .push(
+              score
+            );
+        }
+      );
 
 
       const points =
         [];
 
 
-      scores.forEach(
-        score => {
-          const group =
-            groups
-              .get(
-                String(score)
-              )
-              .slice()
-              .sort(
+      scoreGroups.forEach(
+        (
+          scores,
+          scoreKey
+        ) => {
+          const score =
+            Number(
+              scoreKey
+            );
+
+          const pointCount =
+            scores.length;
+
+          const rawSpan =
+            Math.min(
+              21,
+              Math.max(
+                0,
                 (
-                  first,
-                  second
-                ) =>
-                  second.respondents -
-                    first.respondents ||
-                  first.employer.localeCompare(
-                    second.employer
-                  )
-              );
+                  pointCount -
+                  1
+                ) *
+                2.4
+              )
+            );
 
 
-          group.forEach(
+          let startX =
+            aggregateX -
+            rawSpan / 2;
+
+
+          startX =
+            clamp(
+              startX,
+              4,
+              96 -
+              rawSpan
+            );
+
+
+          scores.forEach(
             (
-              item,
+              _,
               index
             ) => {
-              const appearance =
-                getEmployerAppearance(
-                  item.employer
-                );
+              const x =
+                pointCount === 1
+                  ? aggregateX
+                  : startX +
+                    (
+                      index /
+                      (
+                        pointCount -
+                        1
+                      )
+                    ) *
+                    rawSpan;
 
 
               points.push({
+                kind:
+                  'raw',
+
                 x:
-                  sharedPositions[
-                    index
-                  ],
-
-                y:
-                  item.score,
-
-                baseRadius:
-                  getBaseBubbleRadius(
-                    item.respondents
+                  clamp(
+                    x,
+                    4,
+                    96
                   ),
 
-                employer:
-                  item.employer,
+                y:
+                  score,
 
-                fullName:
-                  appearance.fullName,
+                baseRadius:
+                  RAW_POINT_RADIUS,
+
+                canonicalKey:
+                  aggregateItem.canonicalKey,
 
                 shortLabel:
-                  appearance.label,
+                  '',
 
-                respondents:
-                  item.respondents,
+                fullName:
+                  aggregateItem.fullName,
 
-                backgroundColour:
-                  appearance.colour
+                colour:
+                  aggregateItem.colour,
+
+                opacity:
+                  RAW_OPACITY,
+
+                hoverOpacity:
+                  RAW_HOVER_OPACITY,
+
+                rawScore:
+                  score,
+
+                scoreCount:
+                  rawEmployer.statistics.count,
+
+                median:
+                  rawEmployer.statistics.median,
+
+                q1:
+                  rawEmployer.statistics.q1,
+
+                q3:
+                  rawEmployer.statistics.q3
               });
             }
           );
@@ -1169,17 +1682,138 @@
       );
 
 
-      /*
-       * Larger bubbles are drawn first so smaller bubbles remain
-       * visible above them where circles overlap.
-       */
+      return points;
+    }
+
+
+    /************************************************************
+     * BUILD DISPLAY POINTS
+     *
+     * Higher scores are drawn first.
+     * Lower scores are therefore rendered later and sit on top
+     * wherever bubbles overlap.
+     ************************************************************/
+
+    function buildDisplayPoints() {
+      const points =
+        [];
+
+
+      aggregateItems.forEach(
+        item => {
+          const x =
+            aggregatePositions.get(
+              item.canonicalKey
+            ) ??
+            12;
+
+          const rawEmployer =
+            rawEmployerData.get(
+              item.canonicalKey
+            );
+
+
+          if (
+            splitEmployers.has(
+              item.canonicalKey
+            ) &&
+            rawEmployer?.scores?.length
+          ) {
+            points.push(
+              ...buildRawEmployerPoints(
+                item,
+                rawEmployer,
+                x
+              )
+            );
+
+            return;
+          }
+
+
+          points.push({
+            kind:
+              'aggregate',
+
+            x,
+
+            y:
+              item.score,
+
+            baseRadius:
+              getBaseBubbleRadius(
+                item.respondents
+              ),
+
+            canonicalKey:
+              item.canonicalKey,
+
+            shortLabel:
+              item.label,
+
+            fullName:
+              item.fullName,
+
+            respondents:
+              item.respondents,
+
+            colour:
+              item.colour,
+
+            opacity:
+              AGGREGATE_OPACITY,
+
+            hoverOpacity:
+              AGGREGATE_HOVER_OPACITY,
+
+            canSplit:
+              Boolean(
+                rawEmployer
+                  ?.scores
+                  ?.length
+              )
+          });
+        }
+      );
+
+
       points.sort(
         (
           first,
           second
-        ) =>
-          second.respondents -
-          first.respondents
+        ) => {
+          /*
+           * Higher scores first, lower scores later and on top.
+           */
+          if (
+            first.y !==
+            second.y
+          ) {
+            return (
+              second.y -
+              first.y
+            );
+          }
+
+          /*
+           * At the same score, larger bubbles first and smaller
+           * bubbles later and on top.
+           */
+          if (
+            first.baseRadius !==
+            second.baseRadius
+          ) {
+            return (
+              second.baseRadius -
+              first.baseRadius
+            );
+          }
+
+          return (
+            first.x -
+            second.x
+          );
+        }
       );
 
 
@@ -1221,8 +1855,10 @@
                 index
               ];
 
+
             if (
-              !raw ||
+              raw?.kind !==
+                'aggregate' ||
               !raw.shortLabel
             ) {
               return;
@@ -1238,7 +1874,8 @@
 
             const fontSize =
               clamp(
-                radius * 0.43,
+                radius *
+                  0.43,
                 9,
                 15
               );
@@ -1261,7 +1898,8 @@
             context.lineWidth =
               Math.max(
                 1.4,
-                fontSize * 0.12
+                fontSize *
+                  0.12
               );
 
             context.strokeStyle =
@@ -1283,6 +1921,7 @@
               element.y
             );
 
+
             context.restore();
           }
         );
@@ -1291,7 +1930,7 @@
 
 
     /************************************************************
-     * AXIS HEADING AND DESCRIPTORS
+     * AXIS HEADING, SCORE LABEL AND DESCRIPTORS
      ************************************************************/
 
     const yGuidePlugin = {
@@ -1322,11 +1961,15 @@
         context.save();
 
 
+        /*
+         * Main heading aligned to the far left because it describes
+         * the y-axis score.
+         */
         context.fillStyle =
           '#151515';
 
         context.font =
-          '700 14px Lato, sans-serif';
+          '700 15px Lato, sans-serif';
 
         context.textAlign =
           'left';
@@ -1337,16 +1980,56 @@
 
         context.fillText(
           'Likelihood of recommending workplace',
-          chartArea.left,
-          chartArea.top - 11
+          4,
+          chartArea.top -
+            12
         );
 
 
+        /*
+         * Vertical y-axis title.
+         */
+        context.save();
+
+        context.translate(
+          10,
+          chartArea.top +
+          chartArea.height / 2
+        );
+
+        context.rotate(
+          -Math.PI / 2
+        );
+
+        context.fillStyle =
+          '#151515';
+
+        context.font =
+          '700 12px Lato, sans-serif';
+
+        context.textAlign =
+          'center';
+
+        context.textBaseline =
+          'middle';
+
+        context.fillText(
+          'Score',
+          0,
+          0
+        );
+
+        context.restore();
+
+
+        /*
+         * Descriptions beside 0, 5 and 10.
+         */
         context.fillStyle =
           '#69718a';
 
         context.font =
-          '400 9px Lato, sans-serif';
+          '400 11px Lato, sans-serif';
 
         context.textAlign =
           'right';
@@ -1355,12 +2038,9 @@
           'middle';
 
 
-        /*
-         * Place the descriptions close to the y-axis to minimise
-         * unused space on the left.
-         */
         const descriptorX =
-          chartArea.left - 24;
+          chartArea.left -
+          27;
 
 
         [
@@ -1395,10 +2075,42 @@
 
 
     /************************************************************
-     * RENDER CHART
+     * UPDATE CHART POINTS
      ************************************************************/
 
-    function renderChart(
+    function updateChartPoints() {
+      const points =
+        buildDisplayPoints();
+
+
+      if (
+        !promoterChart
+      ) {
+        createChart(
+          points
+        );
+      } else {
+        promoterChart
+          .data
+          .datasets[0]
+          .data =
+            points;
+
+        promoterChart.update();
+      }
+
+
+      reaggregateButton.hidden =
+        splitEmployers.size ===
+        0;
+    }
+
+
+    /************************************************************
+     * CREATE CHART
+     ************************************************************/
+
+    function createChart(
       points
     ) {
       const canvas =
@@ -1410,13 +2122,6 @@
         canvas.getContext(
           '2d'
         );
-
-
-      if (
-        promoterChart
-      ) {
-        promoterChart.destroy();
-      }
 
 
       promoterChart =
@@ -1458,11 +2163,25 @@
                       getDisplayedBubbleRadius(
                         chartContext.chart,
                         chartContext.raw
-                      ) + 2,
+                      ) +
+                      (
+                        chartContext
+                          .raw
+                          ?.kind ===
+                        'raw'
+                          ? 2
+                          : 1.5
+                      ),
 
 
                   pointHitRadius:
-                    5,
+                    chartContext =>
+                      chartContext
+                        .raw
+                        ?.kind ===
+                      'raw'
+                        ? 4
+                        : 5,
 
 
                   pointBackgroundColor:
@@ -1470,10 +2189,13 @@
                       hexToRgba(
                         chartContext
                           .raw
-                          ?.backgroundColour ||
+                          ?.colour ||
                           '#777777',
 
-                        BUBBLE_OPACITY
+                        chartContext
+                          .raw
+                          ?.opacity ??
+                          AGGREGATE_OPACITY
                       ),
 
 
@@ -1482,10 +2204,13 @@
                       hexToRgba(
                         chartContext
                           .raw
-                          ?.backgroundColour ||
+                          ?.colour ||
                           '#777777',
 
-                        BUBBLE_HOVER_OPACITY
+                        chartContext
+                          .raw
+                          ?.hoverOpacity ??
+                          AGGREGATE_HOVER_OPACITY
                       ),
 
 
@@ -1512,7 +2237,7 @@
 
               animation: {
                 duration:
-                  650,
+                  520,
 
                 easing:
                   'easeOutCubic'
@@ -1529,13 +2254,13 @@
 
 
               /*
-               * Reduced left padding keeps the y-axis close to the
-               * edge while retaining room for the descriptive labels.
+               * Room is retained for the larger descriptions and
+               * vertical Score label without leaving excessive space.
                */
               layout: {
                 padding: {
                   top:
-                    30,
+                    33,
 
                   right:
                     5,
@@ -1544,8 +2269,86 @@
                     2,
 
                   left:
-                    43
+                    31
                 }
+              },
+
+
+              onHover(
+                event,
+                elements,
+                chart
+              ) {
+                const point =
+                  elements.length
+                    ? chart
+                        .data
+                        .datasets[
+                          elements[0]
+                            .datasetIndex
+                        ]
+                        .data[
+                          elements[0]
+                            .index
+                        ]
+                    : null;
+
+
+                chart.canvas.style.cursor =
+                  point?.kind ===
+                    'aggregate' &&
+                  point.canSplit
+                    ? 'pointer'
+                    : 'default';
+              },
+
+
+              onClick(
+                event,
+                elements,
+                chart
+              ) {
+                if (
+                  !elements.length
+                ) {
+                  return;
+                }
+
+
+                const selectedElement =
+                  elements[0];
+
+                const point =
+                  chart
+                    .data
+                    .datasets[
+                      selectedElement
+                        .datasetIndex
+                    ]
+                    .data[
+                      selectedElement
+                        .index
+                    ];
+
+
+                /*
+                 * Raw score bubbles are hoverable but not clickable.
+                 */
+                if (
+                  point?.kind !==
+                    'aggregate' ||
+                  !point.canSplit
+                ) {
+                  return;
+                }
+
+
+                splitEmployers.add(
+                  point.canonicalKey
+                );
+
+
+                updateChartPoints();
               },
 
 
@@ -1603,6 +2406,7 @@
                       '400'
                   },
 
+
                   callbacks: {
                     title(
                       tooltipItems
@@ -1623,10 +2427,32 @@
                       const raw =
                         tooltipItem.raw;
 
+
+                      if (
+                        raw.kind ===
+                        'raw'
+                      ) {
+                        return [
+                          `Raw score: ${formatStatistic(raw.rawScore)}`,
+                          `Scores: ${formatNumber(raw.scoreCount)}`,
+                          (
+                            'Median [IQR]: ' +
+                            `${formatStatistic(raw.median)} ` +
+                            `[${formatStatistic(raw.q1)}–${formatStatistic(raw.q3)}]`
+                          )
+                        ];
+                      }
+
+
                       return [
-                        `Score: ${raw.y}`,
-                        `Respondents: ${formatNumber(raw.respondents)}`
-                      ];
+                        `Median score: ${formatStatistic(raw.y)}`,
+                        `Respondents: ${formatNumber(raw.respondents)}`,
+                        raw.canSplit
+                          ? 'Click to show raw scores'
+                          : ''
+                      ].filter(
+                        Boolean
+                      );
                     }
                   }
                 }
@@ -1675,14 +2501,14 @@
                       '#151515',
 
                     padding:
-                      5,
+                      6,
 
                     font: {
                       family:
                         'Lato',
 
                       size:
-                        11,
+                        12,
 
                       weight:
                         '400'
@@ -1698,7 +2524,7 @@
 
                   grid: {
                     color:
-                      'rgba(105, 113, 138, 0.09)',
+                      'rgba(105, 113, 138, 0.075)',
 
                     lineWidth:
                       1,
@@ -1707,10 +2533,13 @@
                       true,
 
                     tickLength:
-                      6,
+                      7,
 
                     tickColor:
-                      '#151515'
+                      '#151515',
+
+                    tickWidth:
+                      1.2
                   },
 
 
@@ -1739,9 +2568,23 @@
 
 
     /************************************************************
+     * RE-AGGREGATE
+     ************************************************************/
+
+    reaggregateButton.addEventListener(
+      'click',
+      () => {
+        splitEmployers.clear();
+
+        updateChartPoints();
+      }
+    );
+
+
+    /************************************************************
      * LOAD ONCE
      *
-     * Data is loaded only when the page opens or is refreshed.
+     * Data reloads only when the page itself is refreshed.
      ************************************************************/
 
     async function loadPromoterChart() {
@@ -1749,30 +2592,49 @@
         setStatus();
 
 
-        const rows =
-          await loadSheetRows();
+        const [
+          aggregateRows,
+          rawRows
+        ] =
+          await Promise.all([
+            loadSheetQuery(
+              AGGREGATE_QUERY
+            ),
+
+            loadSheetQuery(
+              RAW_QUERY
+            )
+          ]);
 
 
-        const items =
-          normaliseRows(
-            rows
+        aggregateItems =
+          normaliseAggregateRows(
+            aggregateRows
+          );
+
+
+        rawEmployerData =
+          normaliseRawRows(
+            rawRows
           );
 
 
         if (
-          !items.length
+          !aggregateItems.length
         ) {
           throw new Error(
-            'No valid rows found in columns AM to AO'
+            'No valid aggregate rows found in columns AM to AO'
           );
         }
 
 
-        renderChart(
-          buildChartPoints(
-            items
-          )
-        );
+        aggregatePositions =
+          buildAggregatePositions(
+            aggregateItems
+          );
+
+
+        updateChartPoints();
 
 
         setStatus();
