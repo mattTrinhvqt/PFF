@@ -89,14 +89,28 @@
       min-height: 29px;
       margin: 0;
       padding: 0 9px 6px;
-      color: var(--purple);
+      color: var(--muted);
       background: #fff;
       border: 0;
-      border-bottom: 2px solid var(--purple);
+      border-bottom: 2px solid transparent;
       font-size: 13px;
       font-weight: 700;
       line-height: 1;
+      cursor: pointer;
+
+      transition:
+        color 180ms ease,
+        border-color 180ms ease;
+    }
+
+    .chart-tab.is-active {
+      color: var(--purple);
+      border-bottom-color: var(--purple);
       cursor: default;
+    }
+
+    .chart-tab:focus-visible {
+      outline: none;
     }
 
     .live-data {
@@ -341,12 +355,25 @@
           aria-label="Promoter score views"
         >
           <button
-            class="chart-tab"
+            id="overallTab"
+            class="chart-tab is-active"
             type="button"
             role="tab"
+            data-view="overall"
             aria-selected="true"
           >
             Overall
+          </button>
+
+          <button
+            id="payTab"
+            class="chart-tab"
+            type="button"
+            role="tab"
+            data-view="pay"
+            aria-selected="false"
+          >
+            Pay
           </button>
         </div>
 
@@ -370,7 +397,10 @@
       ></div>
 
       <div class="chart-heading-row">
-        <h2 class="chart-heading">
+        <h2
+          id="chartHeading"
+          class="chart-heading"
+        >
           Likely to recommend workplace?
         </h2>
 
@@ -441,6 +471,17 @@
       'where B is not null ' +
       'and C is not null';
 
+    /*
+     * AM = employer
+     * AS = percentage endorsing pay/bonuses
+     * AT = respondent count
+     */
+    const PAY_QUERY =
+      'select AL, AS, AT ' +
+      'where AL is not null ' +
+      'and AS is not null ' +
+      'and AT is not null';
+
 
     /************************************************************
      * CHART APPEARANCE
@@ -489,6 +530,9 @@
     const HOVER_ANIMATION_MS =
       170;
 
+    const VIEW_TRANSITION_MS =
+      850;
+
     /*
      * Maximum interval between two clicks or taps for splitting.
      */
@@ -523,6 +567,12 @@
     let aggregateItems =
       [];
 
+    let payItems =
+      [];
+
+    let payEmployerData =
+      new Map();
+
     let aggregatePoints =
       [];
 
@@ -555,6 +605,16 @@
       0;
 
     /*
+     * Overall values are represented internally on a 0–100
+     * chart scale so both tabs can share the same fixed axis.
+     */
+    let activeView =
+      'overall';
+
+    let axisDescriptionOpacity =
+      1;
+
+    /*
      * Used to distinguish a single click/tap from a second
      * click/tap on the same aggregate bubble.
      */
@@ -581,6 +641,21 @@
     const reaggregateButton =
       document.getElementById(
         'reaggregateButton'
+      );
+
+    const overallTab =
+      document.getElementById(
+        'overallTab'
+      );
+
+    const payTab =
+      document.getElementById(
+        'payTab'
+      );
+
+    const chartHeading =
+      document.getElementById(
+        'chartHeading'
       );
 
 
@@ -1016,11 +1091,30 @@
               )
             );
 
-      return Number.isFinite(
-        number
-      )
-        ? number
-        : NaN;
+    function toPercentage(
+      value
+    ) {
+      const number =
+        toNumber(
+          value
+        );
+
+      if (
+        !Number.isFinite(
+          number
+        )
+      ) {
+        return NaN;
+      }
+
+      /*
+       * Google Sheets percentage cells commonly return 0–1
+       * even when displayed as 0%–100%.
+       */
+      return number >= 0 &&
+        number <= 1
+          ? number * 100
+          : number;
     }
 
 
@@ -1864,66 +1958,107 @@
     ) {
       return items
         .map(
-          item => ({
-            kind:
-              'aggregate',
-
-            x:
-              aggregatePositions.get(
+          item => {
+            const payItem =
+              payEmployerData.get(
                 item.canonicalKey
-              ) ??
-              20,
+              );
 
-            /*
-             * The initial animation starts these at zero and
-             * moves them to targetY only once.
-             */
-            y:
-              0,
-
-            targetY:
-              item.score,
-
-            baseRadius:
-              getBaseBubbleRadius(
-                item.respondents
-              ),
-
-            canonicalKey:
-              item.canonicalKey,
-
-            shortLabel:
-              item.label,
-
-            fullName:
-              item.fullName,
-
-            respondents:
-              item.respondents,
-
-            colour:
-              item.colour,
-
-            canSplit:
-              Boolean(
-                rawEmployerData
-                  .get(
-                    item.canonicalKey
+            const payValue =
+              payItem
+                ? toPercentage(
+                    payItem.score
                   )
-                  ?.scores
-                  ?.length
-              )
-          })
+                : item.score *
+                  10;
+
+            const payRespondents =
+              payItem
+                ?.respondents ??
+              item.respondents;
+
+
+            return {
+              kind:
+                'aggregate',
+
+              x:
+                aggregatePositions.get(
+                  item.canonicalKey
+                ) ??
+                20,
+
+              y:
+                0,
+
+              /*
+               * Overall scores are multiplied by 10 internally.
+               * A score of 7 therefore occupies the same position
+               * as 70% on the Pay tab.
+               */
+              targetY:
+                item.score *
+                10,
+
+              overallValue:
+                item.score,
+
+              overallRespondents:
+                item.respondents,
+
+              payValue:
+                clamp(
+                  payValue,
+                  0,
+                  100
+                ),
+
+              payRespondents:
+                payRespondents,
+
+              currentMetricValue:
+                item.score,
+
+              currentRespondents:
+                item.respondents,
+
+              baseRadius:
+                getBaseBubbleRadius(
+                  item.respondents
+                ),
+
+              canonicalKey:
+                item.canonicalKey,
+
+              shortLabel:
+                item.label,
+
+              fullName:
+                item.fullName,
+
+              respondents:
+                item.respondents,
+
+              colour:
+                item.colour,
+
+              canSplit:
+                Boolean(
+                  rawEmployerData
+                    .get(
+                      item.canonicalKey
+                    )
+                    ?.scores
+                    ?.length
+                )
+            };
+          }
         )
         .sort(
           (
             first,
             second
           ) => {
-            /*
-             * Once at their target positions, lower scores are
-             * drawn later and therefore remain above higher scores.
-             */
             if (
               first.targetY !==
               second.targetY
@@ -1941,8 +2076,6 @@
           }
         );
     }
-
-
     function getAggregatePoint(
       employerKey
     ) {
@@ -1969,7 +2102,8 @@
         20;
 
       const aggregateY =
-        aggregateItem.score;
+        aggregateItem.score *
+        10;
 
       const scoreGroups =
         new Map();
@@ -2088,7 +2222,8 @@
                   ),
 
                 targetY:
-                  score,
+                  score *
+                  10,
 
                 baseRadius:
                   RAW_POINT_RADIUS,
@@ -2301,7 +2436,7 @@
 
           {
             value:
-              5,
+              50,
 
             text:
               '(unsure)',
@@ -2312,7 +2447,7 @@
 
           {
             value:
-              10,
+              100,
 
             text:
               '(extremely)',
@@ -2324,6 +2459,12 @@
 
 
         context.save();
+
+        /*
+         * Fade these labels out on Pay and back in on Overall.
+         */
+        context.globalAlpha =
+          axisDescriptionOpacity;
 
         context.font =
           '400 10px Lato, sans-serif';
@@ -2514,7 +2655,291 @@
       }
     };
 
+    /************************************************************
+     * VIEW SWITCHING
+     ************************************************************/
 
+    function getViewTargets(
+      point,
+      view
+    ) {
+      const isPay =
+        view ===
+        'pay';
+
+      const metricValue =
+        isPay
+          ? point.payValue
+          : point.overallValue;
+
+      const respondents =
+        isPay
+          ? point.payRespondents
+          : point.overallRespondents;
+
+      return {
+        y:
+          isPay
+            ? metricValue
+            : metricValue *
+              10,
+
+        radius:
+          getBaseBubbleRadius(
+            respondents
+          ),
+
+        metricValue,
+
+        respondents
+      };
+    }
+
+
+    function updateActiveTab() {
+      const overallActive =
+        activeView ===
+        'overall';
+
+      overallTab.classList.toggle(
+        'is-active',
+        overallActive
+      );
+
+      payTab.classList.toggle(
+        'is-active',
+        !overallActive
+      );
+
+      overallTab.setAttribute(
+        'aria-selected',
+        String(
+          overallActive
+        )
+      );
+
+      payTab.setAttribute(
+        'aria-selected',
+        String(
+          !overallActive
+        )
+      );
+    }
+
+
+    function animateViewSwitch(
+      nextView
+    ) {
+      if (
+        !promoterChart ||
+        interactionLocked ||
+        nextView ===
+          activeView
+      ) {
+        return;
+      }
+
+
+      const startingDescriptionOpacity =
+        axisDescriptionOpacity;
+
+      const targetDescriptionOpacity =
+        nextView ===
+          'overall'
+          ? 1
+          : 0;
+
+
+      aggregatePoints.forEach(
+        point => {
+          const targets =
+            getViewTargets(
+              point,
+              nextView
+            );
+
+          point.viewStartY =
+            point.y;
+
+          point.viewStartRadius =
+            point.baseRadius;
+
+          point.viewTargetY =
+            targets.y;
+
+          point.viewTargetRadius =
+            targets.radius;
+
+          point.viewTargetMetricValue =
+            targets.metricValue;
+
+          point.viewTargetRespondents =
+            targets.respondents;
+        }
+      );
+
+
+      interactionLocked =
+        true;
+
+      lastAggregateClickKey =
+        null;
+
+      lastAggregateClickTime =
+        0;
+
+      activeView =
+        nextView;
+
+
+      chartHeading.textContent =
+        activeView ===
+          'pay'
+          ? 'Pay/bonuses'
+          : 'Likely to recommend workplace?';
+
+
+      promoterChart.options
+        .scales
+        .y
+        .title
+        .text =
+          activeView ===
+            'pay'
+            ? '% of optoms endorsing'
+            : (
+                '\u00A0\u00A0\u00A0\u00A0' +
+                '\u00A0\u00A0\u00A0\u00A0' +
+                '\u00A0\u00A0\u00A0\u00A0' +
+                '\u00A0\u00A0\u00A0\u00A0' +
+                '\u00A0\u00A0\u00A0\u00A0' +
+                '\u00A0\u00A0Score'
+              );
+
+
+      updateActiveTab();
+
+
+      runAnimation({
+        duration:
+          VIEW_TRANSITION_MS,
+
+        easing:
+          easeInOutCubic,
+
+        onFrame(
+          progress
+        ) {
+          aggregatePoints.forEach(
+            point => {
+              point.y =
+                point.viewStartY +
+                (
+                  point.viewTargetY -
+                  point.viewStartY
+                ) *
+                progress;
+
+              point.baseRadius =
+                point.viewStartRadius +
+                (
+                  point.viewTargetRadius -
+                  point.viewStartRadius
+                ) *
+                progress;
+            }
+          );
+
+
+          axisDescriptionOpacity =
+            startingDescriptionOpacity +
+            (
+              targetDescriptionOpacity -
+              startingDescriptionOpacity
+            ) *
+            progress;
+
+
+          promoterChart.update(
+            'none'
+          );
+        },
+
+        onComplete() {
+          aggregatePoints.forEach(
+            point => {
+              point.y =
+                point.viewTargetY;
+
+              point.targetY =
+                point.viewTargetY;
+
+              point.baseRadius =
+                point.viewTargetRadius;
+
+              point.currentMetricValue =
+                point.viewTargetMetricValue;
+
+              point.currentRespondents =
+                point.viewTargetRespondents;
+
+              point.respondents =
+                point.viewTargetRespondents;
+            }
+          );
+
+
+          axisDescriptionOpacity =
+            targetDescriptionOpacity;
+
+          promoterChart.update(
+            'none'
+          );
+
+          interactionLocked =
+            false;
+
+          updateReaggregateButton();
+        }
+      });
+    }
+
+
+    function requestViewSwitch(
+      nextView
+    ) {
+      if (
+        nextView ===
+        activeView ||
+        interactionLocked
+      ) {
+        return;
+      }
+
+      /*
+       * Raw Overall points are first smoothly re-aggregated before
+       * transitioning to Pay.
+       */
+      if (
+        splitEmployers.size >
+        0
+      ) {
+        animateReaggregation(
+          () => {
+            animateViewSwitch(
+              nextView
+            );
+          }
+        );
+
+        return;
+      }
+
+      animateViewSwitch(
+        nextView
+      );
+    }
+      
     /************************************************************
      * INITIAL RISE
      *
@@ -2786,7 +3211,10 @@
      * Raw points move back into them and are then removed.
      ************************************************************/
 
-    function animateReaggregation() {
+    function animateReaggregation(
+      onCompleteCallback =
+        null
+    ) {
       if (
         interactionLocked ||
         !promoterChart ||
@@ -2929,6 +3357,13 @@
             false;
 
           updateReaggregateButton();
+
+          if (
+            typeof onCompleteCallback ===
+            'function'
+          ) {
+            onCompleteCallback();
+          }
         }
       });
     }
@@ -3377,6 +3812,8 @@
 
 
                 chart.canvas.style.cursor =
+                  activeView ===
+                    'overall' &&
                   selectedElement
                     .datasetIndex ===
                       0 &&
@@ -3484,6 +3921,8 @@
                  * retain normal single-tap tooltip behaviour.
                  */
                 if (
+                  activeView !==
+                    'overall' ||
                   selectedElement
                     .datasetIndex !==
                     0 ||
@@ -3675,11 +4114,37 @@
                       }
 
 
+                      if (
+                        activeView ===
+                        'pay'
+                      ) {
+                        return [
+                          (
+                            'Pay/bonuses endorsed: ' +
+                            `${formatStatistic(raw?.currentMetricValue)}%`
+                          ),
+
+                          (
+                            'Respondents: ' +
+                            `${formatNumber(raw?.currentRespondents ?? 0)}`
+                          )
+                        ];
+                      }
+
+
                       return [
-                        `Median score: ${formatStatistic(raw?.targetY)}`,
-                        `Respondents: ${formatNumber(raw?.respondents ?? 0)}`,
+                        (
+                          'Median score: ' +
+                          `${formatStatistic(raw?.currentMetricValue)}`
+                        ),
+
+                        (
+                          'Respondents: ' +
+                          `${formatNumber(raw?.currentRespondents ?? 0)}`
+                        ),
+
                         raw?.canSplit
-                          ? 'Double-tap for raw scores'
+                          ? 'Double-click or double-tap for raw scores'
                           : ''
                       ].filter(
                         Boolean
@@ -3721,7 +4186,7 @@
                     0,
 
                   max:
-                    10,
+                    100,
 
 
                   title: {
@@ -3754,7 +4219,7 @@
 
                   ticks: {
                     stepSize:
-                      1,
+                      10,
 
                     color:
                       '#151515',
@@ -3786,11 +4251,20 @@
                     callback(
                       value
                     ) {
-                      return String(
+                      const number =
                         Number(
                           value
-                        )
-                      );
+                        );
+
+                      return activeView ===
+                        'pay'
+                          ? String(
+                              number
+                            )
+                          : String(
+                              number /
+                              10
+                            );
                     }
                   },
 
@@ -3846,9 +4320,30 @@
 
     reaggregateButton.addEventListener(
       'click',
-      animateReaggregation
+      () => {
+        animateReaggregation();
+      }
     );
 
+
+    overallTab.addEventListener(
+      'click',
+      () => {
+        requestViewSwitch(
+          'overall'
+        );
+      }
+    );
+
+
+    payTab.addEventListener(
+      'click',
+      () => {
+        requestViewSwitch(
+          'pay'
+        );
+      }
+    );
 
     /************************************************************
      * LOAD ONCE
@@ -3861,7 +4356,8 @@
 
         const [
           aggregateRows,
-          rawRows
+          rawRows,
+          payRows
         ] =
           await Promise.all([
             loadSheetQuery(
@@ -3870,6 +4366,10 @@
 
             loadSheetQuery(
               RAW_QUERY
+            ),
+
+            loadSheetQuery(
+              PAY_QUERY
             )
           ]);
 
@@ -3885,7 +4385,22 @@
             rawRows
           );
 
+        payItems =
+          normaliseAggregateRows(
+            payRows
+          );
 
+
+        payEmployerData =
+          new Map(
+            payItems.map(
+              item => [
+                item.canonicalKey,
+                item
+              ]
+            )
+          );
+        
         if (
           !aggregateItems.length
         ) {
