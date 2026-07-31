@@ -531,7 +531,7 @@
       170;
 
     const VIEW_TRANSITION_MS =
-      850;
+      1500;
 
     /*
      * Maximum interval between two clicks or taps for splitting.
@@ -616,6 +616,13 @@
 
     let axisDescriptionOpacity =
       1;
+
+    /*
+     * Overall displays 0–10 while Pay displays 0–100.
+     * This value animates between 0.1 and 1.
+     */
+    let axisTickMultiplier =
+      0.1;
 
     /*
      * Used to distinguish a single click/tap from a second
@@ -2050,7 +2057,156 @@
       return positions;
     }
 
+    /*
+     * Assign nearby Pay values to separate horizontal lanes.
+     * Values separated by 5 percentage points or less cannot
+     * occupy the same lane.
+     */
+    function buildProximityPositions(
+      items,
+      proximityThreshold =
+        5
+    ) {
+      const sortedItems =
+        items
+          .slice()
+          .sort(
+            (
+              first,
+              second
+            ) =>
+              first.score -
+                second.score ||
+              second.respondents -
+                first.respondents ||
+              first.fullName.localeCompare(
+                second.fullName
+              )
+          );
 
+      /*
+       * Each entry stores the most recent percentage occupying
+       * that horizontal lane.
+       */
+      const laneLastScores =
+        [];
+
+      const laneAssignments =
+        new Map();
+
+
+      sortedItems.forEach(
+        item => {
+          let laneIndex =
+            laneLastScores.findIndex(
+              previousScore =>
+                (
+                  item.score -
+                  previousScore
+                ) >
+                proximityThreshold
+            );
+
+
+          /*
+           * Every existing lane contains another value within
+           * five percentage points, so create a lane to the right.
+           */
+          if (
+            laneIndex ===
+            -1
+          ) {
+            laneIndex =
+              laneLastScores.length;
+
+            laneLastScores.push(
+              item.score
+            );
+          } else {
+            laneLastScores[
+              laneIndex
+            ] =
+              item.score;
+          }
+
+
+          laneAssignments.set(
+            item.canonicalKey,
+            laneIndex
+          );
+        }
+      );
+
+
+      const laneCount =
+        Math.max(
+          1,
+          laneLastScores.length
+        );
+
+      /*
+       * Retain at least five possible positions so a second
+       * nearby value moves only one position to the right rather
+       * than jumping across the whole chart.
+       */
+      const positionCount =
+        Math.max(
+          5,
+          laneCount
+        );
+
+      const leftPosition =
+        20;
+
+      const rightPosition =
+        82;
+
+      const sharedPositions =
+        Array.from(
+          {
+            length:
+              positionCount
+          },
+          (
+            _,
+            index
+          ) =>
+            leftPosition +
+            (
+              index /
+              (
+                positionCount -
+                1
+              )
+            ) *
+            (
+              rightPosition -
+              leftPosition
+            )
+        );
+
+      const positions =
+        new Map();
+
+
+      laneAssignments.forEach(
+        (
+          laneIndex,
+          employerKey
+        ) => {
+          positions.set(
+            employerKey,
+            sharedPositions[
+              laneIndex
+            ]
+          );
+        }
+      );
+
+
+      return positions;
+    }
+    
     function buildAggregatePoints(
       items
     ) {
@@ -2865,6 +3021,15 @@
           ? 1
           : 0;
 
+      const startingAxisTickMultiplier =
+        axisTickMultiplier;
+
+      const targetAxisTickMultiplier =
+        nextView ===
+          'pay'
+          ? 1
+          : 0.1;
+
 
       aggregatePoints.forEach(
         point => {
@@ -2989,6 +3154,18 @@
             ) *
             progress;
 
+          /*
+           * Gradually count the y-axis labels between 0–10
+           * and 0–100.
+           */
+          axisTickMultiplier =
+            startingAxisTickMultiplier +
+            (
+              targetAxisTickMultiplier -
+              startingAxisTickMultiplier
+            ) *
+            progress;
+
 
           promoterChart.update(
             'none'
@@ -3024,6 +3201,9 @@
 
           axisDescriptionOpacity =
             targetDescriptionOpacity;
+
+          axisTickMultiplier =
+            targetAxisTickMultiplier;
 
           promoterChart.update(
             'none'
@@ -4321,6 +4501,22 @@
                   max:
                     100,
 
+                  /*
+                   * Keep the y-axis spine in one fixed position.
+                   * As the numbers gain digits, they expand left
+                   * instead of pushing the spine right.
+                   */
+                  afterFit(
+                    scale
+                  ) {
+                    scale.width =
+                      window.matchMedia(
+                        '(max-width: 430px)'
+                      ).matches
+                        ? 52
+                        : 54;
+                  },
+
 
                   title: {
                     display:
@@ -4389,15 +4585,12 @@
                           value
                         );
 
-                      return activeView ===
-                        'pay'
-                          ? String(
-                              number
-                            )
-                          : String(
-                              number /
-                              10
-                            );
+                      return String(
+                        Math.round(
+                          number *
+                          axisTickMultiplier
+                        )
+                      );
                     }
                   },
 
@@ -4550,10 +4743,10 @@
 
 
         payPositions =
-          buildAggregatePositions(
-            payItems
+          buildProximityPositions(
+            payItems,
+            5
           );
-
 
         aggregatePoints =
           buildAggregatePoints(
