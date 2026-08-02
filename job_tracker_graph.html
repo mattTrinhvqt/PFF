@@ -1627,9 +1627,13 @@ chartOptionsRow.classList.toggle(
 !countTabActive
 );
 
+const showSmallNumbersNote =
+countTabActive &&
+currentGroup === 'state';
+
 smallNumbersNote.classList.toggle(
 'is-hidden',
-!countTabActive
+!showSmallNumbersNote
 );
 
 fteToggle.classList.toggle('is-on', fteAdjusted);
@@ -4566,10 +4570,113 @@ role === 'regression';
 });
 }
 
+function distanceToSegment(px, py, ax, ay, bx, by) {
+const dx = bx - ax;
+const dy = by - ay;
+
+if (dx === 0 && dy === 0) {
+return Math.hypot(px - ax, py - ay);
+}
+
+const t = clamp(
+((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy),
+0,
+1
+);
+
+const closestX = ax + t * dx;
+const closestY = ay + t * dy;
+
+return Math.hypot(px - closestX, py - closestY);
+}
+
+function findNearestRateTrendLine(event, maximumDistance = 8) {
+if (!chart?.chartArea || activeView !== 'per100') return null;
+
+const area = chart.chartArea;
+const x = Number.isFinite(event?.x) ? event.x : null;
+const y = Number.isFinite(event?.y) ? event.y : null;
+
+if (
+!Number.isFinite(x) ||
+!Number.isFinite(y) ||
+x < area.left ||
+x > area.right ||
+y < area.top ||
+y > area.bottom
+) {
+return null;
+}
+
+let bestMatch = null;
+
+chart.data.datasets.forEach((dataset, datasetIndex) => {
+if (dataset.datasetRole !== 'rateTrend') return;
+
+for (let index = 0; index < dataset.data.length - 1; index++) {
+const first = dataset.data[index];
+const second = dataset.data[index + 1];
+
+if (
+!Number.isFinite(first?.x) ||
+!Number.isFinite(first?.y) ||
+!Number.isFinite(second?.x) ||
+!Number.isFinite(second?.y)
+) {
+continue;
+}
+
+const firstX = chart.scales.x.getPixelForValue(first.x);
+const firstY = chart.scales.y.getPixelForValue(first.y);
+const secondX = chart.scales.x.getPixelForValue(second.x);
+const secondY = chart.scales.y.getPixelForValue(second.y);
+
+const distance = distanceToSegment(
+x,
+y,
+firstX,
+firstY,
+secondX,
+secondY
+);
+
+if (distance > maximumDistance) continue;
+
+const firstDistance = Math.hypot(x - firstX, y - firstY);
+const secondDistance = Math.hypot(x - secondX, y - secondY);
+const nearestIndex = firstDistance <= secondDistance
+? index
+: index + 1;
+
+if (!bestMatch || distance < bestMatch.distance) {
+bestMatch = {
+datasetIndex,
+index: nearestIndex,
+distance,
+x,
+y
+};
+}
+}
+});
+
+return bestMatch;
+}
+ 
 function handleChartHover(event, elements) {
 if (interactionLocked) {
 chart.canvas.style.cursor = 'default';
 return;
+}
+
+const interactiveElement = findInteractiveElement(elements);
+const rateTrendLine = interactiveElement
+? null
+: findNearestRateTrendLine(event);
+
+chart.canvas.style.cursor = interactiveElement || rateTrendLine
+? 'pointer'
+: 'default';
 }
 
 chart.canvas.style.cursor = findInteractiveElement(elements)
@@ -4590,6 +4697,28 @@ chart.canvas.blur();
 const interactiveElement = findInteractiveElement(elements);
 
 if (!interactiveElement) {
+const rateTrendLine = findNearestRateTrendLine(event);
+
+if (rateTrendLine) {
+const renderedElement = chart
+.getDatasetMeta(rateTrendLine.datasetIndex)
+?.data?.[rateTrendLine.index];
+
+chart.tooltip.setActiveElements(
+[{
+datasetIndex: rateTrendLine.datasetIndex,
+index: rateTrendLine.index
+}],
+{
+x: renderedElement?.x ?? rateTrendLine.x,
+y: renderedElement?.y ?? rateTrendLine.y
+}
+);
+
+chart.update('none');
+return;
+}
+
 chart.tooltip.setActiveElements([], { x: 0, y: 0 });
 chart.update('none');
 return;
@@ -4868,6 +4997,7 @@ return role === 'countPoints' ||
 role === 'countTrend' ||
 role === 'proportionPoints' ||
 role === 'proportionTrend' ||
+role === 'ratePoints' ||
 role === 'rateTrend' ||
 role === 'salaryPoints' ||
 role === 'regression';
