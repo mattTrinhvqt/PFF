@@ -50,6 +50,7 @@ min-height: 100%;
 margin: 0;
 padding: 0;
 background: #fff;
+-webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -58,6 +59,7 @@ background: #fff;
 font-family: 'Lato', sans-serif;
 overflow-x: hidden;
 -webkit-tap-highlight-color: transparent;
+-webkit-touch-callout: none;
 }
 
 button,
@@ -203,6 +205,7 @@ border-bottom: 1px solid var(--track);
 }
 
 .tab-list {
+position: relative;
 display: flex;
 align-items: flex-end;
 min-width: 0;
@@ -213,6 +216,28 @@ scrollbar-width: none;
 
 .tab-list::-webkit-scrollbar {
 display: none;
+}
+
+.tab-list::after {
+content: '';
+position: absolute;
+right: auto;
+bottom: 0;
+left: 0;
+z-index: 2;
+width: var(--tab-indicator-width, 0px);
+height: 2px;
+background: var(--purple);
+pointer-events: none;
+transform: translate3d(var(--tab-indicator-x, 0px), 0, 0);
+transition:
+transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+width 420ms cubic-bezier(0.22, 1, 0.36, 1);
+will-change: transform, width;
+}
+
+.tab-list.is-positioning::after {
+transition: none;
 }
 
 .chart-tab {
@@ -235,7 +260,7 @@ border-color 180ms ease;
 
 .chart-tab.is-active {
 color: var(--purple);
-border-bottom-color: var(--purple);
+border-bottom-color: transparent;
 cursor: default;
 }
 
@@ -295,6 +320,7 @@ font-weight: 700;
 line-height: 22px;
 text-align: left;
 white-space: nowrap;
+will-change: opacity;
 }
 
 .group-control {
@@ -403,6 +429,7 @@ font-weight: 700;
 letter-spacing: 0.04em;
 line-height: 1.2;
 text-transform: uppercase;
+will-change: opacity;
 }
 
 .group-option {
@@ -550,28 +577,25 @@ margin: -2px 0 0;
 overflow: hidden;
 contain: strict;
 -webkit-tap-highlight-color: transparent;
+-webkit-touch-callout: none;
 -webkit-user-select: none;
 user-select: none;
 }
 
-.chart-canvas {
-position: absolute;
-inset: 0;
+#jobChart {
 display: block;
 width: 100% !important;
 height: 100% !important;
 touch-action: manipulation;
--webkit-tap-highlight-color: transparent;
+-webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
+-webkit-touch-callout: none;
 -webkit-user-select: none;
 user-select: none;
-outline: none;
-transition: opacity 180ms ease;
+outline: none !important;
 }
 
-.chart-canvas.is-inactive {
-visibility: hidden;
-opacity: 0;
-pointer-events: none;
+#jobChart::selection {
+background: transparent;
 }
 
 @media (max-width: 430px) {
@@ -727,7 +751,7 @@ Advertised pay
 <div id="status" role="alert" aria-live="polite"></div>
 
 <div class="chart-heading-row">
-<h2 id="chartHeading" class="chart-heading">Job advertisements over time</h2>
+<h2 id="chartHeading" class="chart-heading">Job ads over time</h2>
 
 <div class="group-control">
 <button
@@ -810,15 +834,8 @@ aria-label="Chart legend"
 
 <div class="chart-shell">
 <canvas
-id="countChart"
-class="chart-canvas"
-aria-label="Monthly job advertisement count chart"
-tabindex="-1"
-></canvas>
-<canvas
-id="salaryChart"
-class="chart-canvas is-inactive"
-aria-label="Advertised salaries over time chart"
+id="jobChart"
+aria-label="Job ads data chart"
 tabindex="-1"
 ></canvas>
 </div>
@@ -837,11 +854,10 @@ range: 'B3:V',
 fetchTimeoutMs: 20000,
 fetchAttempts: 2,
 retryDelayMs: 1200,
-cacheKey: 'pff-job-ads-count-pay-v1',
+cacheKey: 'pff-job-ads-count-pay-v3',
 yMin: 60000,
 yMax: 180000,
 majorYStep: 20000,
-minorYStep: 10000,
 pointRadius: 2.7,
 pointHoverRadius: 4.4,
 pointOpacity: 0.20,
@@ -852,8 +868,9 @@ regressionHitRadius: 8,
 trendWidth: 3.6,
 trendHitRadius: 8,
 minimumGroupSize: 20,
-maxGroupDatasets: 8,
+maxGroups: 8,
 trailingWeeks: 13,
+transitionMs: 1050,
 columns: {
 repeatFlag: 0,
 date: 2,
@@ -906,6 +923,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const YEAR_MS = 365.2425 * DAY_MS;
 const AVERAGE_MONTH_DAYS = 365.2425 / 12;
 const TRAILING_WINDOW_MS = CONFIG.trailingWeeks * 7 * DAY_MS;
+const POINT_SLOT_COUNT = CONFIG.maxGroups;
 
 const app = document.getElementById('app');
 const loadingState = document.getElementById('loadingState');
@@ -918,23 +936,29 @@ const groupMenuTitle = document.getElementById('groupMenuTitle');
 const groupOptions = [
 ...document.querySelectorAll('.group-option-input')
 ];
+const tabList = document.querySelector('.tab-list');
 const chartTabs = [
 ...document.querySelectorAll('.chart-tab')
 ];
 const chartLegend = document.getElementById('chartLegend');
 const legendNote = document.getElementById('legendNote');
-const countCanvas = document.getElementById('countChart');
-const salaryCanvas = document.getElementById('salaryChart');
+const chartCanvas = document.getElementById('jobChart');
 
-let countChart = null;
-let salaryChart = null;
+let chart = null;
 let rows = [];
 let salaryRows = [];
-let salaryPointData = [];
 let axisBounds = null;
 let countAxis = null;
 let activeView = 'count';
 let currentGroup = 'none';
+let interactionLocked = false;
+let activeAnimationFrame = null;
+
+const axisTransition = {
+fromView: 'count',
+toView: 'count',
+progress: 1
+};
 
 function cleanText(value) {
 return String(value ?? '')
@@ -1121,9 +1145,64 @@ const blue = parseInt(cleaned.slice(4, 6), 16);
 return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
 }
 
-function formatAxisThousands(value) {
-const number = Number(value);
-return Number.isFinite(number) ? `${number / 1000}k` : '';
+function hexToRgb(hex) {
+const cleaned = String(hex).replace('#', '').trim();
+
+if (!/^[0-9a-f]{6}$/i.test(cleaned)) {
+return { red: 119, green: 119, blue: 119 };
+}
+
+return {
+red: parseInt(cleaned.slice(0, 2), 16),
+green: parseInt(cleaned.slice(2, 4), 16),
+blue: parseInt(cleaned.slice(4, 6), 16)
+};
+}
+
+function interpolateColour(firstHex, secondHex, progress) {
+const first = hexToRgb(firstHex);
+const second = hexToRgb(secondHex);
+const red = Math.round(first.red + (second.red - first.red) * progress);
+const green = Math.round(first.green + (second.green - first.green) * progress);
+const blue = Math.round(first.blue + (second.blue - first.blue) * progress);
+return `rgb(${red}, ${green}, ${blue})`;
+}
+
+function interpolateRgba(
+firstHex,
+secondHex,
+firstOpacity,
+secondOpacity,
+progress
+) {
+const first = hexToRgb(firstHex);
+const second = hexToRgb(secondHex);
+const red = Math.round(first.red + (second.red - first.red) * progress);
+const green = Math.round(first.green + (second.green - first.green) * progress);
+const blue = Math.round(first.blue + (second.blue - first.blue) * progress);
+const opacity = firstOpacity + (secondOpacity - firstOpacity) * progress;
+
+return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+}
+
+function clamp(value, minimum, maximum) {
+return Math.max(minimum, Math.min(maximum, value));
+}
+
+function easeInOutCubic(progress) {
+return progress < 0.5
+? 4 * progress * progress * progress
+: 1 - Math.pow(-2 * progress + 2, 3) / 2;
+}
+
+function formatAnimatedAxisValue(value) {
+if (!Number.isFinite(value)) return '';
+
+if (Math.abs(value) >= 1000) {
+return `${Math.round(value / 1000)}k`;
+}
+
+return String(Math.round(value));
 }
 
 function formatTooltipDate(timestamp) {
@@ -1137,10 +1216,30 @@ timeZone: 'UTC'
 
 function formatTooltipMonth(timestamp) {
 return new Intl.DateTimeFormat('en-AU', {
-month: 'long',
+month: 'short',
 year: 'numeric',
 timeZone: 'UTC'
 }).format(new Date(timestamp));
+}
+
+function formatMonthShort(timestamp) {
+return new Intl.DateTimeFormat('en-AU', {
+month: 'short',
+timeZone: 'UTC'
+}).format(new Date(timestamp));
+}
+
+function formatQuarterRange(timestamp) {
+const endMonth = new Date(timestamp);
+const startMonth = addUtcMonths(endMonth, -2);
+const abbreviatedYear = String(
+endMonth.getUTCFullYear()
+).slice(-2);
+
+return (
+`${formatMonthShort(startMonth.getTime())}-` +
+`${formatMonthShort(endMonth.getTime())} quarter '${abbreviatedYear}`
+);
 }
 
 function formatSlopePerYear(value) {
@@ -1200,35 +1299,18 @@ axisBounds.lastDataMonth
 ).map(tick => tick.value);
 }
 
-function formatMonthTick(timestamp) {
+function formatQuarterTick(timestamp) {
 const date = new Date(timestamp);
 const month = date.getUTCMonth();
 
-return month === 0 || month === 6
+return [0, 3, 6, 9].includes(month)
 ? `${month + 1}/${date.getUTCFullYear()}`
 : '';
 }
 
-function isHalfYearTick(value) {
-const date = new Date(Number(value));
-const month = date.getUTCMonth();
-return month === 0 || month === 6;
-}
-
-function isSalaryMajorYTick(value) {
-const number = Number(value);
-return Number.isFinite(number) && number % CONFIG.majorYStep === 0;
-}
-
-function isCountMajorYTick(value) {
-const number = Number(value);
-
-if (!Number.isFinite(number) || !countAxis?.majorStep) {
-return false;
-}
-
-const ratio = number / countAxis.majorStep;
-return Math.abs(ratio - Math.round(ratio)) < 1e-9;
+function isQuarterTick(value) {
+const month = new Date(Number(value)).getUTCMonth();
+return [0, 3, 6, 9].includes(month);
 }
 
 function hideLoadingState() {
@@ -1288,6 +1370,7 @@ resolve(response?.table?.rows || []);
 }
 
 window[callbackName] = response => finish(null, response);
+
 script.onerror = () => finish(
 new Error('Network error loading Google Sheet data')
 );
@@ -1388,40 +1471,43 @@ lastDataMonth: lastDataMonth.getTime()
 };
 }
 
-function niceStep(value) {
-if (!Number.isFinite(value) || value <= 0) return 5;
-
-const exponent = Math.floor(Math.log10(value));
-const magnitude = Math.pow(10, exponent);
-const fraction = value / magnitude;
-
-if (fraction <= 1) return 1 * magnitude;
-if (fraction <= 2) return 2 * magnitude;
-if (fraction <= 5) return 5 * magnitude;
-return 10 * magnitude;
-}
-
 function calculateCountAxis() {
-const overallSeries = buildMonthlyCountSeries(rows);
-const trendSeries = buildTrailingAverageSeries(rows);
+const overallSeries = buildMonthlyCountSeries(rows, false);
+const trendSeries = buildTrailingAverageSeries(rows, false);
+
 const values = [
-...overallSeries.map(point => point.y),
-...trendSeries.map(point => point.y).filter(Number.isFinite)
+...overallSeries.map(point => point.value),
+...trendSeries
+.map(point => point.value)
+.filter(Number.isFinite)
 ];
-const maximum = Math.max(1, ...values);
-const majorStep = Math.max(5, niceStep(maximum / 5));
-const minorStep = majorStep / 2;
-const maximumValue = Math.max(
-majorStep * 3,
-Math.ceil(maximum / majorStep) * majorStep
+
+const observedMaximum = Math.max(1, ...values);
+const targetMaximum = observedMaximum * 1.08;
+const majorStep = Math.max(
+1,
+Math.ceil(targetMaximum / 6)
 );
 
 return {
 minimum: 0,
-maximum: maximumValue,
+maximum: majorStep * 6,
 majorStep,
-minorStep
+minorStep: majorStep / 2
 };
+}
+
+function normaliseCountValue(value) {
+return clamp(value / countAxis.maximum, 0, 1);
+}
+
+function normaliseSalaryValue(value) {
+return clamp(
+(value - CONFIG.yMin) /
+(CONFIG.yMax - CONFIG.yMin),
+0,
+1
+);
 }
 
 function logGamma(value) {
@@ -1468,19 +1554,34 @@ let c = 1;
 let d = 1 - qab * x / qap;
 
 if (Math.abs(d) < minimumValue) d = minimumValue;
+
 d = 1 / d;
+
 let result = d;
 
-for (let iteration = 1; iteration <= maximumIterations; iteration++) {
+for (
+let iteration = 1;
+iteration <= maximumIterations;
+iteration++
+) {
 const doubledIteration = 2 * iteration;
+
 let coefficient =
 iteration * (b - iteration) * x /
 ((qam + doubledIteration) * (a + doubledIteration));
 
 d = 1 + coefficient * d;
-if (Math.abs(d) < minimumValue) d = minimumValue;
+
+if (Math.abs(d) < minimumValue) {
+d = minimumValue;
+}
+
 c = 1 + coefficient / c;
-if (Math.abs(c) < minimumValue) c = minimumValue;
+
+if (Math.abs(c) < minimumValue) {
+c = minimumValue;
+}
+
 d = 1 / d;
 result *= d * c;
 
@@ -1489,15 +1590,25 @@ coefficient =
 ((a + doubledIteration) * (qap + doubledIteration));
 
 d = 1 + coefficient * d;
-if (Math.abs(d) < minimumValue) d = minimumValue;
+
+if (Math.abs(d) < minimumValue) {
+d = minimumValue;
+}
+
 c = 1 + coefficient / c;
-if (Math.abs(c) < minimumValue) c = minimumValue;
+
+if (Math.abs(c) < minimumValue) {
+c = minimumValue;
+}
+
 d = 1 / d;
 
 const change = d * c;
 result *= change;
 
-if (Math.abs(change - 1) < epsilon) break;
+if (Math.abs(change - 1) < epsilon) {
+break;
+}
 }
 
 return result;
@@ -1516,14 +1627,21 @@ b * Math.log1p(-x)
 );
 
 if (x < (a + 1) / (a + b + 2)) {
-return betaTerm * betaContinuedFraction(a, b, x) / a;
+return betaTerm *
+betaContinuedFraction(a, b, x) /
+a;
 }
 
 return 1 -
-betaTerm * betaContinuedFraction(b, a, 1 - x) / b;
+betaTerm *
+betaContinuedFraction(b, a, 1 - x) /
+b;
 }
 
-function calculateTwoSidedTTestPValue(tStatistic, degreesOfFreedom) {
+function calculateTwoSidedTTestPValue(
+tStatistic,
+degreesOfFreedom
+) {
 if (
 !Number.isFinite(tStatistic) ||
 !Number.isFinite(degreesOfFreedom) ||
@@ -1533,6 +1651,7 @@ return NaN;
 }
 
 const absoluteT = Math.abs(tStatistic);
+
 const betaInput =
 degreesOfFreedom /
 (degreesOfFreedom + absoluteT * absoluteT);
@@ -1553,44 +1672,109 @@ degreesOfFreedom / 2,
 function calculateRegression(data) {
 if (data.length < 2) return null;
 
-const meanX = data.reduce((total, row) => total + row.x, 0) /
+const meanX =
+data.reduce(
+(total, row) =>
+total + row.x,
+0
+) /
 data.length;
-const meanY = data.reduce((total, row) => total + row.salary, 0) /
+
+const meanY =
+data.reduce(
+(total, row) =>
+total + row.salary,
+0
+) /
 data.length;
+
 let numerator = 0;
 let denominator = 0;
 
 data.forEach(row => {
-const centredXYears = (row.x - meanX) / YEAR_MS;
-numerator += centredXYears * (row.salary - meanY);
-denominator += centredXYears * centredXYears;
+const centredXYears =
+(row.x - meanX) /
+YEAR_MS;
+
+numerator +=
+centredXYears *
+(row.salary - meanY);
+
+denominator +=
+centredXYears *
+centredXYears;
 });
 
-if (denominator === 0) return null;
+if (denominator === 0) {
+return null;
+}
 
-const slopePerYear = numerator / denominator;
-const minimumX = Math.min(...data.map(row => row.x));
-const maximumX = Math.max(...data.map(row => row.x));
-const predict = timestamp =>
-meanY + slopePerYear * ((timestamp - meanX) / YEAR_MS);
+const slopePerYear =
+numerator /
+denominator;
+
+const minimumX =
+Math.min(
+...data.map(row => row.x)
+);
+
+const maximumX =
+Math.max(
+...data.map(row => row.x)
+);
+
+const predict =
+timestamp =>
+meanY +
+slopePerYear *
+(
+(timestamp - meanX) /
+YEAR_MS
+);
+
 let pValue = NaN;
 
 if (data.length > 2) {
-const residualSumOfSquares = data.reduce((total, row) => {
-const residual = row.salary - predict(row.x);
-return total + residual * residual;
-}, 0);
-const degreesOfFreedom = data.length - 2;
-const residualVariance = residualSumOfSquares / degreesOfFreedom;
-const slopeStandardError = Math.sqrt(
-residualVariance / denominator
+const residualSumOfSquares =
+data.reduce(
+(total, row) => {
+const residual =
+row.salary -
+predict(row.x);
+
+return total +
+residual * residual;
+},
+0
+);
+
+const degreesOfFreedom =
+data.length - 2;
+
+const residualVariance =
+residualSumOfSquares /
+degreesOfFreedom;
+
+const slopeStandardError =
+Math.sqrt(
+residualVariance /
+denominator
 );
 
 if (slopeStandardError === 0) {
-pValue = slopePerYear === 0 ? 1 : 0;
-} else if (Number.isFinite(slopeStandardError)) {
-pValue = calculateTwoSidedTTestPValue(
-slopePerYear / slopeStandardError,
+pValue =
+slopePerYear === 0
+? 1
+: 0;
+} else if (
+Number.isFinite(
+slopeStandardError
+)
+) {
+pValue =
+calculateTwoSidedTTestPValue(
+slopePerYear /
+slopeStandardError,
 degreesOfFreedom
 );
 }
@@ -1607,128 +1791,287 @@ pValue
 }
 
 function buildRegressionLinePoints(regression) {
-const sampleCount = Math.max(2, CONFIG.regressionSamples);
-const span = regression.maximumX - regression.minimumX;
+const sampleCount =
+Math.max(
+2,
+CONFIG.regressionSamples
+);
+
+const span =
+regression.maximumX -
+regression.minimumX;
 
 return Array.from(
-{ length: sampleCount },
-(_, index) => {
-const proportion = index / (sampleCount - 1);
-const x = regression.minimumX + span * proportion;
+{
+length:
+sampleCount
+},
+(
+_,
+index
+) => {
+const proportion =
+index /
+(sampleCount - 1);
+
+const x =
+regression.minimumX +
+span * proportion;
+
+const salary =
+regression.meanY +
+regression.slopePerYear *
+(
+(x - regression.meanX) /
+YEAR_MS
+);
 
 return {
 x,
 y:
-regression.meanY +
-regression.slopePerYear *
-((x - regression.meanX) / YEAR_MS)
+normaliseSalaryValue(
+salary
+),
+value:
+salary
 };
 }
 );
 }
 
 function getGroupColour(mode, label) {
-if (mode === 'state') return STATE_COLOURS[label];
-if (mode === 'rurality') return RURALITY_COLOURS[label];
-if (mode === 'employerType') return EMPLOYER_TYPE_COLOURS[label];
+if (mode === 'state') {
+return STATE_COLOURS[label];
+}
+
+if (mode === 'rurality') {
+return RURALITY_COLOURS[label];
+}
+
+if (mode === 'employerType') {
+return EMPLOYER_TYPE_COLOURS[label];
+}
+
 return '#6600ff';
 }
 
 function getRowGroupLabel(row, mode) {
-return mode === 'none' ? null : row[mode] || null;
+return mode === 'none'
+? null
+: row[mode] || null;
 }
 
 function getBaseRows(view) {
-return view === 'count' ? rows : salaryRows;
+return view === 'count'
+? rows
+: salaryRows;
 }
 
-function getGroupedRows(view, mode, includeSmallGroups = false) {
+function getGroupedRows(
+view,
+mode,
+includeSmallGroups = false
+) {
 if (mode === 'none') {
-return [{
-label: view === 'count' ? 'Job ads' : 'Advertised salary',
-colour: '#f1c232',
-rows: getBaseRows(view)
-}];
+return [
+{
+label:
+view === 'count'
+? 'Job ads'
+: 'Advertised salary',
+
+colour:
+'#f1c232',
+
+rows:
+getBaseRows(view)
+}
+];
 }
 
-const grouped = new Map();
+const grouped =
+new Map();
 
-getBaseRows(view).forEach(row => {
-const label = getRowGroupLabel(row, mode);
-if (!label) return;
+getBaseRows(view)
+.forEach(row => {
+const label =
+getRowGroupLabel(
+row,
+mode
+);
 
-if (!grouped.has(label)) grouped.set(label, []);
-grouped.get(label).push(row);
+if (!label) {
+return;
+}
+
+if (!grouped.has(label)) {
+grouped.set(
+label,
+[]
+);
+}
+
+grouped
+.get(label)
+.push(row);
 });
 
 return GROUP_ORDER[mode]
 .filter(label => {
-if (!grouped.has(label)) return false;
-return includeSmallGroups ||
-grouped.get(label).length >= CONFIG.minimumGroupSize;
+if (!grouped.has(label)) {
+return false;
+}
+
+return (
+includeSmallGroups ||
+grouped.get(label).length >=
+CONFIG.minimumGroupSize
+);
 })
 .map(label => ({
 label,
-colour: getGroupColour(mode, label),
-rows: grouped.get(label)
+colour:
+getGroupColour(
+mode,
+label
+),
+rows:
+grouped.get(label)
 }));
 }
 
-function getExcludedGroupCount(view, mode) {
-if (mode === 'none') return 0;
+function getExcludedGroupCount(
+view,
+mode
+) {
+if (mode === 'none') {
+return 0;
+}
 
-return getGroupedRows(view, mode, true)
-.filter(group => group.rows.length < CONFIG.minimumGroupSize)
+return getGroupedRows(
+view,
+mode,
+true
+)
+.filter(
+group =>
+group.rows.length <
+CONFIG.minimumGroupSize
+)
 .length;
 }
 
-function getEligibleGroupLabels(view, mode) {
-return new Set(
-getGroupedRows(view, mode).map(group => group.label)
-);
-}
-
 function getMonthTimestamp(timestamp) {
-return startOfUtcMonth(new Date(timestamp)).getTime();
+return startOfUtcMonth(
+new Date(timestamp)
+).getTime();
 }
 
-function buildMonthlyCountSeries(data) {
-const counts = new Map();
+function buildMonthlyCountSeries(
+data,
+shouldNormalise = true
+) {
+const counts =
+new Map();
 
-buildMonthSequence().forEach(month => {
-counts.set(month, 0);
+buildMonthSequence()
+.forEach(month => {
+counts.set(
+month,
+0
+);
 });
 
 data.forEach(row => {
-const month = getMonthTimestamp(row.x);
+const month =
+getMonthTimestamp(
+row.x
+);
 
 if (counts.has(month)) {
-counts.set(month, counts.get(month) + 1);
+counts.set(
+month,
+counts.get(month) + 1
+);
 }
 });
 
-return [...counts.entries()].map(([x, y]) => ({ x, y }));
+return [
+...counts.entries()
+]
+.map(
+([
+x,
+value
+]) => ({
+x,
+y:
+shouldNormalise
+? normaliseCountValue(value)
+: value,
+value,
+monthLabel:
+formatTooltipMonth(x)
+})
+);
 }
 
-function buildTrailingAverageSeries(data) {
-const now = Date.now();
+function buildTrailingAverageSeries(
+data,
+shouldNormalise = true
+) {
+const now =
+Date.now();
 
-return buildMonthSequence().map(monthTimestamp => {
-const monthStart = new Date(monthTimestamp);
-const monthEnd = addUtcMonths(monthStart, 1).getTime();
-const effectiveEnd = Math.min(monthEnd, now);
-const windowStart = effectiveEnd - TRAILING_WINDOW_MS;
+return buildMonthSequence()
+.map(monthTimestamp => {
+const monthStart =
+new Date(
+monthTimestamp
+);
 
-if (windowStart < axisBounds.firstDataTime) {
+const monthEnd =
+addUtcMonths(
+monthStart,
+1
+).getTime();
+
+const effectiveEnd =
+Math.min(
+monthEnd,
+now
+);
+
+const windowStart =
+effectiveEnd -
+TRAILING_WINDOW_MS;
+
+if (
+windowStart <
+axisBounds.firstDataTime
+) {
 return {
-x: monthTimestamp,
-y: null
+x:
+monthTimestamp,
+y:
+null,
+value:
+null,
+quarterLabel:
+formatQuarterRange(
+monthTimestamp
+)
 };
 }
 
-const windowCount = data.reduce(
-(total, row) =>
-total + (
+const windowCount =
+data.reduce(
+(
+total,
+row
+) =>
+total +
+(
 row.x >= windowStart &&
 row.x < effectiveEnd
 ? 1
@@ -1737,57 +2080,1493 @@ row.x < effectiveEnd
 0
 );
 
-return {
-x: monthTimestamp,
-y:
+const value =
 windowCount *
 AVERAGE_MONTH_DAYS /
-(CONFIG.trailingWeeks * 7)
+(
+CONFIG.trailingWeeks *
+7
+);
+
+return {
+x:
+monthTimestamp,
+y:
+shouldNormalise
+? normaliseCountValue(value)
+: value,
+value,
+quarterLabel:
+formatQuarterRange(
+monthTimestamp
+)
 };
 });
 }
 
-function appendLegendItem(colour, label, markerType = 'line') {
-const item = document.createElement('span');
-item.className = 'legend-item';
-
-const marker = document.createElement('span');
-marker.className = markerType === 'square'
-? 'legend-square'
-: 'legend-line';
-marker.style.background = colour;
-
-if (markerType === 'square') {
-marker.style.borderColor = colour;
+function createEmptyDescriptor(kind) {
+return {
+kind,
+role:
+'empty',
+label:
+'',
+groupLabel:
+'',
+colour:
+'#6600ff',
+opacity:
+0,
+lineWidth:
+0,
+data:
+[],
+pointColours:
+[],
+pointOpacities:
+[],
+metadata:
+{}
+};
 }
 
-const text = document.createElement('span');
-text.textContent = label;
-
-item.appendChild(marker);
-item.appendChild(text);
-chartLegend.appendChild(item);
-}
-
-function updateLegend(view, mode) {
-chartLegend.textContent = '';
-
-const excludedGroupCount = getExcludedGroupCount(view, mode);
-legendNote.classList.toggle(
-'is-hidden',
-mode === 'none' || excludedGroupCount === 0
+function buildTargetDescriptors(
+view,
+mode
+) {
+const pointTargets =
+Array.from(
+{
+length:
+CONFIG.maxGroups
+},
+() =>
+createEmptyDescriptor(
+'point'
+)
 );
 
-if (mode !== 'none' && excludedGroupCount > 0) {
-legendNote.textContent = view === 'count'
+const lineTargets =
+Array.from(
+{
+length:
+CONFIG.maxGroups
+},
+() =>
+createEmptyDescriptor(
+'line'
+)
+);
+
+const groups =
+getGroupedRows(
+view,
+mode
+);
+
+if (view === 'pay') {
+const eligibleLabels =
+mode === 'none'
+? null
+: new Set(
+groups.map(
+group =>
+group.label
+)
+);
+
+const salaryData =
+salaryRows.map(
+row => ({
+x:
+row.x,
+y:
+normaliseSalaryValue(
+row.salary
+),
+value:
+row.salary,
+employer:
+row.employer,
+suburb:
+row.suburb,
+stateText:
+row.stateText
+})
+);
+
+const pointColours =
+salaryRows.map(
+row => {
+if (mode === 'none') {
+return '#6600ff';
+}
+
+const label =
+getRowGroupLabel(
+row,
+mode
+);
+
+return (
+label &&
+eligibleLabels.has(label)
+)
+? getGroupColour(
+mode,
+label
+)
+: '#6600ff';
+}
+);
+
+const pointOpacities =
+salaryRows.map(
+row => {
+if (mode === 'none') {
+return CONFIG.pointOpacity;
+}
+
+const label =
+getRowGroupLabel(
+row,
+mode
+);
+
+return (
+label &&
+eligibleLabels.has(label)
+)
+? CONFIG.pointOpacity
+: 0;
+}
+);
+
+pointTargets[0] = {
+kind:
+'point',
+role:
+'salaryPoints',
+label:
+'Advertised salary points',
+groupLabel:
+'Advertised salary',
+colour:
+'#6600ff',
+opacity:
+CONFIG.pointOpacity,
+lineWidth:
+0,
+data:
+salaryData,
+pointColours,
+pointOpacities,
+metadata:
+{}
+};
+
+groups.forEach(
+(
+group,
+index
+) => {
+if (
+index >=
+CONFIG.maxGroups
+) {
+return;
+}
+
+const regression =
+calculateRegression(
+group.rows
+);
+
+if (!regression) {
+return;
+}
+
+lineTargets[index] = {
+kind:
+'line',
+role:
+'regression',
+label:
+`${group.label} linear regression`,
+groupLabel:
+group.label,
+colour:
+mode === 'none'
+? '#f1c232'
+: group.colour,
+opacity:
+1,
+lineWidth:
+CONFIG.regressionWidth,
+data:
+buildRegressionLinePoints(
+regression
+),
+pointColours:
+[],
+pointOpacities:
+[],
+metadata: {
+slopePerYear:
+regression.slopePerYear,
+pValue:
+regression.pValue
+}
+};
+}
+);
+
+return [
+...pointTargets,
+...lineTargets
+];
+}
+
+groups.forEach(
+(
+group,
+index
+) => {
+if (
+index >=
+CONFIG.maxGroups
+) {
+return;
+}
+
+const pointColour =
+mode === 'none'
+? '#6600ff'
+: group.colour;
+
+const lineColour =
+mode === 'none'
+? '#f1c232'
+: group.colour;
+
+pointTargets[index] = {
+kind:
+'point',
+role:
+'countPoints',
+label:
+`${group.label} monthly job ads`,
+groupLabel:
+group.label,
+colour:
+pointColour,
+opacity:
+CONFIG.pointOpacity,
+lineWidth:
+0,
+data:
+buildMonthlyCountSeries(
+group.rows
+),
+pointColours:
+[],
+pointOpacities:
+[],
+metadata:
+{}
+};
+
+lineTargets[index] = {
+kind:
+'line',
+role:
+'countTrend',
+label:
+`${group.label} 13-week trailing average`,
+groupLabel:
+group.label,
+colour:
+lineColour,
+opacity:
+1,
+lineWidth:
+CONFIG.trendWidth,
+data:
+buildTrailingAverageSeries(
+group.rows
+),
+pointColours:
+[],
+pointOpacities:
+[],
+metadata:
+{}
+};
+}
+);
+
+return [
+...pointTargets,
+...lineTargets
+];
+}
+
+function createChartDataset(kind) {
+if (kind === 'point') {
+return {
+type:
+'scatter',
+datasetRole:
+'empty',
+kind:
+'point',
+label:
+'',
+groupLabel:
+'',
+data:
+[],
+parsing:
+false,
+showLine:
+false,
+order:
+1,
+pointStyle:
+'rect',
+pointRadius:
+CONFIG.pointRadius,
+pointHoverRadius:
+CONFIG.pointHoverRadius,
+pointHitRadius:
+4,
+pointBackgroundColor:
+'rgba(0, 0, 0, 0)',
+pointHoverBackgroundColor:
+'rgba(0, 0, 0, 0)',
+pointBorderColor:
+'rgba(0, 0, 0, 0)',
+pointHoverBorderColor:
+'rgba(0, 0, 0, 0)',
+pointBorderWidth:
+0.45,
+pointHoverBorderWidth:
+1,
+_hexColour:
+'#6600ff',
+_opacity:
+0,
+_pointHexColours:
+[],
+_pointOpacities:
+[],
+_metadata:
+{}
+};
+}
+
+return {
+type:
+'line',
+datasetRole:
+'empty',
+kind:
+'line',
+label:
+'',
+groupLabel:
+'',
+data:
+[],
+parsing:
+false,
+showLine:
+true,
+spanGaps:
+false,
+fill:
+false,
+order:
+10,
+borderColor:
+'rgba(0, 0, 0, 0)',
+backgroundColor:
+'rgba(0, 0, 0, 0)',
+borderWidth:
+0,
+borderCapStyle:
+'round',
+borderJoinStyle:
+'round',
+pointRadius:
+0,
+pointHoverRadius:
+0,
+pointHitRadius:
+CONFIG.trendHitRadius,
+pointBorderWidth:
+0,
+pointHoverBorderWidth:
+0,
+tension:
+0.16,
+_hexColour:
+'#f1c232',
+_opacity:
+0,
+_pointHexColours:
+[],
+_pointOpacities:
+[],
+_metadata:
+{}
+};
+}
+
+function getVisiblePool(
+kind,
+datasets
+) {
+return datasets
+.filter(
+dataset =>
+dataset.kind === kind &&
+dataset.datasetRole !== 'empty' &&
+dataset.data.length
+)
+.flatMap(
+dataset =>
+dataset.data
+)
+.filter(
+point =>
+Number.isFinite(point?.x) &&
+Number.isFinite(point?.y)
+);
+}
+
+function samplePoint(
+source,
+index,
+length
+) {
+if (!source.length) {
+return {
+x:
+axisBounds.xMin,
+y:
+0.5
+};
+}
+
+if (length <= 1) {
+return source[0];
+}
+
+const sourceIndex =
+Math.round(
+index *
+(source.length - 1) /
+(length - 1)
+);
+
+return source[sourceIndex];
+}
+
+function buildPointPairs(
+startData,
+endData,
+startFallback,
+endFallback
+) {
+const usableStart =
+startData.length
+? startData
+: startFallback.length
+? startFallback
+: endData;
+
+const usableEnd =
+endData.length
+? endData
+: endFallback.length
+? endFallback
+: startData;
+
+const length =
+Math.max(
+startData.length,
+endData.length,
+usableStart.length
+? 1
+: 0,
+usableEnd.length
+? 1
+: 0
+);
+
+if (!length) {
+return {
+start:
+[],
+end:
+[]
+};
+}
+
+const start = [];
+const end = [];
+
+for (
+let index = 0;
+index < length;
+index++
+) {
+start.push(
+samplePoint(
+usableStart,
+index,
+length
+)
+);
+
+end.push(
+samplePoint(
+usableEnd,
+index,
+length
+)
+);
+}
+
+return {
+start,
+end
+};
+}
+
+function applyDescriptor(
+dataset,
+descriptor
+) {
+dataset.datasetRole =
+descriptor.role;
+
+dataset.label =
+descriptor.label;
+
+dataset.groupLabel =
+descriptor.groupLabel;
+
+dataset.data =
+descriptor.data.map(
+point => ({
+...point
+})
+);
+
+dataset._hexColour =
+descriptor.colour;
+
+dataset._opacity =
+descriptor.opacity;
+
+dataset._pointHexColours =
+descriptor.pointColours?.slice() ||
+[];
+
+dataset._pointOpacities =
+descriptor.pointOpacities?.slice() ||
+[];
+
+dataset._metadata = {
+...descriptor.metadata
+};
+
+if (descriptor.kind === 'point') {
+const hasPerPointColours =
+dataset._pointHexColours.length ===
+dataset.data.length;
+
+const hasPerPointOpacities =
+dataset._pointOpacities.length ===
+dataset.data.length;
+
+if (
+hasPerPointColours &&
+hasPerPointOpacities
+) {
+dataset.pointBackgroundColor =
+dataset._pointHexColours.map(
+(
+colour,
+index
+) =>
+rgba(
+colour,
+dataset._pointOpacities[index]
+)
+);
+
+dataset.pointHoverBackgroundColor =
+dataset._pointHexColours.map(
+(
+colour,
+index
+) =>
+rgba(
+colour,
+dataset._pointOpacities[index] > 0
+? CONFIG.pointHoverOpacity
+: 0
+)
+);
+
+dataset.pointBorderColor =
+dataset._pointHexColours.map(
+(
+colour,
+index
+) =>
+rgba(
+colour,
+dataset._pointOpacities[index] > 0
+? 0.34
+: 0
+)
+);
+
+dataset.pointHoverBorderColor =
+dataset._pointHexColours.slice();
+
+dataset.pointRadius =
+dataset._pointOpacities.map(
+opacity =>
+opacity > 0
+? CONFIG.pointRadius
+: 0
+);
+
+dataset.pointHoverRadius =
+dataset._pointOpacities.map(
+opacity =>
+opacity > 0
+? CONFIG.pointHoverRadius
+: 0
+);
+
+dataset.pointHitRadius =
+dataset._pointOpacities.map(
+opacity =>
+opacity > 0
+? 4
+: 0
+);
+} else {
+dataset.pointBackgroundColor =
+rgba(
+descriptor.colour,
+descriptor.opacity
+);
+
+dataset.pointHoverBackgroundColor =
+rgba(
+descriptor.colour,
+CONFIG.pointHoverOpacity
+);
+
+dataset.pointBorderColor =
+rgba(
+descriptor.colour,
+descriptor.opacity > 0
+? 0.34
+: 0
+);
+
+dataset.pointHoverBorderColor =
+descriptor.colour;
+
+dataset.pointRadius =
+descriptor.role === 'empty'
+? 0
+: CONFIG.pointRadius;
+
+dataset.pointHoverRadius =
+descriptor.role === 'empty'
+? 0
+: CONFIG.pointHoverRadius;
+
+dataset.pointHitRadius =
+descriptor.role === 'empty'
+? 0
+: 4;
+}
+
+return;
+}
+
+dataset.borderColor =
+rgba(
+descriptor.colour,
+descriptor.opacity
+);
+
+dataset.backgroundColor =
+rgba(
+descriptor.colour,
+descriptor.opacity
+);
+
+dataset.borderWidth =
+descriptor.lineWidth;
+
+dataset.pointHitRadius =
+descriptor.role === 'empty'
+? 0
+: descriptor.role === 'regression'
+? CONFIG.regressionHitRadius
+: CONFIG.trendHitRadius;
+
+dataset.tension =
+descriptor.role === 'countTrend'
+? 0.22
+: 0;
+}
+
+function getAxisValue(
+view,
+majorIndex
+) {
+if (view === 'pay') {
+return (
+CONFIG.yMin +
+CONFIG.majorYStep *
+majorIndex
+);
+}
+
+return (
+countAxis.majorStep *
+majorIndex
+);
+}
+
+function getAnimatedAxisValue(
+majorIndex
+) {
+const fromValue =
+getAxisValue(
+axisTransition.fromView,
+majorIndex
+);
+
+const toValue =
+getAxisValue(
+axisTransition.toView,
+majorIndex
+);
+
+return (
+fromValue +
+(toValue - fromValue) *
+axisTransition.progress
+);
+}
+
+function animateToTargets(
+targets,
+nextView,
+animate = true
+) {
+if (!chart) return;
+
+if (activeAnimationFrame) {
+cancelAnimationFrame(
+activeAnimationFrame
+);
+
+activeAnimationFrame =
+null;
+}
+
+const reduceMotion =
+window.matchMedia(
+'(prefers-reduced-motion: reduce)'
+).matches;
+
+const currentDatasets =
+chart.data.datasets;
+
+const startPointPool =
+getVisiblePool(
+'point',
+currentDatasets
+);
+
+const startLinePool =
+getVisiblePool(
+'line',
+currentDatasets
+);
+
+const endPointPool =
+getVisiblePool(
+'point',
+targets.map(
+target => ({
+kind:
+target.kind,
+datasetRole:
+target.role,
+data:
+target.data
+})
+)
+);
+
+const endLinePool =
+getVisiblePool(
+'line',
+targets.map(
+target => ({
+kind:
+target.kind,
+datasetRole:
+target.role,
+data:
+target.data
+})
+)
+);
+
+const plans =
+currentDatasets.map(
+(
+dataset,
+index
+) => {
+const target =
+targets[index];
+
+const currentData =
+dataset.data.filter(
+point =>
+Number.isFinite(point?.x) &&
+Number.isFinite(point?.y)
+);
+
+const targetData =
+target.data.filter(
+point =>
+Number.isFinite(point?.x) &&
+Number.isFinite(point?.y)
+);
+
+const preserveSalaryGeometry =
+dataset.kind === 'point' &&
+dataset.datasetRole === 'salaryPoints' &&
+target.role === 'salaryPoints' &&
+currentData.length === targetData.length &&
+currentData.every(
+(
+point,
+pointIndex
+) =>
+point.x ===
+targetData[pointIndex]?.x
+);
+
+const pairs =
+preserveSalaryGeometry
+? {
+start:
+currentData.map(
+point => ({
+...point
+})
+),
+end:
+targetData.map(
+point => ({
+...point
+})
+)
+}
+: buildPointPairs(
+currentData,
+targetData,
+dataset.kind === 'point'
+? startPointPool
+: startLinePool,
+dataset.kind === 'point'
+? endPointPool
+: endLinePool
+);
+
+const hasCurrent =
+dataset.datasetRole !== 'empty' &&
+currentData.length;
+
+const hasTarget =
+target.role !== 'empty' &&
+targetData.length;
+
+const startColour =
+hasCurrent
+? dataset._hexColour
+: target.colour;
+
+const endColour =
+hasTarget
+? target.colour
+: dataset._hexColour;
+
+const startOpacity =
+hasCurrent
+? dataset._opacity
+: 0;
+
+const endOpacity =
+hasTarget
+? target.opacity
+: 0;
+
+let startPointColours = [];
+let endPointColours = [];
+let startPointOpacities = [];
+let endPointOpacities = [];
+
+if (preserveSalaryGeometry) {
+startPointColours =
+dataset._pointHexColours.length ===
+currentData.length
+? dataset._pointHexColours.slice()
+: currentData.map(
+() =>
+dataset._hexColour
+);
+
+endPointColours =
+target.pointColours?.length ===
+targetData.length
+? target.pointColours.slice()
+: targetData.map(
+() =>
+target.colour
+);
+
+startPointOpacities =
+dataset._pointOpacities.length ===
+currentData.length
+? dataset._pointOpacities.slice()
+: currentData.map(
+() =>
+dataset._opacity
+);
+
+endPointOpacities =
+target.pointOpacities?.length ===
+targetData.length
+? target.pointOpacities.slice()
+: targetData.map(
+() =>
+target.opacity
+);
+}
+
+return {
+dataset,
+target,
+start:
+pairs.start,
+end:
+pairs.end,
+preserveSalaryGeometry,
+startPointColours,
+endPointColours,
+startPointOpacities,
+endPointOpacities,
+startColour,
+endColour,
+startOpacity,
+endOpacity,
+startWidth:
+dataset.kind === 'line'
+? Number(dataset.borderWidth) || 0
+: 0,
+endWidth:
+target.kind === 'line'
+? target.lineWidth
+: 0
+};
+}
+);
+
+const previousView =
+axisTransition.toView;
+
+axisTransition.fromView =
+previousView;
+
+axisTransition.toView =
+nextView;
+
+axisTransition.progress =
+previousView === nextView
+? 1
+: 0;
+
+interactionLocked =
+true;
+
+chart.tooltip
+.setActiveElements(
+[],
+{
+x:
+0,
+y:
+0
+}
+);
+
+function complete() {
+plans.forEach(
+plan => {
+applyDescriptor(
+plan.dataset,
+plan.target
+);
+}
+);
+
+axisTransition.fromView =
+nextView;
+
+axisTransition.toView =
+nextView;
+
+axisTransition.progress =
+1;
+
+chart.options.scales.y.title.text =
+nextView === 'count'
+? 'Job ads per month'
+: 'Advertised salary ($)';
+
+chart.options.scales.y.title.color =
+'#151515';
+
+chart.update(
+'none'
+);
+
+interactionLocked =
+false;
+}
+
+if (
+!animate ||
+reduceMotion ||
+CONFIG.transitionMs <= 0
+) {
+complete();
+return;
+}
+
+const startedAt =
+performance.now();
+
+function frame(now) {
+const rawProgress =
+Math.min(
+(
+now -
+startedAt
+) /
+CONFIG.transitionMs,
+1
+);
+
+const progress =
+easeInOutCubic(
+rawProgress
+);
+
+axisTransition.progress =
+previousView === nextView
+? 1
+: progress;
+
+plans.forEach(
+plan => {
+const length =
+Math.max(
+plan.start.length,
+plan.end.length
+);
+
+const animatedData = [];
+
+for (
+let index = 0;
+index < length;
+index++
+) {
+const startPoint =
+plan.start[index];
+
+const endPoint =
+plan.end[index];
+
+animatedData.push({
+x:
+startPoint.x +
+(endPoint.x - startPoint.x) *
+progress,
+
+y:
+startPoint.y +
+(endPoint.y - startPoint.y) *
+progress
+});
+}
+
+plan.dataset.datasetRole =
+'transition';
+
+plan.dataset.data =
+animatedData;
+
+if (
+plan.dataset.kind === 'point' &&
+plan.preserveSalaryGeometry
+) {
+const backgrounds = [];
+const hoverBackgrounds = [];
+const borders = [];
+const hoverBorders = [];
+const radii = [];
+const hoverRadii = [];
+const hitRadii = [];
+
+for (
+let index = 0;
+index < animatedData.length;
+index++
+) {
+const startColour =
+plan.startPointColours[index];
+
+const endColour =
+plan.endPointColours[index];
+
+const startOpacity =
+plan.startPointOpacities[index];
+
+const endOpacity =
+plan.endPointOpacities[index];
+
+const opacity =
+startOpacity +
+(endOpacity - startOpacity) *
+progress;
+
+const colour =
+interpolateColour(
+startColour,
+endColour,
+progress
+);
+
+backgrounds.push(
+interpolateRgba(
+startColour,
+endColour,
+startOpacity,
+endOpacity,
+progress
+)
+);
+
+hoverBackgrounds.push(
+rgba(
+colour,
+opacity > 0.001
+? CONFIG.pointHoverOpacity
+: 0
+)
+);
+
+borders.push(
+rgba(
+colour,
+opacity > 0.001
+? 0.34
+: 0
+)
+);
+
+hoverBorders.push(
+colour
+);
+
+radii.push(
+opacity > 0.001
+? CONFIG.pointRadius
+: 0
+);
+
+hoverRadii.push(
+opacity > 0.001
+? CONFIG.pointHoverRadius
+: 0
+);
+
+hitRadii.push(
+0
+);
+}
+
+plan.dataset.pointBackgroundColor =
+backgrounds;
+
+plan.dataset.pointHoverBackgroundColor =
+hoverBackgrounds;
+
+plan.dataset.pointBorderColor =
+borders;
+
+plan.dataset.pointHoverBorderColor =
+hoverBorders;
+
+plan.dataset.pointRadius =
+radii;
+
+plan.dataset.pointHoverRadius =
+hoverRadii;
+
+plan.dataset.pointHitRadius =
+hitRadii;
+
+return;
+}
+
+const colour =
+interpolateColour(
+plan.startColour,
+plan.endColour,
+progress
+);
+
+const opacity =
+plan.startOpacity +
+(plan.endOpacity - plan.startOpacity) *
+progress;
+
+if (plan.dataset.kind === 'point') {
+plan.dataset.pointBackgroundColor =
+interpolateRgba(
+plan.startColour,
+plan.endColour,
+plan.startOpacity,
+plan.endOpacity,
+progress
+);
+
+plan.dataset.pointHoverBackgroundColor =
+rgba(
+colour,
+opacity > 0.001
+? CONFIG.pointHoverOpacity
+: 0
+);
+
+plan.dataset.pointBorderColor =
+rgba(
+colour,
+opacity > 0.001
+? 0.34
+: 0
+);
+
+plan.dataset.pointHoverBorderColor =
+colour;
+
+plan.dataset.pointRadius =
+opacity > 0.001
+? CONFIG.pointRadius
+: 0;
+
+plan.dataset.pointHoverRadius =
+opacity > 0.001
+? CONFIG.pointHoverRadius
+: 0;
+
+plan.dataset.pointHitRadius =
+0;
+} else {
+plan.dataset.borderColor =
+rgba(
+colour,
+opacity
+);
+
+plan.dataset.backgroundColor =
+rgba(
+colour,
+opacity
+);
+
+plan.dataset.borderWidth =
+plan.startWidth +
+(plan.endWidth - plan.startWidth) *
+progress;
+
+plan.dataset.pointHitRadius =
+0;
+
+plan.dataset.tension =
+0.16;
+}
+}
+);
+
+const isViewChange =
+previousView !== nextView;
+
+const axisTitleOpacity =
+isViewChange
+? Math.abs(
+progress * 2 - 1
+)
+: 1;
+
+chart.options.scales.y.title.text =
+progress < 0.5
+? previousView === 'count'
+? 'Job ads per month'
+: 'Advertised salary ($)'
+: nextView === 'count'
+? 'Job ads per month'
+: 'Advertised salary ($)';
+
+chart.options.scales.y.title.color =
+`rgba(21, 21, 21, ${axisTitleOpacity})`;
+
+chart.update(
+'none'
+);
+
+if (rawProgress < 1) {
+activeAnimationFrame =
+requestAnimationFrame(
+frame
+);
+} else {
+activeAnimationFrame =
+null;
+
+complete();
+}
+}
+
+activeAnimationFrame =
+requestAnimationFrame(
+frame
+);
+}
+
+function appendLegendItem(
+colour,
+label,
+markerType = 'line'
+) {
+const item =
+document.createElement(
+'span'
+);
+
+item.className =
+'legend-item';
+
+const marker =
+document.createElement(
+'span'
+);
+
+marker.className =
+markerType === 'square'
+? 'legend-square'
+: 'legend-line';
+
+marker.style.background =
+colour;
+
+if (markerType === 'square') {
+marker.style.borderColor =
+colour;
+}
+
+const text =
+document.createElement(
+'span'
+);
+
+text.textContent =
+label;
+
+item.appendChild(
+marker
+);
+
+item.appendChild(
+text
+);
+
+chartLegend.appendChild(
+item
+);
+}
+
+function updateLegend(
+view,
+mode
+) {
+chartLegend.textContent =
+'';
+
+const excludedGroupCount =
+getExcludedGroupCount(
+view,
+mode
+);
+
+legendNote.classList.toggle(
+'is-hidden',
+mode === 'none' ||
+excludedGroupCount === 0
+);
+
+if (
+mode !== 'none' &&
+excludedGroupCount > 0
+) {
+legendNote.textContent =
+view === 'count'
 ? 'Groups with <20 job ads excluded'
 : 'Groups with <20 salary points excluded';
 }
 
 if (mode === 'none') {
 appendLegendItem(
-rgba('#6600ff', CONFIG.pointOpacity),
-view === 'count' ? 'Monthly job ads' : 'Advertised salary',
+rgba(
+'#6600ff',
+CONFIG.pointOpacity
+),
+view === 'count'
+? 'Monthly job ads'
+: 'Advertised salary',
 'square'
 );
 
@@ -1802,889 +3581,1307 @@ view === 'count'
 return;
 }
 
-getGroupedRows(view, mode).forEach(group => {
-appendLegendItem(group.colour, group.label, 'square');
-});
-}
-
-function buildCountDatasets(mode) {
-const groups = getGroupedRows('count', mode);
-const datasets = [];
-
-if (mode === 'none') {
-const group = groups[0];
-
-datasets.push({
-type: 'scatter',
-datasetRole: 'countPoints',
-label: 'Monthly job ads',
-groupLabel: 'Job ads',
-data: buildMonthlyCountSeries(group.rows),
-parsing: false,
-showLine: false,
-order: 1,
-pointStyle: 'rect',
-pointRadius: CONFIG.pointRadius,
-pointHoverRadius: CONFIG.pointHoverRadius,
-pointHitRadius: 4,
-pointBackgroundColor: rgba('#6600ff', CONFIG.pointOpacity),
-pointHoverBackgroundColor: rgba('#6600ff', CONFIG.pointHoverOpacity),
-pointBorderColor: rgba('#6600ff', 0.34),
-pointHoverBorderColor: '#6600ff',
-pointBorderWidth: 0.45,
-pointHoverBorderWidth: 1
-});
-
-datasets.push({
-type: 'line',
-datasetRole: 'countTrend',
-label: '13-week trailing average',
-groupLabel: 'Job ads',
-data: buildTrailingAverageSeries(group.rows),
-parsing: false,
-showLine: true,
-spanGaps: false,
-fill: false,
-order: 10,
-borderColor: '#f1c232',
-backgroundColor: '#f1c232',
-borderWidth: CONFIG.trendWidth,
-borderCapStyle: 'round',
-borderJoinStyle: 'round',
-pointRadius: 0,
-pointHoverRadius: 0,
-pointHitRadius: CONFIG.trendHitRadius,
-pointBorderWidth: 0,
-pointHoverBorderWidth: 0,
-tension: 0.22
-});
-
-return datasets;
-}
-
-groups.forEach(group => {
-datasets.push({
-type: 'scatter',
-datasetRole: 'countPoints',
-label: `${group.label} monthly job ads`,
-groupLabel: group.label,
-data: buildMonthlyCountSeries(group.rows),
-parsing: false,
-showLine: false,
-order: 1,
-pointStyle: 'rect',
-pointRadius: CONFIG.pointRadius,
-pointHoverRadius: CONFIG.pointHoverRadius,
-pointHitRadius: 4,
-pointBackgroundColor: rgba(group.colour, CONFIG.pointOpacity),
-pointHoverBackgroundColor: rgba(group.colour, CONFIG.pointHoverOpacity),
-pointBorderColor: rgba(group.colour, 0.34),
-pointHoverBorderColor: group.colour,
-pointBorderWidth: 0.45,
-pointHoverBorderWidth: 1
-});
-
-datasets.push({
-type: 'line',
-datasetRole: 'countTrend',
-label: `${group.label} 13-week trailing average`,
-groupLabel: group.label,
-data: buildTrailingAverageSeries(group.rows),
-parsing: false,
-showLine: true,
-spanGaps: false,
-fill: false,
-order: 10,
-borderColor: group.colour,
-backgroundColor: group.colour,
-borderWidth: CONFIG.trendWidth,
-borderCapStyle: 'round',
-borderJoinStyle: 'round',
-pointRadius: 0,
-pointHoverRadius: 0,
-pointHitRadius: CONFIG.trendHitRadius,
-pointBorderWidth: 0,
-pointHoverBorderWidth: 0,
-tension: 0.22
-});
-});
-
-return datasets;
-}
-
-function createRegressionDataset(index) {
-return {
-type: 'line',
-datasetRole: 'regression',
-regressionSlot: index,
-label: '',
-groupLabel: '',
-slopePerYear: NaN,
-pValue: NaN,
-data: [],
-parsing: false,
-showLine: true,
-fill: false,
-order: 10,
-borderColor: 'rgba(0, 0, 0, 0)',
-backgroundColor: 'rgba(0, 0, 0, 0)',
-borderWidth: CONFIG.regressionWidth,
-borderCapStyle: 'round',
-borderJoinStyle: 'round',
-pointRadius: 0,
-pointHoverRadius: 0,
-pointHitRadius: CONFIG.regressionHitRadius,
-pointBorderWidth: 0,
-pointHoverBorderWidth: 0,
-tension: 0
-};
-}
-
-function getSalaryPointAppearance(mode) {
-const backgrounds = [];
-const hoverBackgrounds = [];
-const borders = [];
-const hoverBorders = [];
-const radii = [];
-const hoverRadii = [];
-const hitRadii = [];
-const eligibleLabels = mode === 'none'
-? null
-: getEligibleGroupLabels('pay', mode);
-
-salaryRows.forEach(row => {
-const groupLabel = getRowGroupLabel(row, mode);
-const isVisible = mode === 'none' || (
-Boolean(groupLabel) && eligibleLabels.has(groupLabel)
+getGroupedRows(
+view,
+mode
+)
+.forEach(
+group => {
+appendLegendItem(
+group.colour,
+group.label,
+'square'
 );
-const colour = mode === 'none'
-? '#6600ff'
-: getGroupColour(mode, groupLabel);
-
-backgrounds.push(
-isVisible ? rgba(colour, CONFIG.pointOpacity) : 'rgba(0, 0, 0, 0)'
+}
 );
-hoverBackgrounds.push(
-isVisible
-? rgba(colour, CONFIG.pointHoverOpacity)
-: 'rgba(0, 0, 0, 0)'
+}
+
+function applyGrouping(
+mode,
+animate = true
+) {
+if (interactionLocked) {
+return;
+}
+
+currentGroup =
+mode;
+
+fadeTextChange(
+groupValue,
+GROUP_LABELS[mode]
 );
-borders.push(
-isVisible ? rgba(colour, 0.34) : 'rgba(0, 0, 0, 0)'
+
+groupOptions.forEach(
+option => {
+option.checked =
+option.value === mode;
+}
 );
-hoverBorders.push(
-isVisible ? colour : 'rgba(0, 0, 0, 0)'
+
+updateLegend(
+activeView,
+mode
 );
-radii.push(isVisible ? CONFIG.pointRadius : 0);
-hoverRadii.push(isVisible ? CONFIG.pointHoverRadius : 0);
-hitRadii.push(isVisible ? 4 : 0);
-});
 
-return {
-backgrounds,
-hoverBackgrounds,
-borders,
-hoverBorders,
-radii,
-hoverRadii,
-hitRadii
-};
+animateToTargets(
+buildTargetDescriptors(
+activeView,
+mode
+),
+activeView,
+animate
+);
 }
 
-function clearRegressionDataset(dataset) {
-dataset.label = '';
-dataset.groupLabel = '';
-dataset.slopePerYear = NaN;
-dataset.pValue = NaN;
-dataset.data = [];
-dataset.borderColor = 'rgba(0, 0, 0, 0)';
-dataset.backgroundColor = 'rgba(0, 0, 0, 0)';
-}
-
-function updateRegressionDatasets(mode) {
-if (!salaryChart) return;
-
-const groups = getGroupedRows('pay', mode);
-
-for (let index = 0; index < CONFIG.maxGroupDatasets; index++) {
-const dataset = salaryChart.data.datasets[index + 1];
-const group = groups[index];
-
-if (!group) {
-clearRegressionDataset(dataset);
-continue;
-}
-
-const regression = calculateRegression(group.rows);
-
-if (!regression) {
-clearRegressionDataset(dataset);
-continue;
-}
-
-dataset.label = `${group.label} linear regression`;
-dataset.groupLabel = group.label;
-dataset.slopePerYear = regression.slopePerYear;
-dataset.pValue = regression.pValue;
-dataset.data = buildRegressionLinePoints(regression);
-dataset.borderColor = group.colour;
-dataset.backgroundColor = group.colour;
-}
-}
-
-function updateCountGrouping(mode, animate = true) {
-if (!countChart) return;
-
-countChart.data.datasets = buildCountDatasets(mode);
-countChart.tooltip.setActiveElements([], { x: 0, y: 0 });
-countChart.update(animate ? undefined : 'none');
-}
-
-function updateSalaryGrouping(mode, animate = true) {
-if (!salaryChart) return;
-
-const appearance = getSalaryPointAppearance(mode);
-const pointDataset = salaryChart.data.datasets[0];
-
-pointDataset.pointBackgroundColor = appearance.backgrounds;
-pointDataset.pointHoverBackgroundColor = appearance.hoverBackgrounds;
-pointDataset.pointBorderColor = appearance.borders;
-pointDataset.pointHoverBorderColor = appearance.hoverBorders;
-pointDataset.pointRadius = appearance.radii;
-pointDataset.pointHoverRadius = appearance.hoverRadii;
-pointDataset.pointHitRadius = appearance.hitRadii;
-
-updateRegressionDatasets(mode);
-salaryChart.tooltip.setActiveElements([], { x: 0, y: 0 });
-salaryChart.update(animate ? undefined : 'none');
-}
-
-function applyGrouping(mode, animate = true) {
-currentGroup = mode;
-groupValue.textContent = GROUP_LABELS[mode];
-
-groupOptions.forEach(option => {
-option.checked = option.value === mode;
-});
-
-updateCountGrouping(mode, animate);
-updateSalaryGrouping(mode, animate);
-updateLegend(activeView, mode);
-}
-
-function findInteractiveElement(activeChart, elements) {
-return elements.find(element => {
-const role = activeChart.data.datasets[
+function findInteractiveElement(elements) {
+return elements.find(
+element => {
+const role =
+chart.data.datasets[
 element.datasetIndex
 ]?.datasetRole;
 
-return role === 'countPoints' ||
+return (
+role === 'countPoints' ||
 role === 'countTrend' ||
 role === 'salaryPoints' ||
-role === 'regression';
-});
+role === 'regression'
+);
+}
+);
 }
 
-function handleChartHover(event, elements, activeChart) {
-const interactiveElement = findInteractiveElement(
-activeChart,
+function handleChartHover(
+event,
 elements
-);
+) {
+if (interactionLocked) {
+chart.canvas.style.cursor =
+'default';
 
-activeChart.canvas.style.cursor = interactiveElement
+return;
+}
+
+chart.canvas.style.cursor =
+findInteractiveElement(elements)
 ? 'pointer'
 : 'default';
 }
 
-function handleChartClick(event, elements, activeChart) {
-const interactiveElement = findInteractiveElement(
-activeChart,
+function handleChartClick(
+event,
+elements
+) {
+if (interactionLocked) {
+return;
+}
+
+if (
+event?.native?.preventDefault
+) {
+event.native.preventDefault();
+}
+
+window
+.getSelection?.()
+?.removeAllRanges?.();
+
+chart.canvas.blur();
+
+const interactiveElement =
+findInteractiveElement(
 elements
 );
 
 if (!interactiveElement) {
-activeChart.tooltip.setActiveElements([], { x: 0, y: 0 });
-activeChart.update('none');
+chart.tooltip
+.setActiveElements(
+[],
+{
+x:
+0,
+y:
+0
+}
+);
+
+chart.update(
+'none'
+);
+
 return;
 }
 
-const renderedElement = activeChart
-.getDatasetMeta(interactiveElement.datasetIndex)
-?.data?.[interactiveElement.index];
+const renderedElement =
+chart
+.getDatasetMeta(
+interactiveElement.datasetIndex
+)
+?.data
+?.[
+interactiveElement.index
+];
 
-activeChart.tooltip.setActiveElements(
-[{
-datasetIndex: interactiveElement.datasetIndex,
-index: interactiveElement.index
-}],
+chart.tooltip
+.setActiveElements(
+[
 {
-x: Number.isFinite(event.x)
+datasetIndex:
+interactiveElement.datasetIndex,
+index:
+interactiveElement.index
+}
+],
+{
+x:
+Number.isFinite(event.x)
 ? event.x
 : renderedElement?.x ?? 0,
-y: Number.isFinite(event.y)
+
+y:
+Number.isFinite(event.y)
 ? event.y
 : renderedElement?.y ?? 0
 }
 );
 
-activeChart.update('none');
+chart.update(
+'none'
+);
 }
 
-function buildSharedXAxisOptions() {
-return {
-type: 'linear',
-min: axisBounds.xMin,
-max: axisBounds.xMax,
-bounds: 'data',
-title: {
-display: true,
-text: 'Date advertised',
-color: '#151515',
-font: {
-family: 'Lato',
-size: 13,
-weight: '700'
+const sourceMilestonePlugin = {
+id:
+'sourceMilestonePlugin',
+
+afterDatasetsDraw(activeChart) {
+const xScale =
+activeChart.scales.x;
+
+const area =
+activeChart.chartArea;
+
+if (!xScale || !area) {
+return;
+}
+
+const context =
+activeChart.ctx;
+
+const events = [
+{
+date:
+Date.UTC(
+2025,
+11,
+1
+),
+label:
+'EssiLux jobs added'
 },
+{
+date:
+Date.UTC(
+2026,
+6,
+1
+),
+label:
+'Indeed jobs added'
+}
+];
+
+context.save();
+
+context.fillStyle =
+'rgba(105, 113, 138, 0.76)';
+
+context.font =
+'400 9px Lato, sans-serif';
+
+context.textAlign =
+'left';
+
+context.textBaseline =
+'top';
+
+context.fillText(
+'SEEK jobs only',
+area.left + 4,
+area.top + 5
+);
+
+events.forEach(
+event => {
+const x =
+xScale.getPixelForValue(
+event.date
+);
+
+if (
+x < area.left ||
+x > area.right
+) {
+return;
+}
+
+context.save();
+
+context.beginPath();
+
+context.setLineDash(
+[
+4,
+4
+]
+);
+
+context.strokeStyle =
+'rgba(105, 113, 138, 0.26)';
+
+context.lineWidth =
+1;
+
+context.moveTo(
+x,
+area.top
+);
+
+context.lineTo(
+x,
+area.bottom
+);
+
+context.stroke();
+
+context.setLineDash(
+[]
+);
+
+context.translate(
+x + 5,
+area.top + 100
+);
+
+context.rotate(
+-Math.PI / 2
+);
+
+context.fillStyle =
+'rgba(105, 113, 138, 0.58)';
+
+context.font =
+'400 9px Lato, sans-serif';
+
+context.textAlign =
+'left';
+
+context.textBaseline =
+'middle';
+
+context.fillText(
+event.label,
+0,
+0
+);
+
+context.restore();
+}
+);
+
+context.restore();
+}
+};
+
+function createChart() {
+const context =
+chartCanvas.getContext(
+'2d'
+);
+
+const datasets = [
+...Array.from(
+{
+length:
+POINT_SLOT_COUNT
+},
+() =>
+createChartDataset(
+'point'
+)
+),
+...Array.from(
+{
+length:
+CONFIG.maxGroups
+},
+() =>
+createChartDataset(
+'line'
+)
+)
+];
+
+chart =
+new Chart(
+context,
+{
+type:
+'scatter',
+
+data: {
+datasets
+},
+
+options: {
+responsive:
+true,
+
+maintainAspectRatio:
+false,
+
+devicePixelRatio:
+Math.min(
+window.devicePixelRatio || 1,
+3
+),
+
+animation: {
+duration:
+0
+},
+
+interaction: {
+mode:
+'nearest',
+axis:
+'xy',
+intersect:
+true,
+includeInvisible:
+false
+},
+
+layout: {
 padding: {
-top: 7
+top:
+4,
+right:
+4,
+bottom:
+0,
+left:
+0
 }
 },
+
+onHover:
+handleChartHover,
+
+onClick:
+handleChartClick,
+
+plugins: {
+legend: {
+display:
+false
+},
+
+tooltip: {
+enabled:
+true,
+
+mode:
+'nearest',
+
+intersect:
+true,
+
+displayColors:
+false,
+
+backgroundColor:
+'#ffffff',
+
+titleColor:
+'#151515',
+
+bodyColor:
+'#69718a',
+
+borderColor:
+'#e8eaf0',
+
+borderWidth:
+1,
+
+cornerRadius:
+4,
+
+padding:
+9,
+
+titleFont: {
+family:
+'Lato',
+size:
+12,
+weight:
+'700'
+},
+
+bodyFont: {
+family:
+'Lato',
+size:
+11,
+weight:
+'400'
+},
+
+filter(tooltipItem) {
+if (interactionLocked) {
+return false;
+}
+
+const role =
+tooltipItem
+.dataset
+.datasetRole;
+
+return (
+role === 'countPoints' ||
+role === 'countTrend' ||
+role === 'salaryPoints' ||
+role === 'regression'
+);
+},
+
+callbacks: {
+title(tooltipItems) {
+const item =
+tooltipItems?.[0];
+
+const role =
+item
+?.dataset
+?.datasetRole;
+
+if (
+role === 'countPoints' ||
+role === 'countTrend'
+) {
+return (
+item.dataset.groupLabel ||
+'Job ads'
+);
+}
+
+if (role === 'regression') {
+return (
+item.dataset.groupLabel ||
+'Regression'
+);
+}
+
+return Number.isFinite(
+item?.raw?.x
+)
+? formatTooltipDate(
+item.raw.x
+)
+: '';
+},
+
+label(tooltipItem) {
+const role =
+tooltipItem
+.dataset
+.datasetRole;
+
+const raw =
+tooltipItem.raw;
+
+if (role === 'countTrend') {
+return (
+`${raw.quarterLabel}: ` +
+`${Number(raw.value).toFixed(1)} ads/month`
+);
+}
+
+if (role === 'countPoints') {
+return (
+`${raw.monthLabel}: ` +
+`${Math.round(raw.value)} ads`
+);
+}
+
+if (role === 'regression') {
+return [
+`Slope: ${formatSlopePerYear(
+tooltipItem
+.dataset
+._metadata
+.slopePerYear
+)}`,
+formatPValue(
+tooltipItem
+.dataset
+._metadata
+.pValue
+)
+];
+}
+
+return [
+`Employer: ${displayText(raw.employer)}`,
+`Suburb: ${displayText(raw.suburb)}`,
+`State: ${displayText(raw.stateText)}`
+];
+}
+}
+}
+},
+
+scales: {
+x: {
+type:
+'linear',
+
+min:
+axisBounds.xMin,
+
+max:
+axisBounds.xMax,
+
+bounds:
+'data',
+
+title: {
+display:
+true,
+text:
+'Date advertised',
+color:
+'#151515',
+font: {
+family:
+'Lato',
+size:
+13,
+weight:
+'700'
+},
+padding: {
+top:
+7
+}
+},
+
 afterBuildTicks(scale) {
-scale.ticks = buildMonthTicks(
+scale.ticks =
+buildMonthTicks(
 axisBounds.xMin,
 axisBounds.lastDataMonth
 );
 },
+
 ticks: {
-color: '#151515',
-autoSkip: false,
-maxRotation: 0,
-minRotation: 0,
-padding: 3,
+color:
+'#151515',
+autoSkip:
+false,
+maxRotation:
+0,
+minRotation:
+0,
+padding:
+3,
 font: {
-family: 'Lato',
-size: window.matchMedia('(max-width: 430px)').matches
+family:
+'Lato',
+size:
+window.matchMedia(
+'(max-width: 430px)'
+).matches
 ? 9
 : 10,
-weight: '400'
+weight:
+'400'
 },
+
 callback(value) {
-return formatMonthTick(Number(value));
-}
-},
-grid: {
-drawOnChartArea: false,
-drawTicks: true,
-tickLength(context) {
-return isHalfYearTick(context.tick?.value) ? 8 : 2;
-},
-tickColor: '#151515'
-},
-border: {
-display: true,
-color: '#151515',
-width: 1.1
-}
-};
-}
-
-function createCountChart() {
-const context = countCanvas.getContext('2d');
-
-countChart = new Chart(context, {
-type: 'scatter',
-data: {
-datasets: buildCountDatasets(currentGroup)
-},
-options: {
-responsive: true,
-maintainAspectRatio: false,
-devicePixelRatio: Math.min(window.devicePixelRatio || 1, 3),
-animation: {
-duration: 650,
-easing: 'easeOutCubic'
-},
-interaction: {
-mode: 'nearest',
-axis: 'xy',
-intersect: true
-},
-layout: {
-padding: {
-top: 4,
-right: 4,
-bottom: 0,
-left: 0
-}
-},
-onHover: handleChartHover,
-onClick: handleChartClick,
-plugins: {
-legend: {
-display: false
-},
-tooltip: {
-enabled: true,
-mode: 'nearest',
-intersect: true,
-displayColors: false,
-backgroundColor: '#ffffff',
-titleColor: '#151515',
-bodyColor: '#69718a',
-borderColor: '#e8eaf0',
-borderWidth: 1,
-cornerRadius: 4,
-padding: 9,
-titleFont: {
-family: 'Lato',
-size: 12,
-weight: '700'
-},
-bodyFont: {
-family: 'Lato',
-size: 11,
-weight: '400'
-},
-filter(tooltipItem) {
-const role = tooltipItem.dataset.datasetRole;
-return role === 'countPoints' || role === 'countTrend';
-},
-callbacks: {
-title(tooltipItems) {
-const tooltipItem = tooltipItems?.[0];
-const groupLabel = tooltipItem?.dataset?.groupLabel || '';
-const xValue = tooltipItem?.parsed?.x;
-const monthText = Number.isFinite(xValue)
-? formatTooltipMonth(xValue)
-: '';
-
-return currentGroup === 'none'
-? monthText
-: [groupLabel, monthText];
-},
-label(tooltipItem) {
-if (tooltipItem.dataset.datasetRole === 'countTrend') {
-return (
-'13-week trailing average: ' +
-`${Number(tooltipItem.parsed.y).toFixed(1)} ads/month`
+return formatQuarterTick(
+Number(value)
 );
 }
+},
 
-return `Job ads: ${Math.round(tooltipItem.parsed.y)}`;
-}
-}
+grid: {
+drawOnChartArea:
+false,
+drawTicks:
+true,
+
+tickLength(context) {
+return isQuarterTick(
+context.tick?.value
+)
+? 6
+: 2;
+},
+
+tickColor:
+'#151515'
+},
+
+border: {
+display:
+true,
+color:
+'#151515',
+width:
+1.1
 }
 },
-scales: {
-x: buildSharedXAxisOptions(),
+
 y: {
-min: countAxis.minimum,
-max: countAxis.maximum,
+min:
+0,
+
+max:
+1,
+
+afterFit(scale) {
+scale.width =
+window.matchMedia(
+'(max-width: 430px)'
+).matches
+? 58
+: 62;
+},
+
 title: {
-display: true,
-text: 'Job advertisements per month',
-color: '#151515',
+display:
+true,
+text:
+'Job ads per month',
+color:
+'#151515',
 font: {
-family: 'Lato',
-size: 13,
-weight: '700'
+family:
+'Lato',
+size:
+13,
+weight:
+'700'
 }
 },
+
+afterBuildTicks(scale) {
+scale.ticks =
+Array.from(
+{
+length:
+13
+},
+(
+_,
+index
+) => ({
+value:
+index / 12
+})
+);
+},
+
 ticks: {
-color: '#151515',
-stepSize: countAxis.minorStep,
-autoSkip: false,
-padding: 3,
+color:
+'#151515',
+autoSkip:
+false,
+padding:
+3,
 font: {
-family: 'Lato',
-size: 11,
-weight: '400'
+family:
+'Lato',
+size:
+11,
+weight:
+'400'
 },
-callback(value) {
-return isCountMajorYTick(value)
-? String(Math.round(Number(value)))
-: '';
+
+callback(
+value,
+index
+) {
+if (
+index % 2 !== 0
+) {
+return '';
+}
+
+return formatAnimatedAxisValue(
+getAnimatedAxisValue(
+index / 2
+)
+);
 }
 },
+
 grid: {
 color(context) {
-return isCountMajorYTick(context.tick?.value)
+const index =
+context.index ?? 0;
+
+return index % 2 === 0
 ? 'rgba(105, 113, 138, 0.075)'
 : 'rgba(105, 113, 138, 0.035)';
 },
+
 lineWidth(context) {
-return isCountMajorYTick(context.tick?.value) ? 1 : 0.7;
+const index =
+context.index ?? 0;
+
+return index % 2 === 0
+? 1
+: 0.7;
 },
-drawTicks: true,
+
+drawTicks:
+true,
+
 tickLength(context) {
-return isCountMajorYTick(context.tick?.value) ? 8 : 2;
+const index =
+context.index ?? 0;
+
+return index % 2 === 0
+? 5
+: 1.5;
 },
-tickColor: '#151515',
-tickWidth: 1.1
+
+tickColor:
+'#151515',
+
+tickWidth:
+1.1
 },
+
 border: {
-display: true,
-color: '#151515',
-width: 1.1
+display:
+true,
+color:
+'#151515',
+width:
+1.1
 }
 }
 }
-}
-});
-}
+},
 
-function createSalaryChart() {
-const context = salaryCanvas.getContext('2d');
-const initialAppearance = getSalaryPointAppearance(currentGroup);
-
-const pointDataset = {
-type: 'scatter',
-datasetRole: 'salaryPoints',
-label: 'Advertised salary',
-data: salaryPointData,
-parsing: false,
-showLine: false,
-order: 1,
-pointStyle: 'rect',
-pointRadius: initialAppearance.radii,
-pointHoverRadius: initialAppearance.hoverRadii,
-pointHitRadius: initialAppearance.hitRadii,
-pointBackgroundColor: initialAppearance.backgrounds,
-pointHoverBackgroundColor: initialAppearance.hoverBackgrounds,
-pointBorderColor: initialAppearance.borders,
-pointHoverBorderColor: initialAppearance.hoverBorders,
-pointBorderWidth: 0.45,
-pointHoverBorderWidth: 1
-};
-
-const regressionDatasets = Array.from(
-{ length: CONFIG.maxGroupDatasets },
-(_, index) => createRegressionDataset(index)
+plugins: [
+sourceMilestonePlugin
+]
+}
 );
 
-salaryChart = new Chart(context, {
-type: 'scatter',
-data: {
-datasets: [pointDataset, ...regressionDatasets]
-},
-options: {
-responsive: true,
-maintainAspectRatio: false,
-devicePixelRatio: Math.min(window.devicePixelRatio || 1, 3),
-animation: {
-duration: 650,
-easing: 'easeOutCubic'
-},
-interaction: {
-mode: 'nearest',
-axis: 'xy',
-intersect: true
-},
-layout: {
-padding: {
-top: 4,
-right: 4,
-bottom: 0,
-left: 0
-}
-},
-onHover: handleChartHover,
-onClick: handleChartClick,
-plugins: {
-legend: {
-display: false
-},
-tooltip: {
-enabled: true,
-mode: 'nearest',
-intersect: true,
-displayColors: false,
-backgroundColor: '#ffffff',
-titleColor: '#151515',
-bodyColor: '#69718a',
-borderColor: '#e8eaf0',
-borderWidth: 1,
-cornerRadius: 4,
-padding: 9,
-titleFont: {
-family: 'Lato',
-size: 12,
-weight: '700'
-},
-bodyFont: {
-family: 'Lato',
-size: 11,
-weight: '400'
-},
-filter(tooltipItem) {
-const role = tooltipItem.dataset.datasetRole;
-return role === 'salaryPoints' || role === 'regression';
-},
-callbacks: {
-title(tooltipItems) {
-const tooltipItem = tooltipItems?.[0];
+const initialTargets =
+buildTargetDescriptors(
+activeView,
+currentGroup
+);
 
-if (tooltipItem?.dataset?.datasetRole === 'regression') {
-return tooltipItem.dataset.groupLabel || 'Regression';
+chart.data.datasets
+.forEach(
+(
+dataset,
+index
+) => {
+applyDescriptor(
+dataset,
+initialTargets[index]
+);
+}
+);
+
+chart.update(
+'none'
+);
 }
 
-const xValue = tooltipItem?.parsed?.x;
-return Number.isFinite(xValue)
-? formatTooltipDate(xValue)
-: '';
-},
-label(tooltipItem) {
-if (tooltipItem.dataset.datasetRole === 'regression') {
-return [
-`Slope: ${formatSlopePerYear(
-tooltipItem.dataset.slopePerYear
-)}`,
-formatPValue(tooltipItem.dataset.pValue)
-];
+function updateTabIndicator(
+animate = true
+) {
+const activeTab =
+chartTabs.find(
+tab =>
+tab.dataset.view ===
+activeView
+);
+
+if (
+!tabList ||
+!activeTab
+) {
+return;
 }
 
-const row = salaryRows[tooltipItem.raw.rowIndex];
-if (!row) return [];
+if (!animate) {
+tabList.classList.add(
+'is-positioning'
+);
+}
 
-return [
-`Employer: ${displayText(row.employer)}`,
-`Suburb: ${displayText(row.suburb)}`,
-`State: ${displayText(row.stateText)}`
-];
-}
-}
-}
-},
-scales: {
-x: buildSharedXAxisOptions(),
-y: {
-min: CONFIG.yMin,
-max: CONFIG.yMax,
-title: {
-display: true,
-text: 'Advertised salary ($)',
-color: '#151515',
-font: {
-family: 'Lato',
-size: 13,
-weight: '700'
-}
-},
-ticks: {
-color: '#151515',
-stepSize: CONFIG.minorYStep,
-autoSkip: false,
-padding: 3,
-font: {
-family: 'Lato',
-size: 11,
-weight: '400'
-},
-callback(value) {
-return isSalaryMajorYTick(value)
-? formatAxisThousands(value)
-: '';
-}
-},
-grid: {
-color(context) {
-return isSalaryMajorYTick(context.tick?.value)
-? 'rgba(105, 113, 138, 0.075)'
-: 'rgba(105, 113, 138, 0.035)';
-},
-lineWidth(context) {
-return isSalaryMajorYTick(context.tick?.value) ? 1 : 0.7;
-},
-drawTicks: true,
-tickLength(context) {
-return isSalaryMajorYTick(context.tick?.value) ? 8 : 2;
-},
-tickColor: '#151515',
-tickWidth: 1.1
-},
-border: {
-display: true,
-color: '#151515',
-width: 1.1
-}
-}
-}
-}
-});
+tabList.style.setProperty(
+'--tab-indicator-x',
+`${activeTab.offsetLeft}px`
+);
 
-updateRegressionDatasets(currentGroup);
-salaryChart.update('none');
+tabList.style.setProperty(
+'--tab-indicator-width',
+`${activeTab.offsetWidth}px`
+);
+
+if (!animate) {
+requestAnimationFrame(
+() => {
+tabList.classList.remove(
+'is-positioning'
+);
+}
+);
+}
+}
+
+function fadeTextChange(
+element,
+nextText
+) {
+if (
+!element ||
+element.textContent === nextText
+) {
+return;
+}
+
+const reduceMotion =
+window.matchMedia(
+'(prefers-reduced-motion: reduce)'
+).matches;
+
+if (
+reduceMotion ||
+!element.animate
+) {
+element.textContent =
+nextText;
+
+return;
+}
+
+const fadeOut =
+element.animate(
+[
+{
+opacity:
+1
+},
+{
+opacity:
+0
+}
+],
+{
+duration:
+170,
+easing:
+'ease-out',
+fill:
+'forwards'
+}
+);
+
+fadeOut.finished
+.then(
+() => {
+fadeOut.cancel();
+
+element.textContent =
+nextText;
+
+const fadeIn =
+element.animate(
+[
+{
+opacity:
+0
+},
+{
+opacity:
+1
+}
+],
+{
+duration:
+260,
+easing:
+'cubic-bezier(0.22, 1, 0.36, 1)'
+}
+);
+
+fadeIn.finished
+.then(
+() =>
+fadeIn.cancel()
+)
+.catch(
+() => {}
+);
+}
+)
+.catch(
+() => {
+element.textContent =
+nextText;
+}
+);
 }
 
 function setGroupMenuOpen(isOpen) {
-groupMenu.classList.toggle('is-open', isOpen);
-groupButton.setAttribute('aria-expanded', String(isOpen));
+groupMenu.classList.toggle(
+'is-open',
+isOpen
+);
+
+groupButton.setAttribute(
+'aria-expanded',
+String(isOpen)
+);
 }
 
 function switchView(nextView) {
-if (nextView === activeView) return;
+if (
+nextView === activeView ||
+interactionLocked
+) {
+return;
+}
 
-activeView = nextView;
+activeView =
+nextView;
 
-chartTabs.forEach(tab => {
-const isActive = tab.dataset.view === activeView;
-tab.classList.toggle('is-active', isActive);
-tab.setAttribute('aria-selected', String(isActive));
-});
+chartTabs.forEach(
+tab => {
+const isActive =
+tab.dataset.view ===
+activeView;
 
-countCanvas.classList.toggle('is-inactive', activeView !== 'count');
-salaryCanvas.classList.toggle('is-inactive', activeView !== 'pay');
+tab.classList.toggle(
+'is-active',
+isActive
+);
 
-chartHeading.textContent = activeView === 'count'
-? 'Job advertisements over time'
-: 'Advertised salaries over time';
+tab.setAttribute(
+'aria-selected',
+String(isActive)
+);
+}
+);
 
-groupMenuTitle.textContent = activeView === 'count'
+fadeTextChange(
+chartHeading,
+activeView === 'count'
+? 'Job ads over time'
+: 'Advertised salaries over time'
+);
+
+fadeTextChange(
+groupMenuTitle,
+activeView === 'count'
 ? 'Group job ad count'
-: 'Group salary data';
+: 'Group salary data'
+);
 
-updateLegend(activeView, currentGroup);
-setGroupMenuOpen(false);
+updateTabIndicator(
+true
+);
 
-if (countChart) {
-countChart.tooltip.setActiveElements([], { x: 0, y: 0 });
-countChart.update('none');
+updateLegend(
+activeView,
+currentGroup
+);
+
+setGroupMenuOpen(
+false
+);
+
+animateToTargets(
+buildTargetDescriptors(
+activeView,
+currentGroup
+),
+activeView,
+true
+);
 }
 
-if (salaryChart) {
-salaryChart.tooltip.setActiveElements([], { x: 0, y: 0 });
-salaryChart.update('none');
+chartTabs.forEach(
+tab => {
+tab.addEventListener(
+'click',
+() => {
+switchView(
+tab.dataset.view
+);
 }
-
-window.requestAnimationFrame(() => {
-if (activeView === 'count') {
-countChart?.resize();
-} else {
-salaryChart?.resize();
+);
 }
-});
-}
+);
 
-chartTabs.forEach(tab => {
-tab.addEventListener('click', () => {
-switchView(tab.dataset.view);
-});
-});
-
-groupButton.addEventListener('click', event => {
+groupButton.addEventListener(
+'click',
+event => {
 event.stopPropagation();
-setGroupMenuOpen(!groupMenu.classList.contains('is-open'));
-});
 
-groupMenu.addEventListener('click', event => {
-event.stopPropagation();
-});
-
-groupOptions.forEach(option => {
-option.addEventListener('change', () => {
-if (!option.checked) return;
-applyGrouping(option.value, true);
-setGroupMenuOpen(false);
-});
-});
-
-document.addEventListener('pointerdown', event => {
-if (!event.target.closest('.group-control')) {
-setGroupMenuOpen(false);
+setGroupMenuOpen(
+!groupMenu
+.classList
+.contains(
+'is-open'
+)
+);
 }
-});
+);
 
-document.addEventListener('keydown', event => {
+groupMenu.addEventListener(
+'click',
+event => {
+event.stopPropagation();
+}
+);
+
+groupOptions.forEach(
+option => {
+option.addEventListener(
+'change',
+() => {
+if (!option.checked) {
+return;
+}
+
+applyGrouping(
+option.value,
+true
+);
+
+setGroupMenuOpen(
+false
+);
+}
+);
+}
+);
+
+document.addEventListener(
+'pointerdown',
+event => {
+if (
+!event.target.closest(
+'.group-control'
+)
+) {
+setGroupMenuOpen(
+false
+);
+}
+}
+);
+
+document.addEventListener(
+'keydown',
+event => {
 if (event.key === 'Escape') {
-setGroupMenuOpen(false);
+setGroupMenuOpen(
+false
+);
 }
-});
+}
+);
 
-[countCanvas, salaryCanvas].forEach(canvas => {
-canvas.addEventListener('contextmenu', event => {
+chartCanvas.addEventListener(
+'contextmenu',
+event => {
 event.preventDefault();
-});
-});
+}
+);
+
+chartCanvas.addEventListener(
+'selectstart',
+event => {
+event.preventDefault();
+}
+);
 
 async function loadCharts() {
 setStatus();
-let lastError = null;
+
+let lastError =
+null;
 
 for (
 let attempt = 1;
-attempt <= CONFIG.fetchAttempts;
+attempt <=
+CONFIG.fetchAttempts;
 attempt++
 ) {
 try {
-const sourceRows = await loadSheetRows();
-rows = normaliseRows(sourceRows);
+const sourceRows =
+await loadSheetRows();
+
+rows =
+normaliseRows(
+sourceRows
+);
 
 if (!rows.length) {
 throw new Error(
-'No valid non-repeat job advertisements were found'
+'No valid non-repeat job ads were found'
 );
 }
 
-saveCache(rows);
-prepareCharts();
+saveCache(
+rows
+);
+
+prepareChart();
+
 hideLoadingState();
+
 setStatus();
+
 return;
 } catch (error) {
-lastError = error;
+lastError =
+error;
 
-if (attempt < CONFIG.fetchAttempts) {
-await new Promise(resolve => {
-window.setTimeout(resolve, CONFIG.retryDelayMs);
-});
+if (
+attempt <
+CONFIG.fetchAttempts
+) {
+await new Promise(
+resolve => {
+window.setTimeout(
+resolve,
+CONFIG.retryDelayMs
+);
+}
+);
 }
 }
 }
 
-const cachedRows = loadCache();
+const cachedRows =
+loadCache();
 
 if (cachedRows.length) {
-rows = cachedRows;
-prepareCharts();
+rows =
+cachedRows;
+
+prepareChart();
+
 hideLoadingState();
+
 setStatus(
 'Live data could not be refreshed; showing the most recently saved data'
 );
+
 return;
 }
 
-console.error(lastError);
+console.error(
+lastError
+);
+
 hideLoadingState();
+
 setStatus(
 '⚠ ' +
 String(
 lastError?.message ||
-'Unable to load job advertisement data'
-).replace(/\.+$/, '')
+'Unable to load job ad data'
+).replace(
+/\.+$/,
+''
+)
 );
 }
 
-function prepareCharts() {
-salaryRows = rows.filter(row =>
-Number.isFinite(row.salary) &&
+function prepareChart() {
+salaryRows =
+rows.filter(
+row =>
+Number.isFinite(
+row.salary
+) &&
 row.salary > 0
 );
 
-axisBounds = calculateAxisBounds(rows);
-countAxis = calculateCountAxis();
-salaryPointData = salaryRows.map((row, rowIndex) => ({
-x: row.x,
-y: row.salary,
-rowIndex
-}));
+axisBounds =
+calculateAxisBounds(
+rows
+);
 
-createCountChart();
-createSalaryChart();
-applyGrouping(currentGroup, false);
-updateLegend(activeView, currentGroup);
+countAxis =
+calculateCountAxis();
+
+axisTransition.fromView =
+activeView;
+
+axisTransition.toView =
+activeView;
+
+axisTransition.progress =
+1;
+
+createChart();
+
+updateLegend(
+activeView,
+currentGroup
+);
 }
 
-applyGrouping('none', false);
+updateLegend(
+activeView,
+currentGroup
+);
+
+updateTabIndicator(
+false
+);
+
+if (
+document.fonts?.ready
+) {
+document.fonts.ready.then(
+() => {
+updateTabIndicator(
+false
+);
+}
+);
+}
+
+window.addEventListener(
+'resize',
+() => {
+updateTabIndicator(
+false
+);
+}
+);
+
 loadCharts();
 </script>
 </body>
