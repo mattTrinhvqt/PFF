@@ -1003,6 +1003,429 @@
       minorStep: 5
     };
 
+    const xAxisSlide = {
+      active: false,
+      progress: 1,
+      distance: 14,
+      from: null,
+      to: null
+    };
+
+    function resolveAxisValue(value, context, fallback) {
+      try {
+        return typeof value === 'function'
+          ? value(context)
+          : value ?? fallback;
+      } catch (_) {
+        return fallback;
+      }
+    }
+
+    function normaliseAxisPadding(value) {
+      if (Number.isFinite(Number(value))) {
+        const number = Number(value);
+
+        return {
+          top: number,
+          right: number,
+          bottom: number,
+          left: number
+        };
+      }
+
+      return {
+        top: Number(value?.top) || 0,
+        right: Number(value?.right) || 0,
+        bottom: Number(value?.bottom) || 0,
+        left: Number(value?.left) || 0
+      };
+    }
+
+    function getAxisFont(
+      fontOptions,
+      fallbackSize = 10,
+      fallbackWeight = '400'
+    ) {
+      const family =
+        fontOptions?.family ||
+        Chart.defaults.font.family ||
+        "'Lato', sans-serif";
+
+      const size =
+        Number(fontOptions?.size) ||
+        fallbackSize;
+
+      const weight =
+        fontOptions?.weight ||
+        fallbackWeight;
+
+      const style =
+        fontOptions?.style
+          ? `${fontOptions.style} `
+          : '';
+
+      const configuredLineHeight =
+        Number(fontOptions?.lineHeight);
+
+      const lineHeight =
+        Number.isFinite(configuredLineHeight)
+          ? configuredLineHeight
+          : size * 1.2;
+
+      return {
+        css: `${style}${weight} ${size}px ${family}`,
+        lineHeight
+      };
+    }
+
+    function captureXAxisSnapshot(
+      scale,
+      styleOptions = scale?.options
+    ) {
+      if (!scale || !styleOptions) {
+        return null;
+      }
+
+      const tickOptions =
+        styleOptions.ticks || {};
+
+      const gridOptions =
+        styleOptions.grid || {};
+
+      const titleOptions =
+        styleOptions.title || {};
+
+      const tickPadding =
+        Number(tickOptions.padding) || 0;
+
+      const ticks =
+        (scale.ticks || []).map((tick, index) => {
+          const context =
+            typeof scale.getContext === 'function'
+              ? scale.getContext(index)
+              : {
+                  chart,
+                  scale,
+                  tick,
+                  index,
+                  type: 'tick'
+                };
+
+          let label =
+            tick.label;
+
+          if (
+            label === undefined &&
+            typeof tickOptions.callback === 'function'
+          ) {
+            try {
+              label = tickOptions.callback.call(
+                scale,
+                tick.value,
+                index,
+                scale.ticks
+              );
+            } catch (_) {
+              label = tick.value;
+            }
+          }
+
+          const labelLines =
+            Array.isArray(label)
+              ? label.map(line => String(line ?? ''))
+              : [String(label ?? '')];
+
+          const fontOptions =
+            resolveAxisValue(
+              tickOptions.font,
+              context,
+              tickOptions.font || {}
+            );
+
+          const font =
+            getAxisFont(
+              fontOptions,
+              10,
+              '400'
+            );
+
+          const tickLength =
+            Number(
+              resolveAxisValue(
+                gridOptions.tickLength,
+                context,
+                0
+              )
+            ) || 0;
+
+          const tickWidth =
+            Number(
+              resolveAxisValue(
+                gridOptions.tickWidth,
+                context,
+                1
+              )
+            ) || 1;
+
+          return {
+            x: scale.getPixelForTick(index),
+            axisY: scale.top,
+            labelY:
+              scale.top +
+              tickLength +
+              tickPadding +
+              font.lineHeight / 2,
+            labelLines,
+            font,
+            tickLength,
+            tickWidth,
+            showTick:
+              styleOptions.display !== false &&
+              gridOptions.drawTicks !== false,
+            showLabel:
+              styleOptions.display !== false &&
+              tickOptions.display !== false,
+            tickColour:
+              resolveAxisValue(
+                gridOptions.tickColor,
+                context,
+                '#151515'
+              ),
+            labelColour:
+              resolveAxisValue(
+                tickOptions.color,
+                context,
+                '#151515'
+              )
+          };
+        });
+
+      const titlePadding =
+        normaliseAxisPadding(
+          titleOptions.padding
+        );
+
+      const titleFontOptions =
+        resolveAxisValue(
+          titleOptions.font,
+          {
+            chart,
+            scale,
+            type: 'scale'
+          },
+          titleOptions.font || {}
+        );
+
+      const titleFont =
+        getAxisFont(
+          titleFontOptions,
+          13,
+          '700'
+        );
+
+      const titleLines =
+        Array.isArray(titleOptions.text)
+          ? titleOptions.text.map(line => String(line ?? ''))
+          : [String(titleOptions.text ?? '')];
+
+      return {
+        ticks,
+
+        title: {
+          show:
+            styleOptions.display !== false &&
+            titleOptions.display !== false &&
+            titleLines.some(Boolean),
+
+          x:
+            (scale.left + scale.right) / 2,
+
+          y:
+            scale.bottom -
+            titlePadding.bottom -
+            titleFont.lineHeight / 2,
+
+          lines:
+            titleLines,
+
+          font:
+            titleFont,
+
+          colour:
+            titleOptions.color ||
+            '#151515'
+        }
+      };
+    }
+
+    function drawXAxisSnapshot(
+      context,
+      snapshot,
+      opacity,
+      offsetX
+    ) {
+      if (
+        !snapshot ||
+        opacity <= 0.001
+      ) {
+        return;
+      }
+
+      context.save();
+      context.globalAlpha = opacity;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+
+      snapshot.ticks.forEach(tick => {
+        const x =
+          tick.x +
+          offsetX;
+
+        if (
+          tick.showTick &&
+          tick.tickLength > 0
+        ) {
+          context.beginPath();
+          context.strokeStyle =
+            tick.tickColour;
+          context.lineWidth =
+            tick.tickWidth;
+          context.moveTo(
+            x,
+            tick.axisY
+          );
+          context.lineTo(
+            x,
+            tick.axisY +
+            tick.tickLength
+          );
+          context.stroke();
+        }
+
+        if (
+          !tick.showLabel ||
+          !tick.labelLines.some(Boolean)
+        ) {
+          return;
+        }
+
+        context.font =
+          tick.font.css;
+        context.fillStyle =
+          tick.labelColour;
+
+        const firstLineY =
+          tick.labelY -
+          (
+            tick.labelLines.length -
+            1
+          ) *
+          tick.font.lineHeight /
+          2;
+
+        tick.labelLines.forEach((line, lineIndex) => {
+          if (!line) {
+            return;
+          }
+
+          context.fillText(
+            line,
+            x,
+            firstLineY +
+            lineIndex *
+            tick.font.lineHeight
+          );
+        });
+      });
+
+      if (
+        snapshot.title.show
+      ) {
+        context.font =
+          snapshot.title.font.css;
+        context.fillStyle =
+          snapshot.title.colour;
+
+        const firstLineY =
+          snapshot.title.y -
+          (
+            snapshot.title.lines.length -
+            1
+          ) *
+          snapshot.title.font.lineHeight /
+          2;
+
+        snapshot.title.lines.forEach((line, lineIndex) => {
+          if (!line) {
+            return;
+          }
+
+          context.fillText(
+            line,
+            snapshot.title.x +
+            offsetX,
+            firstLineY +
+            lineIndex *
+            snapshot.title.font.lineHeight
+          );
+        });
+      }
+
+      context.restore();
+    }
+
+    function createHiddenXAxisOptions(options) {
+      return {
+        ...options,
+
+        ticks: {
+          ...(options?.ticks || {}),
+          color: 'rgba(21, 21, 21, 0)'
+        },
+
+        grid: {
+          ...(options?.grid || {}),
+          tickColor: 'rgba(21, 21, 21, 0)'
+        },
+
+        title: {
+          ...(options?.title || {}),
+          color: 'rgba(21, 21, 21, 0)'
+        }
+      };
+    }
+
+    const xAxisSlidePlugin = {
+      id: 'xAxisSlidePlugin',
+
+      afterDraw(activeChart) {
+        if (!xAxisSlide.active) {
+          return;
+        }
+
+        const progress =
+          clamp(
+            xAxisSlide.progress,
+            0,
+            1
+          );
+
+        drawXAxisSnapshot(
+          activeChart.ctx,
+          xAxisSlide.from,
+          1 - progress,
+          -xAxisSlide.distance * progress
+        );
+
+        drawXAxisSnapshot(
+          activeChart.ctx,
+          xAxisSlide.to,
+          progress,
+          xAxisSlide.distance * (1 - progress)
+        );
+      }
+    };
+
     function getFixedXAxisHeight() {
       return window.matchMedia('(max-width: 430px)').matches
         ? 42
@@ -5418,8 +5841,6 @@
             },
 
             plugins: [
-              locationLabelPlugin
-            ]
           }
         );
 
@@ -6921,6 +7342,11 @@
       const geometry =
         captureRenderedGeometry();
 
+      const previousXAxis =
+        captureXAxisSnapshot(
+          chart.scales.x
+        );
+
       interactionLocked =
         true;
 
@@ -6944,7 +7370,9 @@
       chart.options
         .scales
         .x =
-          model.xScale;
+          createHiddenXAxisOptions(
+            model.xScale
+          );
 
       chart.options
         .scales
@@ -6957,6 +7385,21 @@
       chart.update(
         'none'
       );
+
+      xAxisSlide.from =
+        previousXAxis;
+
+      xAxisSlide.to =
+        captureXAxisSnapshot(
+          chart.scales.x,
+          model.xScale
+        );
+
+      xAxisSlide.progress =
+        0;
+
+      xAxisSlide.active =
+        true;
 
       const plans =
         createTransitionPlans(
@@ -6993,9 +7436,6 @@
           easeInOutCubic,
 
         onFrame(
-          progress
-        ) {
-          plans.forEach(
             (
               plan,
               datasetIndex
@@ -7160,6 +7600,23 @@
         },
 
         onComplete() {
+          xAxisSlide.active =
+            false;
+
+          xAxisSlide.progress =
+            1;
+
+          xAxisSlide.from =
+            null;
+
+          xAxisSlide.to =
+            null;
+
+          chart.options
+            .scales
+            .x =
+              model.xScale;
+
           chart.data.datasets =
             model.datasets;
 
