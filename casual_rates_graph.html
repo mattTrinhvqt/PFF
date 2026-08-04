@@ -977,8 +977,175 @@
     const xAxisFade = {
       active: false,
       progress: 1,
-      from: null
+      from: null,
+      changes: {
+        ticks: false,
+        labels: false,
+        title: false,
+        border: false
+      }
     };
+
+    function getXAxisChangeMap(
+      previousOptions,
+      nextOptions
+    ) {
+      const previousView =
+        previousOptions?.pffTickView || '';
+
+      const nextView =
+        nextOptions?.pffTickView || '';
+
+      const previousAxisVisible =
+        previousOptions?.display !== false;
+
+      const nextAxisVisible =
+        nextOptions?.display !== false;
+
+      const previousTicksVisible =
+        previousAxisVisible &&
+        previousOptions?.grid?.drawTicks !== false &&
+        previousView !== 'hidden';
+
+      const nextTicksVisible =
+        nextAxisVisible &&
+        nextOptions?.grid?.drawTicks !== false &&
+        nextView !== 'hidden';
+
+      const previousLabelsVisible =
+        previousAxisVisible &&
+        previousOptions?.ticks?.display !== false &&
+        previousView !== 'hidden';
+
+      const nextLabelsVisible =
+        nextAxisVisible &&
+        nextOptions?.ticks?.display !== false &&
+        nextView !== 'hidden';
+
+      const previousTitleText =
+        previousOptions?.title?.text;
+
+      const nextTitleText =
+        nextOptions?.title?.text;
+
+      const previousTitleHasText = Array.isArray(
+        previousTitleText
+      )
+        ? previousTitleText.some(Boolean)
+        : Boolean(previousTitleText);
+
+      const nextTitleHasText = Array.isArray(
+        nextTitleText
+      )
+        ? nextTitleText.some(Boolean)
+        : Boolean(nextTitleText);
+
+      const previousTitleVisible =
+        previousAxisVisible &&
+        previousOptions?.title?.display !== false &&
+        previousTitleHasText;
+
+      const nextTitleVisible =
+        nextAxisVisible &&
+        nextOptions?.title?.display !== false &&
+        nextTitleHasText;
+
+      const previousBorderVisible =
+        previousAxisVisible &&
+        previousOptions?.border?.display !== false;
+
+      const nextBorderVisible =
+        nextAxisVisible &&
+        nextOptions?.border?.display !== false;
+
+      const previousTickSignature = JSON.stringify({
+        view: previousView,
+        minimum: previousOptions?.min,
+        maximum: previousOptions?.max,
+        tickLength: previousOptions?.grid?.tickLength
+      });
+
+      const nextTickSignature = JSON.stringify({
+        view: nextView,
+        minimum: nextOptions?.min,
+        maximum: nextOptions?.max,
+        tickLength: nextOptions?.grid?.tickLength
+      });
+
+      const previousLabelSignature = JSON.stringify({
+        view: previousView,
+        minimum: previousOptions?.min,
+        maximum: previousOptions?.max,
+        colour: previousOptions?.ticks?.color,
+        font: previousOptions?.ticks?.font || {}
+      });
+
+      const nextLabelSignature = JSON.stringify({
+        view: nextView,
+        minimum: nextOptions?.min,
+        maximum: nextOptions?.max,
+        colour: nextOptions?.ticks?.color,
+        font: nextOptions?.ticks?.font || {}
+      });
+
+      const previousTitleSignature = JSON.stringify({
+        text: previousTitleText,
+        colour: previousOptions?.title?.color,
+        font: previousOptions?.title?.font || {},
+        padding: previousOptions?.title?.padding || {}
+      });
+
+      const nextTitleSignature = JSON.stringify({
+        text: nextTitleText,
+        colour: nextOptions?.title?.color,
+        font: nextOptions?.title?.font || {},
+        padding: nextOptions?.title?.padding || {}
+      });
+
+      const previousBorderSignature = JSON.stringify({
+        colour: previousOptions?.border?.color,
+        width: previousOptions?.border?.width
+      });
+
+      const nextBorderSignature = JSON.stringify({
+        colour: nextOptions?.border?.color,
+        width: nextOptions?.border?.width
+      });
+
+      return {
+        ticks:
+          previousTicksVisible !== nextTicksVisible ||
+          (
+            previousTicksVisible &&
+            nextTicksVisible &&
+            previousTickSignature !== nextTickSignature
+          ),
+
+        labels:
+          previousLabelsVisible !== nextLabelsVisible ||
+          (
+            previousLabelsVisible &&
+            nextLabelsVisible &&
+            previousLabelSignature !== nextLabelSignature
+          ),
+
+        title:
+          previousTitleVisible !== nextTitleVisible ||
+          (
+            previousTitleVisible &&
+            nextTitleVisible &&
+            previousTitleSignature !== nextTitleSignature
+          ),
+
+        border:
+          previousBorderVisible !== nextBorderVisible ||
+          (
+            previousBorderVisible &&
+            nextBorderVisible &&
+            previousBorderSignature !== nextBorderSignature
+          )
+      };
+    }
     function isMajorXAxisTick(value, view) {
       if (!Number.isFinite(value)) {
         return false;
@@ -1028,7 +1195,7 @@
         axis === 'x'
           ? fadeCssColour(
               '#151515',
-              getIncomingXAxisOpacity()
+              getIncomingXAxisOpacity('ticks')
             )
           : '#151515';
 
@@ -1169,6 +1336,7 @@
       const tickOptions = styleOptions.ticks || {};
       const gridOptions = styleOptions.grid || {};
       const titleOptions = styleOptions.title || {};
+      const borderOptions = styleOptions.border || {};
       const tickPadding = Number(tickOptions.padding) || 0;
 
       const ticks = (scale.ticks || []).map((tick, index) => {
@@ -1211,7 +1379,12 @@
           tickOptions.font || {}
         );
 
-        const font = getAxisFont(fontOptions, 10, '400');
+        const font = getAxisFont(
+          fontOptions,
+          10,
+          '400'
+        );
+
         const tickValue = Number(tick.value);
 
         const isMajor = isMajorXAxisTick(
@@ -1263,23 +1436,49 @@
         };
       });
 
-      const titlePadding = normaliseAxisPadding(titleOptions.padding);
+      const titlePadding = normaliseAxisPadding(
+        titleOptions.padding
+      );
+
+      const titleContext = {
+        chart,
+        scale,
+        type: 'scale'
+      };
+
       const titleFontOptions = resolveAxisValue(
         titleOptions.font,
-        {
-          chart,
-          scale,
-          type: 'scale'
-        },
+        titleContext,
         titleOptions.font || {}
       );
-      const titleFont = getAxisFont(titleFontOptions, 13, '700');
+
+      const titleFont = getAxisFont(
+        titleFontOptions,
+        13,
+        '700'
+      );
+
       const titleLines = Array.isArray(titleOptions.text)
         ? titleOptions.text.map(line => String(line ?? ''))
         : [String(titleOptions.text ?? '')];
 
+      const borderContext = {
+        chart,
+        scale,
+        type: 'scale'
+      };
+
+      const resolvedBorderWidth = Number(
+        resolveAxisValue(
+          borderOptions.width,
+          borderContext,
+          1
+        )
+      );
+
       return {
         ticks,
+
         title: {
           show:
             styleOptions.display !== false &&
@@ -1294,17 +1493,30 @@
           font: titleFont,
           colour: resolveAxisValue(
             titleOptions.color,
-            {
-              chart,
-              scale,
-              type: 'scale'
-            },
+            titleContext,
             '#151515'
           )
+        },
+
+        border: {
+          show:
+            styleOptions.display !== false &&
+            borderOptions.display !== false,
+          left: scale.left,
+          right: scale.right,
+          y: scale.top,
+          colour: resolveAxisValue(
+            borderOptions.color,
+            borderContext,
+            '#151515'
+          ),
+          width:
+            Number.isFinite(resolvedBorderWidth)
+              ? resolvedBorderWidth
+              : 1
         }
       };
     }
-
     function safeCaptureXAxisSnapshot(scale, styleOptions) {
       try {
         return captureXAxisSnapshot(scale, styleOptions);
@@ -1317,40 +1529,107 @@
     function drawXAxisSnapshot(
       context,
       snapshot,
-      opacity,
+      opacities,
       offsetX = 0
     ) {
-      if (!snapshot || opacity <= 0.001) {
+      if (!snapshot) {
+        return;
+      }
+
+      const tickOpacity = clamp(
+        Number(opacities?.ticks) || 0,
+        0,
+        1
+      );
+
+      const labelOpacity = clamp(
+        Number(opacities?.labels) || 0,
+        0,
+        1
+      );
+
+      const titleOpacity = clamp(
+        Number(opacities?.title) || 0,
+        0,
+        1
+      );
+
+      const borderOpacity = clamp(
+        Number(opacities?.border) || 0,
+        0,
+        1
+      );
+
+      if (
+        tickOpacity <= 0.001 &&
+        labelOpacity <= 0.001 &&
+        titleOpacity <= 0.001 &&
+        borderOpacity <= 0.001
+      ) {
         return;
       }
 
       context.save();
-      context.globalAlpha = opacity;
       context.textAlign = 'center';
       context.textBaseline = 'middle';
+      context.lineCap = 'butt';
+
+      if (
+        snapshot.border?.show &&
+        borderOpacity > 0.001
+      ) {
+        context.globalAlpha = borderOpacity;
+        context.beginPath();
+        context.strokeStyle = snapshot.border.colour;
+        context.lineWidth = snapshot.border.width;
+        context.moveTo(
+          snapshot.border.left + offsetX,
+          snapshot.border.y
+        );
+        context.lineTo(
+          snapshot.border.right + offsetX,
+          snapshot.border.y
+        );
+        context.stroke();
+      }
 
       snapshot.ticks.forEach(tick => {
         const x = tick.x + offsetX;
 
-        if (tick.showTick && tick.tickLength > 0) {
+        if (
+          tick.showTick &&
+          tick.tickLength > 0 &&
+          tickOpacity > 0.001
+        ) {
+          context.globalAlpha = tickOpacity;
           context.beginPath();
           context.strokeStyle = tick.tickColour;
           context.lineWidth = tick.tickWidth;
           context.moveTo(x, tick.axisY);
-          context.lineTo(x, tick.axisY + tick.tickLength);
+          context.lineTo(
+            x,
+            tick.axisY + tick.tickLength
+          );
           context.stroke();
         }
 
-        if (!tick.showLabel || !tick.labelLines.some(Boolean)) {
+        if (
+          !tick.showLabel ||
+          !tick.labelLines.some(Boolean) ||
+          labelOpacity <= 0.001
+        ) {
           return;
         }
 
+        context.globalAlpha = labelOpacity;
         context.font = tick.font.css;
         context.fillStyle = tick.labelColour;
 
         const firstLineY =
           tick.labelY -
-          (tick.labelLines.length - 1) *
+          (
+            tick.labelLines.length - 1
+          ) *
           tick.font.lineHeight / 2;
 
         tick.labelLines.forEach((line, lineIndex) => {
@@ -1361,42 +1640,59 @@
           context.fillText(
             line,
             x,
-            firstLineY + lineIndex * tick.font.lineHeight
+            firstLineY +
+            lineIndex * tick.font.lineHeight
           );
         });
       });
 
-      if (snapshot.title.show) {
+      if (
+        snapshot.title.show &&
+        titleOpacity > 0.001
+      ) {
+        context.globalAlpha = titleOpacity;
         context.font = snapshot.title.font.css;
         context.fillStyle = snapshot.title.colour;
 
         const firstLineY =
           snapshot.title.y -
-          (snapshot.title.lines.length - 1) *
+          (
+            snapshot.title.lines.length - 1
+          ) *
           snapshot.title.font.lineHeight / 2;
 
-        snapshot.title.lines.forEach((line, lineIndex) => {
-          if (!line) {
-            return;
-          }
+        snapshot.title.lines.forEach(
+          (line, lineIndex) => {
+            if (!line) {
+              return;
+            }
 
-          context.fillText(
-            line,
-            snapshot.title.x + offsetX,
-            firstLineY + lineIndex * snapshot.title.font.lineHeight
-          );
-        });
+            context.fillText(
+              line,
+              snapshot.title.x + offsetX,
+              firstLineY +
+              lineIndex *
+              snapshot.title.font.lineHeight
+            );
+          }
+        );
       }
 
       context.restore();
     }
-
-    function getIncomingXAxisOpacity() {
-      if (!xAxisFade.active) {
+    function getIncomingXAxisOpacity(part) {
+      if (
+        !xAxisFade.active ||
+        xAxisFade.changes?.[part] === false
+      ) {
         return 1;
       }
 
-      return clamp(xAxisFade.progress, 0, 1);
+      return clamp(
+        xAxisFade.progress,
+        0,
+        1
+      );
     }
 
     function createFadingXAxisOptions(options) {
@@ -1407,8 +1703,10 @@
 
       return {
         ...options,
+
         ticks: {
           ...tickOptions,
+
           color(context) {
             const colour = resolveAxisValue(
               tickOptions.color,
@@ -1418,12 +1716,14 @@
 
             return fadeCssColour(
               colour,
-              getIncomingXAxisOpacity()
+              getIncomingXAxisOpacity('labels')
             );
           }
         },
+
         grid: {
           ...gridOptions,
+
           tickColor(context) {
             const colour = resolveAxisValue(
               gridOptions.tickColor,
@@ -1433,12 +1733,14 @@
 
             return fadeCssColour(
               colour,
-              getIncomingXAxisOpacity()
+              getIncomingXAxisOpacity('ticks')
             );
           }
         },
+
         title: {
           ...titleOptions,
+
           color(context) {
             const colour = resolveAxisValue(
               titleOptions.color,
@@ -1448,12 +1750,14 @@
 
             return fadeCssColour(
               colour,
-              getIncomingXAxisOpacity()
+              getIncomingXAxisOpacity('title')
             );
           }
         },
+
         border: {
           ...borderOptions,
+
           color(context) {
             const colour = resolveAxisValue(
               borderOptions.color,
@@ -1463,7 +1767,7 @@
 
             return fadeCssColour(
               colour,
-              getIncomingXAxisOpacity()
+              getIncomingXAxisOpacity('border')
             );
           }
         }
@@ -1483,7 +1787,7 @@
           1
         );
 
-        const oldAxisOpacity = clamp(
+        const outgoingOpacity = clamp(
           1 - progress,
           0,
           1
@@ -1492,7 +1796,27 @@
         drawXAxisSnapshot(
           activeChart.ctx,
           xAxisFade.from,
-          oldAxisOpacity,
+          {
+            ticks:
+              xAxisFade.changes.ticks
+                ? outgoingOpacity
+                : 0,
+
+            labels:
+              xAxisFade.changes.labels
+                ? outgoingOpacity
+                : 0,
+
+            title:
+              xAxisFade.changes.title
+                ? outgoingOpacity
+                : 0,
+
+            border:
+              xAxisFade.changes.border
+                ? outgoingOpacity
+                : 0
+          },
           0
         );
       }
@@ -4037,8 +4361,14 @@
         currentXAxisOptions
       );
 
+      const xAxisChanges = getXAxisChangeMap(
+        currentXAxisOptions,
+        model.xScale
+      );
+
       xAxisFade.from = previousXAxis;
       xAxisFade.progress = 0;
+      xAxisFade.changes = xAxisChanges;
       xAxisFade.active = true;
       interactionLocked = true;
       viewMorphInProgress = true;
@@ -4158,6 +4488,12 @@
           xAxisFade.active = false;
           xAxisFade.progress = 1;
           xAxisFade.from = null;
+          xAxisFade.changes = {
+            ticks: false,
+            labels: false,
+            title: false,
+            border: false
+          };
           currentXAxisOptions = model.xScale;
           chart.options.scales.x = model.xScale;
           chart.data.datasets = model.datasets;
