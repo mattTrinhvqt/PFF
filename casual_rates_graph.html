@@ -946,7 +946,6 @@
       chartTabs.map(tab => [tab.dataset.view, tab])
     );
 
-    const legendNav = document.getElementById('legendNav');
     const legendViewport = document.getElementById('legendViewport');
     const chartLegend = document.getElementById('chartLegend');
     const legendScrollLeft = document.getElementById('legendScrollLeft');
@@ -980,7 +979,111 @@
       progress: 1,
       from: null
     };
+    function isMajorXAxisTick(value, view) {
+      if (!Number.isFinite(value)) {
+        return false;
+      }
 
+      if (view === 'experience') {
+        return value % 5 === 0;
+      }
+
+      if (view === 'date') {
+        const month = new Date(value).getUTCMonth();
+
+        return [0, 3, 6, 9].includes(month);
+      }
+
+      return false;
+    }
+
+    function isMajorYAxisTick(value) {
+      if (!Number.isFinite(value)) {
+        return false;
+      }
+
+      return (
+        (value - yAxisModel.minimum) %
+        yAxisModel.majorStep === 0
+      );
+    }
+
+    function drawVariableAxisTicks(
+      context,
+      scale,
+      axis,
+      view
+    ) {
+      if (!scale) {
+        return;
+      }
+
+      const ticks = scale.ticks || [];
+
+      if (!ticks.length) {
+        return;
+      }
+
+      const tickColour =
+        axis === 'x'
+          ? fadeCssColour(
+              '#151515',
+              getIncomingXAxisOpacity()
+            )
+          : '#151515';
+
+      context.save();
+      context.lineCap = 'butt';
+
+      ticks.forEach((tick, index) => {
+        const value = Number(tick.value);
+        const pixel = scale.getPixelForTick(index);
+
+        if (!Number.isFinite(pixel)) {
+          return;
+        }
+
+        const isMajor =
+          axis === 'x'
+            ? isMajorXAxisTick(value, view)
+            : isMajorYAxisTick(value);
+
+        const tickLength =
+          axis === 'x'
+            ? isMajor
+              ? 6
+              : 2
+            : isMajor
+              ? 5
+              : 2;
+
+        const tickWidth = isMajor
+          ? 1.1
+          : 0.7;
+
+        context.beginPath();
+        context.strokeStyle = tickColour;
+        context.lineWidth = tickWidth;
+
+        if (axis === 'x') {
+          context.moveTo(pixel, scale.top);
+          context.lineTo(
+            pixel,
+            scale.top + tickLength
+          );
+        } else {
+          context.moveTo(scale.right, pixel);
+          context.lineTo(
+            scale.right - tickLength,
+            pixel
+          );
+        }
+
+        context.stroke();
+      });
+
+      context.restore();
+    }
 
     function resolveAxisValue(value, context, fallback) {
       try {
@@ -1109,12 +1212,20 @@
         );
 
         const font = getAxisFont(fontOptions, 10, '400');
-        const tickLength = Number(
-          resolveAxisValue(gridOptions.tickLength, context, 0)
-        ) || 0;
-        const tickWidth = Number(
-          resolveAxisValue(gridOptions.tickWidth, context, 1)
-        ) || 1;
+        const tickValue = Number(tick.value);
+
+        const isMajor = isMajorXAxisTick(
+          tickValue,
+          styleOptions.pffTickView
+        );
+
+        const tickLength = isMajor
+          ? 6
+          : 2;
+
+        const tickWidth = isMajor
+          ? 1.1
+          : 0.7;
 
         return {
           x: scale.getPixelForTick(index),
@@ -1134,11 +1245,7 @@
           showLabel:
             styleOptions.display !== false &&
             tickOptions.display !== false,
-          tickColour: resolveAxisValue(
-            gridOptions.tickColor,
-            context,
-            '#151515'
-          ),
+          tickColour: '#151515',
           labelColour: resolveAxisValue(
             tickOptions.color,
             context,
@@ -1353,7 +1460,6 @@
         }
       };
     }
-
     const xAxisFadePlugin = {
       id: 'xAxisFadePlugin',
 
@@ -1362,14 +1468,48 @@
           return;
         }
 
-        const progress = clamp(xAxisFade.progress, 0, 1);
-        const oldAxisOpacity = clamp(1 - progress * 2, 0, 1);
+        const progress = clamp(
+          xAxisFade.progress,
+          0,
+          1
+        );
+
+        const oldAxisOpacity = clamp(
+          1 - progress * 2,
+          0,
+          1
+        );
 
         drawXAxisSnapshot(
           activeChart.ctx,
           xAxisFade.from,
           oldAxisOpacity,
           0
+        );
+      }
+    };
+    const variableAxisTickPlugin = {
+      id: 'variableAxisTickPlugin',
+
+      afterDraw(activeChart) {
+        if (
+          ['experience', 'date', 'rurality'].includes(
+            activeView
+          )
+        ) {
+          drawVariableAxisTicks(
+            activeChart.ctx,
+            activeChart.scales.x,
+            'x',
+            activeView
+          );
+        }
+
+        drawVariableAxisTicks(
+          activeChart.ctx,
+          activeChart.scales.y,
+          'y',
+          activeView
         );
       }
     };
@@ -1559,11 +1699,21 @@
 
 
     function toNumber(value) {
-      const number = Number(
-        cleanText(value).replace(/[^\d.-]/g, '')
-      );
+      const cleaned = cleanText(value)
+        .replace(/[^\d.-]/g, '');
 
-      return Number.isFinite(number) ? number : NaN;
+      if (
+        !cleaned ||
+        !/\d/.test(cleaned)
+      ) {
+        return NaN;
+      }
+
+      const number = Number(cleaned);
+
+      return Number.isFinite(number)
+        ? number
+        : NaN;
     }
 
     function getCellValue(cell) {
@@ -2167,23 +2317,7 @@
             : null
         }));
     }
-    function getXAxisTickValue(context) {
-      const directValue = Number(
-        context?.tick?.value
-      );
 
-      if (Number.isFinite(directValue)) {
-        return directValue;
-      }
-
-      const indexedValue = Number(
-        context?.scale?.ticks?.[context?.index]?.value
-      );
-
-      return Number.isFinite(indexedValue)
-        ? indexedValue
-        : NaN;
-    }
 
     function fixedXAxis(options) {
       const originalAfterFit = options?.afterFit;
@@ -2298,23 +2432,9 @@
               : 0.7;
           },
           drawTicks: true,
-          tickLength(context) {
-            return (
-              (Number(context.tick?.value) - yAxisModel.minimum) %
-              yAxisModel.majorStep === 0
-            )
-              ? 5
-              : 2;
-          },
-          tickColor: '#151515',
-          tickWidth(context) {
-            return (
-              (Number(context.tick?.value) - yAxisModel.minimum) %
-              yAxisModel.majorStep === 0
-            )
-              ? 1.1
-              : 0.7;
-          }
+          tickLength: 5,
+          tickColor: 'rgba(21, 21, 21, 0)',
+          tickWidth: 0
         },
         border: {
           display: true,
@@ -2453,6 +2573,7 @@
         slopeLabel: '/hour per ln(years + 1)',
         xScale: {
           type: 'linear',
+          pffTickView: 'experience',
           min: 0,
           max: 45,
           afterBuildTicks(scale) {
@@ -2489,27 +2610,9 @@
           grid: {
             drawOnChartArea: false,
             drawTicks: true,
-            tickLength(context) {
-              const value = getXAxisTickValue(context);
-
-              return (
-                Number.isFinite(value) &&
-                value % 5 === 0
-              )
-                ? 6
-                : 2;
-            },
-            tickColor: '#151515',
-            tickWidth(context) {
-              const value = getXAxisTickValue(context);
-
-              return (
-                Number.isFinite(value) &&
-                value % 5 === 0
-              )
-                ? 1.1
-                : 0.7;
-            }
+            tickLength: 6,
+            tickColor: 'rgba(21, 21, 21, 0)',
+            tickWidth: 0
           },
           border: {
             display: true,
@@ -2569,6 +2672,7 @@
         slopeMultiplier: YEAR_MS,
         xScale: {
           type: 'linear',
+          pffTickView: 'date',
           min: firstMonth,
           max: monthAfterLast,
           afterBuildTicks(scale) {
@@ -2607,29 +2711,9 @@
           grid: {
             drawOnChartArea: false,
             drawTicks: true,
-            tickLength(context) {
-              const value = getXAxisTickValue(context);
-
-              const month = Number.isFinite(value)
-                ? new Date(value).getUTCMonth()
-                : -1;
-
-              return [0, 3, 6, 9].includes(month)
-                ? 6
-                : 2;
-            },
-            tickColor: '#151515',
-            tickWidth(context) {
-              const value = getXAxisTickValue(context);
-
-              const month = Number.isFinite(value)
-                ? new Date(value).getUTCMonth()
-                : -1;
-
-              return [0, 3, 6, 9].includes(month)
-                ? 1.1
-                : 0.7;
-            }
+            tickLength: 6,
+            tickColor: 'rgba(21, 21, 21, 0)',
+            tickWidth: 0
           },
           border: {
             display: true,
@@ -2724,6 +2808,7 @@
         datasets,
         xScale: fixedXAxis({
           type: 'linear',
+          pffTickView: 'rurality',
           min: -0.55,
           max: Math.max(0.55, categories.length - 0.45),
           afterBuildTicks(scale) {
@@ -2757,9 +2842,9 @@
           grid: {
             drawOnChartArea: false,
             drawTicks: true,
-            tickLength: 2,
-            tickColor: '#151515',
-            tickWidth: 0.7
+            tickLength: 6,
+            tickColor: 'rgba(21, 21, 21, 0)',
+            tickWidth: 0
           },
           border: {
             display: true,
@@ -2792,7 +2877,7 @@
       };
     }
 
-    function bubbleRadius(respondents, view) {
+    function bubbleRadius(respondents) {
       return clamp(
         11 + Math.pow(respondents, 0.78) * 3.15,
         18,
@@ -2865,7 +2950,7 @@
           label: config.label(categoryKey),
           fullName: config.fullName(categoryKey),
           colour: config.colour(categoryKey),
-          baseRadius: bubbleRadius(stats.count, view),
+          baseRadius: bubbleRadius(stats.count),
           statistics: stats
         };
       });
@@ -2942,9 +3027,13 @@
             pointHitRadius: 0,
             pointBackgroundColor(context) {
               const raw = context.raw;
+
               const opacity =
                 CONFIG.aggregateOpacity +
-                (CONFIG.dimmedAggregateOpacity - CONFIG.aggregateOpacity) *
+                (
+                  CONFIG.dimmedAggregateOpacity -
+                  CONFIG.aggregateOpacity
+                ) *
                 bubbleStores[raw.bubbleView].dimProgress;
 
               return rgba(
@@ -2954,9 +3043,13 @@
             },
             pointHoverBackgroundColor(context) {
               const raw = context.raw;
+
               const opacity =
                 CONFIG.aggregateHoverOpacity +
-                (CONFIG.dimmedAggregateHoverOpacity - CONFIG.aggregateHoverOpacity) *
+                (
+                  CONFIG.dimmedAggregateHoverOpacity -
+                  CONFIG.aggregateHoverOpacity
+                ) *
                 bubbleStores[raw.bubbleView].dimProgress;
 
               return rgba(
@@ -2974,13 +3067,20 @@
             data: store.rawPoints,
             parsing: false,
             pointRadius: CONFIG.rawPointRadius,
-            pointHoverRadius: CONFIG.rawPointRadius + 0.8,
+            pointHoverRadius:
+              CONFIG.rawPointRadius + 0.8,
             pointHitRadius: 2,
             pointBackgroundColor(context) {
-              return rgba(context.raw?.colour, CONFIG.aggregateOpacity);
+              return rgba(
+                context.raw?.colour,
+                CONFIG.aggregateOpacity
+              );
             },
             pointHoverBackgroundColor(context) {
-              return rgba(context.raw?.colour, CONFIG.aggregateHoverOpacity);
+              return rgba(
+                context.raw?.colour,
+                CONFIG.aggregateHoverOpacity
+              );
             },
             pointBorderWidth: 0,
             showLine: false,
@@ -2989,6 +3089,7 @@
         ],
         xScale: fixedXAxis({
           type: 'linear',
+          pffTickView: 'hidden',
           min: 0,
           max: 100,
           title: {
@@ -4158,6 +4259,7 @@
           },
           plugins: [
             xAxisFadePlugin,
+            variableAxisTickPlugin,
             bubbleLabelPlugin
           ]
         }
@@ -4568,14 +4670,7 @@
       return points;
     }
 
-    function animate(duration, frame, complete) {
-      runAnimation({
-        duration,
-        easing: easeInOutCubic,
-        onFrame: frame,
-        onComplete: complete
-      });
-    }
+
 
     function splitBubble(view, categoryKey) {
       const store = bubbleStores[view];
