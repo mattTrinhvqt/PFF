@@ -17,6 +17,7 @@
       --ink: #151515;
       --muted: #69718a;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
       --track: #e8eaf0;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
@@ -383,6 +384,10 @@
       background: var(--live-red);
     }
 
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
     h1 {
       flex: 0 0 auto;
       margin:
@@ -645,6 +650,7 @@
           ></div>
 
           <div
+            id="data-source-indicator"
             class="live-data"
             aria-label="Live data"
           >
@@ -653,7 +659,7 @@
               aria-hidden="true"
             ></span>
 
-            <span>LIVE data</span>
+            <span id="data-source-text">LIVE data</span>
           </div>
         </div>
       </section>
@@ -718,6 +724,15 @@
     const PODIUM_RANGE =
       'AL64:AL66';
 
+    const CACHE_WEB_APP_URL =
+      'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+
+    const CACHE_APP_KEY =
+      'best-optometry-workplaces';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
 
     const app =
       document.getElementById(
@@ -739,6 +754,21 @@
         '.podium-list'
       );
 
+    const dataSourceIndicator =
+      document.getElementById(
+        'data-source-indicator'
+      );
+
+    const dataSourceText =
+      document.getElementById(
+        'data-source-text'
+      );
+
+    const status =
+      document.getElementById(
+        'status'
+      );
+
 
     const podiumRows = [
       {
@@ -756,6 +786,38 @@
           'bronze'
       }
     ];
+
+
+    function setDataSource(
+      source
+    ) {
+      const isCached =
+        source ===
+        'cached';
+
+
+      dataSourceIndicator
+        .classList
+        .toggle(
+          'is-cached',
+          isCached
+        );
+
+
+      dataSourceIndicator
+        .setAttribute(
+          'aria-label',
+          isCached
+            ? 'Cached data'
+            : 'Live data'
+        );
+
+
+      dataSourceText.textContent =
+        isCached
+          ? 'CACHED data'
+          : 'LIVE data';
+    }
 
 
     function escapeRegExp(
@@ -1463,6 +1525,191 @@
     }
 
 
+    function loadCachedDashboard() {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          if (
+            !CACHE_WEB_APP_URL ||
+            CACHE_WEB_APP_URL.includes(
+              'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'
+            )
+          ) {
+            reject(
+              new Error(
+                'The cached-data web app URL has not been configured'
+              )
+            );
+
+            return;
+          }
+
+
+          const callbackName =
+            `bestWorkplacesCacheCallback_${Date.now()}_${Math.floor(
+              Math.random() *
+              100000
+            )}`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled =
+            false;
+
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                finish(
+                  new Error(
+                    'The cached-data request timed out'
+                  )
+                );
+              },
+              CACHE_FETCH_TIMEOUT_MS
+            );
+
+
+          function cleanup() {
+            window.clearTimeout(
+              timeout
+            );
+
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (
+              error
+            ) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+
+
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(
+                  script
+                );
+            }
+          }
+
+
+          function finish(
+            error,
+            response
+          ) {
+            if (
+              settled
+            ) {
+              return;
+            }
+
+
+            settled =
+              true;
+
+            cleanup();
+
+
+            if (
+              error
+            ) {
+              reject(
+                error
+              );
+
+              return;
+            }
+
+
+            resolve(
+              response
+            );
+          }
+
+
+          window[
+            callbackName
+          ] = response => {
+            if (
+              !response ||
+              typeof response !==
+                'object'
+            ) {
+              finish(
+                new Error(
+                  'The cached-data response was malformed'
+                )
+              );
+
+              return;
+            }
+
+
+            finish(
+              null,
+              response
+            );
+          };
+
+
+          script.onerror =
+            () => {
+              finish(
+                new Error(
+                  'Could not load the cached-data service'
+                )
+              );
+            };
+
+
+          const params =
+            new URLSearchParams({
+              appKey:
+                CACHE_APP_KEY,
+
+              callback:
+                callbackName,
+
+              _:
+                String(
+                  Date.now()
+                )
+            });
+
+
+          const separator =
+            CACHE_WEB_APP_URL.includes(
+              '?'
+            )
+              ? '&'
+              : '?';
+
+
+          script.src =
+            `${CACHE_WEB_APP_URL}${separator}${params.toString()}`;
+
+
+          document.body
+            .appendChild(
+              script
+            );
+        }
+      );
+    }
+
+
     function normaliseDashboard(
       responseData,
       podiumData
@@ -1519,9 +1766,133 @@
     }
 
 
+    function isUsableDashboardText(
+      value
+    ) {
+      const text =
+        String(
+          value ??
+          ''
+        ).trim();
+
+
+      return Boolean(
+        text &&
+        text !==
+          '—'
+      );
+    }
+
+
+    function validateDashboardData(
+      data
+    ) {
+      const requiredFields = [
+        'responseCount',
+        'gold',
+        'silver',
+        'bronze'
+      ];
+
+
+      const missingField =
+        requiredFields.find(
+          field =>
+            !isUsableDashboardText(
+              data?.[
+                field
+              ]
+            )
+        );
+
+
+      if (
+        missingField
+      ) {
+        throw new Error(
+          `Dashboard data is missing a usable ${missingField} value`
+        );
+      }
+
+
+      return {
+        responseCount:
+          String(
+            data.responseCount
+          ).trim(),
+
+        gold:
+          String(
+            data.gold
+          ).trim(),
+
+        silver:
+          String(
+            data.silver
+          ).trim(),
+
+        bronze:
+          String(
+            data.bronze
+          ).trim()
+      };
+    }
+
+
+    function normaliseCachedDashboard(
+      response
+    ) {
+      if (
+        response?.ok !==
+        true
+      ) {
+        throw new Error(
+          response?.error ||
+          'The cached-data service did not return a snapshot'
+        );
+      }
+
+
+      if (
+        response.appKey !==
+        CACHE_APP_KEY
+      ) {
+        throw new Error(
+          'The cached-data response belongs to a different app'
+        );
+      }
+
+
+      if (
+        !response.cachedAt ||
+        Number.isNaN(
+          Date.parse(
+            response.cachedAt
+          )
+        )
+      ) {
+        throw new Error(
+          'The cached-data response has no valid timestamp'
+        );
+      }
+
+
+      return validateDashboardData(
+        response.data
+      );
+    }
+
+
     function renderDashboard(
       data
     ) {
+      status.hidden =
+        true;
+
+      status.textContent =
+        '';
+
+
       responseCount.textContent =
         data.responseCount ||
         '—';
@@ -1585,11 +1956,6 @@
       );
 
 
-      const status =
-        document.getElementById(
-          'status'
-        );
-
       status.hidden =
         false;
 
@@ -1605,6 +1971,10 @@
 
 
     async function loadDashboard() {
+      let liveError =
+        null;
+
+
       try {
         const [
           responseData,
@@ -1621,17 +1991,77 @@
           ]);
 
 
-        renderDashboard(
-          normaliseDashboard(
-            responseData,
-            podiumData
-          )
+        const liveDashboard =
+          validateDashboardData(
+            normaliseDashboard(
+              responseData,
+              podiumData
+            )
+          );
+
+
+        setDataSource(
+          'live'
         );
+
+
+        renderDashboard(
+          liveDashboard
+        );
+
+        return;
       } catch (
         error
       ) {
-        showError(
+        liveError =
+          error;
+
+
+        console.warn(
+          'Live Google Sheets data could not be used',
           error
+        );
+      }
+
+
+      try {
+        const cachedResponse =
+          await loadCachedDashboard();
+
+
+        const cachedDashboard =
+          normaliseCachedDashboard(
+            cachedResponse
+          );
+
+
+        setDataSource(
+          'cached'
+        );
+
+
+        renderDashboard(
+          cachedDashboard
+        );
+      } catch (
+        cachedError
+      ) {
+        console.error(
+          'Live Google Sheets data error',
+          liveError
+        );
+
+
+        console.error(
+          'Cached Apps Script data error',
+          cachedError
+        );
+
+
+        showError(
+          new Error(
+            'Live and cached data are currently unavailable'
+          )
         );
       }
     }
