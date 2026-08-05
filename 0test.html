@@ -389,30 +389,29 @@
 
     .toggle-text-viewport {
       display: block;
-      width: 100%;
+      width: min(220px, 100%);
+      margin: 0 auto;
       overflow: hidden;
-    }
-
-    .toggle-text-track {
-      display: flex;
-      width: 200%;
-      transform: translateX(0);
-      transition:
-        transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
-      will-change: transform;
-    }
-
-    .toggle-text-item {
-      display: flex;
-      width: 50%;
-      flex: 0 0 50%;
-      align-items: center;
-      justify-content: center;
       white-space: nowrap;
     }
 
-    #toggleBtn.is-hourly .toggle-text-track {
-      transform: translateX(-50%);
+    .toggle-text-track {
+      display: inline-flex;
+      min-width: max-content;
+      align-items: center;
+      transform: translateX(0);
+      transition:
+        transform 560ms cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: transform;
+    }
+
+    .toggle-text-track.no-transition {
+      transition: none;
+    }
+
+    .toggle-text-state,
+    .toggle-text-join {
+      flex: 0 0 auto;
     }
 
     button:disabled {
@@ -1860,18 +1859,32 @@
                 class="toggle-text-viewport"
                 aria-hidden="true"
               >
-                <span class="toggle-text-track">
-                  <span class="toggle-text-item">
-                    Salary; switch to Hourly rate
-                  </span>
-
-                  <span class="toggle-text-item">
-                    Hourly rate; switch to Salary
-                  </span>
+                <span
+                  id="toggleTextTrack"
+                  class="toggle-text-track"
+                >
+                  <span
+                    id="toggleSalaryStart"
+                    class="toggle-text-state"
+                  >Salary</span><span
+                    class="toggle-text-join"
+                  >; switch to </span><span
+                    id="toggleHourly"
+                    class="toggle-text-state"
+                  >Hourly rate</span><span
+                    class="toggle-text-join"
+                  >; switch to </span><span
+                    id="toggleSalaryLoop"
+                    class="toggle-text-state"
+                  >Salary</span><span
+                    class="toggle-text-join"
+                  >; switch to </span><span
+                    id="toggleHourlyLoop"
+                    class="toggle-text-state"
+                  >Hourly rate</span>
                 </span>
               </span>
             </button>
-
             <p class="calculator-note">
               Salary estimates (FTE) excl. super and sales bonuses, incl. location and weekend/night loadings.
               <span id="workPatternNote" hidden>
@@ -2702,6 +2715,44 @@ function sortKeysByCountDesc(counts) {
     const TOGGLE_NUMBER_ANIMATION_MS = 240;
 
     const toggleBtn = document.getElementById('toggleBtn');
+    const toggleTextViewport =
+      document.querySelector(
+        '#toggleBtn .toggle-text-viewport'
+      );
+
+    const toggleTextTrack =
+      document.getElementById(
+        'toggleTextTrack'
+      );
+
+    const toggleSalaryStart =
+      document.getElementById(
+        'toggleSalaryStart'
+      );
+
+    const toggleHourly =
+      document.getElementById(
+        'toggleHourly'
+      );
+
+    const toggleSalaryLoop =
+      document.getElementById(
+        'toggleSalaryLoop'
+      );
+
+    const toggleHourlyLoop =
+      document.getElementById(
+        'toggleHourlyLoop'
+      );
+
+    let toggleTextPosition =
+      'salary-start';
+
+    let toggleTextReady =
+      false;
+
+    let toggleTextResetPending =
+      false;    
     const resultsHeading = document.getElementById('resultsHeading');
     const resultsHeadingFixed =
       document.getElementById('resultsHeadingFixed');
@@ -3241,7 +3292,193 @@ function sortKeysByCountDesc(counts) {
         );
     }
 
+    function getToggleTextTranslate(
+      startElement,
+      endElement
+    ) {
+      const phraseStart =
+        startElement.offsetLeft;
 
+      const phraseEnd =
+        endElement.offsetLeft +
+        endElement.offsetWidth;
+
+      const phraseWidth =
+        phraseEnd -
+        phraseStart;
+
+      return (
+        (
+          toggleTextViewport.clientWidth -
+          phraseWidth
+        ) / 2 -
+        phraseStart
+      );
+    }
+
+
+    function placeToggleText(
+      position,
+      animate = true
+    ) {
+      let startElement;
+      let endElement;
+
+      if (position === 'hourly') {
+        startElement =
+          toggleHourly;
+
+        endElement =
+          toggleSalaryLoop;
+      } else if (
+        position === 'salary-loop'
+      ) {
+        startElement =
+          toggleSalaryLoop;
+
+        endElement =
+          toggleHourlyLoop;
+      } else {
+        startElement =
+          toggleSalaryStart;
+
+        endElement =
+          toggleHourly;
+      }
+
+      const translateX =
+        getToggleTextTranslate(
+          startElement,
+          endElement
+        );
+
+      toggleTextTrack.classList.toggle(
+        'no-transition',
+        !animate
+      );
+
+      toggleTextTrack.style.transform =
+        `translateX(${translateX}px)`;
+
+      if (!animate) {
+        /*
+         * Apply the position immediately, then restore transitions
+         * for the next user-triggered movement.
+         */
+        void toggleTextTrack.offsetWidth;
+
+        toggleTextTrack.classList.remove(
+          'no-transition'
+        );
+      }
+
+      toggleTextPosition =
+        position;
+    }
+
+
+    function updateToggleButtonText(
+      showHourly
+    ) {
+      toggleBtn.setAttribute(
+        'aria-label',
+        showHourly
+          ? 'Hourly rate; switch to Salary'
+          : 'Salary; switch to Hourly rate'
+      );
+
+      /*
+       * The button must be visible before its text widths can be
+       * measured accurately.
+       */
+      if (!toggleTextReady) {
+        requestAnimationFrame(
+          () => {
+            placeToggleText(
+              showHourly
+                ? 'hourly'
+                : 'salary-start',
+              false
+            );
+
+            toggleTextReady =
+              true;
+          }
+        );
+
+        return;
+      }
+
+      if (showHourly) {
+        toggleTextResetPending =
+          false;
+
+        if (
+          toggleTextPosition !==
+          'hourly'
+        ) {
+          placeToggleText(
+            'hourly',
+            true
+          );
+        }
+
+        return;
+      }
+
+      /*
+       * Continue scrolling forward from Hourly rate to the repeated
+       * Salary text rather than reversing the animation.
+       */
+      if (
+        toggleTextPosition ===
+        'hourly'
+      ) {
+        toggleTextResetPending =
+          true;
+
+        placeToggleText(
+          'salary-loop',
+          true
+        );
+
+        return;
+      }
+
+      toggleTextResetPending =
+        false;
+
+      placeToggleText(
+        'salary-start',
+        false
+      );
+    }
+
+
+    toggleTextTrack.addEventListener(
+      'transitionend',
+      event => {
+        if (
+          event.propertyName !==
+            'transform' ||
+          !toggleTextResetPending
+        ) {
+          return;
+        }
+
+        toggleTextResetPending =
+          false;
+
+        /*
+         * The repeated Salary phrase is visually identical to the
+         * first Salary phrase, so this reset cannot be seen.
+         */
+        placeToggleText(
+          'salary-start',
+          false
+        );
+      }
+    );
     function updateView(
       animateNumbers = false,
       animationDuration = NUMBER_ANIMATION_MS
@@ -3285,19 +3522,12 @@ function sortKeysByCountDesc(counts) {
           : 'salary'
       );
 
-      toggleBtn.classList.toggle(
-        'is-hourly',
+      toggleBtn.style.display =
+        'inline-block';
+
+      updateToggleButtonText(
         showHourly
       );
-
-      toggleBtn.setAttribute(
-        'aria-label',
-        showHourly
-          ? 'Hourly rate; switch to Salary'
-          : 'Salary; switch to Hourly rate'
-      );
-
-      toggleBtn.style.display = 'inline-block';
 
       scheduleApplyScale();
     }
@@ -4081,7 +4311,24 @@ function sortKeysByCountDesc(counts) {
         positionSalaryHelp();
       }
     });
+    window.addEventListener(
+      'resize',
+      () => {
+        if (!toggleTextReady) {
+          return;
+        }
 
+        toggleTextResetPending =
+          false;
+
+        placeToggleText(
+          viewMode === 'hourly'
+            ? 'hourly'
+            : 'salary-start',
+          false
+        );
+      }
+    );
     window.addEventListener(
       'scroll',
       () => {
