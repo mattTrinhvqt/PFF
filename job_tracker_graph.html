@@ -891,8 +891,11 @@ font-size: 10px;
 font-weight: 400;
 line-height: 1.35;
 
+opacity: 1;
 pointer-events: none;
 transform: translateX(-50%);
+transition: opacity 170ms ease;
+will-change: opacity;
 }
 
 .small-numbers-note.is-hidden {
@@ -933,6 +936,13 @@ color: var(--ink);
 outline: 2px solid rgba(102, 0, 255, 0.22);
 outline-offset: 1px;
 }
+
+.metric-toggle.is-view-fading,
+.small-numbers-note.is-view-fading {
+opacity: 0;
+pointer-events: none;
+}
+
 .module-top,
 #status,
 .chart-heading-row,
@@ -1525,6 +1535,7 @@ let currentGroup = 'state';
 let countGroup = 'state';
 let payGroup = 'none';
 let interactionLocked = false;
+let viewFadeLocked = false;
 let activeAnimationFrame = null;
 let currentLegendSignature = '';
 let legendAnimationToken = 0;
@@ -5346,60 +5357,97 @@ groupMenu.classList.toggle('is-open', isOpen);
 groupButton.setAttribute('aria-expanded', String(isOpen));
 }
 
-function setMeasureMenuOpen(isOpen) {
-measureMenu.classList.toggle('is-open', isOpen);
-measureButton.setAttribute('aria-expanded', String(isOpen));
-}
+    function setMeasureMenuOpen(isOpen) {
+      measureMenu.classList.toggle('is-open', isOpen);
+      measureButton.setAttribute('aria-expanded', String(isOpen));
+    }
 
-function switchView(nextView) {
-if (nextView === selectedTab || interactionLocked) return;
+    function setViewDependentControlsFaded(shouldFade) {
+      document
+        .querySelectorAll(
+          '.metric-toggle, .small-numbers-note'
+        )
+        .forEach(element => {
+          element.classList.toggle(
+            'is-view-fading',
+            shouldFade
+          );
+        });
+    }
 
-selectedTab = nextView;
+    function switchView(nextView) {
+      if (
+        nextView === selectedTab ||
+        interactionLocked ||
+        viewFadeLocked
+      ) {
+        return;
+      }
 
-currentGroup = selectedTab === 'pay'
-? payGroup
-: countGroup;
+      viewFadeLocked = true;
+      setViewDependentControlsFaded(true);
 
-syncActiveView();
+      const reduceMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)'
+      ).matches;
 
-chartTabs.forEach(tab => {
-const isActive = tab.dataset.view === selectedTab;
-tab.classList.toggle('is-active', isActive);
-tab.setAttribute('aria-selected', String(isActive));
-});
+      window.setTimeout(() => {
+        selectedTab = nextView;
+        syncActiveView();
 
-groupOptions.forEach(option => {
-option.checked = option.value === currentGroup;
-});
+        chartTabs.forEach(tab => {
+          const isActive = tab.dataset.view === selectedTab;
 
-fadeTextChange(
-groupValue,
-GROUP_LABELS[currentGroup]
-);
+          tab.classList.toggle(
+            'is-active',
+            isActive
+          );
 
-fadeTextChange(
-chartHeading,
-getHeadingText(activeView)
-);
+          tab.setAttribute(
+            'aria-selected',
+            String(isActive)
+          );
+        });
 
-fadeTextChange(
-groupMenuTitle,
-getGroupMenuText()
-);
+        fadeTextChange(
+          chartHeading,
+          getHeadingText(activeView)
+        );
 
-updateCountControls();
-updateTabIndicator(true);
-updateLegend(activeView, currentGroup, true);
+        fadeTextChange(
+          groupMenuTitle,
+          getGroupMenuText()
+        );
 
-setGroupMenuOpen(false);
-setMeasureMenuOpen(false);
+        updateCountControls();
+        updateTabIndicator(true);
 
-animateToTargets(
-buildTargetDescriptors(activeView, currentGroup),
-activeView,
-true
-);
-}
+        updateLegend(
+          activeView,
+          currentGroup,
+          true
+        );
+
+        setGroupMenuOpen(false);
+        setMeasureMenuOpen(false);
+
+        animateToTargets(
+          buildTargetDescriptors(
+            activeView,
+            currentGroup
+          ),
+          activeView,
+          true
+        );
+
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setViewDependentControlsFaded(false);
+            viewFadeLocked = false;
+          });
+        });
+      }, reduceMotion ? 0 : 180);
+    }
 
 
 
