@@ -879,8 +879,9 @@ top: 34px;
 left: 50%;
 z-index: 4;
 
-width: min(252px, calc(100% - 82px));
-padding: 8px 9px;
+width: max-content;
+max-width: calc(100% - 24px);
+padding: 8px 10px;
 
 color: var(--muted);
 background: rgba(255, 255, 255, 0.88);
@@ -891,8 +892,11 @@ font-size: 10px;
 font-weight: 400;
 line-height: 1.35;
 
+opacity: 1;
 pointer-events: none;
 transform: translateX(-50%);
+transition: opacity 170ms ease;
+will-change: opacity;
 }
 
 .small-numbers-note.is-hidden {
@@ -915,6 +919,7 @@ padding-left: 14px;
 .small-numbers-note-list li {
 margin: 1px 0;
 padding: 0;
+white-space: nowrap;
 }
 
 .small-numbers-note a {
@@ -929,9 +934,10 @@ pointer-events: auto;
 color: var(--ink);
 }
 
-.small-numbers-note a:focus-visible {
-outline: 2px solid rgba(102, 0, 255, 0.22);
-outline-offset: 1px;
+.metric-toggle.is-view-fading,
+.small-numbers-note.is-view-fading {
+opacity: 0;
+pointer-events: none;
 }
 .module-top,
 #status,
@@ -1027,11 +1033,12 @@ background: transparent;
   }
 
   .small-numbers-note {
-    top: 31px;
-    width: min(224px, calc(100% - 70px));
-    padding: 7px 8px;
-    font-size: 10px;
-    line-height: 1.35;
+  top: 31px;
+  width: max-content;
+  max-width: calc(100% - 12px);
+  padding: 7px 9px;
+  font-size: 10px;
+  line-height: 1.35;
   }
 
   .small-numbers-note-title {
@@ -1511,6 +1518,39 @@ const smallNumbersNote = document.getElementById('smallNumbersNote');
 const chartShell = document.querySelector('.chart-shell');
 const chartCanvas = document.getElementById('jobChart');
 
+      function getGraphViewFadeTargets() {
+      return [
+        document.querySelector('.small-numbers-note'),
+        ...document.querySelectorAll('.metric-toggle')
+      ].filter(Boolean);
+    }
+
+    function setGraphViewControlsFaded(isFaded) {
+      getGraphViewFadeTargets().forEach(element => {
+        element.classList.toggle(
+          'is-view-fading',
+          isFaded
+        );
+      });
+    }
+
+    function fadeGraphViewControlsOut(onComplete) {
+      setGraphViewControlsFaded(true);
+
+      const reduceMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)'
+      ).matches;
+
+      if (reduceMotion) {
+        onComplete?.();
+        return;
+      }
+
+      window.setTimeout(() => {
+        onComplete?.();
+      }, 180);
+    }
+  
 let chart = null;
 let rows = [];
 let salaryRows = [];
@@ -1525,6 +1565,7 @@ let currentGroup = 'state';
 let countGroup = 'state';
 let payGroup = 'none';
 let interactionLocked = false;
+let viewFadeLocked = false;
 let activeAnimationFrame = null;
 let currentLegendSignature = '';
 let legendAnimationToken = 0;
@@ -5347,58 +5388,110 @@ groupButton.setAttribute('aria-expanded', String(isOpen));
 }
 
 function setMeasureMenuOpen(isOpen) {
-measureMenu.classList.toggle('is-open', isOpen);
-measureButton.setAttribute('aria-expanded', String(isOpen));
+  measureMenu.classList.toggle('is-open', isOpen);
+  measureButton.setAttribute('aria-expanded', String(isOpen));
+}
+
+function getGraphViewFadeTargets() {
+  return [
+    document.querySelector('.small-numbers-note'),
+    fteToggle
+  ].filter(Boolean);
+}
+
+function setGraphViewControlsFaded(isFaded) {
+  getGraphViewFadeTargets().forEach(element => {
+    element.classList.toggle(
+      'is-view-fading',
+      isFaded
+    );
+  });
+}
+
+function fadeGraphViewControlsOut(onComplete) {
+  setGraphViewControlsFaded(true);
+
+  const reduceMotion = window.matchMedia(
+    '(prefers-reduced-motion: reduce)'
+  ).matches;
+
+  if (reduceMotion) {
+    onComplete();
+    return;
+  }
+
+  window.setTimeout(() => {
+    onComplete();
+  }, 180);
 }
 
 function switchView(nextView) {
-if (nextView === selectedTab || interactionLocked) return;
+  if (
+    nextView === selectedTab ||
+    interactionLocked ||
+    viewFadeLocked
+  ) {
+    return;
+  }
 
-selectedTab = nextView;
+  viewFadeLocked = true;
 
-currentGroup = selectedTab === 'pay'
-? payGroup
-: countGroup;
+  fadeGraphViewControlsOut(() => {
+    selectedTab = nextView;
+    syncActiveView();
 
-syncActiveView();
+    chartTabs.forEach(tab => {
+      const isActive = tab.dataset.view === selectedTab;
 
-chartTabs.forEach(tab => {
-const isActive = tab.dataset.view === selectedTab;
-tab.classList.toggle('is-active', isActive);
-tab.setAttribute('aria-selected', String(isActive));
-});
+      tab.classList.toggle(
+        'is-active',
+        isActive
+      );
 
-groupOptions.forEach(option => {
-option.checked = option.value === currentGroup;
-});
+      tab.setAttribute(
+        'aria-selected',
+        String(isActive)
+      );
+    });
 
-fadeTextChange(
-groupValue,
-GROUP_LABELS[currentGroup]
-);
+    fadeTextChange(
+      chartHeading,
+      getHeadingText(activeView)
+    );
 
-fadeTextChange(
-chartHeading,
-getHeadingText(activeView)
-);
+    fadeTextChange(
+      groupMenuTitle,
+      getGroupMenuText()
+    );
 
-fadeTextChange(
-groupMenuTitle,
-getGroupMenuText()
-);
+    updateCountControls();
+    updateTabIndicator(true);
 
-updateCountControls();
-updateTabIndicator(true);
-updateLegend(activeView, currentGroup, true);
+    updateLegend(
+      activeView,
+      currentGroup,
+      true
+    );
 
-setGroupMenuOpen(false);
-setMeasureMenuOpen(false);
+    setGroupMenuOpen(false);
+    setMeasureMenuOpen(false);
 
-animateToTargets(
-buildTargetDescriptors(activeView, currentGroup),
-activeView,
-true
-);
+    animateToTargets(
+      buildTargetDescriptors(
+        activeView,
+        currentGroup
+      ),
+      activeView,
+      true
+    );
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setGraphViewControlsFaded(false);
+        viewFadeLocked = false;
+      });
+    });
+  });
 }
 
 
