@@ -3181,6 +3181,18 @@
       );
     }
 
+    function sameAxisTickLayout(firstAxis, secondAxis) {
+      /*
+       * All y-axis ticks use evenly spaced normalised positions from 0 to 1.
+       * Therefore, the tick and grid-line positions remain unchanged whenever
+       * the two axes use the same number of displayed ticks.
+       */
+      return (
+        getAxisTickCount(firstAxis) ===
+        getAxisTickCount(secondAxis)
+      );
+    }
+
     function sameAxisNumbers(firstAxis, secondAxis) {
       return (
         firstAxis.maximum === secondAxis.maximum &&
@@ -3243,7 +3255,17 @@
       }
 
       const nextTitleParts = getYAxisTitleParts(nextView);
-      const axisNumbersIdentical = sameAxisNumbers(previousAxis, nextAxis);
+
+      const axisTickLayoutIdentical = sameAxisTickLayout(
+        previousAxis,
+        nextAxis
+      );
+
+      const axisNumbersIdentical = sameAxisNumbers(
+        previousAxis,
+        nextAxis
+      );
+
       const titleIdentical = sameTitleParts(
         previousTitleParts,
         nextTitleParts
@@ -3291,26 +3313,39 @@
         applyModelToChart(nextModel, true);
         currentYAxisModel = nextAxis;
 
-        if (viewChanged) {
+        if (axisTickLayoutIdentical) {
+          /*
+           * The tick and grid-line positions have not changed. Keep them
+           * fully visible and count the displayed numbers to their new
+           * values rather than fading the whole axis out and back in.
+           */
+          axisLabelOpacity = 1;
+
+          if (axisNumbersIdentical) {
+            axisNumberTransition.fromMaximum = nextAxis.maximum;
+            axisNumberTransition.toMaximum = nextAxis.maximum;
+            axisNumberTransition.progress = 1;
+          } else {
+            animateAxisMaximum(
+              previousAxis.maximum,
+              nextAxis.maximum,
+              CONFIG.transitionMs
+            );
+          }
+        } else {
+          /*
+           * The graph requires a different number of tick positions.
+           * The old axis has already faded out, so initialise the new
+           * numbers and fade the new labels, ticks and grid lines in.
+           */
           axisNumberTransition.fromMaximum = nextAxis.maximum;
           axisNumberTransition.toMaximum = nextAxis.maximum;
           axisNumberTransition.progress = 1;
+
           animateAxisLabelOpacity(
             0,
             1,
             CONFIG.axisFadeInMs
-          );
-        } else if (axisNumbersIdentical) {
-          axisNumberTransition.fromMaximum = nextAxis.maximum;
-          axisNumberTransition.toMaximum = nextAxis.maximum;
-          axisNumberTransition.progress = 1;
-          axisLabelOpacity = 1;
-        } else {
-          axisLabelOpacity = 1;
-          animateAxisMaximum(
-            previousAxis.maximum,
-            nextAxis.maximum,
-            CONFIG.transitionMs
           );
         }
 
@@ -3346,8 +3381,12 @@
         }
       }
 
-      if (viewChanged) {
+      if (
+        viewChanged &&
+        !axisTickLayoutIdentical
+      ) {
         pendingPreparations += 1;
+
         animateAxisLabelOpacity(
           axisLabelOpacity,
           0,
