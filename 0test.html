@@ -3281,7 +3281,7 @@
                         id="projectedBenchmarkTooltip"
                         class="help-tooltip"
                         role="tooltip"
-                      >Assuming salaries do not <em>decrease</em> over time</span>
+                      >Assumes salaries <em>increase</em> over time</span>
                     </span>
                   </div>
                   <div id="projectedBenchmarkValue" class="projected-benchmark-value">–</div>
@@ -4946,6 +4946,7 @@ function sortKeysByCountDesc(counts) {
     const HPSS_CACHE_KEY = 'pff-hpss-award-cache-v1';
     let numberAnimationToken = 0;
     let headingYearAnimationToken = 0;
+    let projectedExperienceAnimationToken = 0;
 
     const NUMBER_ANIMATION_MS = 1700;
     const TOGGLE_NUMBER_ANIMATION_MS = 240;
@@ -5065,17 +5066,65 @@ function sortKeysByCountDesc(counts) {
         return;
       }
 
-      const targetYears = baseYears + (Number(offsetYears) || 0);
-      const token = numberAnimationToken;
-
-      animateNumber(
-        'summaryYears',
-        targetYears,
-        formatExperienceSummary_,
-        animate,
-        token,
-        320
+      const targetOffset = Math.max(
+        0,
+        Math.round(Number(offsetYears) || 0)
       );
+
+      /*
+       * The model still receives the exact experience value. For the compact
+       * summary animation, only the whole-year projection offset counts up,
+       * avoiding distracting decimal steps between slider years.
+       */
+      if (targetOffset === 0) {
+        summaryYears.textContent = formatExperienceSummary_(baseYears);
+        summaryYears.dataset.numericValue = String(baseYears);
+        return;
+      }
+
+      const storedYears = Number(summaryYears.dataset.numericValue);
+      const startOffset = Number.isFinite(storedYears)
+        ? Math.max(0, Math.round(storedYears - baseYears))
+        : 0;
+
+      const reduceMotion =
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      const token = ++projectedExperienceAnimationToken;
+
+      if (!animate || reduceMotion || startOffset === targetOffset) {
+        const targetYears = baseYears + targetOffset;
+        summaryYears.textContent = formatExperienceSummary_(targetYears);
+        summaryYears.dataset.numericValue = String(targetYears);
+        return;
+      }
+
+      const startedAt = performance.now();
+      const duration = 320;
+
+      function frame(now) {
+        if (token !== projectedExperienceAnimationToken) return;
+
+        const progress = Math.min((now - startedAt) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const currentOffset = Math.round(
+          startOffset + (targetOffset - startOffset) * eased
+        );
+        const currentYears = baseYears + currentOffset;
+
+        summaryYears.textContent = formatExperienceSummary_(currentYears);
+        summaryYears.dataset.numericValue = String(currentYears);
+
+        if (progress < 1) {
+          requestAnimationFrame(frame);
+        } else {
+          const targetYears = baseYears + targetOffset;
+          summaryYears.textContent = formatExperienceSummary_(targetYears);
+          summaryYears.dataset.numericValue = String(targetYears);
+        }
+      }
+
+      requestAnimationFrame(frame);
     }
 
     function updateInputSummary() {
@@ -7604,6 +7653,16 @@ function sortKeysByCountDesc(counts) {
       }
     );
 
+    const helpTooltipClosers = new Map();
+
+    function closeOtherHelpTooltips_(activeButton) {
+      helpTooltipClosers.forEach((closeTooltip, button) => {
+        if (button !== activeButton) {
+          closeTooltip();
+        }
+      });
+    }
+
     function setupHpssTooltip(
       buttonId,
       tooltipId
@@ -7693,6 +7752,7 @@ function sortKeysByCountDesc(counts) {
         );
 
         if (open) {
+          closeOtherHelpTooltips_(button);
           position();
           tooltip.classList.add(
             'is-visible'
@@ -7722,6 +7782,14 @@ function sortKeysByCountDesc(counts) {
             100
           );
       }
+
+      helpTooltipClosers.set(
+        button,
+        () => {
+          pinned = false;
+          setOpen(false);
+        }
+      );
 
       button.addEventListener(
         'mouseenter',
@@ -7927,6 +7995,8 @@ function sortKeysByCountDesc(counts) {
 
     function setSalaryHelpOpen(open) {
       if (open) {
+        closeOtherHelpTooltips_(salaryHelpBtn);
+
         /*
          * Position it while still hidden, then reveal it.
          */
@@ -7955,6 +8025,11 @@ function sortKeysByCountDesc(counts) {
         salaryHelpBtn.focus();
       }
     }
+
+    helpTooltipClosers.set(
+      salaryHelpBtn,
+      () => closeSalaryHelp()
+    );
 
     /* Hover support */
     salaryHelpBtn.addEventListener('mouseenter', () => {
