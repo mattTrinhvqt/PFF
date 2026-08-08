@@ -2710,25 +2710,6 @@
     }
 
 
-    .benchmark-flight-clone {
-      box-sizing: border-box;
-      background: #fff !important;
-      border: 0 !important;
-      box-shadow: none !important;
-      outline: 0 !important;
-      will-change: left, top, width;
-    }
-
-    .benchmark-flight-clone input[type="number"],
-    .benchmark-flight-clone input.salary-currency-input {
-      border-top: 0 !important;
-      border-right: 0 !important;
-      border-left: 0 !important;
-      border-radius: 0 !important;
-      box-shadow: none !important;
-      outline: 0 !important;
-    }
-
     .projected-benchmark-field {
       flex: 0 1 238px;
       width: min(238px, calc(50% - 7px));
@@ -2744,6 +2725,7 @@
     .projected-benchmark-field.is-visible {
       opacity: 1;
       transform: translateX(0);
+      pointer-events: auto;
     }
 
     .projected-benchmark-label-row {
@@ -2754,11 +2736,6 @@
       gap: 4px;
     }
 
-    .projected-benchmark-help .help-tooltip-button {
-      width: 13px;
-      height: 13px;
-      font-size: 8px;
-    }
 
     .projected-benchmark-label {
       color: var(--muted);
@@ -3248,7 +3225,7 @@
                       >?</button>
                       <span
                         id="projectedBenchmarkTooltip"
-                        class="help-tooltip hpss-help-tooltip"
+                        class="help-tooltip"
                         role="tooltip"
                       >Assuming salaries do not <em>decrease</em> over time</span>
                     </span>
@@ -3381,7 +3358,7 @@
                   <label for="hpssWeekendHours">Average weekend hours worked per week</label>
                   <div class="hpss-weekend-input-wrap">
                     <span id="hpssWeekendWarning" class="hpss-inline-warning hpss-weekend-warning" aria-hidden="true">⚠</span>
-                    <input id="hpssWeekendHours" type="number" inputmode="decimal" min="0" max="20" step="0.5" value="0" aria-label="Average weekend hours worked per week, maximum 20">
+                    <input id="hpssWeekendHours" type="number" inputmode="decimal" min="0" max="20" step="0.5" aria-label="Average weekend hours worked per week, maximum 20">
                     <span>hrs</span>
                   </div>
                 </div>
@@ -3391,7 +3368,7 @@
                   class="hpss-fieldset"
                 >
                   <legend>
-                    <span id="hpssLevelPrompt" class="hpss-question-row" hidden><span id="hpssLevelWarning" class="hpss-inline-warning" aria-hidden="true" hidden>⚠</span>Award level – which best describes your skills and responsibilities?</span>
+                    <span id="hpssLevelPrompt" class="hpss-question-row" hidden>Award level – which best describes your skills and responsibilities?</span>
                     <button
                       id="hpssLoadStatus"
                       class="hpss-status"
@@ -3565,6 +3542,7 @@ const HPSS_SHEET_ID =
 const HPSS_SHEET_GID = '0';
 const HPSS_RAW_RANGE = 'A10:AD29';
 const HPSS_PROJECTION_YEARS = 20;
+const HPSS_OVERTAKE_SEARCH_YEARS = 100;
 const HPSS_START_PAY_POINT_BY_LEVEL = {
   'Level 1': 4,
   'Level 2': 1,
@@ -4993,8 +4971,6 @@ function sortKeysByCountDesc(counts) {
     const hpssWeekendWarning =
       document.getElementById('hpssWeekendWarning');
 
-    const hpssLevelWarning =
-      document.getElementById('hpssLevelWarning');
 
     const hpssYearSlider =
       document.getElementById('hpssYearSlider');
@@ -5136,85 +5112,92 @@ function sortKeysByCountDesc(counts) {
         ]
           .filter(Boolean)
           .forEach(element => {
-            const entrance = element.animate(
-              [
-                { opacity: 0.12, transform: 'translateY(10px)' },
-                { opacity: 1, transform: 'translateY(0)' }
-              ],
-              {
-                duration: LAYOUT_TRANSITION_MS,
-                easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
-                fill: 'both'
-              }
-            );
+            const entrance =
+              element.animate(
+                [
+                  {
+                    opacity: 0,
+                    transform: 'translateY(12px)'
+                  },
+                  {
+                    opacity: 1,
+                    transform: 'translateY(0)'
+                  }
+                ],
+                {
+                  duration: LAYOUT_TRANSITION_MS,
+                  easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                  fill: 'both'
+                }
+              );
 
             entrance.finished
               .catch(() => {})
-              .finally(() => entrance.cancel());
+              .finally(() => {
+                entrance.cancel();
+              });
           });
       }
 
       if (
         !reduceMotion &&
+        benchmarkField.animate &&
         benchmarkStartRect.width > 0 &&
         benchmarkEndRect.width > 0
       ) {
-        const flight = benchmarkField.cloneNode(true);
+        const deltaX =
+          benchmarkStartRect.left -
+          benchmarkEndRect.left;
 
-        flight.removeAttribute('id');
-        flight.querySelectorAll('[id]').forEach(node => node.removeAttribute('id'));
-        flight.querySelectorAll('[for]').forEach(node => node.removeAttribute('for'));
-        flight.querySelectorAll('[aria-controls]').forEach(node => node.removeAttribute('aria-controls'));
-        flight.classList.add('benchmark-flight-clone');
-        flight.classList.remove('is-relocating');
+        const deltaY =
+          benchmarkStartRect.top -
+          benchmarkEndRect.top;
 
-        Object.assign(flight.style, {
-          position: 'fixed',
-          left: `${benchmarkStartRect.left}px`,
-          top: `${benchmarkStartRect.top}px`,
-          width: `${benchmarkStartRect.width}px`,
-          height: `${benchmarkStartRect.height}px`,
-          margin: '0',
-          zIndex: '9990',
-          pointerEvents: 'none',
-          transform: 'none',
-          visibility: 'visible',
-          opacity: '1'
-        });
+        benchmarkField
+          .getAnimations?.()
+          .forEach(
+            animation =>
+              animation.cancel()
+          );
 
-        benchmarkField.style.opacity = '0';
-        document.body.appendChild(flight);
-
-        const relocation = flight.animate(
-          [
+        const relocation =
+          benchmarkField.animate(
+            [
+              {
+                transform:
+                  `translate3d(${deltaX}px, ${deltaY}px, 0)`,
+                width:
+                  `${benchmarkStartRect.width}px`
+              },
+              {
+                transform:
+                  'translate3d(0, 0, 0)',
+                width:
+                  `${benchmarkEndRect.width}px`
+              }
+            ],
             {
-              left: `${benchmarkStartRect.left}px`,
-              top: `${benchmarkStartRect.top}px`,
-              width: `${benchmarkStartRect.width}px`
-            },
-            {
-              left: `${benchmarkEndRect.left}px`,
-              top: `${benchmarkEndRect.top}px`,
-              width: `${benchmarkEndRect.width}px`
+              duration:
+                LAYOUT_TRANSITION_MS,
+              easing:
+                'cubic-bezier(0.22, 1, 0.36, 1)',
+              fill:
+                'both'
             }
-          ],
-          {
-            duration: LAYOUT_TRANSITION_MS,
-            easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
-            fill: 'forwards'
-          }
-        );
+          );
 
         relocation.finished
           .catch(() => {})
           .finally(() => {
-            flight.remove();
-            benchmarkField.style.opacity = '';
-            benchmarkField.classList.remove('is-relocating');
+            relocation.cancel();
+            benchmarkField.classList.remove(
+              'is-relocating'
+            );
           });
       } else {
-        benchmarkField.style.opacity = '';
-        benchmarkField.classList.remove('is-relocating');
+        benchmarkField.classList.remove(
+          'is-relocating'
+        );
       }
 
       inputSummaryButton.setAttribute(
@@ -6249,35 +6232,55 @@ function sortKeysByCountDesc(counts) {
         : HPSS_FTE_WEEKLY_HOURS_FALLBACK;
     }
 
+    let hpssWeekendRequiredWarning = false;
+
     function updateHpssWeekendWarning_() {
       if (!hpssWeekendHours || !hpssWeekendWarning) return;
+
       const rawText = hpssWeekendHours.value.trim();
       const raw = Number(rawText);
-      const invalid = rawText !== '' && (!Number.isFinite(raw) || raw < 0 || raw > 20);
-      hpssWeekendWarning.classList.toggle('is-visible', invalid);
-      hpssWeekendWarning.setAttribute('aria-hidden', String(!invalid));
-      hpssWeekendHours.setAttribute('aria-invalid', String(invalid));
-    }
+      const outOfRange =
+        rawText !== '' &&
+        (
+          !Number.isFinite(raw) ||
+          raw < 0 ||
+          raw > 20
+        );
 
-    function updateHpssLevelWarning_() {
-      if (!hpssLevelWarning) return;
-      const shouldShow = Boolean(
-        hpssCompare.open &&
-        hpssAwardData &&
-        !hpssSelectedLevel
+      const missingRequired =
+        hpssWeekendRequiredWarning &&
+        rawText === '';
+
+      const invalid =
+        outOfRange ||
+        missingRequired;
+
+      hpssWeekendWarning.classList.toggle(
+        'is-visible',
+        invalid
       );
-      hpssLevelWarning.hidden = !shouldShow;
-      hpssLevelWarning.setAttribute('aria-hidden', String(!shouldShow));
+
+      hpssWeekendWarning.setAttribute(
+        'aria-hidden',
+        String(!invalid)
+      );
+
+      hpssWeekendHours.setAttribute(
+        'aria-invalid',
+        String(invalid)
+      );
     }
 
-    function buildHpssProjection() {
+    function buildHpssProjectionPoint_(
+      offset
+    ) {
       if (
         !hpssAwardData ||
         !hpssSelectedLevel ||
         !lastModel ||
         !lastPredictionInput
       ) {
-        return [];
+        return null;
       }
 
       const levelData =
@@ -6286,7 +6289,7 @@ function sortKeysByCountDesc(counts) {
         );
 
       if (!levelData) {
-        return [];
+        return null;
       }
 
       const startPayPoint =
@@ -6295,106 +6298,141 @@ function sortKeysByCountDesc(counts) {
         ];
 
       const startIndex =
-        levelData.points
-          .findIndex(
-            point =>
-              point.point ===
-              startPayPoint
-          );
+        levelData.points.findIndex(
+          point =>
+            point.point ===
+            startPayPoint
+        );
 
       if (startIndex < 0) {
-        return [];
+        return null;
       }
 
+      const safeOffset = Math.max(
+        0,
+        Math.round(Number(offset) || 0)
+      );
+
+      const pointIndex =
+        Math.min(
+          startIndex + safeOffset,
+          levelData.points.length - 1
+        );
+
+      const pointData =
+        levelData.points[pointIndex];
+
+      const targetYear =
+        hpssAwardData.baseYear +
+        safeOffset;
+
+      const weeklyRate =
+        linearProjectHpssRate_(
+          pointData.history,
+          targetYear
+        );
+
+      const weekendHours =
+        getHpssWeekendHours_();
+
+      const weekendLoadingFactor =
+        1 +
+        weekendHours *
+        (HPSS_WEEKEND_PENALTY_MULTIPLIER - 1) /
+        getHpssFteWeeklyHours_();
+
+      const baseAnnualSalary =
+        weeklyRate *
+        HPSS_WEEKLY_TO_ANNUAL;
+
+      const annualSalary =
+        baseAnnualSalary *
+        weekendLoadingFactor;
+
+      const marketRes =
+        getHpssProjectedMarketResult(
+          safeOffset
+        );
+
+      const projectedPay =
+        marketRes
+          ? projectBenchmarkPay_(
+              marketRes
+            )
+          : null;
+
+      const percentile =
+        marketRes
+          ? calculateBenchmarkPercentile(
+              marketRes,
+              annualSalary
+            )
+          : null;
+
+      return {
+        offset: safeOffset,
+        year: targetYear,
+        point: pointData.point,
+        pointLabel: pointData.pointLabel,
+        weeklyRate,
+        baseAnnualSalary,
+        weekendHours,
+        weekendLoadingFactor,
+        annualSalary,
+        marketRes,
+        projectedPay,
+        percentile
+      };
+    }
+
+    function buildHpssProjection() {
       const projection = [];
 
       for (
         let offset = 0;
-        offset <=
-          HPSS_PROJECTION_YEARS;
+        offset <= HPSS_PROJECTION_YEARS;
         offset++
       ) {
-        const pointIndex =
-          Math.min(
-            startIndex +
-              offset,
-            levelData.points.length - 1
-          );
-
-        const pointData =
-          levelData.points[
-            pointIndex
-          ];
-
-        const targetYear =
-          hpssAwardData.baseYear +
-          offset;
-
-        const weeklyRate =
-          linearProjectHpssRate_(
-            pointData.history,
-            targetYear
-          );
-
-        const weekendHours =
-          getHpssWeekendHours_();
-
-        /*
-         * The Award comparator adds only the extra 50% needed to lift
-         * nominated weekend ordinary hours from 100% to 150%. The entered
-         * FTE benchmark is not adjusted because it represents actual pay.
-         */
-        const weekendLoadingFactor =
-          1 +
-          weekendHours *
-          (HPSS_WEEKEND_PENALTY_MULTIPLIER - 1) /
-          getHpssFteWeeklyHours_();
-
-        const baseAnnualSalary =
-          weeklyRate *
-          HPSS_WEEKLY_TO_ANNUAL;
-
-        const annualSalary =
-          baseAnnualSalary *
-          weekendLoadingFactor;
-
-        const marketRes =
-          getHpssProjectedMarketResult(
+        const point =
+          buildHpssProjectionPoint_(
             offset
           );
 
-        const projectedPay =
-          marketRes
-            ? projectBenchmarkPay_(
-                marketRes
-              )
-            : null;
+        if (!point) {
+          return [];
+        }
 
-        const percentile =
-          marketRes
-            ? calculateBenchmarkPercentile(
-                marketRes,
-                annualSalary
-              )
-            : null;
-
-        projection.push({
-          offset,
-          year: targetYear,
-          point: pointData.point,
-          pointLabel: pointData.pointLabel,
-          weeklyRate,
-          baseAnnualSalary,
-          weekendHours,
-          weekendLoadingFactor,
-          annualSalary,
-          marketRes,
-          projectedPay,
-          percentile
-        });
+        projection.push(point);
       }
 
       return projection;
+    }
+
+    function findHpssFutureOvertakePoint_() {
+      for (
+        let offset = 1;
+        offset <= HPSS_OVERTAKE_SEARCH_YEARS;
+        offset++
+      ) {
+        const point =
+          offset <= HPSS_PROJECTION_YEARS
+            ? hpssProjection[offset]
+            : buildHpssProjectionPoint_(offset);
+
+        if (
+          point &&
+          Number.isFinite(Number(point.annualSalary)) &&
+          point.projectedPay !== null &&
+          point.projectedPay !== undefined &&
+          Number.isFinite(Number(point.projectedPay)) &&
+          Number(point.projectedPay) > 0 &&
+          Number(point.annualSalary) > Number(point.projectedPay)
+        ) {
+          return point;
+        }
+      }
+
+      return null;
     }
 
     function hideHpssAwardMarker() {
@@ -6636,19 +6674,11 @@ function sortKeysByCountDesc(counts) {
       }
 
       const overtakePoint =
-        hpssProjection.find(
-          point =>
-            Number.isFinite(Number(point.annualSalary)) &&
-            point.projectedPay !== null &&
-            point.projectedPay !== undefined &&
-            Number.isFinite(Number(point.projectedPay)) &&
-            Number(point.projectedPay) > 0 &&
-            Number(point.annualSalary) > Number(point.projectedPay)
-        );
+        findHpssFutureOvertakePoint_();
 
       if (!overtakePoint) {
         hpssOvertakeText.innerHTML =
-          `HPSS Award <em>minimum</em> stays below your projected pay for ${HPSS_PROJECTION_YEARS} years`;
+          `HPSS Award <em>minimum</em> is not projected to overtake your projected pay within ${HPSS_OVERTAKE_SEARCH_YEARS} years`;
         return;
       }
 
@@ -6719,7 +6749,6 @@ function sortKeysByCountDesc(counts) {
     function selectHpssLevel(levelName) {
       hpssSelectedLevel = levelName;
       hpssActiveProjectionIndex = 0;
-      updateHpssLevelWarning_();
       refreshHpssProjection(false);
       scheduleApplyScale();
     }
@@ -6807,9 +6836,6 @@ function sortKeysByCountDesc(counts) {
 
       hpssLevelPrompt.hidden = loading || error;
       hpssLoadStatus.hidden = !(loading || error);
-      if (loading || error) {
-        hpssLevelWarning.hidden = true;
-      }
       hpssLoadStatus.disabled = !error;
       hpssLoadStatus.classList.toggle('is-error', error);
 
@@ -6830,7 +6856,6 @@ function sortKeysByCountDesc(counts) {
       if (hpssSelectedLevel) {
         refreshHpssProjection(true);
       }
-      updateHpssLevelWarning_();
 
       scheduleApplyScale();
     }
@@ -7243,7 +7268,6 @@ function sortKeysByCountDesc(counts) {
           requestHpssAwardData(true);
         }
 
-        updateHpssLevelWarning_();
         scheduleApplyScale();
       }
     );
@@ -7253,6 +7277,32 @@ function sortKeysByCountDesc(counts) {
         'input[name="hpssLevel"]'
       )
       .forEach(input => {
+        input.addEventListener(
+          'click',
+          event => {
+            const weekendText =
+              hpssWeekendHours.value.trim();
+
+            const weekendValue =
+              Number(weekendText);
+
+            const weekendValid =
+              weekendText !== '' &&
+              Number.isFinite(weekendValue) &&
+              weekendValue >= 0 &&
+              weekendValue <= 20;
+
+            if (!weekendValid) {
+              event.preventDefault();
+              event.stopPropagation();
+              hpssWeekendRequiredWarning =
+                weekendText === '';
+              updateHpssWeekendWarning_();
+              hpssWeekendHours.focus();
+            }
+          }
+        );
+
         input.addEventListener(
           'change',
           event => {
@@ -7288,22 +7338,14 @@ function sortKeysByCountDesc(counts) {
     );
 
     hpssWeekendHours.addEventListener(
-      'focus',
-      () => {
-        if (hpssWeekendHours.value.trim() === '0') {
-          hpssWeekendHours.value = '';
-          updateHpssWeekendWarning_();
-        }
-      }
-    );
-
-    hpssWeekendHours.addEventListener(
       'input',
       () => {
-        updateHpssWeekendWarning_();
-        if (!hpssSelectedLevel) {
-          updateHpssLevelWarning_();
+        if (hpssWeekendHours.value.trim() !== '') {
+          hpssWeekendRequiredWarning = false;
         }
+
+        updateHpssWeekendWarning_();
+
         if (hpssSelectedLevel) {
           refreshHpssProjection(true);
         }
@@ -7313,10 +7355,8 @@ function sortKeysByCountDesc(counts) {
     hpssWeekendHours.addEventListener(
       'blur',
       () => {
-        if (hpssWeekendHours.value.trim() === '') {
-          hpssWeekendHours.value = '0';
-        }
         updateHpssWeekendWarning_();
+
         if (hpssSelectedLevel) {
           refreshHpssProjection(true);
         }
