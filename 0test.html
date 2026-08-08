@@ -1284,13 +1284,21 @@
       white-space: nowrap;
     }
 
-    #modelMeta.is-live::before {
+    #modelMeta.is-live::before,
+    #modelMeta.is-cached::before {
       content: "";
       width: 6px;
       height: 6px;
       flex: 0 0 6px;
       border-radius: 50%;
+    }
+
+    #modelMeta.is-live::before {
       background: #e53935;
+    }
+
+    #modelMeta.is-cached::before {
+      background: var(--muted);
     }
 
     .help-tooltip {
@@ -3133,7 +3141,11 @@
         role="note"
       >
         <p>Shows what employers pay</p>
-        <p id="modelMeta" aria-live="polite">Loading model…</p>
+        <p
+          id="modelMeta"
+          aria-live="polite"
+          aria-label="Loading data"
+        ><span id="dataSourceText">Loading data…</span></p>
       </aside>
 
       <main
@@ -3599,6 +3611,15 @@ const HPSS_SHEET_ID =
 
 const HPSS_SHEET_GID = '0';
 const HPSS_RAW_RANGE = 'A10:AD29';
+
+const CACHE_WEB_APP_URL =
+  'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+
+const APP_CACHE_KEY =
+  'permanent-optometrist-income-estimator';
+
+const CACHE_REQUEST_TIMEOUT_MS = 15000;
+
 const HPSS_PROJECTION_YEARS = 20;
 const HPSS_OVERTAKE_SEARCH_YEARS = 100;
 const HPSS_START_PAY_POINT_BY_LEVEL = {
@@ -4310,37 +4331,6 @@ function loadHpssAwardData() {
   });
 }
 
-function readHpssAwardCache_() {
-  try {
-    const raw = window.localStorage?.getItem(HPSS_CACHE_KEY);
-    if (!raw) return null;
-
-    const data = JSON.parse(raw)?.data;
-    if (
-      !data ||
-      !Array.isArray(data.levels) ||
-      data.levels.length < 4 ||
-      !Number.isFinite(Number(data.baseYear))
-    ) {
-      return null;
-    }
-    return data;
-  } catch (error) {
-    return null;
-  }
-}
-
-function writeHpssAwardCache_(data) {
-  try {
-    window.localStorage?.setItem(
-      HPSS_CACHE_KEY,
-      JSON.stringify({ savedAt: Date.now(), data })
-    );
-  } catch (error) {
-    /* Cache is only a resilience fallback */
-  }
-}
-
 function wait_(ms) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
@@ -4943,7 +4933,14 @@ function sortKeysByCountDesc(counts) {
     let hpssProjection = [];
     let hpssActiveProjectionIndex = 0;
     let hpssLoadPromise = null;
-    const HPSS_CACHE_KEY = 'pff-hpss-award-cache-v1';
+    let centralCachedSnapshotPromise = null;
+
+    const dataSourceParts = {
+      core: 'none',
+      model: 'none',
+      hpss: 'none'
+    };
+
     let numberAnimationToken = 0;
     let headingYearAnimationToken = 0;
     let projectedExperienceAnimationToken = 0;
@@ -5455,6 +5452,533 @@ function sortKeysByCountDesc(counts) {
       )
         .trim()
         .replace(/\.+$/, '');
+    }
+
+    function setDataSource(mode) {
+      const modelMeta =
+        document.getElementById('modelMeta');
+
+      const dataSourceText =
+        document.getElementById('dataSourceText');
+
+      if (!modelMeta || !dataSourceText) {
+        return;
+      }
+
+      const live = mode === 'live';
+      const cached = mode === 'cached';
+
+      modelMeta.classList.toggle(
+        'is-live',
+        live
+      );
+
+      modelMeta.classList.toggle(
+        'is-cached',
+        cached
+      );
+
+      if (live) {
+        dataSourceText.textContent =
+          'LIVE data';
+
+        modelMeta.setAttribute(
+          'aria-label',
+          'Live data'
+        );
+      } else if (cached) {
+        dataSourceText.textContent =
+          'CACHED data';
+
+        modelMeta.setAttribute(
+          'aria-label',
+          'Cached data'
+        );
+      } else {
+        dataSourceText.textContent =
+          'Loading data…';
+
+        modelMeta.setAttribute(
+          'aria-label',
+          'Loading data'
+        );
+      }
+
+      scheduleApplyScale();
+    }
+
+    function updateDataSourcePart_(
+      part,
+      source
+    ) {
+      if (
+        !Object.prototype.hasOwnProperty.call(
+          dataSourceParts,
+          part
+        )
+      ) {
+        return;
+      }
+
+      dataSourceParts[part] = source;
+
+      const sources =
+        Object.values(
+          dataSourceParts
+        );
+
+      if (
+        sources.includes('cached')
+      ) {
+        setDataSource('cached');
+      } else if (
+        sources.includes('live')
+      ) {
+        setDataSource('live');
+      } else {
+        setDataSource('loading');
+      }
+    }
+
+    function normaliseCachedModelTable_(
+      table
+    ) {
+      const rows =
+        Array.isArray(table?.rows)
+          ? table.rows
+          : [];
+
+      const usableRows = rows
+        .filter(row =>
+          Array.isArray(row?.c) &&
+          row.c.length >= 5
+        )
+        .map(row => ({
+          c: row.c.slice(0, 5).map(cell => ({
+            v: cell?.v ?? cell?.f ?? null
+          }))
+        }));
+
+      if (usableRows.length < 10) {
+        throw new Error(
+          'Cached salary-model rows are unavailable'
+        );
+      }
+
+      return {
+        rows: usableRows
+      };
+    }
+
+    function normaliseCachedWorkPatternMedians_(
+      medians
+    ) {
+      const normalised = {
+        sat: String(medians?.sat ?? '').trim(),
+        sun: String(medians?.sun ?? '').trim(),
+        late: String(medians?.late ?? '').trim()
+      };
+
+      if (
+        !normalised.sat ||
+        !normalised.sun ||
+        !normalised.late
+      ) {
+        throw new Error(
+          'Cached work-pattern medians are unavailable'
+        );
+      }
+
+      return normalised;
+    }
+
+    function normaliseCachedHpssAwardData_(
+      data
+    ) {
+      const levels =
+        Array.isArray(data?.levels)
+          ? data.levels
+          : [];
+
+      const baseYear =
+        Number(data?.baseYear);
+
+      if (
+        levels.length < 4 ||
+        !Number.isFinite(baseYear)
+      ) {
+        throw new Error(
+          'Cached HPSS Award data is unavailable'
+        );
+      }
+
+      const normalisedLevels = levels
+        .map(level => ({
+          level:
+            String(level?.level ?? '').trim(),
+          description:
+            String(level?.description ?? '').trim(),
+          points:
+            Array.isArray(level?.points)
+              ? level.points.map(point => {
+                  const history = {};
+
+                  Object.entries(
+                    point?.history || {}
+                  ).forEach(([year, rate]) => {
+                    const numericYear =
+                      Number(year);
+                    const numericRate =
+                      Number(rate);
+
+                    if (
+                      Number.isFinite(numericYear) &&
+                      Number.isFinite(numericRate) &&
+                      numericRate > 0
+                    ) {
+                      history[numericYear] =
+                        numericRate;
+                    }
+                  });
+
+                  return {
+                    point:
+                      Number(point?.point),
+                    pointLabel:
+                      String(
+                        point?.pointLabel ?? ''
+                      ).trim(),
+                    note:
+                      String(point?.note ?? '').trim(),
+                    history
+                  };
+                })
+              : []
+        }))
+        .filter(level =>
+          /^Level\s+[1-4]$/i.test(
+            level.level
+          ) &&
+          level.points.length > 0 &&
+          level.points.every(point =>
+            Number.isFinite(point.point) &&
+            Object.keys(point.history).length > 0
+          )
+        );
+
+      if (normalisedLevels.length < 4) {
+        throw new Error(
+          'Cached HPSS Award levels are incomplete'
+        );
+      }
+
+      return {
+        levels: normalisedLevels,
+        baseYear,
+        sourceYears:
+          Array.isArray(data?.sourceYears)
+            ? data.sourceYears
+                .map(Number)
+                .filter(Number.isFinite)
+                .sort((a, b) => a - b)
+            : []
+      };
+    }
+
+    function normaliseCachedCalculatorData_(
+      data
+    ) {
+      const fteHoursValue =
+        Number(data?.fteHours);
+
+      if (
+        !Number.isFinite(fteHoursValue) ||
+        fteHoursValue <= 0
+      ) {
+        throw new Error(
+          'Cached FTE weekly hours are unavailable'
+        );
+      }
+
+      return {
+        permanentModelTable:
+          normaliseCachedModelTable_(
+            data?.permanentModelTable
+          ),
+        fteHours:
+          fteHoursValue,
+        workPatternMedians:
+          normaliseCachedWorkPatternMedians_(
+            data?.workPatternMedians
+          ),
+        hpssAwardData:
+          normaliseCachedHpssAwardData_(
+            data?.hpssAwardData
+          )
+      };
+    }
+
+    function normaliseCachedSnapshot_(
+      snapshot
+    ) {
+      if (
+        !snapshot ||
+        snapshot.ok !== true
+      ) {
+        throw new Error(
+          snapshot?.error ||
+          'The cached snapshot response is not valid'
+        );
+      }
+
+      if (
+        snapshot.appKey !==
+        APP_CACHE_KEY
+      ) {
+        throw new Error(
+          'The cached snapshot has the wrong app key'
+        );
+      }
+
+      if (
+        !snapshot.cachedAt ||
+        Number.isNaN(
+          Date.parse(
+            snapshot.cachedAt
+          )
+        )
+      ) {
+        throw new Error(
+          'The cached snapshot has no valid timestamp'
+        );
+      }
+
+      return {
+        ok: true,
+        version:
+          Number(snapshot.version) || 1,
+        appKey:
+          snapshot.appKey,
+        cachedAt:
+          snapshot.cachedAt,
+        data:
+          normaliseCachedCalculatorData_(
+            snapshot.data
+          )
+      };
+    }
+
+    function loadCentralCachedSnapshot_() {
+      return new Promise((resolve, reject) => {
+        if (
+          !CACHE_WEB_APP_URL ||
+          CACHE_WEB_APP_URL.includes(
+            'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'
+          )
+        ) {
+          reject(
+            new Error(
+              'Cached-data web app URL has not been configured'
+            )
+          );
+          return;
+        }
+
+        const callbackName =
+          `permanentSalaryCacheCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+        const script =
+          document.createElement('script');
+
+        const timeout =
+          window.setTimeout(() => {
+            cleanup();
+            reject(
+              new Error(
+                'Cached-data request timed out'
+              )
+            );
+          }, CACHE_REQUEST_TIMEOUT_MS);
+
+        function cleanup() {
+          window.clearTimeout(
+            timeout
+          );
+
+          try {
+            delete window[
+              callbackName
+            ];
+          } catch (error) {
+            window[
+              callbackName
+            ] = undefined;
+          }
+
+          if (script.parentNode) {
+            script.parentNode.removeChild(
+              script
+            );
+          }
+        }
+
+        window[callbackName] = response => {
+          try {
+            const snapshot =
+              normaliseCachedSnapshot_(
+                response
+              );
+
+            cleanup();
+            resolve(snapshot);
+          } catch (error) {
+            cleanup();
+            reject(error);
+          }
+        };
+
+        script.onerror = () => {
+          cleanup();
+          reject(
+            new Error(
+              'Could not load the centrally cached snapshot'
+            )
+          );
+        };
+
+        let url;
+
+        try {
+          url = new URL(
+            CACHE_WEB_APP_URL
+          );
+        } catch (error) {
+          cleanup();
+          reject(
+            new Error(
+              'Cached-data web app URL is invalid'
+            )
+          );
+          return;
+        }
+
+        url.searchParams.set(
+          'appKey',
+          APP_CACHE_KEY
+        );
+
+        url.searchParams.set(
+          'callback',
+          callbackName
+        );
+
+        url.searchParams.set(
+          '_',
+          String(Date.now())
+        );
+
+        script.src =
+          url.toString();
+
+        document.body.appendChild(
+          script
+        );
+      });
+    }
+
+    function getCentralCachedSnapshot_(
+      forceReload = false
+    ) {
+      if (forceReload) {
+        centralCachedSnapshotPromise = null;
+      }
+
+      if (!centralCachedSnapshotPromise) {
+        centralCachedSnapshotPromise =
+          loadCentralCachedSnapshot_()
+            .catch(error => {
+              centralCachedSnapshotPromise = null;
+              throw error;
+            });
+      }
+
+      return centralCachedSnapshotPromise;
+    }
+
+    function applyWorkPatternMedians_(
+      medians
+    ) {
+      document
+        .getElementById('medianSat')
+        .textContent = medians.sat;
+
+      document
+        .getElementById('medianSun')
+        .textContent = medians.sun;
+
+      document
+        .getElementById('medianLate')
+        .textContent = medians.late;
+
+      document
+        .getElementById('workPatternNote')
+        .hidden = false;
+
+      scheduleApplyScale();
+    }
+
+    async function loadPermanentModelWithCentralFallback_() {
+      let liveError = null;
+
+      try {
+        const model =
+          await loadPermanentModel();
+
+        updateDataSourcePart_(
+          'model',
+          'live'
+        );
+
+        return model;
+      } catch (error) {
+        liveError = error;
+      }
+
+      try {
+        const snapshot =
+          await getCentralCachedSnapshot_();
+
+        const model =
+          buildModelFromTable_(
+            snapshot.data.permanentModelTable
+          );
+
+        updateDataSourcePart_(
+          'model',
+          'cached'
+        );
+
+        console.warn(
+          'Live salary-model request failed; using centrally cached model',
+          liveError?.message
+        );
+
+        return model;
+      } catch (cacheError) {
+        console.warn(
+          'Live salary-model request failed',
+          liveError?.message
+        );
+
+        console.warn(
+          'Centrally cached salary-model request failed',
+          cacheError?.message
+        );
+
+        throw new Error(
+          'Salary data could not be loaded'
+        );
+      }
     }
 
     /*
@@ -7021,39 +7545,75 @@ function sortKeysByCountDesc(counts) {
     function requestHpssAwardData(forceNetwork = false) {
       if (hpssLoadPromise) return hpssLoadPromise;
 
-      const cached = forceNetwork ? null : readHpssAwardCache_();
+      setHpssLevelInputsDisabled(true);
+      setHpssLoadUi('loading');
 
-      if (cached) {
-        applyHpssAwardData(cached);
-      } else {
-        setHpssLevelInputsDisabled(true);
-        setHpssLoadUi('loading');
-      }
+      hpssLoadPromise = (async () => {
+        let liveError = null;
 
-      hpssLoadPromise = loadHpssAwardDataWithRetry_(3)
-        .then(data => {
-          writeHpssAwardCache_(data);
+        try {
+          const data =
+            await loadHpssAwardDataWithRetry_(3);
+
           applyHpssAwardData(data);
-          return data;
-        })
-        .catch(error => {
-          if (cached) {
-            console.warn(
-              'Fresh HPSS Award data could not be loaded; using cached data',
-              error?.message
-            );
-            return cached;
-          }
 
+          updateDataSourcePart_(
+            'hpss',
+            'live'
+          );
+
+          return data;
+        } catch (error) {
+          liveError = error;
+        }
+
+        try {
+          const snapshot =
+            await getCentralCachedSnapshot_(
+              forceNetwork
+            );
+
+          const data =
+            normaliseCachedHpssAwardData_(
+              snapshot.data.hpssAwardData
+            );
+
+          applyHpssAwardData(data);
+
+          updateDataSourcePart_(
+            'hpss',
+            'cached'
+          );
+
+          console.warn(
+            'Live HPSS Award request failed; using centrally cached Award data',
+            liveError?.message
+          );
+
+          return data;
+        } catch (cacheError) {
           hpssAwardData = null;
           setHpssLevelInputsDisabled(true);
           setHpssLoadUi('error');
-          console.warn(
-            'HPSS Award data load failed after retries',
-            error?.message
+
+          updateDataSourcePart_(
+            'hpss',
+            'none'
           );
+
+          console.warn(
+            'Live HPSS Award request failed',
+            liveError?.message
+          );
+
+          console.warn(
+            'Centrally cached HPSS Award request failed',
+            cacheError?.message
+          );
+
           return null;
-        })
+        }
+      })()
         .finally(() => {
           hpssLoadPromise = null;
         });
@@ -7061,66 +7621,104 @@ function sortKeysByCountDesc(counts) {
       return hpssLoadPromise;
     }
 
-    function loadModel() {
-      loadPermanentModel()
-        .then(() => {
-          const modelMeta =
-            document.getElementById('modelMeta');
+    async function loadModel() {
+      const modelMeta =
+        document.getElementById('modelMeta');
 
-          modelMeta.textContent =
-            'LIVE MLR (OLS) model loaded';
+      setDataSource('loading');
 
-          modelMeta.classList.add(
-            'is-live'
+      let liveError = null;
+
+      try {
+        const [
+          model,
+          liveFteHours,
+          liveWorkPatternMedians
+        ] = await Promise.all([
+          loadPermanentModel(),
+          loadFTEHours(),
+          loadWorkPatternMedians()
+        ]);
+
+        if (!model) {
+          throw new Error(
+            'Live salary model is unavailable'
           );
+        }
 
-          scheduleApplyScale();
-        })
-        .catch(err => {
-          const modelMeta =
-            document.getElementById('modelMeta');
+        fteHours =
+          liveFteHours;
 
-          modelMeta.classList.remove(
-            'is-live'
-          );
+        applyWorkPatternMedians_(
+          liveWorkPatternMedians
+        );
 
-          modelMeta.innerHTML =
-            '<span class="warn">Model error: ' +
-            cleanErrorMessage(err?.message) +
-            '</span>';
+        updateDataSourcePart_(
+          'core',
+          'live'
+        );
 
-          scheduleApplyScale();
-        });
+        requestHpssAwardData();
+        return;
+      } catch (error) {
+        liveError = error;
+      }
 
-      loadFTEHours()
-        .then(value => {
-          fteHours = value;
-        })
-        .catch(err => {
-          console.warn(
-            'FTE hours fetch failed:',
-            err.message
-          );
-        });
+      try {
+        const snapshot =
+          await getCentralCachedSnapshot_();
 
-      loadWorkPatternMedians()
-        .then(({ sat, sun, late }) => {
-          document.getElementById('medianSat').textContent = sat;
-          document.getElementById('medianSun').textContent = sun;
-          document.getElementById('medianLate').textContent = late;
+        buildModelFromTable_(
+          snapshot.data.permanentModelTable
+        );
 
-          document.getElementById('workPatternNote').hidden = false;
+        fteHours =
+          snapshot.data.fteHours;
 
-          scheduleApplyScale();
-        })
-        .catch(err => {
-          console.warn(
-            'Work-pattern medians fetch failed:',
-            err.message
-          );
-        });
+        applyWorkPatternMedians_(
+          snapshot.data.workPatternMedians
+        );
 
-      requestHpssAwardData();
+        updateDataSourcePart_(
+          'core',
+          'cached'
+        );
+
+        console.warn(
+          'Live calculator data request failed; using centrally cached snapshot',
+          liveError?.message
+        );
+
+        requestHpssAwardData();
+      } catch (cacheError) {
+        dataSourceParts.core = 'none';
+        dataSourceParts.model = 'none';
+
+        modelMeta.classList.remove(
+          'is-live',
+          'is-cached'
+        );
+
+        modelMeta.setAttribute(
+          'aria-label',
+          'Data unavailable'
+        );
+
+        modelMeta.innerHTML =
+          '<span class="warn">Data unavailable</span>';
+
+        console.warn(
+          'Live calculator data request failed',
+          liveError?.message
+        );
+
+        console.warn(
+          'Centrally cached calculator data request failed',
+          cacheError?.message
+        );
+
+        scheduleApplyScale();
+      }
     }
 
     function parseSalaryInput_(rawValue) {
@@ -7242,7 +7840,7 @@ function sortKeysByCountDesc(counts) {
        * Re-read the Google Sheet and refit on every calculation,
        * matching the previous backend behaviour.
        */
-      loadPermanentModel()
+      loadPermanentModelWithCentralFallback_()
         .then(model => {
           lastModel =
             model;
