@@ -3298,9 +3298,25 @@
 
     .hpss-summary-title {
       flex: 0 0 auto;
+      padding-right: 2px;
       font-size: 11px;
       font-weight: 700;
       line-height: 1.25;
+    }
+
+    .hpss-compare.is-editing .hpss-summary-title,
+    .hpss-fieldset legend,
+    .hpss-hours-row label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: normal;
+      line-height: 1.15;
+      text-transform: none;
+    }
+
+    .hpss-compare.is-editing .hpss-summary-title {
+      padding-right: 0;
     }
 
     .hpss-summary-values {
@@ -7901,19 +7917,52 @@ function sortKeysByCountDesc(counts) {
         return null;
       }
 
-      const levelData = getHpssLevelData(hpssSelectedLevel);
-      const startPayPoint = HPSS_START_PAY_POINT_BY_LEVEL[hpssSelectedLevel];
-      const pointData = levelData?.points?.find(point => point.point === startPayPoint);
-      const currentYears = Number(lastPredictionInput.years);
+      const levelData =
+        getHpssLevelData(
+          hpssSelectedLevel
+        );
 
-      if (!pointData || !Number.isFinite(currentYears) || currentYears <= 0) {
+      const startPayPoint =
+        HPSS_START_PAY_POINT_BY_LEVEL[
+          hpssSelectedLevel
+        ];
+
+      const pointData =
+        levelData
+          ?.points
+          ?.find(
+            point =>
+              point.point ===
+              startPayPoint
+          );
+
+      const currentYears =
+        Number(
+          lastPredictionInput.years
+        );
+
+      if (
+        !pointData ||
+        !Number.isFinite(currentYears) ||
+        currentYears <= 0
+      ) {
         return null;
       }
 
-      const maxBack = Math.min(HPSS_PROJECTION_YEARS, Math.floor(currentYears));
-      const weekendHours = getHpssWeekendHours_();
-      const eveningHours = getHpssEveningHours_();
-      const fteWeeklyHours = getHpssFteWeeklyHours_();
+      const maximumYearsBack =
+        Math.min(
+          HPSS_OVERTAKE_SEARCH_YEARS,
+          currentYears
+        );
+
+      const weekendHours =
+        getHpssWeekendHours_();
+
+      const eveningHours =
+        getHpssEveningHours_();
+
+      const fteWeeklyHours =
+        getHpssFteWeeklyHours_();
 
       const penaltyLoadingFactor =
         1 +
@@ -7924,28 +7973,166 @@ function sortKeysByCountDesc(counts) {
         (HPSS_WEEKDAY_SHIFTWORK_PENALTY_MULTIPLIER - 1) /
         fteWeeklyHours;
 
-      for (let back = 1; back <= maxBack; back++) {
-        const weeklyRate = linearProjectHpssRate_(
-          pointData.history,
-          hpssAwardData.baseYear - back
-        );
-        const marketRes = getHpssProjectedMarketResult(-back);
-        const projectedPay = marketRes ? projectBenchmarkPay_(marketRes) : null;
-        const awardPay = weeklyRate * HPSS_WEEKLY_TO_ANNUAL * penaltyLoadingFactor;
+      function getHistoricalPayGap_(
+        yearsBack
+      ) {
+        const safeYearsBack =
+          Math.max(
+            0,
+            Math.min(
+              maximumYearsBack,
+              Number(yearsBack) || 0
+            )
+          );
+
+        const weeklyRate =
+          linearProjectHpssRate_(
+            pointData.history,
+            hpssAwardData.baseYear -
+              safeYearsBack
+          );
+
+        const marketRes =
+          getHpssProjectedMarketResult(
+            -safeYearsBack
+          );
+
+        const projectedPay =
+          marketRes
+            ? projectBenchmarkPay_(
+                marketRes
+              )
+            : null;
+
+        const awardPay =
+          weeklyRate *
+          HPSS_WEEKLY_TO_ANNUAL *
+          penaltyLoadingFactor;
 
         if (
-          Number.isFinite(awardPay) &&
-          projectedPay !== null &&
-          Number.isFinite(Number(projectedPay)) &&
-          awardPay <= Number(projectedPay)
+          !Number.isFinite(awardPay) ||
+          projectedPay === null ||
+          !Number.isFinite(
+            Number(projectedPay)
+          )
         ) {
-          return { years: back, foundCrossing: true };
+          return null;
+        }
+
+        return (
+          awardPay -
+          Number(projectedPay)
+        );
+      }
+
+      const currentGap =
+        getHistoricalPayGap_(0);
+
+      if (
+        currentGap === null ||
+        currentGap <= 0
+      ) {
+        return null;
+      }
+
+      let newerYearsBack = 0;
+
+      function locateCrossing_(
+        olderYearsBack
+      ) {
+        let newer =
+          newerYearsBack;
+
+        let older =
+          olderYearsBack;
+
+        /*
+         * At `newer`, the Award is above pay. At `older`, it is
+         * equal to or below pay. Binary search gives the crossover
+         * rather than reporting the older whole-year boundary.
+         */
+        for (
+          let iteration = 0;
+          iteration < 28;
+          iteration++
+        ) {
+          const midpoint =
+            (newer + older) / 2;
+
+          const midpointGap =
+            getHistoricalPayGap_(
+              midpoint
+            );
+
+          if (midpointGap === null) {
+            break;
+          }
+
+          if (midpointGap > 0) {
+            newer = midpoint;
+          } else {
+            older = midpoint;
+          }
+        }
+
+        return {
+          years:
+            (newer + older) / 2,
+          foundCrossing: true
+        };
+      }
+
+      const wholeYearsBack =
+        Math.floor(
+          maximumYearsBack
+        );
+
+      for (
+        let back = 1;
+        back <= wholeYearsBack;
+        back++
+      ) {
+        const olderGap =
+          getHistoricalPayGap_(
+            back
+          );
+
+        if (olderGap === null) {
+          continue;
+        }
+
+        if (olderGap <= 0) {
+          return locateCrossing_(
+            back
+          );
+        }
+
+        newerYearsBack = back;
+      }
+
+      if (
+        maximumYearsBack >
+        wholeYearsBack
+      ) {
+        const finalGap =
+          getHistoricalPayGap_(
+            maximumYearsBack
+          );
+
+        if (
+          finalGap !== null &&
+          finalGap <= 0
+        ) {
+          return locateCrossing_(
+            maximumYearsBack
+          );
         }
       }
 
-      return maxBack > 0
-        ? { years: maxBack, foundCrossing: false }
-        : null;
+      return {
+        years: maximumYearsBack,
+        foundCrossing: false
+      };
     }
 
     function renderHpssOvertakeText() {
@@ -7977,17 +8164,9 @@ function sortKeysByCountDesc(counts) {
       );
 
       if (currentAwardAbove) {
-        const past = estimateHpssPastOvertakeYears_();
-        if (past?.foundCrossing) {
-          hpssOvertakeText.innerHTML =
-            `HPSS Award <em>minimum</em> is above your pay as of ${past.years} year${past.years === 1 ? '' : 's'} ago`;
-        } else if (past?.years) {
-          hpssOvertakeText.innerHTML =
-            `HPSS Award <em>minimum</em> is above your pay as of ${past.years} year${past.years === 1 ? '' : 's'} ago`;
-        } else {
-          hpssOvertakeText.innerHTML =
-            'HPSS Award <em>minimum</em> is above your pay';
-        }
+        hpssOvertakeText.innerHTML =
+          'HPSS Award <em>minimum</em> has already overtaken your pay';
+
         return;
       }
 
