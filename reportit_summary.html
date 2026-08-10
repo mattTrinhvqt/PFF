@@ -22,6 +22,7 @@
       --muted: #69718a;
       --track: #e8eaf0;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -393,6 +394,13 @@
 
       background:
         var(--live-red);
+    }
+
+
+    .live-data.is-cached
+    .live-data-dot {
+      background:
+        var(--cached-amber);
     }
 
 
@@ -792,6 +800,7 @@
 
 
               <div
+                id="dataSourceIndicator"
                 class="live-data"
                 aria-label="Live data"
               >
@@ -801,7 +810,7 @@
                   aria-hidden="true"
                 ></span>
 
-                <span>
+                <span id="dataSourceText">
                   LIVE data
                 </span>
 
@@ -856,6 +865,24 @@
 
     const SHEET_GID =
       '0';
+
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'pff-report-summary';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      false;
 
 
     /*
@@ -913,6 +940,16 @@
         'summary-table'
       );
 
+    const dataSourceIndicator =
+      document.getElementById(
+        'dataSourceIndicator'
+      );
+
+    const dataSourceText =
+      document.getElementById(
+        'dataSourceText'
+      );
+
 
     /************************************************************
      * BASIC HELPERS
@@ -960,6 +997,68 @@
           'error',
           isError
         );
+
+    }
+
+
+    function setDataSource(
+      source
+    ) {
+
+      const isCached =
+        source ===
+        'cached';
+
+      dataSourceIndicator
+        ?.classList
+        .toggle(
+          'is-cached',
+          isCached
+        );
+
+      if (
+        source ===
+        'live'
+      ) {
+        dataSourceIndicator
+          ?.setAttribute(
+            'aria-label',
+            'Live data'
+          );
+
+        if (dataSourceText) {
+          dataSourceText.textContent =
+            'LIVE data';
+        }
+
+        return;
+      }
+
+      if (isCached) {
+        dataSourceIndicator
+          ?.setAttribute(
+            'aria-label',
+            'Cached data'
+          );
+
+        if (dataSourceText) {
+          dataSourceText.textContent =
+            'CACHED data';
+        }
+
+        return;
+      }
+
+      dataSourceIndicator
+        ?.setAttribute(
+          'aria-label',
+          'Data unavailable'
+        );
+
+      if (dataSourceText) {
+        dataSourceText.textContent =
+          'DATA unavailable';
+      }
 
     }
 
@@ -1277,6 +1376,281 @@
           script.src =
             `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?` +
             params.toString();
+
+
+          document.body
+            .appendChild(
+              script
+            );
+
+        }
+      );
+
+    }
+
+
+    /************************************************************
+     * CACHED DATA FALLBACK
+     ************************************************************/
+
+    function validateCachedDashboardData(
+      data
+    ) {
+
+      const reports =
+        String(
+          data?.reports ??
+          ''
+        ).trim();
+
+      const documents =
+        String(
+          data?.documents ??
+          ''
+        ).trim();
+
+      const tableValues =
+        Array.isArray(
+          data?.tableValues
+        )
+          ? data.tableValues
+          : [];
+
+      if (
+        !reports ||
+        !documents ||
+        tableValues.length !==
+          TABLE_ROWS + 1 ||
+        tableValues.some(
+          row =>
+            !Array.isArray(row) ||
+            row.length < 2
+        )
+      ) {
+        throw new Error(
+          'The cached report summary is incomplete'
+        );
+      }
+
+      return {
+        reports,
+        documents,
+        tableValues:
+          tableValues.map(
+            row => [
+              String(
+                row?.[0] ??
+                ''
+              ).trim(),
+              String(
+                row?.[1] ??
+                ''
+              ).trim()
+            ]
+          )
+      };
+
+    }
+
+
+    function loadCachedDashboardData() {
+
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+
+          const callbackName =
+            'pffReportSummaryCache_' +
+            Date.now() +
+            '_' +
+            Math.floor(
+              Math.random() *
+              1000000
+            );
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled =
+            false;
+
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                finish(
+                  new Error(
+                    'The cached-data request timed out'
+                  )
+                );
+              },
+              CACHE_FETCH_TIMEOUT_MS
+            );
+
+
+          function cleanup() {
+
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (_) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(
+                  script
+                );
+            }
+
+          }
+
+
+          function finish(
+            error,
+            data
+          ) {
+
+            if (settled) {
+              return;
+            }
+
+            settled =
+              true;
+
+            cleanup();
+
+            if (error) {
+              reject(
+                error
+              );
+
+              return;
+            }
+
+            resolve(
+              data
+            );
+
+          }
+
+
+          window[
+            callbackName
+          ] = response => {
+
+            if (
+              !response ||
+              response.ok !==
+                true
+            ) {
+              finish(
+                new Error(
+                  response?.error ||
+                  'The cached-data service did not return a snapshot'
+                )
+              );
+
+              return;
+            }
+
+            if (
+              response.appKey !==
+                CACHE_APP_KEY
+            ) {
+              finish(
+                new Error(
+                  'The cached-data response belongs to a different app'
+                )
+              );
+
+              return;
+            }
+
+            if (
+              !response.cachedAt ||
+              Number.isNaN(
+                Date.parse(
+                  response.cachedAt
+                )
+              )
+            ) {
+              finish(
+                new Error(
+                  'The cached-data response has no valid timestamp'
+                )
+              );
+
+              return;
+            }
+
+            try {
+              finish(
+                null,
+                validateCachedDashboardData(
+                  response.data
+                )
+              );
+            } catch (
+              error
+            ) {
+              finish(
+                error
+              );
+            }
+
+          };
+
+
+          script.onerror =
+            () => {
+              finish(
+                new Error(
+                  'Could not load the cached-data service'
+                )
+              );
+            };
+
+
+          const params =
+            new URLSearchParams({
+              appKey:
+                CACHE_APP_KEY,
+
+              callback:
+                callbackName,
+
+              _:
+                String(
+                  Date.now()
+                )
+            });
+
+
+          const separator =
+            CACHE_WEB_APP_URL.includes(
+              '?'
+            )
+              ? '&'
+              : '?';
+
+
+          script.src =
+            `${CACHE_WEB_APP_URL}${separator}${params.toString()}`;
 
 
           document.body
@@ -1728,81 +2102,197 @@
      * LOAD ALL DATA
      ************************************************************/
 
-    async function loadDashboardData() {
+    function renderDashboardData(
+      data
+    ) {
 
-      try {
-
-        const [
-          countData,
-          tableHeaderData,
-          tableData
-        ] =
-          await Promise.all([
-
-            loadGvizRange(
-              COUNT_RANGE,
-              0
-            ),
-
-            loadGvizRange(
-              TABLE_HEADER_RANGE,
-              0
-            ),
-
-            loadGvizRange(
-              TABLE_DATA_RANGE,
-              0
-            )
-
-          ]);
+      showValue(
+        reportsValue,
+        data.reports
+      );
 
 
-        /*
-         * Counts.
-         */
-        const counts =
-          normaliseCounts(
-            countData
-          );
+      showValue(
+        documentsValue,
+        data.documents
+      );
 
 
-        showValue(
-          reportsValue,
-          counts.reports
+      renderTable(
+        data.tableValues
+      );
+
+
+      hideLoadingState();
+
+    }
+
+
+    async function loadLiveDashboardData() {
+
+      const [
+        countData,
+        tableHeaderData,
+        tableData
+      ] =
+        await Promise.all([
+
+          loadGvizRange(
+            COUNT_RANGE,
+            0
+          ),
+
+          loadGvizRange(
+            TABLE_HEADER_RANGE,
+            0
+          ),
+
+          loadGvizRange(
+            TABLE_DATA_RANGE,
+            0
+          )
+
+        ]);
+
+
+      const counts =
+        normaliseCounts(
+          countData
         );
 
 
-        showValue(
-          documentsValue,
-          counts.documents
-        );
+      const data = {
+        reports:
+          counts.reports,
 
+        documents:
+          counts.documents,
 
-        /*
-         * T / V table.
-         */
-        renderTable(
+        tableValues:
           normaliseTable(
             tableHeaderData,
             tableData
           )
+      };
+
+
+      if (
+        !data.reports ||
+        !data.documents
+      ) {
+        throw new Error(
+          'Live report summary data are incomplete'
+        );
+      }
+
+
+      return data;
+
+    }
+
+
+    async function loadDashboardData() {
+
+      let liveError =
+        null;
+
+
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+
+          const liveData =
+            await loadLiveDashboardData();
+
+
+          setDataSource(
+            'live'
+          );
+
+
+          renderDashboardData(
+            liveData
+          );
+
+
+          return;
+
+        } catch (
+          error
+        ) {
+
+          liveError =
+            error;
+
+
+          console.warn(
+            'Live Google Sheets data could not be used',
+            error
+          );
+
+        }
+      } else {
+
+        liveError =
+          new Error(
+            'Live data bypassed for cached-data test'
+          );
+
+      }
+
+
+      try {
+
+        const cachedData =
+          await loadCachedDashboardData();
+
+
+        setDataSource(
+          'cached'
         );
 
 
-        hideLoadingState();
+        console.warn(
+          'Using cached report summary data',
+          liveError?.message
+        );
+
+
+        renderDashboardData(
+          cachedData
+        );
 
       } catch (
-        error
+        cachedError
       ) {
 
+        setDataSource(
+          'none'
+        );
+
+
+        console.error(
+          'Live Google Sheets data error',
+          liveError
+        );
+
+
+        console.error(
+          'Cached Apps Script data error',
+          cachedError
+        );
+
+
         showError(
-          error
+          new Error(
+            'Live and cached data are currently unavailable'
+          )
         );
 
       }
 
     }
-
 
     /*
      * Initial load.
