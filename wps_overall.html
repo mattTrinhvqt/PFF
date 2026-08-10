@@ -23,6 +23,7 @@
       --track: #e8eaf0;
       --error: #b42318;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -492,6 +493,10 @@
       background: var(--live-red);
     }
 
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
     #status {
       width: 100%;
       margin: 3px 0 0;
@@ -843,6 +848,7 @@
         </div>
 
         <div
+          id="dataSourceIndicator"
           class="live-data"
           aria-label="Live data"
         >
@@ -851,7 +857,7 @@
             aria-hidden="true"
           ></span>
 
-          <span>LIVE data</span>
+          <span id="dataSourceText">LIVE data</span>
         </div>
       </div>
 
@@ -915,6 +921,23 @@
 
     const SHEET_NAME =
       'Data';
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'workplace-promoter-score-graph';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      false;
 
 
     const OVERALL_AXIS_TITLE =
@@ -1238,6 +1261,17 @@
       document.getElementById(
         'status'
       );
+
+    const dataSourceIndicator =
+      document.getElementById(
+        'dataSourceIndicator'
+      );
+
+    const dataSourceText =
+      document.getElementById(
+        'dataSourceText'
+      );
+
     const reaggregateButton =
       document.getElementById(
         'reaggregateButton'
@@ -1685,6 +1719,52 @@
     ) {
       statusElement.textContent =
         message;
+    }
+
+
+    function setDataSource(
+      source
+    ) {
+      const isLive =
+        source ===
+          'live';
+
+      const isCached =
+        source ===
+          'cached';
+
+      const isVisible =
+        isLive ||
+        isCached;
+
+      dataSourceIndicator.hidden =
+        !isVisible;
+
+      if (
+        !isVisible
+      ) {
+        return;
+      }
+
+      dataSourceIndicator
+        .classList
+        .toggle(
+          'is-cached',
+          isCached
+        );
+
+      dataSourceIndicator
+        .setAttribute(
+          'aria-label',
+          isCached
+            ? 'Cached data'
+            : 'Live data'
+        );
+
+      dataSourceText.textContent =
+        isCached
+          ? 'CACHED data'
+          : 'LIVE data';
     }
 
 
@@ -2326,6 +2406,361 @@
             );
         }
       );
+    }
+
+
+    function loadCachedRawRows() {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          if (
+            !CACHE_WEB_APP_URL ||
+            CACHE_WEB_APP_URL.includes(
+              'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'
+            )
+          ) {
+            reject(
+              new Error(
+                'The cached-data web app URL has not been configured'
+              )
+            );
+
+            return;
+          }
+
+
+          const callbackName =
+            'pffPromoterCacheCallback_' +
+            Date.now() +
+            '_' +
+            Math.floor(
+              Math.random() *
+              1000000
+            );
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled =
+            false;
+
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                finish(
+                  new Error(
+                    'The cached-data request timed out'
+                  )
+                );
+              },
+              CACHE_FETCH_TIMEOUT_MS
+            );
+
+
+          function cleanup() {
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (_) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(
+                  script
+                );
+            }
+          }
+
+
+          function finish(
+            error,
+            response
+          ) {
+            if (
+              settled
+            ) {
+              return;
+            }
+
+            settled =
+              true;
+
+            cleanup();
+
+            if (
+              error
+            ) {
+              reject(
+                error
+              );
+
+              return;
+            }
+
+            resolve(
+              response
+            );
+          }
+
+
+          window[
+            callbackName
+          ] = response => {
+            if (
+              !response ||
+              response.ok !==
+                true
+            ) {
+              finish(
+                new Error(
+                  response?.message ||
+                  'The cached-data service did not return a snapshot'
+                )
+              );
+
+              return;
+            }
+
+            if (
+              response.appKey !==
+                'workplace-promoter-score-graph'
+            ) {
+              finish(
+                new Error(
+                  'The cached-data response belongs to a different app'
+                )
+              );
+
+              return;
+            }
+
+            if (
+              !response.cachedAt ||
+              Number.isNaN(
+                Date.parse(
+                  response.cachedAt
+                )
+              )
+            ) {
+              finish(
+                new Error(
+                  'The cached-data response has no valid timestamp'
+                )
+              );
+
+              return;
+            }
+
+            if (
+              !Array.isArray(
+                response.data?.rows
+              ) ||
+              !response.data.rows.length
+            ) {
+              finish(
+                new Error(
+                  'The cached-data response has no survey rows'
+                )
+              );
+
+              return;
+            }
+
+            const rows =
+              response.data.rows.map(
+                row => ({
+                  c: [
+                    {
+                      v:
+                        row?.[0] ??
+                        ''
+                    },
+                    {
+                      v:
+                        row?.[1] ??
+                        ''
+                    },
+                    {
+                      v:
+                        row?.[2] ??
+                        ''
+                    },
+                    {
+                      v:
+                        row?.[3] ??
+                        ''
+                    }
+                  ]
+                })
+              );
+
+            finish(
+              null,
+              rows
+            );
+          };
+
+
+          script.onerror =
+            () => {
+              finish(
+                new Error(
+                  'Could not load the cached-data service'
+                )
+              );
+            };
+
+
+          const params =
+            new URLSearchParams({
+              appKey:
+                CACHE_APP_KEY,
+
+              callback:
+                callbackName,
+
+              _:
+                String(
+                  Date.now()
+                )
+            });
+
+
+          const separator =
+            CACHE_WEB_APP_URL.includes(
+              '?'
+            )
+              ? '&'
+              : '?';
+
+
+          script.src =
+            `${CACHE_WEB_APP_URL}${separator}${params.toString()}`;
+
+          document.body
+            .appendChild(
+              script
+            );
+        }
+      );
+    }
+
+
+    async function loadRawEmployerDataWithFallback_() {
+      let liveError =
+        null;
+
+
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          const liveRows =
+            await loadSheetQuery(
+              RAW_QUERY
+            );
+
+          const liveEmployerData =
+            normaliseRawRows(
+              liveRows
+            );
+
+          if (
+            !liveEmployerData.size
+          ) {
+            throw new Error(
+              'No valid raw survey rows found in columns A to D'
+            );
+          }
+
+          setDataSource(
+            'live'
+          );
+
+          return liveEmployerData;
+        } catch (
+          error
+        ) {
+          liveError =
+            error;
+
+          console.warn(
+            'Live Google Sheets data could not be used',
+            error
+          );
+        }
+      } else {
+        liveError =
+          new Error(
+            'Live data bypassed for cached-data test'
+          );
+      }
+
+
+      try {
+        const cachedRows =
+          await loadCachedRawRows();
+
+        const cachedEmployerData =
+          normaliseRawRows(
+            cachedRows
+          );
+
+        if (
+          !cachedEmployerData.size
+        ) {
+          throw new Error(
+            'No valid cached survey rows found'
+          );
+        }
+
+        setDataSource(
+          'cached'
+        );
+
+        console.warn(
+          'Using cached workplace survey data',
+          liveError?.message
+        );
+
+        return cachedEmployerData;
+      } catch (
+        cachedError
+      ) {
+        setDataSource(
+          'none'
+        );
+
+        console.error(
+          'Live Google Sheets data error',
+          liveError
+        );
+
+        console.error(
+          'Cached Apps Script data error',
+          cachedError
+        );
+
+        throw new Error(
+          'Live and cached data are currently unavailable'
+        );
+      }
     }
 
 
@@ -5906,16 +6341,8 @@
         setStatus();
 
 
-        const rawRows =
-          await loadSheetQuery(
-            RAW_QUERY
-          );
-
-
         rawEmployerData =
-          normaliseRawRows(
-            rawRows
-          );
+          await loadRawEmployerDataWithFallback_();
 
 
         viewItems.clear();
