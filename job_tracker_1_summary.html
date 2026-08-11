@@ -21,6 +21,7 @@
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
       --red-cone: rgba(255, 92, 48, 0.76);
+      --cached-amber: #c27c00;
     }
 
     * {
@@ -359,6 +360,14 @@
       background: #e53935;
     }
 
+    .live-data-inline.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
+    .live-data-inline.is-unavailable .live-data-dot {
+      background: var(--muted);
+    }
+
     .data-table th:first-child,
     .data-table td:first-child {
       width: 24%;
@@ -495,25 +504,113 @@
     const FETCH_RETRY_DELAY_MS = 1000;
     const TABLE_STORAGE_KEY = 'pff-clinical-optom-summary-table-v1';
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
+
+    const CACHE_APP_KEY =
+      'pff-clinical-optom-summary';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Set true to skip the live Google Sheets feed
+     * and test the Apps Script cache.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const app = document.getElementById('app');
     const dataTable = document.getElementById('data-table');
     const loadingState = document.getElementById('loading-state');
 
-    function appendLiveDataCell(cell) {
-      const liveData = document.createElement('span');
-      liveData.className = 'live-data-inline';
-      liveData.setAttribute('aria-label', 'Live data');
+    function appendLiveDataCell(
+      cell,
+      source = 'live'
+    ) {
+      const liveData =
+        document.createElement(
+          'span'
+        );
 
-      const dot = document.createElement('span');
-      dot.className = 'live-data-dot';
-      dot.setAttribute('aria-hidden', 'true');
+      liveData.className =
+        'live-data-inline';
 
-      const text = document.createElement('span');
-      text.textContent = 'LIVE data';
+      if (
+        source === 'cached'
+      ) {
+        liveData.classList.add(
+          'is-cached'
+        );
+      }
 
-      liveData.appendChild(dot);
-      liveData.appendChild(text);
-      cell.appendChild(liveData);
+      if (
+        source === 'unavailable'
+      ) {
+        liveData.classList.add(
+          'is-unavailable'
+        );
+      }
+
+      const dot =
+        document.createElement(
+          'span'
+        );
+
+      dot.className =
+        'live-data-dot';
+
+      dot.setAttribute(
+        'aria-hidden',
+        'true'
+      );
+
+      const text =
+        document.createElement(
+          'span'
+        );
+
+      if (
+        source === 'cached'
+      ) {
+        text.textContent =
+          'CACHED data';
+
+        liveData.setAttribute(
+          'aria-label',
+          'Cached data'
+        );
+      } else if (
+        source === 'unavailable'
+      ) {
+        text.textContent =
+          'DATA unavailable';
+
+        liveData.setAttribute(
+          'aria-label',
+          'Data unavailable'
+        );
+      } else {
+        text.textContent =
+          'LIVE data';
+
+        liveData.setAttribute(
+          'aria-label',
+          'Live data'
+        );
+      }
+
+      liveData.appendChild(
+        dot
+      );
+
+      liveData.appendChild(
+        text
+      );
+
+      cell.appendChild(
+        liveData
+      );
     }
 
     function appendHeaderText(cell, value) {
@@ -576,7 +673,10 @@
       loadingState.setAttribute('aria-hidden', 'true');
     }
 
-    function renderTable(values) {
+    function renderTable(
+      values,
+      source = 'live'
+    ) {
       hideLoadingState();
       dataTable.classList.remove('error');
 
@@ -596,7 +696,10 @@
         th.scope = 'col';
 
         if (index === 0) {
-          appendLiveDataCell(th);
+          appendLiveDataCell(
+            th,
+            source
+          );
         } else {
           appendHeaderText(th, value);
         }
@@ -660,13 +763,16 @@
 
       hideLoadingState();
 
-      renderTable([
-        ['ERROR', '—', '—'],
-        [error?.message || 'Could not load data', '—', '—'],
-        ['—', '—', '—'],
-        ['—', '—', '—'],
-        ['—', '—', '—']
-      ]);
+      renderTable(
+        [
+          ['ERROR', '—', '—'],
+          [error?.message || 'Could not load data', '—', '—'],
+          ['—', '—', '—'],
+          ['—', '—', '—'],
+          ['—', '—', '—']
+        ],
+        'unavailable'
+      );
 
       dataTable.classList.add('error');
     }
@@ -756,6 +862,256 @@
       }
     }
 
+    function validateCachedSummaryData(
+      data
+    ) {
+      const values =
+        Array.isArray(
+          data?.tableValues
+        )
+          ? data.tableValues
+          : [];
+
+      const isValid =
+        values.length ===
+          EXPECTED_ROWS &&
+        values.every(
+          row =>
+            Array.isArray(row) &&
+            row.length >=
+              EXPECTED_COLS
+        );
+
+      if (!isValid) {
+        throw new Error(
+          'Cached summary data is incomplete.'
+        );
+      }
+
+      return {
+        tableValues:
+          values.map(
+            row =>
+              row
+                .slice(
+                  0,
+                  EXPECTED_COLS
+                )
+                .map(
+                  value =>
+                    String(
+                      value ??
+                      ''
+                    ).trim()
+                )
+          )
+      };
+    }
+
+    function loadCachedSummarySnapshot() {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          const callbackName =
+            `pffJobTracker1Cache_${
+              Date.now()
+            }_${
+              Math.floor(
+                Math.random() *
+                100000
+              )
+            }`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled =
+            false;
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                finish(
+                  new Error(
+                    'Cached summary data timed out.'
+                  )
+                );
+              },
+              CACHE_FETCH_TIMEOUT_MS
+            );
+
+          function cleanup() {
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (error) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(
+                  script
+                );
+            }
+          }
+
+          function finish(
+            error,
+            snapshot
+          ) {
+            if (settled) {
+              return;
+            }
+
+            settled =
+              true;
+
+            cleanup();
+
+            error
+              ? reject(
+                  error
+                )
+              : resolve(
+                  snapshot
+                );
+          }
+
+          window[callbackName] =
+            snapshot => {
+              if (
+                !snapshot ||
+                snapshot.ok !== true ||
+                snapshot.appKey !==
+                  CACHE_APP_KEY
+              ) {
+                finish(
+                  new Error(
+                    snapshot?.error ||
+                    'Cached summary data is unavailable.'
+                  )
+                );
+
+                return;
+              }
+
+              try {
+                snapshot.data =
+                  validateCachedSummaryData(
+                    snapshot.data
+                  );
+              } catch (
+                error
+              ) {
+                finish(
+                  error
+                );
+
+                return;
+              }
+
+              finish(
+                null,
+                snapshot
+              );
+            };
+
+          script.onerror =
+            () => {
+              finish(
+                new Error(
+                  'Cached summary data could not be loaded.'
+                )
+              );
+            };
+
+          const params =
+            new URLSearchParams({
+              appKey:
+                CACHE_APP_KEY,
+
+              callback:
+                callbackName,
+
+              _:
+                String(
+                  Date.now()
+                )
+            });
+
+          script.src =
+            `${
+              CACHE_WEB_APP_URL
+            }?${
+              params
+            }`;
+
+          document.body.appendChild(
+            script
+          );
+        }
+      );
+    }
+
+    function loadForcedCachedData() {
+      loadCachedSummarySnapshot()
+        .then(
+          snapshot => {
+            const values =
+              snapshot
+                .data
+                .tableValues;
+
+            saveStoredTable(
+              values
+            );
+
+            renderTable(
+              values,
+              'cached'
+            );
+          }
+        )
+        .catch(
+          cacheError => {
+            console.error(
+              'Cached summary load failed',
+              cacheError
+            );
+
+            const storedValues =
+              loadStoredTable();
+
+            if (storedValues) {
+              renderTable(
+                storedValues,
+                'cached'
+              );
+
+              return;
+            }
+
+            showError(
+              cacheError
+            );
+          }
+        );
+    }
+
     function loadTableData(attempt = 1) {
       const callbackName =
         `pffJobTracker1Callback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -805,7 +1161,7 @@
         }
       }
 
-      function retryOrUseStoredTable(
+      function retryOrUseCachedTable(
         error
       ) {
         if (
@@ -824,20 +1180,48 @@
           return;
         }
 
-        const storedValues =
-          loadStoredTable();
+        loadCachedSummarySnapshot()
+          .then(
+            snapshot => {
+              const values =
+                snapshot
+                  .data
+                  .tableValues;
 
-        if (storedValues) {
-          renderTable(
-            storedValues
+              saveStoredTable(
+                values
+              );
+
+              renderTable(
+                values,
+                'cached'
+              );
+            }
+          )
+          .catch(
+            cacheError => {
+              console.error(
+                'Cached summary load failed',
+                cacheError
+              );
+
+              const storedValues =
+                loadStoredTable();
+
+              if (storedValues) {
+                renderTable(
+                  storedValues,
+                  'cached'
+                );
+
+                return;
+              }
+
+              showError(
+                error
+              );
+            }
           );
-
-          return;
-        }
-
-        showError(
-          error
-        );
       }
 
       function finish(
@@ -854,7 +1238,7 @@
         cleanup();
 
         if (error) {
-          retryOrUseStoredTable(
+          retryOrUseCachedTable(
             error
           );
 
@@ -872,10 +1256,11 @@
           );
 
           renderTable(
-            values
+            values,
+            'live'
           );
         } catch (normaliseError) {
-          retryOrUseStoredTable(
+          retryOrUseCachedTable(
             normaliseError
           );
         }
@@ -926,7 +1311,13 @@
       );
     }
 
-    loadTableData();
+    if (
+      FORCE_CACHED_DATA
+    ) {
+      loadForcedCachedData();
+    } else {
+      loadTableData();
+    }
   </script>
 </body>
 </html>
