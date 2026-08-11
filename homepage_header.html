@@ -18,6 +18,7 @@
       --muted: #69718a;
       --track: #e8eaf0;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -283,6 +284,14 @@
       background: var(--live-red);
     }
 
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
+    .live-data.is-unavailable .live-data-dot {
+      background: var(--muted);
+    }
+
     /* ---------- Contribution buttons ---------- */
 
     .actions {
@@ -421,9 +430,13 @@
             <div class="loader-text">Loading...</div>
           </div>
 
-          <div class="live-data" aria-label="Live data">
+          <div
+            id="data-source-indicator"
+            class="live-data"
+            aria-label="Live data"
+          >
             <span class="live-data-dot" aria-hidden="true"></span>
-            <span>LIVE data</span>
+            <span id="data-source-text">LIVE data</span>
           </div>
         </div>
 
@@ -461,78 +474,583 @@
     const SHEET_GID = '0';
     const CONTRIBUTION_CELL = 'BU14';
 
-    const contributionCount = document.getElementById('contribution-count');
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
 
-    function showContributionCount(value, isError = false) {
-      contributionCount.classList.remove('is-loading');
-      contributionCount.textContent = value || '—';
-      contributionCount.classList.toggle('error', isError);
+    const CACHE_APP_KEY =
+      'pff-contribution-count';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    const LOCAL_CACHE_KEY =
+      'pff-contribution-count-v1';
+
+    /*
+     * Set true to skip the live Google Sheets feed
+     * and test the Apps Script cache.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
+    const contributionCount =
+      document.getElementById(
+        'contribution-count'
+      );
+
+    const dataSourceIndicator =
+      document.getElementById(
+        'data-source-indicator'
+      );
+
+    const dataSourceText =
+      document.getElementById(
+        'data-source-text'
+      );
+
+    function setDataSource(
+      source
+    ) {
+      dataSourceIndicator.classList.toggle(
+        'is-cached',
+        source === 'cached'
+      );
+
+      dataSourceIndicator.classList.toggle(
+        'is-unavailable',
+        source === 'unavailable'
+      );
+
+      if (
+        source === 'cached'
+      ) {
+        dataSourceText.textContent =
+          'CACHED data';
+
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Cached data'
+        );
+
+        return;
+      }
+
+      if (
+        source === 'unavailable'
+      ) {
+        dataSourceText.textContent =
+          'DATA unavailable';
+
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Data unavailable'
+        );
+
+        return;
+      }
+
+      dataSourceText.textContent =
+        'LIVE data';
+
+      dataSourceIndicator.setAttribute(
+        'aria-label',
+        'Live data'
+      );
     }
 
-    function getCellDisplayValue(response) {
-      const cell = response?.table?.rows?.[0]?.c?.[0];
+    function showContributionCount(
+      value,
+      isError = false
+    ) {
+      contributionCount.classList.remove(
+        'is-loading'
+      );
+
+      contributionCount.textContent =
+        value ||
+        '—';
+
+      contributionCount.classList.toggle(
+        'error',
+        isError
+      );
+    }
+
+    function getCellDisplayValue(
+      response
+    ) {
+      const cell =
+        response?.table?.rows?.[0]?.c?.[0];
 
       if (!cell) {
         return '—';
       }
 
-      return String(cell.f ?? cell.v ?? '').trim() || '—';
+      return String(
+        cell.f ??
+        cell.v ??
+        ''
+      ).trim() ||
+        '—';
     }
 
-    function loadContributionCount() {
-      const callbackName = `pffContributionCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-      const script = document.createElement('script');
+    function saveLocalCachedCount(
+      value
+    ) {
+      try {
+        localStorage.setItem(
+          LOCAL_CACHE_KEY,
+          String(
+            value ??
+            ''
+          )
+        );
+      } catch (
+        error
+      ) {
+      }
+    }
 
-      const timeout = window.setTimeout(() => {
-        cleanup();
-        showContributionCount('—', true);
-      }, 10000);
+    function loadLocalCachedCount() {
+      try {
+        const value =
+          localStorage.getItem(
+            LOCAL_CACHE_KEY
+          );
 
-      function cleanup() {
-        window.clearTimeout(timeout);
+        return String(
+          value ??
+          ''
+        ).trim() ||
+          null;
+      } catch (
+        error
+      ) {
+        return null;
+      }
+    }
 
-        try {
-          delete window[callbackName];
-        } catch (error) {
-          window[callbackName] = undefined;
+    function loadLiveContributionCount() {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          const callbackName =
+            `pffContributionCallback_${
+              Date.now()
+            }_${
+              Math.floor(
+                Math.random() *
+                100000
+              )
+            }`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled =
+            false;
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                finish(
+                  new Error(
+                    'Live contribution count timed out'
+                  )
+                );
+              },
+              10000
+            );
+
+          function cleanup() {
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (
+              error
+            ) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(
+                  script
+                );
+            }
+          }
+
+          function finish(
+            error,
+            value
+          ) {
+            if (settled) {
+              return;
+            }
+
+            settled =
+              true;
+
+            cleanup();
+
+            error
+              ? reject(
+                  error
+                )
+              : resolve(
+                  value
+                );
+          }
+
+          window[callbackName] =
+            response => {
+              if (
+                response?.status ===
+                  'error'
+              ) {
+                finish(
+                  new Error(
+                    'Live contribution count could not be loaded'
+                  )
+                );
+
+                return;
+              }
+
+              const value =
+                getCellDisplayValue(
+                  response
+                );
+
+              if (
+                !value ||
+                value === '—'
+              ) {
+                finish(
+                  new Error(
+                    'Live contribution count is empty'
+                  )
+                );
+
+                return;
+              }
+
+              finish(
+                null,
+                value
+              );
+            };
+
+          script.onerror =
+            () => {
+              finish(
+                new Error(
+                  'Network error loading live contribution count'
+                )
+              );
+            };
+
+          const params =
+            new URLSearchParams({
+              gid:
+                SHEET_GID,
+
+              range:
+                CONTRIBUTION_CELL,
+
+              headers:
+                '0',
+
+              tqx:
+                `responseHandler:${callbackName}`,
+
+              _:
+                String(
+                  Date.now()
+                )
+            });
+
+          script.src =
+            `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+
+          document.body.appendChild(
+            script
+          );
         }
+      );
+    }
 
-        if (script.parentNode) {
-          script.parentNode.removeChild(script);
+    function loadCachedContributionCount() {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          const callbackName =
+            `pffContributionCache_${
+              Date.now()
+            }_${
+              Math.floor(
+                Math.random() *
+                100000
+              )
+            }`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled =
+            false;
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                finish(
+                  new Error(
+                    'Cached contribution count timed out'
+                  )
+                );
+              },
+              CACHE_FETCH_TIMEOUT_MS
+            );
+
+          function cleanup() {
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (
+              error
+            ) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(
+                  script
+                );
+            }
+          }
+
+          function finish(
+            error,
+            value
+          ) {
+            if (settled) {
+              return;
+            }
+
+            settled =
+              true;
+
+            cleanup();
+
+            error
+              ? reject(
+                  error
+                )
+              : resolve(
+                  value
+                );
+          }
+
+          window[callbackName] =
+            snapshot => {
+              if (
+                !snapshot ||
+                snapshot.ok !== true ||
+                snapshot.appKey !==
+                  CACHE_APP_KEY
+              ) {
+                finish(
+                  new Error(
+                    snapshot?.error ||
+                    'Cached contribution count is unavailable'
+                  )
+                );
+
+                return;
+              }
+
+              const value =
+                String(
+                  snapshot?.data
+                    ?.contributionCount ??
+                  ''
+                ).trim();
+
+              if (!value) {
+                finish(
+                  new Error(
+                    'Cached contribution count is empty'
+                  )
+                );
+
+                return;
+              }
+
+              finish(
+                null,
+                value
+              );
+            };
+
+          script.onerror =
+            () => {
+              finish(
+                new Error(
+                  'Network error loading cached contribution count'
+                )
+              );
+            };
+
+          const params =
+            new URLSearchParams({
+              appKey:
+                CACHE_APP_KEY,
+
+              callback:
+                callbackName,
+
+              _:
+                String(
+                  Date.now()
+                )
+            });
+
+          script.src =
+            `${
+              CACHE_WEB_APP_URL
+            }?${
+              params.toString()
+            }`;
+
+          document.body.appendChild(
+            script
+          );
+        }
+      );
+    }
+
+    async function loadContributionCount() {
+      let liveError =
+        null;
+
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          const liveValue =
+            await loadLiveContributionCount();
+
+          saveLocalCachedCount(
+            liveValue
+          );
+
+          showContributionCount(
+            liveValue
+          );
+
+          setDataSource(
+            'live'
+          );
+
+          return;
+        } catch (
+          error
+        ) {
+          liveError =
+            error;
         }
       }
 
-      window[callbackName] = response => {
-        cleanup();
+      try {
+        const cachedValue =
+          await loadCachedContributionCount();
 
-        if (response?.status === 'error') {
-          showContributionCount('—', true);
-          return;
-        }
+        saveLocalCachedCount(
+          cachedValue
+        );
 
-        showContributionCount(getCellDisplayValue(response));
-      };
+        showContributionCount(
+          cachedValue
+        );
 
-      script.onerror = () => {
-        cleanup();
-        showContributionCount('—', true);
-      };
+        setDataSource(
+          'cached'
+        );
 
-      const params = new URLSearchParams({
-        gid: SHEET_GID,
-        range: CONTRIBUTION_CELL,
-        headers: '0',
-        tqx: `responseHandler:${callbackName}`
-      });
+        return;
+      } catch (
+        cacheError
+      ) {
+        console.error(
+          'Live contribution count load failed',
+          liveError
+        );
 
-      script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
-      document.body.appendChild(script);
+        console.error(
+          'Cached contribution count load failed',
+          cacheError
+        );
+      }
+
+      const localValue =
+        loadLocalCachedCount();
+
+      if (localValue) {
+        showContributionCount(
+          localValue
+        );
+
+        setDataSource(
+          'cached'
+        );
+
+        return;
+      }
+
+      showContributionCount(
+        '—',
+        true
+      );
+
+      setDataSource(
+        'unavailable'
+      );
     }
 
     loadContributionCount();
 
     // Refresh while the embedded Google Sites page remains open.
-    window.setInterval(loadContributionCount, 60000);
+    window.setInterval(
+      loadContributionCount,
+      60000
+    );
   </script>
 </body>
 </html>
