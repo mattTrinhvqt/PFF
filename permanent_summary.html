@@ -18,6 +18,7 @@
       --muted: #69718a;
       --track: #e8eaf0;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -249,6 +250,10 @@
       background: var(--live-red);
     }
 
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
     /* ---------- Salary table ---------- */
 
     .salary-section {
@@ -432,9 +437,9 @@
 
         <div class="response-value-row">
           <div id="response-count" class="response-value"></div>
-          <div class="live-data" aria-label="Live data">
+          <div id="dataSourceIndicator" class="live-data" aria-label="Live data">
             <span class="live-data-dot" aria-hidden="true"></span>
-            <span>LIVE data</span>
+            <span id="dataSourceText">LIVE data</span>
           </div>
         </div>
       </section>
@@ -459,6 +464,23 @@
     const SPREADSHEET_ID = '1D4EoCMnH_RbwbuzFtw92NOwnvR_r9zQV7dAaXtfnnd0';
     const SHEET_GID = '0';
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'permanent-salary-summary';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const RESPONSE_CELL = 'H2';
 
     // Split header and data to avoid Google gviz dropping the header row.
@@ -472,10 +494,44 @@
     const responseCount = document.getElementById('response-count');
     const salaryTable = document.getElementById('salary-table');
     const loadingState = document.getElementById('loading-state');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
 
     function hideLoadingState() {
       app.classList.remove('is-loading');
       loadingState.setAttribute('aria-hidden', 'true');
+    }
+
+    function setDataSource(source) {
+      const isCached = source === 'cached';
+
+      dataSourceIndicator?.classList.toggle('is-cached', isCached);
+
+      if (source === 'live') {
+        dataSourceIndicator?.setAttribute('aria-label', 'Live data');
+
+        if (dataSourceText) {
+          dataSourceText.textContent = 'LIVE data';
+        }
+
+        return;
+      }
+
+      if (isCached) {
+        dataSourceIndicator?.setAttribute('aria-label', 'Cached data');
+
+        if (dataSourceText) {
+          dataSourceText.textContent = 'CACHED data';
+        }
+
+        return;
+      }
+
+      dataSourceIndicator?.setAttribute('aria-label', 'Data unavailable');
+
+      if (dataSourceText) {
+        dataSourceText.textContent = 'DATA unavailable';
+      }
     }
 
     function appendHeaderText(cell, value) {
@@ -626,6 +682,155 @@
       });
     }
 
+    function validateCachedDashboardData(data) {
+      const cachedResponseCount = String(
+        data?.responseCount ??
+        ''
+      ).trim();
+
+      const salaryTableValues = Array.isArray(
+        data?.salaryTableValues
+      )
+        ? data.salaryTableValues
+        : [];
+
+      if (
+        !cachedResponseCount ||
+        cachedResponseCount === '—' ||
+        salaryTableValues.length !== EXPECTED_SALARY_DATA_ROWS + 1 ||
+        salaryTableValues.some(
+          row =>
+            !Array.isArray(row) ||
+            row.length < EXPECTED_SALARY_COLS
+        )
+      ) {
+        throw new Error(
+          'The cached permanent salary summary is incomplete'
+        );
+      }
+
+      return {
+        responseCount: cachedResponseCount,
+        salaryTableValues: salaryTableValues.map(
+          row =>
+            row.slice(0, EXPECTED_SALARY_COLS).map(
+              value => String(value ?? '').trim()
+            )
+        )
+      };
+    }
+
+    function loadCachedDashboardData() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `permSalarySummaryCache_${Date.now()}_${Math.floor(
+            Math.random() * 1000000
+          )}`;
+
+        const script = document.createElement('script');
+        let settled = false;
+
+        const timeout = window.setTimeout(() => {
+          finish(
+            new Error('The cached-data request timed out')
+          );
+        }, CACHE_FETCH_TIMEOUT_MS);
+
+        function cleanup() {
+          window.clearTimeout(timeout);
+
+          try {
+            delete window[callbackName];
+          } catch (_) {
+            window[callbackName] = undefined;
+          }
+
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+
+        function finish(error, data) {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          cleanup();
+
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve(data);
+        }
+
+        window[callbackName] = response => {
+          if (!response || response.ok !== true) {
+            finish(
+              new Error(
+                response?.error ||
+                'The cached-data service did not return a snapshot'
+              )
+            );
+            return;
+          }
+
+          if (response.appKey !== CACHE_APP_KEY) {
+            finish(
+              new Error(
+                'The cached-data response belongs to a different app'
+              )
+            );
+            return;
+          }
+
+          if (
+            !response.cachedAt ||
+            Number.isNaN(Date.parse(response.cachedAt))
+          ) {
+            finish(
+              new Error(
+                'The cached-data response has no valid timestamp'
+              )
+            );
+            return;
+          }
+
+          try {
+            finish(
+              null,
+              validateCachedDashboardData(response.data)
+            );
+          } catch (error) {
+            finish(error);
+          }
+        };
+
+        script.onerror = () => {
+          finish(
+            new Error('Could not load the cached-data service')
+          );
+        };
+
+        const params = new URLSearchParams({
+          appKey: CACHE_APP_KEY,
+          callback: callbackName,
+          _: String(Date.now())
+        });
+
+        const separator = CACHE_WEB_APP_URL.includes('?')
+          ? '&'
+          : '?';
+
+        script.src =
+          `${CACHE_WEB_APP_URL}${separator}${params.toString()}`;
+
+        document.body.appendChild(script);
+      });
+    }
+
     function normaliseResponseCount(response) {
       const cell = response?.table?.rows?.[0]?.c?.[0];
       return getCellDisplayValue(cell) || '—';
@@ -658,19 +863,90 @@
       return values;
     }
 
-    async function loadDashboardData() {
-      try {
-        const [responseCountData, salaryHeaderData, salaryData] = await Promise.all([
-          loadGvizRange(RESPONSE_CELL, 0),
-          loadGvizRange(SALARY_HEADER_RANGE, 1),
-          loadGvizRange(SALARY_DATA_RANGE, 0)
-        ]);
+    function renderDashboardData(data) {
+      responseCount.textContent = data.responseCount;
+      responseCount.classList.remove('error');
+      renderSalaryTable(data.salaryTableValues);
+      hideLoadingState();
+    }
 
-        responseCount.textContent = normaliseResponseCount(responseCountData);
-        renderSalaryTable(normaliseSalaryTable(salaryHeaderData, salaryData));
-        hideLoadingState();
-      } catch (error) {
-        showError(error);
+    async function loadLiveDashboardData() {
+      const [responseCountData, salaryHeaderData, salaryData] = await Promise.all([
+        loadGvizRange(RESPONSE_CELL, 0),
+        loadGvizRange(SALARY_HEADER_RANGE, 1),
+        loadGvizRange(SALARY_DATA_RANGE, 0)
+      ]);
+
+      const data = {
+        responseCount: normaliseResponseCount(responseCountData),
+        salaryTableValues: normaliseSalaryTable(
+          salaryHeaderData,
+          salaryData
+        )
+      };
+
+      if (!data.responseCount || data.responseCount === '—') {
+        throw new Error(
+          'Live permanent salary summary data are incomplete'
+        );
+      }
+
+      return data;
+    }
+
+    async function loadDashboardData() {
+      let liveError = null;
+
+      if (!FORCE_CACHED_DATA) {
+        try {
+          const liveData = await loadLiveDashboardData();
+
+          setDataSource('live');
+          renderDashboardData(liveData);
+          return;
+        } catch (error) {
+          liveError = error;
+
+          console.warn(
+            'Live Google Sheets data could not be used',
+            error
+          );
+        }
+      } else {
+        liveError = new Error(
+          'Live data bypassed for cached-data test'
+        );
+      }
+
+      try {
+        const cachedData = await loadCachedDashboardData();
+
+        setDataSource('cached');
+
+        console.warn(
+          'Using cached permanent salary summary data',
+          liveError?.message
+        );
+
+        renderDashboardData(cachedData);
+      } catch (cachedError) {
+        setDataSource('none');
+
+        console.error(
+          'Live Google Sheets data error',
+          liveError
+        );
+
+        console.error(
+          'Cached Apps Script data error',
+          cachedError
+        );
+
+        showError(
+          new Error(
+            'Live and cached data are currently unavailable'
+          )
+        );
       }
     }
 
