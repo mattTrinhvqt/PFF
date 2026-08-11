@@ -24,6 +24,7 @@
       --track: #e8eaf0;
       --error: #b42318;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --state-nsw: #2db7f5;
       --state-qld: #7a0036;
@@ -340,6 +341,10 @@
       flex: 0 0 6px;
       border-radius: 50%;
       background: var(--live-red);
+    }
+
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
     }
 
     #status {
@@ -779,9 +784,9 @@
           >›</span>
         </div>
 
-        <div class="live-data" aria-label="Live data">
+        <div id="dataSourceIndicator" class="live-data" aria-label="Live data">
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span>LIVE data</span>
+          <span id="dataSourceText">LIVE data</span>
         </div>
       </div>
 
@@ -880,6 +885,23 @@
       maximumHourlyRate: 500
     };
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'locum-rates-data';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const VIEW_CONFIG = {
       experience: {
         headingDetail: 'by experience'
@@ -958,6 +980,8 @@
     const app = document.getElementById('app');
     const loadingState = document.getElementById('loadingState');
     const statusElement = document.getElementById('status');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
     const chartHeadingDetail = document.getElementById('chartHeadingDetail');
     const reaggregateButton = document.getElementById('reaggregateButton');
     const tabScrollShell = document.querySelector('.tab-scroll-shell');
@@ -986,6 +1010,29 @@
     let currentLegendSignature = '';
     let legendAnimationToken = 0;
     let currentXAxisOptions = null;
+
+    function setDataSource(source) {
+      dataSourceIndicator.classList.toggle(
+        'is-cached',
+        source === 'cached'
+      );
+
+      if (source === 'cached') {
+        dataSourceIndicator.style.display = 'inline-flex';
+        dataSourceIndicator.setAttribute('aria-label', 'Cached data');
+        dataSourceText.textContent = 'CACHED data';
+        return;
+      }
+
+      if (source === 'live') {
+        dataSourceIndicator.style.display = 'inline-flex';
+        dataSourceIndicator.setAttribute('aria-label', 'Live data');
+        dataSourceText.textContent = 'LIVE data';
+        return;
+      }
+
+      dataSourceIndicator.style.display = 'none';
+    }
 
     const yAxisModel = {
       minimum: 40,
@@ -3018,6 +3065,213 @@
         );
     }
 
+    function loadCachedSheetRows() {
+      return new Promise(
+        (resolve, reject) => {
+          const callbackName =
+            `pffLocumRatesCacheCallback_${Date.now()}_${Math.floor(
+              Math.random() * 1000000
+            )}`;
+
+          const script =
+            document.createElement('script');
+
+          let settled =
+            false;
+
+          const timeout =
+            window.setTimeout(
+              () =>
+                finish(
+                  new Error(
+                    'Could not load cached locum rate data'
+                  )
+                ),
+              CACHE_FETCH_TIMEOUT_MS
+            );
+
+          function cleanup() {
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (_) {
+              window[
+                callbackName
+              ] =
+                undefined;
+            }
+
+            script.remove();
+          }
+
+          function finish(
+            error,
+            response
+          ) {
+            if (settled) {
+              return;
+            }
+
+            settled =
+              true;
+
+            cleanup();
+
+            if (error) {
+              reject(
+                error
+              );
+
+              return;
+            }
+
+            if (
+              !response ||
+              response.ok !== true ||
+              response.appKey !==
+                CACHE_APP_KEY ||
+              !response.cachedAt ||
+              Number.isNaN(
+                Date.parse(
+                  response.cachedAt
+                )
+              ) ||
+              !Array.isArray(
+                response?.data?.rows
+              ) ||
+              !response.data.rows.length
+            ) {
+              reject(
+                new Error(
+                  'Cached locum rate data are unavailable'
+                )
+              );
+
+              return;
+            }
+
+            const cachedRows =
+              response.data.rows
+                .map(
+                  row => {
+                    if (
+                      !Array.isArray(row) ||
+                      row.length < 6
+                    ) {
+                      return null;
+                    }
+
+                    const cells =
+                      Array.from(
+                        {
+                          length:
+                            10
+                        },
+                        () => ({
+                          v:
+                            null
+                        })
+                      );
+
+                    cells[0] = {
+                      v:
+                        row[0]
+                    };
+
+                    cells[1] = {
+                      v:
+                        row[1]
+                    };
+
+                    cells[2] = {
+                      v:
+                        row[2]
+                    };
+
+                    cells[4] = {
+                      v:
+                        row[3]
+                    };
+
+                    cells[8] = {
+                      v:
+                        row[4]
+                    };
+
+                    cells[9] = {
+                      v:
+                        row[5]
+                    };
+
+                    return {
+                      c:
+                        cells
+                    };
+                  }
+                )
+                .filter(Boolean);
+
+            if (!cachedRows.length) {
+              reject(
+                new Error(
+                  'Cached locum rate data contain no rows'
+                )
+              );
+
+              return;
+            }
+
+            resolve(
+              cachedRows
+            );
+          }
+
+          window[
+            callbackName
+          ] =
+            response =>
+              finish(
+                null,
+                response
+              );
+
+          script.onerror =
+            () =>
+              finish(
+                new Error(
+                  'Network error loading cached locum rate data'
+                )
+              );
+
+          const params =
+            new URLSearchParams({
+              appKey:
+                CACHE_APP_KEY,
+
+              callback:
+                callbackName,
+
+              _:
+                String(
+                  Date.now()
+                )
+            });
+
+          script.src =
+            `${CACHE_WEB_APP_URL}?${params.toString()}`;
+
+          document.body.appendChild(
+            script
+          );
+        }
+      );
+    }
+
     function loadSheetRows() {
       return new Promise(
         (resolve, reject) => {
@@ -3189,6 +3443,100 @@
               ? row.experience
               : null
         }));
+    }
+
+
+    async function loadRowsWithFallback() {
+      let liveError =
+        null;
+
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          const liveSourceRows =
+            await loadSheetRows();
+
+          const liveRows =
+            normaliseRows(
+              liveSourceRows
+            );
+
+          if (!liveRows.length) {
+            throw new Error(
+              'No valid hourly rate rows were found in columns A to J'
+            );
+          }
+
+          setDataSource(
+            'live'
+          );
+
+          return liveRows;
+        } catch (
+          error
+        ) {
+          liveError =
+            error;
+
+          console.warn(
+            'Live Google Sheets locum rate data could not be used',
+            error
+          );
+        }
+      } else {
+        liveError =
+          new Error(
+            'Live data bypassed for cached-data test'
+          );
+      }
+
+      try {
+        const cachedSourceRows =
+          await loadCachedSheetRows();
+
+        const cachedRows =
+          normaliseRows(
+            cachedSourceRows
+          );
+
+        if (!cachedRows.length) {
+          throw new Error(
+            'No valid cached hourly rate rows were found'
+          );
+        }
+
+        setDataSource(
+          'cached'
+        );
+
+        console.warn(
+          'Using cached locum rate data',
+          liveError?.message
+        );
+
+        return cachedRows;
+      } catch (
+        cachedError
+      ) {
+        setDataSource(
+          'none'
+        );
+
+        console.error(
+          'Live Google Sheets locum rate data error',
+          liveError
+        );
+
+        console.error(
+          'Cached locum rate data error',
+          cachedError
+        );
+
+        throw new Error(
+          'Live and cached locum rate data are currently unavailable'
+        );
+      }
     }
 
     function stabiliseXAxisOptions(options) {
@@ -8058,19 +8406,8 @@
       try {
         setStatus();
 
-        const sourceRows =
-          await loadSheetRows();
-
         rows =
-          normaliseRows(
-            sourceRows
-          );
-
-        if (!rows.length) {
-          throw new Error(
-            'No valid hourly rate rows were found in columns A to J'
-          );
-        }
+          await loadRowsWithFallback();
 
         rebuildLocationData();
         createChart();
