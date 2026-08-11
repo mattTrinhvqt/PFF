@@ -23,6 +23,7 @@
       --track: #e8eaf0;
       --error: #b42318;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --state-nsw: #2db7f5;
       --state-qld: #7a0036;
@@ -335,6 +336,14 @@
       flex: 0 0 6px;
       border-radius: 50%;
       background: var(--live-red);
+    }
+
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
+    .live-data.is-unavailable .live-data-dot {
+      background: var(--muted);
     }
 
     #status {
@@ -770,9 +779,13 @@
           >›</span>
         </div>
 
-        <div class="live-data" aria-label="Live data">
+        <div
+          id="data-source-indicator"
+          class="live-data"
+          aria-label="Live data"
+        >
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span>LIVE data</span>
+          <span id="data-source-text">LIVE data</span>
         </div>
       </div>
 
@@ -871,6 +884,25 @@
       maximumRate: 500
     };
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
+
+    const CACHE_APP_KEY =
+      'pff-casual-rates-data';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    const LOCAL_CACHE_KEY =
+      'pff-casual-rates-data-v1';
+
+    /*
+     * Set true to skip the live Google Sheets feed
+     * and test the Apps Script cache.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const VIEW_CONFIG = {
       experience: 'by experience',
       rurality: 'by rurality',
@@ -953,6 +985,16 @@
     const chartNote = document.getElementById('chartNote');
     const chartShell = document.querySelector('.chart-shell');
     const chartCanvas = document.getElementById('casualChart');
+
+    const dataSourceIndicator =
+      document.getElementById(
+        'data-source-indicator'
+      );
+
+    const dataSourceText =
+      document.getElementById(
+        'data-source-text'
+      );
 
     let rows = [];
     let chart = null;
@@ -2554,7 +2596,192 @@
         pValue
       };
     }
-    function loadRows() {
+    function setDataSource(source) {
+      dataSourceIndicator.classList.toggle(
+        'is-cached',
+        source === 'cached'
+      );
+
+      dataSourceIndicator.classList.toggle(
+        'is-unavailable',
+        source === 'unavailable'
+      );
+
+      if (source === 'cached') {
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Cached data'
+        );
+
+        dataSourceText.textContent =
+          'CACHED data';
+
+        return;
+      }
+
+      if (source === 'unavailable') {
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Data unavailable'
+        );
+
+        dataSourceText.textContent =
+          'DATA unavailable';
+
+        return;
+      }
+
+      dataSourceIndicator.setAttribute(
+        'aria-label',
+        'Live data'
+      );
+
+      dataSourceText.textContent =
+        'LIVE data';
+    }
+
+    function compactSourceRows(sourceRows) {
+      return sourceRows
+        .map(sourceRow => {
+          const cells =
+            sourceRow?.c ||
+            [];
+
+          return [
+            getCellValue(cells[0]),
+            getCellValue(cells[1]),
+            getCellValue(cells[2]),
+            getCellValue(cells[4]),
+            getCellValue(cells[8]),
+            getCellValue(cells[9])
+          ].map(value =>
+            String(
+              value ??
+              ''
+            ).trim()
+          );
+        })
+        .filter(row =>
+          row.some(Boolean)
+        );
+    }
+
+    function validateCachedRows(data) {
+      const cachedRows =
+        Array.isArray(
+          data?.rows
+        )
+          ? data.rows
+          : [];
+
+      if (!cachedRows.length) {
+        throw new Error(
+          'Cached casual rate data has no rows'
+        );
+      }
+
+      const normalised =
+        cachedRows.map(
+          (
+            row,
+            rowIndex
+          ) => {
+            if (
+              !Array.isArray(row) ||
+              row.length < 6
+            ) {
+              throw new Error(
+                `Cached casual rate row ${rowIndex + 1} is malformed`
+              );
+            }
+
+            return row
+              .slice(
+                0,
+                6
+              )
+              .map(value =>
+                String(
+                  value ??
+                  ''
+                ).trim()
+              );
+          }
+        );
+
+      return {
+        rows:
+          normalised
+      };
+    }
+
+    function inflateCachedRows(data) {
+      const validated =
+        validateCachedRows(
+          data
+        );
+
+      return validated.rows.map(row => ({
+        c: [
+          { v: row[0] },
+          { v: row[1] },
+          { v: row[2] },
+          null,
+          { v: row[3] },
+          null,
+          null,
+          null,
+          { v: row[4] },
+          { v: row[5] }
+        ]
+      }));
+    }
+
+    function saveLocalCachedRows(sourceRows) {
+      try {
+        const data = {
+          rows:
+            compactSourceRows(
+              sourceRows
+            )
+        };
+
+        validateCachedRows(
+          data
+        );
+
+        localStorage.setItem(
+          LOCAL_CACHE_KEY,
+          JSON.stringify(
+            data
+          )
+        );
+      } catch (error) {
+      }
+    }
+
+    function loadLocalCachedRows() {
+      try {
+        const raw =
+          localStorage.getItem(
+            LOCAL_CACHE_KEY
+          );
+
+        if (!raw) {
+          return null;
+        }
+
+        return inflateCachedRows(
+          JSON.parse(
+            raw
+          )
+        );
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function loadLiveRows() {
       return new Promise((resolve, reject) => {
         const callback = `pffCasual_${Date.now()}_${Math.floor(
           Math.random() * 100000
@@ -2618,6 +2845,137 @@
           params.toString();
 
         document.body.appendChild(script);
+      });
+    }
+
+    function loadCachedRows() {
+      return new Promise((resolve, reject) => {
+        const callback =
+          `pffCasualCache_${Date.now()}_${Math.floor(
+            Math.random() * 100000
+          )}`;
+
+        const script =
+          document.createElement(
+            'script'
+          );
+
+        let finished =
+          false;
+
+        const timeout =
+          setTimeout(
+            () => {
+              done(
+                new Error(
+                  'Could not load cached casual rate data'
+                )
+              );
+            },
+            CACHE_FETCH_TIMEOUT_MS
+          );
+
+        function cleanup() {
+          clearTimeout(
+            timeout
+          );
+
+          try {
+            delete window[
+              callback
+            ];
+          } catch (_) {
+            window[
+              callback
+            ] = undefined;
+          }
+
+          script.remove();
+        }
+
+        function done(
+          error,
+          snapshot
+        ) {
+          if (finished) {
+            return;
+          }
+
+          finished =
+            true;
+
+          cleanup();
+
+          if (error) {
+            reject(
+              error
+            );
+
+            return;
+          }
+
+          if (
+            !snapshot ||
+            snapshot.ok !== true ||
+            snapshot.appKey !== CACHE_APP_KEY
+          ) {
+            reject(
+              new Error(
+                snapshot?.error ||
+                'Cached casual rate data is unavailable'
+              )
+            );
+
+            return;
+          }
+
+          try {
+            resolve(
+              inflateCachedRows(
+                snapshot.data
+              )
+            );
+          } catch (validationError) {
+            reject(
+              validationError
+            );
+          }
+        }
+
+        window[callback] =
+          snapshot =>
+            done(
+              null,
+              snapshot
+            );
+
+        script.onerror =
+          () =>
+            done(
+              new Error(
+                'Network error loading cached casual rate data'
+              )
+            );
+
+        const params =
+          new URLSearchParams({
+            appKey:
+              CACHE_APP_KEY,
+
+            callback,
+
+            _:
+              String(
+                Date.now()
+              )
+          });
+
+        script.src =
+          `${CACHE_WEB_APP_URL}?${params.toString()}`;
+
+        document.body.appendChild(
+          script
+        );
       });
     }
 
@@ -5367,12 +5725,91 @@
     }
 
     async function start() {
+      statusElement.textContent = '';
+
+      let sourceRows =
+        null;
+
+      let liveError =
+        null;
+
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          sourceRows =
+            await loadLiveRows();
+
+          saveLocalCachedRows(
+            sourceRows
+          );
+
+          setDataSource(
+            'live'
+          );
+        } catch (error) {
+          liveError =
+            error;
+        }
+      }
+
+      if (!sourceRows) {
+        try {
+          sourceRows =
+            await loadCachedRows();
+
+          saveLocalCachedRows(
+            sourceRows
+          );
+
+          setDataSource(
+            'cached'
+          );
+        } catch (cacheError) {
+          console.error(
+            'Live casual rate data load failed',
+            liveError
+          );
+
+          console.error(
+            'Cached casual rate data load failed',
+            cacheError
+          );
+        }
+      }
+
+      if (!sourceRows) {
+        sourceRows =
+          loadLocalCachedRows();
+
+        if (sourceRows) {
+          setDataSource(
+            'cached'
+          );
+        }
+      }
+
       try {
-        statusElement.textContent = '';
-        const sourceRows = await loadRows();
+        if (!sourceRows) {
+          setDataSource(
+            'unavailable'
+          );
+
+          throw (
+            liveError ||
+            new Error(
+              'Unable to load casual rate data'
+            )
+          );
+        }
+
         rows = normaliseRows(sourceRows);
 
         if (!rows.length) {
+          setDataSource(
+            'unavailable'
+          );
+
           throw new Error(
             'No valid hourly rate rows were found in columns A to J'
           );
