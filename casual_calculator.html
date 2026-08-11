@@ -365,6 +365,7 @@
       --track: #e8eaf0;
       --error-red: #b42318;
       --benchmark-red: #b42318;
+      --cached-amber: #c27c00;
       --stage-height: 560px;
       --layout-duration: 920ms;
       --layout-ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -544,13 +545,21 @@
       white-space: nowrap;
     }
 
-    #modelMeta.is-live::before {
+    #modelMeta.is-live::before,
+    #modelMeta.is-cached::before {
       content: "";
       width: 6px;
       height: 6px;
       flex: 0 0 6px;
       border-radius: 50%;
+    }
+
+    #modelMeta.is-live::before {
       background: #e53935;
+    }
+
+    #modelMeta.is-cached::before {
+      background: var(--cached-amber);
     }
 
     .calculator-form {
@@ -1748,6 +1757,30 @@
     const SPREADSHEET_ID = '1UZizMV2CNlyNbKytN4QCSc4HcsKCx-PxOrboJyMCN1E';
     const SHEET_NAME = 'Data';
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
+
+    /*
+     * Reuses the existing Casual Rates Data server cache.
+     * That cache stores A, B, C, E, I and J; this calculator
+     * uses A, B, C, E and I.
+     */
+    const CACHE_APP_KEY =
+      'pff-casual-rates-data';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    const LOCAL_CACHE_KEY =
+      'pff-casual-estimator-model-data-v1';
+
+    /*
+     * Set true temporarily to skip the live Google Sheets feed
+     * and test the Apps Script/browser cache fallback.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const MMM_TREAT_AS_CATEGORICAL = false;
     const STATE_LEVELS = ['NSW', 'QLD', 'ACT', 'VIC', 'SA', 'NT', 'WA', 'TAS'];
 
@@ -2498,48 +2531,462 @@
       });
     }
 
-    function loadModel() {
+    function normaliseRowsFromServerCache(data) {
+      const cachedRows =
+        Array.isArray(
+          data?.rows
+        )
+          ? data.rows
+          : [];
+
+      if (!cachedRows.length) {
+        throw new Error(
+          'Cached model data has no rows'
+        );
+      }
+
+      return cachedRows.map(
+        (
+          row,
+          rowIndex
+        ) => {
+          if (
+            !Array.isArray(row) ||
+            row.length < 5
+          ) {
+            throw new Error(
+              `Cached model row ${rowIndex + 1} is malformed`
+            );
+          }
+
+          return {
+            timestampMs:
+              toDateMs(
+                row[0]
+              ),
+
+            rate:
+              toNum(
+                row[1]
+              ),
+
+            yearsRaw:
+              toNum(
+                row[2]
+              ),
+
+            mmm:
+              toInt(
+                row[3]
+              ),
+
+            state:
+              String(
+                row[4] ??
+                ''
+              )
+                .trim()
+                .toUpperCase()
+          };
+        }
+      );
+    }
+
+    function validateLocalModelRows(rawRows) {
+      if (
+        !Array.isArray(rawRows) ||
+        !rawRows.length
+      ) {
+        throw new Error(
+          'Local model cache has no rows'
+        );
+      }
+
+      return rawRows.map(
+        (
+          row,
+          rowIndex
+        ) => {
+          if (
+            !row ||
+            typeof row !== 'object'
+          ) {
+            throw new Error(
+              `Local model cache row ${rowIndex + 1} is malformed`
+            );
+          }
+
+          return {
+            timestampMs:
+              toNum(
+                row.timestampMs
+              ),
+
+            rate:
+              toNum(
+                row.rate
+              ),
+
+            yearsRaw:
+              toNum(
+                row.yearsRaw
+              ),
+
+            mmm:
+              toInt(
+                row.mmm
+              ),
+
+            state:
+              String(
+                row.state ??
+                ''
+              )
+                .trim()
+                .toUpperCase()
+          };
+        }
+      );
+    }
+
+    function saveLocalModelRows(rawRows) {
+      try {
+        const normalised =
+          validateLocalModelRows(
+            rawRows
+          );
+
+        localStorage.setItem(
+          LOCAL_CACHE_KEY,
+          JSON.stringify(
+            normalised
+          )
+        );
+      } catch (error) {
+      }
+    }
+
+    function loadLocalModelRows() {
+      try {
+        const raw =
+          localStorage.getItem(
+            LOCAL_CACHE_KEY
+          );
+
+        if (!raw) {
+          return null;
+        }
+
+        return validateLocalModelRows(
+          JSON.parse(
+            raw
+          )
+        );
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function loadServerCachedModelRows() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `casualEstimatorCacheCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+        const script =
+          document.createElement(
+            'script'
+          );
+
+        let finished =
+          false;
+
+        const timeout =
+          window.setTimeout(
+            () => {
+              done(
+                new Error(
+                  'Could not load cached model data'
+                )
+              );
+            },
+            CACHE_FETCH_TIMEOUT_MS
+          );
+
+        function cleanup() {
+          window.clearTimeout(
+            timeout
+          );
+
+          try {
+            delete window[
+              callbackName
+            ];
+          } catch (error) {
+            window[
+              callbackName
+            ] = undefined;
+          }
+
+          if (
+            script.parentNode
+          ) {
+            script.parentNode.removeChild(
+              script
+            );
+          }
+        }
+
+        function done(
+          error,
+          snapshot
+        ) {
+          if (finished) {
+            return;
+          }
+
+          finished =
+            true;
+
+          cleanup();
+
+          if (error) {
+            reject(
+              error
+            );
+
+            return;
+          }
+
+          if (
+            !snapshot ||
+            snapshot.ok !== true ||
+            snapshot.appKey !== CACHE_APP_KEY
+          ) {
+            reject(
+              new Error(
+                snapshot?.error ||
+                'Cached model data is unavailable'
+              )
+            );
+
+            return;
+          }
+
+          try {
+            resolve(
+              normaliseRowsFromServerCache(
+                snapshot.data
+              )
+            );
+          } catch (validationError) {
+            reject(
+              validationError
+            );
+          }
+        }
+
+        window[callbackName] =
+          snapshot =>
+            done(
+              null,
+              snapshot
+            );
+
+        script.onerror =
+          () =>
+            done(
+              new Error(
+                'Network error loading cached model data'
+              )
+            );
+
+        const params =
+          new URLSearchParams({
+            appKey:
+              CACHE_APP_KEY,
+
+            callback:
+              callbackName,
+
+            _:
+              String(
+                Date.now()
+              )
+          });
+
+        script.src =
+          `${CACHE_WEB_APP_URL}?${params.toString()}`;
+
+        document.body.appendChild(
+          script
+        );
+      });
+    }
+
+    function setModelSourceStatus(
+      modelMeta,
+      source
+    ) {
+      modelMeta.classList.toggle(
+        'is-live',
+        source === 'live'
+      );
+
+      modelMeta.classList.toggle(
+        'is-cached',
+        source === 'cached'
+      );
+
+      modelMeta.textContent =
+        source === 'cached'
+          ? 'CACHED MLR (OLS) model loaded'
+          : 'LIVE MLR (OLS) model loaded';
+    }
+
+    async function loadModel() {
       const modelMeta =
         document.getElementById('modelMeta');
 
       modelMeta.classList.remove(
-        'is-live'
+        'is-live',
+        'is-cached'
       );
 
       modelMeta.textContent =
         'Loading model...';
 
-      loadGvizData()
-        .then(response => {
+      let liveError =
+        null;
+
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          const response =
+            await loadGvizData();
+
           const rawRows =
-            normaliseRowsFromGviz(response);
+            normaliseRowsFromGviz(
+              response
+            );
+
+          const liveModel =
+            buildModel(
+              rawRows
+            );
 
           cachedModel =
-            buildModel(rawRows);
+            liveModel;
 
-          modelMeta.textContent =
-            'LIVE MLR (OLS) model loaded';
+          saveLocalModelRows(
+            rawRows
+          );
 
-          modelMeta.classList.add(
-            'is-live'
+          setModelSourceStatus(
+            modelMeta,
+            'live'
           );
 
           scheduleApplyScale();
-        })
-        .catch(err => {
-          cachedModel = null;
 
-          modelMeta.classList.remove(
-            'is-live'
+          return;
+        } catch (error) {
+          liveError =
+            error;
+        }
+      }
+
+      let serverCacheError =
+        null;
+
+      try {
+        const rawRows =
+          await loadServerCachedModelRows();
+
+        const cachedServerModel =
+          buildModel(
+            rawRows
           );
 
-          modelMeta.innerHTML =
-            '<span class="warn">Model error: ' +
-            cleanErrorMessage(err?.message) +
-            '</span>';
+        cachedModel =
+          cachedServerModel;
+
+        saveLocalModelRows(
+          rawRows
+        );
+
+        setModelSourceStatus(
+          modelMeta,
+          'cached'
+        );
+
+        scheduleApplyScale();
+
+        return;
+      } catch (error) {
+        serverCacheError =
+          error;
+      }
+
+      const localRows =
+        loadLocalModelRows();
+
+      if (localRows) {
+        try {
+          cachedModel =
+            buildModel(
+              localRows
+            );
+
+          setModelSourceStatus(
+            modelMeta,
+            'cached'
+          );
 
           scheduleApplyScale();
-        });
+
+          return;
+        } catch (error) {
+          console.error(
+            'Local model cache failed',
+            error
+          );
+        }
+      }
+
+      cachedModel =
+        null;
+
+      modelMeta.classList.remove(
+        'is-live',
+        'is-cached'
+      );
+
+      const finalError =
+        liveError ||
+        serverCacheError ||
+        new Error(
+          'Could not load model data'
+        );
+
+      console.error(
+        'Live model load failed',
+        liveError
+      );
+
+      console.error(
+        'Server model cache load failed',
+        serverCacheError
+      );
+
+      modelMeta.innerHTML =
+        '<span class="warn">Model error: ' +
+        cleanErrorMessage(
+          finalError?.message
+        ) +
+        '</span>';
+
+      scheduleApplyScale();
     }
 
     function normaliseRateInputText_(rawValue) {
