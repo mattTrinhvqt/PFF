@@ -23,6 +23,7 @@
       --track: #e8eaf0;
       --error: #b42318;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -317,6 +318,10 @@
       flex: 0 0 6px;
       border-radius: 50%;
       background: var(--live-red);
+    }
+
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
     }
 
     #status {
@@ -704,9 +709,9 @@
           <span class="tab-scroll-arrow tab-scroll-arrow-right" aria-hidden="true">›</span>
         </div>
 
-        <div class="live-data" aria-label="Live data">
+        <div id="dataSourceIndicator" class="live-data" aria-label="Live data">
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span>LIVE data</span>
+          <span id="dataSourceText">LIVE data</span>
         </div>
       </div>
 
@@ -797,6 +802,23 @@
       minimumSalary: 30000,
       maximumSalary: 500000
     };
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'permanent-salary-data';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      true;
 
     const VIEW_CONFIG = {
       experience: 'by experience',
@@ -1011,6 +1033,8 @@
     const app = document.getElementById('app');
     const loadingState = document.getElementById('loadingState');
     const statusElement = document.getElementById('status');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
     const chartHeadingDetail = document.getElementById('chartHeadingDetail');
     const reaggregateButton = document.getElementById('reaggregateButton');
     const tabScrollShell = document.querySelector('.tab-scroll-shell');
@@ -1854,6 +1878,237 @@
         );
     }
 
+    function setDataSource(source) {
+      if (!dataSourceIndicator || !dataSourceText) {
+        return;
+      }
+
+      dataSourceIndicator.classList.toggle(
+        'is-cached',
+        source === 'cached'
+      );
+
+      if (source === 'cached') {
+        dataSourceIndicator.style.display = 'inline-flex';
+        dataSourceIndicator.setAttribute('aria-label', 'Cached data');
+        dataSourceText.textContent = 'CACHED data';
+        return;
+      }
+
+      if (source === 'live') {
+        dataSourceIndicator.style.display = 'inline-flex';
+        dataSourceIndicator.setAttribute('aria-label', 'Live data');
+        dataSourceText.textContent = 'LIVE data';
+        return;
+      }
+
+      dataSourceIndicator.style.display = 'none';
+    }
+
+    function loadCachedSheetRows() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `pffPermanentSalaryCacheCallback_${Date.now()}_${Math.floor(
+            Math.random() * 1000000
+          )}`;
+
+        const script =
+          document.createElement('script');
+
+        let settled =
+          false;
+
+        const timeout =
+          window.setTimeout(
+            () =>
+              finish(
+                new Error(
+                  'Could not load cached permanent salary data'
+                )
+              ),
+            CACHE_FETCH_TIMEOUT_MS
+          );
+
+        function cleanup() {
+          window.clearTimeout(
+            timeout
+          );
+
+          try {
+            delete window[
+              callbackName
+            ];
+          } catch (_) {
+            window[
+              callbackName
+            ] =
+              undefined;
+          }
+
+          script.remove();
+        }
+
+        function finish(
+          error,
+          response
+        ) {
+          if (settled) {
+            return;
+          }
+
+          settled =
+            true;
+
+          cleanup();
+
+          if (error) {
+            reject(
+              error
+            );
+
+            return;
+          }
+
+          if (
+            !response ||
+            response.ok !== true ||
+            response.appKey !==
+              CACHE_APP_KEY ||
+            !response.cachedAt ||
+            Number.isNaN(
+              Date.parse(
+                response.cachedAt
+              )
+            ) ||
+            !Array.isArray(
+              response?.data?.rows
+            ) ||
+            !response.data.rows.length
+          ) {
+            reject(
+              new Error(
+                'Cached permanent salary data are unavailable'
+              )
+            );
+
+            return;
+          }
+
+          const cachedRows =
+            response.data.rows.map(
+              row => {
+                if (
+                  !Array.isArray(row) ||
+                  row.length < 6
+                ) {
+                  return null;
+                }
+
+                const cells =
+                  Array.from(
+                    {
+                      length:
+                        23
+                    },
+                    () => ({
+                      v:
+                        null
+                    })
+                  );
+
+                cells[0] = {
+                  v:
+                    row[0]
+                };
+
+                cells[2] = {
+                  v:
+                    row[1]
+                };
+
+                cells[4] = {
+                  v:
+                    row[2]
+                };
+
+                cells[8] = {
+                  v:
+                    row[3]
+                };
+
+                cells[9] = {
+                  v:
+                    row[4]
+                };
+
+                cells[22] = {
+                  v:
+                    row[5]
+                };
+
+                return {
+                  c:
+                    cells
+                };
+              }
+            )
+              .filter(Boolean);
+
+          if (!cachedRows.length) {
+            reject(
+              new Error(
+                'Cached permanent salary data contain no rows'
+              )
+            );
+
+            return;
+          }
+
+          resolve(
+            cachedRows
+          );
+        }
+
+        window[
+          callbackName
+        ] =
+          response =>
+            finish(
+              null,
+              response
+            );
+
+        script.onerror =
+          () =>
+            finish(
+              new Error(
+                'Network error loading cached permanent salary data'
+              )
+            );
+
+        const params =
+          new URLSearchParams({
+            appKey:
+              CACHE_APP_KEY,
+
+            callback:
+              callbackName,
+
+            _:
+              String(
+                Date.now()
+              )
+          });
+
+        script.src =
+          `${CACHE_WEB_APP_URL}?${params.toString()}`;
+
+        document.body.appendChild(
+          script
+        );
+      });
+    }
+
     function loadSheetRows() {
       return new Promise((resolve, reject) => {
         const callbackName =
@@ -1994,6 +2249,99 @@
               ? row.experience
               : null
         }));
+    }
+
+    async function loadRowsWithFallback() {
+      let liveError =
+        null;
+
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          const liveSourceRows =
+            await loadSheetRows();
+
+          const liveRows =
+            normaliseRows(
+              liveSourceRows
+            );
+
+          if (!liveRows.length) {
+            throw new Error(
+              'No valid FTE salary rows were found in columns A to W'
+            );
+          }
+
+          setDataSource(
+            'live'
+          );
+
+          return liveRows;
+        } catch (
+          error
+        ) {
+          liveError =
+            error;
+
+          console.warn(
+            'Live Google Sheets permanent salary data could not be used',
+            error
+          );
+        }
+      } else {
+        liveError =
+          new Error(
+            'Live data bypassed for cached-data test'
+          );
+      }
+
+      try {
+        const cachedSourceRows =
+          await loadCachedSheetRows();
+
+        const cachedRows =
+          normaliseRows(
+            cachedSourceRows
+          );
+
+        if (!cachedRows.length) {
+          throw new Error(
+            'No valid cached FTE salary rows were found'
+          );
+        }
+
+        setDataSource(
+          'cached'
+        );
+
+        console.warn(
+          'Using cached permanent salary data',
+          liveError?.message
+        );
+
+        return cachedRows;
+      } catch (
+        cachedError
+      ) {
+        setDataSource(
+          'none'
+        );
+
+        console.error(
+          'Live Google Sheets permanent salary data error',
+          liveError
+        );
+
+        console.error(
+          'Cached permanent salary data error',
+          cachedError
+        );
+
+        throw new Error(
+          'Live and cached permanent salary data are currently unavailable'
+        );
+      }
     }
 
     function fixedXAxis(options) {
@@ -7345,19 +7693,8 @@
       try {
         setStatus();
 
-        const sourceRows =
-          await loadSheetRows();
-
         rows =
-          normaliseRows(
-            sourceRows
-          );
-
-        if (!rows.length) {
-          throw new Error(
-            'No valid FTE salary rows were found in columns A to W'
-          );
-        }
+          await loadRowsWithFallback();
 
         rebuildBubbleStore('state');
         rebuildBubbleStore('employer');
