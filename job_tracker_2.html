@@ -42,7 +42,6 @@
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
       --red-cone: rgba(255, 92, 48, 0.76);
-      --cached-amber: #c27c00;
 
       --first-column-width: 58px;
     }
@@ -226,14 +225,6 @@
       height: 6px;
       border-radius: 50%;
       background: #e53935;
-    }
-
-    .live-data-inline.is-cached .live-data-dot {
-      background: var(--cached-amber);
-    }
-
-    .live-data-inline.is-unavailable .live-data-dot {
-      background: var(--muted);
     }
 
     .table-status {
@@ -1136,13 +1127,9 @@
     >
       <div class="topbar">
         <div class="status-group">
-          <div
-            id="data-source-indicator"
-            class="live-data-inline"
-            aria-live="polite"
-          >
+          <div class="live-data-inline" aria-live="polite">
             <span class="live-data-dot" aria-hidden="true"></span>
-            <span id="data-source-text">LIVE data</span>
+            <span>LIVE data</span>
 
             <span>
               (last updated <span id="last-updated">—</span>)
@@ -1475,18 +1462,6 @@
       refreshLastUpdated: 60000
     };
 
-    const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
-
-    const CACHE_APP_KEY =
-      'pff-optometry-related-job-tracker';
-
-    const CACHE_FETCH_TIMEOUT_MS =
-      10000;
-
-    const FORCE_CACHED_DATA =
-      true;
-
     const OPTIONS = {
       rurality: [
         'metro',
@@ -1563,16 +1538,6 @@
     const lastUpdated =
       document.getElementById('last-updated');
 
-    const dataSourceIndicator =
-      document.getElementById(
-        'data-source-indicator'
-      );
-
-    const dataSourceText =
-      document.getElementById(
-        'data-source-text'
-      );
-
     const popover =
       document.getElementById('full-text-popover');
 
@@ -1641,12 +1606,6 @@
     };
 
     let columnResizeTimer =
-      null;
-
-    let currentDataSource =
-      'live';
-
-    let cachedTrackerData =
       null;
 
     const $ =
@@ -2623,353 +2582,6 @@
         rows:
           modelRows
       };
-    }
-
-    function setDataSource(
-      source
-    ) {
-      currentDataSource =
-        source;
-
-      dataSourceIndicator.classList.toggle(
-        'is-cached',
-        source === 'cached'
-      );
-
-      dataSourceIndicator.classList.toggle(
-        'is-unavailable',
-        source === 'unavailable'
-      );
-
-      if (
-        source === 'cached'
-      ) {
-        dataSourceText.textContent =
-          'CACHED data';
-
-        dataSourceIndicator.setAttribute(
-          'aria-label',
-          'Cached data'
-        );
-
-        return;
-      }
-
-      if (
-        source === 'unavailable'
-      ) {
-        dataSourceText.textContent =
-          'DATA unavailable';
-
-        dataSourceIndicator.setAttribute(
-          'aria-label',
-          'Data unavailable'
-        );
-
-        return;
-      }
-
-      dataSourceText.textContent =
-        'LIVE data';
-
-      dataSourceIndicator.setAttribute(
-        'aria-label',
-        'Live data'
-      );
-    }
-
-    function normaliseCachedCellPair(
-      pair
-    ) {
-      if (
-        !Array.isArray(pair) ||
-        pair.length < 2
-      ) {
-        throw new Error(
-          'Cached job tracker data is malformed.'
-        );
-      }
-
-      return [
-        pair[0] === null ||
-        pair[0] === undefined
-          ? ''
-          : pair[0],
-
-        String(
-          pair[1] ??
-          ''
-        )
-      ];
-    }
-
-    function validateCachedTrackerData(
-      data
-    ) {
-      const headerLabels =
-        Array.isArray(
-          data?.headerLabels
-        )
-          ? data.headerLabels
-          : [];
-
-      const rows =
-        Array.isArray(
-          data?.rows
-        )
-          ? data.rows
-          : [];
-
-      if (
-        headerLabels.length <
-          CONFIG.lastColumn ||
-        !rows.length
-      ) {
-        throw new Error(
-          'Cached job tracker data is incomplete.'
-        );
-      }
-
-      return {
-        headerLabels:
-          headerLabels
-            .slice(
-              0,
-              CONFIG.lastColumn
-            )
-            .map(
-              value =>
-                String(
-                  value ??
-                  ''
-                )
-            ),
-
-        rows:
-          rows.map(
-            (
-              row,
-              rowIndex
-            ) => {
-              if (
-                !Array.isArray(row) ||
-                row.length <
-                  CONFIG.lastColumn
-              ) {
-                throw new Error(
-                  `Cached job tracker row ${rowIndex + 1} is malformed.`
-                );
-              }
-
-              return row
-                .slice(
-                  0,
-                  CONFIG.lastColumn
-                )
-                .map(
-                  normaliseCachedCellPair
-                );
-            }
-          )
-      };
-    }
-
-    function buildCachedGvizResponse(
-      data
-    ) {
-      const validated =
-        validateCachedTrackerData(
-          data
-        );
-
-      return {
-        status:
-          'ok',
-
-        table: {
-          cols:
-            validated.headerLabels.map(
-              label => ({
-                label
-              })
-            ),
-
-          rows:
-            validated.rows.map(
-              row => ({
-                c:
-                  row.map(
-                    pair => {
-                      const cell = {
-                        v:
-                          pair[0]
-                      };
-
-                      if (
-                        pair[1] !== ''
-                      ) {
-                        cell.f =
-                          pair[1];
-                      }
-
-                      return cell;
-                    }
-                  )
-              })
-            )
-        }
-      };
-    }
-
-    function loadCachedTrackerSnapshot() {
-      return new Promise(
-        (
-          resolve,
-          reject
-        ) => {
-          const callback =
-            `pffTrackerCache_${
-              Date.now()
-            }_${
-              Math.floor(
-                Math.random() *
-                100000
-              )
-            }`;
-
-          const script =
-            document.createElement(
-              'script'
-            );
-
-          let finished =
-            false;
-
-          const timer =
-            setTimeout(
-              () =>
-                finish(
-                  new Error(
-                    'The cached job tracker data timed out.'
-                  )
-                ),
-
-              CACHE_FETCH_TIMEOUT_MS
-            );
-
-          function cleanup() {
-            clearTimeout(
-              timer
-            );
-
-            try {
-              delete window[
-                callback
-              ];
-            } catch {
-              window[
-                callback
-              ] = undefined;
-            }
-
-            script.remove();
-          }
-
-          function finish(
-            error,
-            snapshot
-          ) {
-            if (finished) {
-              return;
-            }
-
-            finished =
-              true;
-
-            cleanup();
-
-            error
-              ? reject(
-                  error
-                )
-              : resolve(
-                  snapshot
-                );
-          }
-
-          window[callback] =
-            snapshot => {
-              if (
-                !snapshot ||
-                snapshot.ok !== true ||
-                snapshot.appKey !==
-                  CACHE_APP_KEY
-              ) {
-                finish(
-                  new Error(
-                    snapshot?.error ||
-                    'Cached job tracker data is unavailable.'
-                  )
-                );
-
-                return;
-              }
-
-              try {
-                snapshot.data =
-                  validateCachedTrackerData(
-                    snapshot.data
-                  );
-              } catch (
-                error
-              ) {
-                finish(
-                  error
-                );
-
-                return;
-              }
-
-              finish(
-                null,
-                snapshot
-              );
-            };
-
-          script.onerror =
-            () =>
-              finish(
-                new Error(
-                  'The cached job tracker data could not be loaded.'
-                )
-              );
-
-          const params =
-            new URLSearchParams({
-              appKey:
-                CACHE_APP_KEY,
-
-              callback,
-
-              _:
-                String(
-                  Date.now()
-                )
-            });
-
-          script.src =
-            `${
-              CACHE_WEB_APP_URL
-            }?${
-              params
-            }`;
-
-          document.body
-            .appendChild(
-              script
-            );
-        }
-      );
     }
 
     function loadGviz(
@@ -4586,93 +4198,11 @@
       commitFilters();
     }
 
-    function getLatestDateFromResponse(
-      response
-    ) {
-      const today =
-        sydneyToday();
-
-      const dates = [
-        ...new Map(
-          (
-            response
-              ?.table
-              ?.rows ||
-            []
-          )
-            .map(
-              row =>
-                dateFromCell(
-                  row
-                    ?.c
-                    ?.[
-                      CONFIG
-                        .columns
-                        .date -
-                      1
-                    ]
-                )
-            )
-            .filter(
-              date =>
-                date &&
-                date <= today
-            )
-            .map(
-              date => [
-                date
-                  .toISOString()
-                  .slice(
-                    0,
-                    10
-                  ),
-
-                date
-              ]
-            )
-        ).values()
-      ].sort(
-        (
-          a,
-          b
-        ) =>
-          b - a
-      );
-
-      return dates.length
-        ? dates[0]
-        : null;
-    }
-
-    function setLastUpdatedFromCachedData() {
-      if (
-        !cachedTrackerData
-      ) {
-        lastUpdated.textContent =
-          '—';
-
-        return;
-      }
-
-      lastUpdated.textContent =
-        formatDate(
-          getLatestDateFromResponse(
-            buildCachedGvizResponse(
-              cachedTrackerData
-            )
-          )
-        );
-    }
-
     function showError(
       error
     ) {
       console.error(
         error
-      );
-
-      setDataSource(
-        'unavailable'
       );
 
       app.classList.remove(
@@ -4701,120 +4231,57 @@
       const maxAttempts =
         2;
 
-      let liveError =
-        null;
-
-      if (
-        !FORCE_CACHED_DATA
+      for (
+        let attempt = 1;
+        attempt <= maxAttempts;
+        attempt++
       ) {
-        for (
-          let attempt = 1;
-          attempt <= maxAttempts;
-          attempt++
-        ) {
-          try {
-            const response =
-              await loadGviz(
-                `A${CONFIG.headerRow}:N`,
-                1
-              );
-
-            render(
-              buildModel(
-                response
-              )
+        try {
+          const response =
+            await loadGviz(
+              `A${CONFIG.headerRow}:N`,
+              1
             );
 
-            setDataSource(
-              'live'
-            );
+          render(
+            buildModel(
+              response
+            )
+          );
 
-            app.classList.remove(
-              'is-loading'
-            );
+          app.classList.remove(
+            'is-loading'
+          );
 
-            window.requestAnimationFrame(
-              updateControlsScrollHints
+          window.requestAnimationFrame(
+            updateControlsScrollHints
+          );
+
+          return;
+
+        } catch (error) {
+          if (
+            attempt ===
+            maxAttempts
+          ) {
+            showError(
+              error
             );
 
             return;
-
-          } catch (error) {
-            liveError =
-              error;
-
-            if (
-              attempt <
-              maxAttempts
-            ) {
-              await new Promise(
-                resolve =>
-                  setTimeout(
-                    resolve,
-                    1500
-                  )
-              );
-            }
           }
+
+          await new Promise(
+            resolve =>
+              setTimeout(
+                resolve,
+                1500
+              )
+          );
         }
       }
-
-      try {
-        const snapshot =
-          await loadCachedTrackerSnapshot();
-
-        cachedTrackerData =
-          snapshot.data;
-
-        render(
-          buildModel(
-            buildCachedGvizResponse(
-              cachedTrackerData
-            )
-          )
-        );
-
-        setDataSource(
-          'cached'
-        );
-
-        setLastUpdatedFromCachedData();
-
-        app.classList.remove(
-          'is-loading'
-        );
-
-        window.requestAnimationFrame(
-          updateControlsScrollHints
-        );
-      } catch (
-        cacheError
-      ) {
-        console.error(
-          'Live job tracker load failed',
-          liveError
-        );
-
-        console.error(
-          'Cached job tracker load failed',
-          cacheError
-        );
-
-        showError(
-          cacheError
-        );
-      }
     }
-
     async function loadLastUpdated() {
-      if (
-        currentDataSource ===
-          'cached'
-      ) {
-        setLastUpdatedFromCachedData();
-        return;
-      }
-
       try {
         const response =
           await loadGviz(
@@ -4822,14 +4289,6 @@
             0,
             10000
           );
-
-        if (
-          currentDataSource ===
-            'cached'
-        ) {
-          setLastUpdatedFromCachedData();
-          return;
-        }
 
         const today =
           sydneyToday();
@@ -4883,14 +4342,6 @@
               : null
           );
       } catch {
-        if (
-          currentDataSource ===
-            'cached'
-        ) {
-          setLastUpdatedFromCachedData();
-          return;
-        }
-
         lastUpdated.textContent =
           '—';
       }
