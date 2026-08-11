@@ -23,6 +23,7 @@
       --track: #e8eaf0;
       --error: #b42318;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --meal: #f28e2b;
       --tea: #2ca58d;
@@ -331,6 +332,10 @@
       flex: 0 0 6px;
       border-radius: 50%;
       background: var(--live-red);
+    }
+
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
     }
 
     #status {
@@ -832,9 +837,13 @@
           <span class="tab-scroll-arrow tab-scroll-arrow-right" aria-hidden="true">›</span>
         </div>
 
-        <div class="live-data" aria-label="Live data">
+        <div
+          id="dataSourceIndicator"
+          class="live-data"
+          aria-label="Live data"
+        >
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span>LIVE data</span>
+          <span id="dataSourceText">LIVE data</span>
         </div>
       </div>
 
@@ -957,6 +966,23 @@
       }
     };
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'pff-work-loss';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const VIEW_CONFIG = {
       cost: {
         tabLabel: '$ loss',
@@ -1026,6 +1052,8 @@
     const app = document.getElementById('app');
     const loadingState = document.getElementById('loadingState');
     const statusElement = document.getElementById('status');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
     const headingViewport = document.getElementById('headingViewport');
     const headingScrollLeft = document.getElementById('headingScrollLeft');
     const headingScrollRight = document.getElementById('headingScrollRight');
@@ -1616,6 +1644,39 @@
       );
     }
 
+    function setDataSource(source) {
+      const isCached = source === 'cached';
+
+      dataSourceIndicator.classList.toggle(
+        'is-cached',
+        isCached
+      );
+
+      if (source === 'live') {
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Live data'
+        );
+        dataSourceText.textContent = 'LIVE data';
+        return;
+      }
+
+      if (isCached) {
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Cached data'
+        );
+        dataSourceText.textContent = 'CACHED data';
+        return;
+      }
+
+      dataSourceIndicator.setAttribute(
+        'aria-label',
+        'Data unavailable'
+      );
+      dataSourceText.textContent = 'DATA unavailable';
+    }
+
     function loadSheetRows() {
       return new Promise((resolve, reject) => {
         const callbackName =
@@ -1688,6 +1749,224 @@
 
         document.body.appendChild(script);
       });
+    }
+
+    function loadCachedSheetRows() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `pffWorkLossCache_${Date.now()}_${Math.floor(
+            Math.random() * 1000000
+          )}`;
+
+        const script = document.createElement('script');
+        let settled = false;
+
+        const timeout = window.setTimeout(() => {
+          finish(
+            new Error('The cached-data request timed out')
+          );
+        }, CACHE_FETCH_TIMEOUT_MS);
+
+        function cleanup() {
+          window.clearTimeout(timeout);
+
+          try {
+            delete window[callbackName];
+          } catch (_) {
+            window[callbackName] = undefined;
+          }
+
+          script.remove();
+        }
+
+        function finish(error, rows) {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          cleanup();
+
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve(rows);
+        }
+
+        window[callbackName] = response => {
+          if (!response || response.ok !== true) {
+            finish(
+              new Error(
+                response?.error ||
+                'The cached-data service did not return a snapshot'
+              )
+            );
+            return;
+          }
+
+          if (response.appKey !== CACHE_APP_KEY) {
+            finish(
+              new Error(
+                'The cached-data response belongs to a different app'
+              )
+            );
+            return;
+          }
+
+          if (
+            !response.cachedAt ||
+            Number.isNaN(Date.parse(response.cachedAt))
+          ) {
+            finish(
+              new Error(
+                'The cached-data response has no valid timestamp'
+              )
+            );
+            return;
+          }
+
+          const cachedRows = Array.isArray(response?.data?.rows)
+            ? response.data.rows
+            : [];
+
+          if (!cachedRows.length) {
+            finish(
+              new Error(
+                'The cached work-loss snapshot has no rows'
+              )
+            );
+            return;
+          }
+
+          try {
+            const rawRows = cachedRows.map((row, rowIndex) => {
+              if (!Array.isArray(row) || row.length < 11) {
+                throw new Error(
+                  `Cached work-loss row ${rowIndex + 1} is malformed`
+                );
+              }
+
+              return {
+                c: row.slice(0, 11).map((cell, cellIndex) => {
+                  if (!Array.isArray(cell) || cell.length < 2) {
+                    throw new Error(
+                      `Cached work-loss row ${rowIndex + 1}, cell ${cellIndex + 1} is malformed`
+                    );
+                  }
+
+                  return {
+                    v: cell[0],
+                    f: cell[1]
+                  };
+                })
+              };
+            });
+
+            finish(null, rawRows);
+          } catch (error) {
+            finish(error);
+          }
+        };
+
+        script.onerror = () => {
+          finish(
+            new Error(
+              'Could not load the cached-data service'
+            )
+          );
+        };
+
+        const params = new URLSearchParams({
+          appKey: CACHE_APP_KEY,
+          callback: callbackName,
+          _: String(Date.now())
+        });
+
+        const separator =
+          CACHE_WEB_APP_URL.includes('?')
+            ? '&'
+            : '?';
+
+        script.src =
+          `${CACHE_WEB_APP_URL}${separator}${params.toString()}`;
+
+        document.body.appendChild(script);
+      });
+    }
+
+    async function loadSourceRowsWithFallback() {
+      let liveError = null;
+
+      if (!FORCE_CACHED_DATA) {
+        try {
+          const liveRows =
+            normaliseRows(
+              await loadSheetRows()
+            );
+
+          if (!liveRows.length) {
+            throw new Error(
+              'No dated responses were found in the selected Google Sheet columns'
+            );
+          }
+
+          setDataSource('live');
+
+          return liveRows;
+        } catch (error) {
+          liveError = error;
+
+          console.warn(
+            'Live Google Sheets data could not be used',
+            error
+          );
+        }
+      } else {
+        liveError =
+          new Error(
+            'Live data bypassed for cached-data test'
+          );
+      }
+
+      try {
+        const cachedRows =
+          normaliseRows(
+            await loadCachedSheetRows()
+          );
+
+        if (!cachedRows.length) {
+          throw new Error(
+            'The cached work-loss snapshot has no dated responses'
+          );
+        }
+
+        setDataSource('cached');
+
+        console.warn(
+          'Using cached work-loss data',
+          liveError?.message
+        );
+
+        return cachedRows;
+      } catch (cachedError) {
+        setDataSource('none');
+
+        console.error(
+          'Live Google Sheets data error',
+          liveError
+        );
+
+        console.error(
+          'Cached Apps Script data error',
+          cachedError
+        );
+
+        throw new Error(
+          'Live and cached data are currently unavailable'
+        );
+      }
     }
 
     function normaliseRows(rawRows) {
@@ -3883,13 +4162,8 @@
       try {
         setStatus();
 
-        sourceRows = normaliseRows(await loadSheetRows());
-
-        if (!sourceRows.length) {
-          throw new Error(
-            'No dated responses were found in the selected Google Sheet columns'
-          );
-        }
+        sourceRows =
+          await loadSourceRowsWithFallback();
 
         const resolved = resolveAnalysisWindow(sourceRows);
         analysisWindow = resolved.window;
