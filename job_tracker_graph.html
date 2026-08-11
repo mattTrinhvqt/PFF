@@ -20,6 +20,7 @@ src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"
 --track: #e8eaf0;
 --error: #b42318;
 --live-red: #e53935;
+--cached-amber: #c27c00;
 --state-nsw: #2db7f5;
 --state-qld: #7a0036;
 --state-act: #7b61ff;
@@ -297,6 +298,10 @@ height: 6px;
 flex: 0 0 6px;
 border-radius: 50%;
 background: var(--live-red);
+}
+
+.live-data.is-cached .live-data-dot {
+background: var(--cached-amber);
 }
 
 #status {
@@ -1166,9 +1171,9 @@ Advertised pay
 </button>
 </div>
 
-<div class="live-data" aria-label="Live data">
+<div id="dataSourceIndicator" class="live-data" aria-label="Live data">
 <span class="live-data-dot" aria-hidden="true"></span>
-<span>LIVE data</span>
+<span id="dataSourceText">LIVE data</span>
 </div>
 </div>
 
@@ -1451,6 +1456,19 @@ salary: 20
 }
 };
 
+const CACHE_WEB_APP_URL =
+'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+const CACHE_APP_KEY = 'pff-job-ads-data';
+const CACHE_FETCH_TIMEOUT_MS = 10000;
+
+/*
+ * Testing switch only.
+ * Leave false in normal use.
+ * Set true temporarily to verify the central cached-data fallback.
+ */
+const FORCE_CACHED_DATA = true;
+
 const GROUP_LABELS = {
 none: 'None',
 state: 'State',
@@ -1521,6 +1539,8 @@ const legendNote = document.getElementById('legendNote');
 const smallNumbersNote = document.getElementById('smallNumbersNote');
 const chartShell = document.querySelector('.chart-shell');
 const chartCanvas = document.getElementById('jobChart');
+const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+const dataSourceText = document.getElementById('dataSourceText');
 
 let chart = null;
 let rows = [];
@@ -2184,6 +2204,27 @@ function setStatus(message = '') {
 statusElement.textContent = message;
 }
 
+function setDataSource(source) {
+const isCached = source === 'cached';
+
+dataSourceIndicator.classList.toggle('is-cached', isCached);
+
+if (source === 'live') {
+dataSourceIndicator.setAttribute('aria-label', 'Live data');
+dataSourceText.textContent = 'LIVE data';
+return;
+}
+
+if (source === 'cached') {
+dataSourceIndicator.setAttribute('aria-label', 'Cached data');
+dataSourceText.textContent = 'CACHED data';
+return;
+}
+
+dataSourceIndicator.setAttribute('aria-label', 'Data unavailable');
+dataSourceText.textContent = 'DATA unavailable';
+}
+
 function loadSheetQuery({
 sheetId,
 sheetName,
@@ -2252,6 +2293,121 @@ script.src =
 `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?${params.toString()}`;
 document.body.appendChild(script);
 });
+}
+
+function loadCentralCachedData() {
+return new Promise((resolve, reject) => {
+const callbackName =
+`pffJobCacheCallback_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+const script = document.createElement('script');
+let settled = false;
+
+const timeout = window.setTimeout(() => {
+finish(new Error('Could not load central cached data'));
+}, CACHE_FETCH_TIMEOUT_MS);
+
+function cleanup() {
+window.clearTimeout(timeout);
+try {
+delete window[callbackName];
+} catch (error) {
+window[callbackName] = undefined;
+}
+if (script.parentNode) script.parentNode.removeChild(script);
+}
+
+function finish(error, payload) {
+if (settled) return;
+settled = true;
+cleanup();
+
+if (error) {
+reject(error);
+return;
+}
+
+if (
+!payload ||
+payload.ok !== true ||
+payload.appKey !== CACHE_APP_KEY ||
+!payload.data
+) {
+reject(new Error(payload?.error || 'Central cached data is invalid'));
+return;
+}
+
+resolve(payload.data);
+}
+
+window[callbackName] = payload => finish(null, payload);
+script.onerror = () => finish(
+new Error('Network error loading central cached data')
+);
+
+const params = new URLSearchParams({
+appKey: CACHE_APP_KEY,
+callback: callbackName,
+_: String(Date.now())
+});
+
+script.src = `${CACHE_WEB_APP_URL}?${params.toString()}`;
+document.body.appendChild(script);
+});
+}
+
+function makeCachedCell(pair) {
+return {
+v: pair?.[0] ?? '',
+f: pair?.[1] ?? ''
+};
+}
+
+function restoreCachedJobRows(cachedRows) {
+const sourceIndexes = [0, 2, 4, 5, 6, 7, 9, 11, 20];
+
+return (Array.isArray(cachedRows) ? cachedRows : []).map(row => {
+const cells = Array.from({ length: 21 }, () => null);
+
+sourceIndexes.forEach((sourceIndex, cachedIndex) => {
+cells[sourceIndex] = makeCachedCell(row?.[cachedIndex]);
+});
+
+return { c: cells };
+});
+}
+
+function restoreCachedWorkforceTable(table) {
+const labels = Array.isArray(table?.labels) ? table.labels : [];
+const sourceRows = Array.isArray(table?.rows) ? table.rows : [];
+
+return {
+cols: labels.map(label => ({ label: cleanText(label) })),
+rows: sourceRows.map(row => ({
+c: (Array.isArray(row) ? row : []).map(makeCachedCell)
+}))
+};
+}
+
+function parseCentralCachedData(data) {
+const sourceRows = restoreCachedJobRows(data?.jobRows);
+const cachedRows = normaliseRows(sourceRows);
+
+const stateTable = restoreCachedWorkforceTable(
+data?.stateWorkforceTable
+);
+const ruralityTable = restoreCachedWorkforceTable(
+data?.ruralityWorkforceTable
+);
+
+const cachedWorkforce = {
+state: parseStateWorkforceTable(stateTable),
+rurality: parseRuralityWorkforceTable(ruralityTable)
+};
+
+return {
+rows: cachedRows,
+workforce: cachedWorkforce
+};
 }
 
 function loadJobSheetRows() {
@@ -5572,7 +5728,10 @@ setStatus();
 let lastError = null;
 let liveRows = null;
 let liveWorkforce = null;
+let centralRows = null;
+let centralWorkforce = null;
 
+if (!FORCE_CACHED_DATA) {
 for (let attempt = 1; attempt <= CONFIG.fetchAttempts; attempt++) {
 const results = await Promise.allSettled([
 loadJobSheetRows(),
@@ -5597,9 +5756,31 @@ window.setTimeout(resolve, CONFIG.retryDelayMs);
 });
 }
 }
+}
+
+if (!liveRows || !liveWorkforce) {
+try {
+const centralData = parseCentralCachedData(
+await loadCentralCachedData()
+);
+
+if (!liveRows && centralData.rows.length) {
+centralRows = centralData.rows;
+}
+
+if (!liveWorkforce && hasWorkforceData(centralData.workforce)) {
+centralWorkforce = centralData.workforce;
+}
+} catch (error) {
+lastError = lastError || error;
+}
+}
 
 if (liveRows) {
 rows = liveRows;
+saveJsonCache(CONFIG.jobCacheKey, rows);
+} else if (centralRows) {
+rows = centralRows;
 saveJsonCache(CONFIG.jobCacheKey, rows);
 } else {
 rows = loadJobCache();
@@ -5608,22 +5789,29 @@ rows = loadJobCache();
 if (liveWorkforce) {
 workforce = liveWorkforce;
 saveJsonCache(CONFIG.workforceCacheKey, workforce);
+} else if (centralWorkforce) {
+workforce = centralWorkforce;
+saveJsonCache(CONFIG.workforceCacheKey, workforce);
 } else {
 workforce = loadWorkforceCache();
 }
 
 if (!rows.length) {
 console.error(lastError);
+setDataSource('unavailable');
 hideLoadingState();
 setStatus('⚠ Unable to load job ad data');
 return;
 }
 
+const allLive = Boolean(liveRows && liveWorkforce);
+setDataSource(allLive ? 'live' : 'cached');
+
 let warning = '';
 if (!hasWorkforceData(workforce)) {
 selectedMeasure = currentGroup === 'none' ? 'count' : 'proportion';
 warning = 'Optometrist workforce data could not be loaded; showing job ads without the per-100 measure';
-} else if (!liveRows || !liveWorkforce) {
+} else if (!allLive) {
 warning = 'Some live data could not be refreshed; showing the most recently saved data';
 }
 
