@@ -223,6 +223,7 @@
       --track: #e8eaf0;
       --error-red: #b42318;
       --benchmark-red: #b42318;
+      --cached-amber: #c27c00;
       --stage-height: 520px;
       --layout-duration: 920ms;
       --layout-ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -409,6 +410,15 @@
       flex: 0 0 6px;
       border-radius: 50%;
       background: #e53935;
+    }
+
+    #modelMeta.is-cached::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      border-radius: 50%;
+      background: var(--cached-amber);
     }
 
     .calculator-form {
@@ -1456,6 +1466,23 @@
 
     const SHEET_NAME = 'Data';
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'locum-optometrist-income-estimator';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const MMM_TREAT_AS_CATEGORICAL = false;
 
     const MS_PER_YEAR =
@@ -2264,23 +2291,263 @@
       });
     }
 
+    function loadCachedGvizData() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `locumEstimatorCacheCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+        const script =
+          document.createElement('script');
+
+        let settled = false;
+
+        const timeout =
+          window.setTimeout(
+            () => {
+              finish(
+                new Error(
+                  'Could not load cached model data'
+                )
+              );
+            },
+            CACHE_FETCH_TIMEOUT_MS
+          );
+
+        function cleanup() {
+          window.clearTimeout(timeout);
+
+          try {
+            delete window[callbackName];
+          } catch (_) {
+            window[callbackName] =
+              undefined;
+          }
+
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+
+        function finish(
+          error,
+          payload
+        ) {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          cleanup();
+
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          if (
+            !payload ||
+            payload.ok !== true ||
+            payload.appKey !== CACHE_APP_KEY ||
+            !Array.isArray(
+              payload?.data?.rows
+            )
+          ) {
+            reject(
+              new Error(
+                payload?.error ||
+                'Cached model data is invalid'
+              )
+            );
+
+            return;
+          }
+
+          const rows =
+            payload.data.rows
+              .filter(
+                row =>
+                  Array.isArray(row) &&
+                  row.length >= 4 &&
+                  row[1] !== '' &&
+                  row[1] !== null &&
+                  row[1] !== undefined
+              )
+              .map(
+                row => ({
+                  c: [
+                    { v: row[0] },
+                    { v: row[1] },
+                    { v: row[2] },
+                    { v: row[3] }
+                  ]
+                })
+              );
+
+          if (!rows.length) {
+            reject(
+              new Error(
+                'Cached model data has no rate rows'
+              )
+            );
+
+            return;
+          }
+
+          resolve({
+            status: 'ok',
+            table: {
+              rows
+            }
+          });
+        }
+
+        window[callbackName] =
+          payload =>
+            finish(
+              null,
+              payload
+            );
+
+        script.onerror =
+          () =>
+            finish(
+              new Error(
+                'Network error loading cached model data'
+              )
+            );
+
+        const params =
+          new URLSearchParams({
+            appKey:
+              CACHE_APP_KEY,
+
+            callback:
+              callbackName,
+
+            _:
+              String(
+                Date.now()
+              )
+          });
+
+        script.src =
+          `${CACHE_WEB_APP_URL}?${params.toString()}`;
+
+        document.body.appendChild(
+          script
+        );
+      });
+    }
+
+    function loadCachedLocumModel() {
+      return loadCachedGvizData()
+        .then(response => {
+          const rawRows =
+            normaliseRowsFromGviz(response);
+
+          return buildModel(rawRows);
+        });
+    }
+
+    function setModelDataSource(
+      source
+    ) {
+      const modelMeta =
+        document.getElementById('modelMeta');
+
+      modelMeta.classList.remove(
+        'is-live',
+        'is-cached'
+      );
+
+      if (source === 'cached') {
+        modelMeta.textContent =
+          'CACHED MLR (OLS) model loaded';
+
+        modelMeta.classList.add(
+          'is-cached'
+        );
+
+        return;
+      }
+
+      modelMeta.textContent =
+        'LIVE MLR (OLS) model loaded';
+
+      modelMeta.classList.add(
+        'is-live'
+      );
+    }
+
+    async function loadLocumModelWithFallback() {
+      if (FORCE_CACHED_DATA) {
+        const cachedModel =
+          await loadCachedLocumModel();
+
+        setModelDataSource(
+          'cached'
+        );
+
+        return cachedModel;
+      }
+
+      try {
+        const liveModel =
+          await loadLocumModel();
+
+        setModelDataSource(
+          'live'
+        );
+
+        return liveModel;
+      } catch (
+        liveError
+      ) {
+        try {
+          const cachedModel =
+            await loadCachedLocumModel();
+
+          console.warn(
+            'Live locum model unavailable; using cached model data',
+            liveError
+          );
+
+          setModelDataSource(
+            'cached'
+          );
+
+          return cachedModel;
+        } catch (
+          cacheError
+        ) {
+          throw new Error(
+            `${cleanErrorMessage(liveError?.message)}; cached fallback failed: ${cleanErrorMessage(cacheError?.message)}`
+          );
+        }
+      }
+    }
+
     function loadModel() {
       const modelMeta =
         document.getElementById('modelMeta');
 
-      modelMeta.classList.remove('is-live');
-      modelMeta.textContent = 'Loading model...';
+      modelMeta.classList.remove(
+        'is-live',
+        'is-cached'
+      );
 
-      loadLocumModel()
+      modelMeta.textContent =
+        'Loading model...';
+
+      loadLocumModelWithFallback()
         .then(() => {
-          modelMeta.textContent =
-            'LIVE MLR (OLS) model loaded';
-
-          modelMeta.classList.add('is-live');
           scheduleApplyScale();
         })
         .catch(err => {
-          modelMeta.classList.remove('is-live');
+          modelMeta.classList.remove(
+            'is-live',
+            'is-cached'
+          );
 
           modelMeta.innerHTML =
             '<span class="warn">Model error: ' +
@@ -2484,10 +2751,11 @@
         });
 
         /*
-         * Re-read the Google Sheet and refit on every calculation,
-         * preserving the original locum-calculator behaviour.
+         * Re-read live data when available and refit on every calculation.
+         * If live loading fails, refit from the latest cached source rows.
          */
-        const model = await loadLocumModel();
+        const model =
+          await loadLocumModelWithFallback();
 
         const res = predict(
           {
