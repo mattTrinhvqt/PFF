@@ -17,6 +17,8 @@
       --ink: #151515;
       --muted: #69718a;
       --track: #e8eaf0;
+      --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -357,7 +359,15 @@
       height: 6px;
       flex: 0 0 6px;
       border-radius: 50%;
-      background: #e53935;
+      background: var(--live-red);
+    }
+
+    .live-data-inline.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
+    .live-data-inline.is-unavailable .live-data-dot {
+      background: var(--muted);
     }
 
     .data-table th:first-child,
@@ -465,21 +475,74 @@
     const EXPECTED_DATA_ROWS = 2;
     const EXPECTED_COLS = 3;
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'pff-optom-related-jobs-summary';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the central cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const app = document.getElementById('app');
     const dataTable = document.getElementById('data-table');
     const loadingState = document.getElementById('loading-state');
 
+    let currentDataSource =
+      'live';
+
+    function setDataSource(source) {
+      currentDataSource =
+        source;
+    }
+
     function appendLiveDataCell(cell) {
+      const isCached =
+        currentDataSource === 'cached';
+
+      const isUnavailable =
+        currentDataSource === 'unavailable';
+
       const liveData = document.createElement('span');
-      liveData.className = 'live-data-inline';
-      liveData.setAttribute('aria-label', 'Live data');
+      liveData.className = [
+        'live-data-inline',
+        isCached
+          ? 'is-cached'
+          : '',
+        isUnavailable
+          ? 'is-unavailable'
+          : ''
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+      liveData.setAttribute(
+        'aria-label',
+        isCached
+          ? 'Cached data'
+          : isUnavailable
+          ? 'Data unavailable'
+          : 'Live data'
+      );
 
       const dot = document.createElement('span');
       dot.className = 'live-data-dot';
       dot.setAttribute('aria-hidden', 'true');
 
       const text = document.createElement('span');
-      text.textContent = 'LIVE data';
+      text.textContent = isCached
+        ? 'CACHED data'
+        : isUnavailable
+        ? 'DATA unavailable'
+        : 'LIVE data';
 
       liveData.appendChild(dot);
       liveData.appendChild(text);
@@ -596,6 +659,10 @@
     function showError(error) {
       console.error(error);
 
+      setDataSource(
+        'unavailable'
+      );
+
       hideLoadingState();
 
       renderTable([
@@ -692,23 +759,270 @@
       });
     }
     
-    function loadTableData() {
-      Promise.all([
+    function loadLiveTableValues() {
+      return Promise.all([
         loadGvizRange(TABLE_HEADER_RANGE, 1),
         loadGvizRange(TABLE_DATA_RANGE, 0)
       ])
         .then(([headerResponse, dataResponse]) => {
-          const headers = normaliseHeaderResponse(headerResponse);
-          const dataRows = normaliseDataResponse(dataResponse);
-    
-          renderTable([
+          const headers =
+            normaliseHeaderResponse(
+              headerResponse
+            );
+
+          const dataRows =
+            normaliseDataResponse(
+              dataResponse
+            );
+
+          return [
             headers,
             ...dataRows
-          ]);
-        })
-        .catch(error => {
-          showError(error);
+          ];
         });
+    }
+
+    function normaliseCachedTableValues(payload) {
+      if (
+        !payload ||
+        payload.ok !== true
+      ) {
+        throw new Error(
+          payload?.error ||
+          'Could not load cached data'
+        );
+      }
+
+      if (
+        payload.appKey !==
+        CACHE_APP_KEY
+      ) {
+        throw new Error(
+          'Cached data returned the wrong app key'
+        );
+      }
+
+      const values =
+        payload?.data?.tableValues;
+
+      if (
+        !Array.isArray(values) ||
+        values.length <
+          EXPECTED_DATA_ROWS + 1
+      ) {
+        throw new Error(
+          'Cached table data is incomplete'
+        );
+      }
+
+      return Array.from(
+        {
+          length:
+            EXPECTED_DATA_ROWS + 1
+        },
+        (
+          _,
+          rowIndex
+        ) =>
+          Array.from(
+            {
+              length:
+                EXPECTED_COLS
+            },
+            (
+              _,
+              columnIndex
+            ) => {
+              const value =
+                String(
+                  values?.[rowIndex]?.[columnIndex] ??
+                  ''
+                ).trim();
+
+              if (
+                rowIndex === 0 &&
+                !value
+              ) {
+                return '—';
+              }
+
+              return value;
+            }
+          )
+      );
+    }
+
+    function loadCachedTableValues() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `pffOptomRelatedJobsCache_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+        const script =
+          document.createElement('script');
+
+        let settled =
+          false;
+
+        const timeout =
+          window.setTimeout(
+            () => {
+              finish(
+                new Error(
+                  'Could not load cached data'
+                )
+              );
+            },
+            CACHE_FETCH_TIMEOUT_MS
+          );
+
+        function cleanup() {
+          window.clearTimeout(
+            timeout
+          );
+
+          try {
+            delete window[
+              callbackName
+            ];
+          } catch (error) {
+            window[
+              callbackName
+            ] = undefined;
+          }
+
+          if (
+            script.parentNode
+          ) {
+            script.parentNode.removeChild(
+              script
+            );
+          }
+        }
+
+        function finish(
+          error,
+          payload
+        ) {
+          if (settled) return;
+
+          settled =
+            true;
+
+          cleanup();
+
+          if (error) {
+            reject(
+              error
+            );
+
+            return;
+          }
+
+          try {
+            resolve(
+              normaliseCachedTableValues(
+                payload
+              )
+            );
+          } catch (normaliseError) {
+            reject(
+              normaliseError
+            );
+          }
+        }
+
+        window[
+          callbackName
+        ] = payload =>
+          finish(
+            null,
+            payload
+          );
+
+        script.onerror =
+          () =>
+            finish(
+              new Error(
+                'Network error loading cached data'
+              )
+            );
+
+        const params =
+          new URLSearchParams({
+            appKey:
+              CACHE_APP_KEY,
+
+            callback:
+              callbackName,
+
+            _:
+              String(
+                Date.now()
+              )
+          });
+
+        script.src =
+          `${CACHE_WEB_APP_URL}?${params.toString()}`;
+
+        document.body.appendChild(
+          script
+        );
+      });
+    }
+
+    async function loadTableData() {
+      let liveError =
+        null;
+
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          const values =
+            await loadLiveTableValues();
+
+          setDataSource(
+            'live'
+          );
+
+          renderTable(
+            values
+          );
+
+          return;
+        } catch (error) {
+          liveError =
+            error;
+
+          console.warn(
+            'Live PFF table data could not be loaded; trying the central cache.',
+            error
+          );
+        }
+      }
+
+      try {
+        const values =
+          await loadCachedTableValues();
+
+        setDataSource(
+          'cached'
+        );
+
+        renderTable(
+          values
+        );
+      } catch (cacheError) {
+        console.error(
+          'Cached PFF table data could not be loaded.',
+          cacheError
+        );
+
+        showError(
+          liveError ||
+          cacheError
+        );
+      }
     }
 
     loadTableData();
