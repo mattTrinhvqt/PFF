@@ -14,6 +14,7 @@
       --muted: #69718a;
       --track: #e8eaf0;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -245,6 +246,14 @@
       background: var(--live-red);
     }
 
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
+    .live-data.is-unavailable .live-data-dot {
+      background: var(--muted);
+    }
+
     /* ---------- Percentile table ---------- */
 
     .percentile-section {
@@ -421,9 +430,13 @@
         <div class="response-value-row">
           <div id="response-count" class="response-value"></div>
 
-          <div class="live-data" aria-label="Live data">
+          <div
+            id="data-source-indicator"
+            class="live-data"
+            aria-label="Live data"
+          >
             <span class="live-data-dot" aria-hidden="true"></span>
-            <span>LIVE data</span>
+            <span id="data-source-text">LIVE data</span>
           </div>
         </div>
       </section>
@@ -448,14 +461,87 @@
     const PERCENTILE_VALUE_RANGE = 'AK2:AP2';
     const EXPECTED_PERCENTILE_COLS = 6;
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
+
+    const CACHE_APP_KEY =
+      'pff-casual-rate-summary';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    const LOCAL_CACHE_KEY =
+      'pff-casual-rate-summary-v1';
+
+    /*
+     * Set true to skip the live Google Sheets feed
+     * and test the Apps Script cache.
+     */
+    const FORCE_CACHED_DATA =
+      true;
+
     const app = document.getElementById('app');
     const responseCount = document.getElementById('response-count');
     const percentileTable = document.getElementById('percentile-table');
     const loadingState = document.getElementById('loading-state');
 
+    const dataSourceIndicator =
+      document.getElementById(
+        'data-source-indicator'
+      );
+
+    const dataSourceText =
+      document.getElementById(
+        'data-source-text'
+      );
+
     function hideLoadingState() {
       app.classList.remove('is-loading');
       loadingState.setAttribute('aria-hidden', 'true');
+    }
+
+    function setDataSource(source) {
+      dataSourceIndicator.classList.toggle(
+        'is-cached',
+        source === 'cached'
+      );
+
+      dataSourceIndicator.classList.toggle(
+        'is-unavailable',
+        source === 'unavailable'
+      );
+
+      if (source === 'cached') {
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Cached data'
+        );
+
+        dataSourceText.textContent =
+          'CACHED data';
+
+        return;
+      }
+
+      if (source === 'unavailable') {
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Data unavailable'
+        );
+
+        dataSourceText.textContent =
+          'DATA unavailable';
+
+        return;
+      }
+
+      dataSourceIndicator.setAttribute(
+        'aria-label',
+        'Live data'
+      );
+
+      dataSourceText.textContent =
+        'LIVE data';
     }
 
     function appendHeaderText(cell, value) {
@@ -519,6 +605,103 @@
       return String(cell.f ?? cell.v ?? '').trim();
     }
 
+    function validateDashboardData(data) {
+      const responseCountValue =
+        String(
+          data?.responseCount ??
+          ''
+        ).trim();
+
+      const percentileTableValue =
+        Array.isArray(
+          data?.percentileTable
+        )
+          ? data.percentileTable
+          : [];
+
+      const headers =
+        Array.isArray(
+          percentileTableValue[0]
+        )
+          ? percentileTableValue[0]
+          : [];
+
+      const values =
+        Array.isArray(
+          percentileTableValue[1]
+        )
+          ? percentileTableValue[1]
+          : [];
+
+      if (
+        !responseCountValue ||
+        headers.length !== EXPECTED_PERCENTILE_COLS ||
+        values.length !== EXPECTED_PERCENTILE_COLS
+      ) {
+        throw new Error(
+          'Casual rate summary data is invalid'
+        );
+      }
+
+      return {
+        responseCount:
+          responseCountValue,
+
+        percentileTable: [
+          headers.map(value =>
+            String(
+              value ??
+              ''
+            ).trim() ||
+            '—'
+          ),
+
+          values.map(value =>
+            String(
+              value ??
+              ''
+            ).trim() ||
+            '—'
+          )
+        ]
+      };
+    }
+
+    function saveLocalCachedData(data) {
+      try {
+        localStorage.setItem(
+          LOCAL_CACHE_KEY,
+          JSON.stringify(
+            validateDashboardData(
+              data
+            )
+          )
+        );
+      } catch (error) {
+      }
+    }
+
+    function loadLocalCachedData() {
+      try {
+        const raw =
+          localStorage.getItem(
+            LOCAL_CACHE_KEY
+          );
+
+        if (!raw) {
+          return null;
+        }
+
+        return validateDashboardData(
+          JSON.parse(
+            raw
+          )
+        );
+      } catch (error) {
+        return null;
+      }
+    }
+
     function loadGvizRange(range, headers = 0) {
       return new Promise((resolve, reject) => {
         const callbackName = `casualRateSummaryCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -563,11 +746,150 @@
           gid: SHEET_GID,
           range,
           headers: String(headers),
-          tqx: `responseHandler:${callbackName}`
+          tqx: `responseHandler:${callbackName}`,
+          _: String(Date.now())
         });
 
         script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
         document.body.appendChild(script);
+      });
+    }
+
+    function loadCachedDashboardData() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `casualRateSummaryCacheCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+        const script =
+          document.createElement(
+            'script'
+          );
+
+        let settled =
+          false;
+
+        const timeout =
+          window.setTimeout(
+            () => {
+              finish(
+                new Error(
+                  'Could not load cached casual rate summary data'
+                )
+              );
+            },
+            CACHE_FETCH_TIMEOUT_MS
+          );
+
+        function cleanup() {
+          window.clearTimeout(
+            timeout
+          );
+
+          try {
+            delete window[
+              callbackName
+            ];
+          } catch (error) {
+            window[
+              callbackName
+            ] = undefined;
+          }
+
+          if (
+            script.parentNode
+          ) {
+            script.parentNode.removeChild(
+              script
+            );
+          }
+        }
+
+        function finish(
+          error,
+          data
+        ) {
+          if (settled) {
+            return;
+          }
+
+          settled =
+            true;
+
+          cleanup();
+
+          if (error) {
+            reject(
+              error
+            );
+
+            return;
+          }
+
+          resolve(
+            data
+          );
+        }
+
+        window[callbackName] =
+          snapshot => {
+            if (
+              !snapshot ||
+              snapshot.ok !== true ||
+              snapshot.appKey !== CACHE_APP_KEY
+            ) {
+              finish(
+                new Error(
+                  snapshot?.error ||
+                  'Cached casual rate summary data is invalid'
+                )
+              );
+
+              return;
+            }
+
+            try {
+              finish(
+                null,
+                validateDashboardData(
+                  snapshot.data
+                )
+              );
+            } catch (error) {
+              finish(
+                error
+              );
+            }
+          };
+
+        script.onerror =
+          () => {
+            finish(
+              new Error(
+                'Network error loading cached casual rate summary data'
+              )
+            );
+          };
+
+        const params =
+          new URLSearchParams({
+            appKey:
+              CACHE_APP_KEY,
+
+            callback:
+              callbackName,
+
+            _:
+              String(
+                Date.now()
+              )
+          });
+
+        script.src =
+          `${CACHE_WEB_APP_URL}?${params.toString()}`;
+
+        document.body.appendChild(
+          script
+        );
       });
     }
 
@@ -591,8 +913,30 @@
       return [headerRow, valueRow];
     }
 
+    function renderDashboardData(data) {
+      const validated =
+        validateDashboardData(
+          data
+        );
+
+      responseCount.classList.remove(
+        'error'
+      );
+
+      responseCount.textContent =
+        validated.responseCount;
+
+      renderPercentileTable(
+        validated.percentileTable
+      );
+    }
+
     function showError(error) {
       console.error(error);
+
+      setDataSource(
+        'unavailable'
+      );
 
       responseCount.textContent = '—';
       responseCount.classList.add('error');
@@ -606,21 +950,112 @@
     }
 
     async function loadDashboardData() {
-      try {
-        const [responseCountData, percentileHeaderData, percentileValueData] = await Promise.all([
-          loadGvizRange(RESPONSE_CELL, 0),
-          loadGvizRange(PERCENTILE_HEADER_RANGE, 1),
-          loadGvizRange(PERCENTILE_VALUE_RANGE, 0)
-        ]);
+      let liveError =
+        null;
 
-        responseCount.textContent = normaliseResponseCount(responseCountData);
-        renderPercentileTable(
-          normalisePercentileTable(percentileHeaderData, percentileValueData)
-        );
-        hideLoadingState();
-      } catch (error) {
-        showError(error);
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          const [
+            responseCountData,
+            percentileHeaderData,
+            percentileValueData
+          ] = await Promise.all([
+            loadGvizRange(RESPONSE_CELL, 0),
+            loadGvizRange(PERCENTILE_HEADER_RANGE, 1),
+            loadGvizRange(PERCENTILE_VALUE_RANGE, 0)
+          ]);
+
+          const liveData =
+            validateDashboardData({
+              responseCount:
+                normaliseResponseCount(
+                  responseCountData
+                ),
+
+              percentileTable:
+                normalisePercentileTable(
+                  percentileHeaderData,
+                  percentileValueData
+                )
+            });
+
+          saveLocalCachedData(
+            liveData
+          );
+
+          renderDashboardData(
+            liveData
+          );
+
+          setDataSource(
+            'live'
+          );
+
+          hideLoadingState();
+
+          return;
+        } catch (error) {
+          liveError =
+            error;
+        }
       }
+
+      try {
+        const cachedData =
+          await loadCachedDashboardData();
+
+        saveLocalCachedData(
+          cachedData
+        );
+
+        renderDashboardData(
+          cachedData
+        );
+
+        setDataSource(
+          'cached'
+        );
+
+        hideLoadingState();
+
+        return;
+      } catch (cacheError) {
+        console.error(
+          'Live casual rate summary load failed',
+          liveError
+        );
+
+        console.error(
+          'Cached casual rate summary load failed',
+          cacheError
+        );
+      }
+
+      const localData =
+        loadLocalCachedData();
+
+      if (localData) {
+        renderDashboardData(
+          localData
+        );
+
+        setDataSource(
+          'cached'
+        );
+
+        hideLoadingState();
+
+        return;
+      }
+
+      showError(
+        liveError ||
+        new Error(
+          'Casual rate summary data could not be loaded'
+        )
+      );
     }
 
     loadDashboardData();
