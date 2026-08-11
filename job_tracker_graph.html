@@ -1467,7 +1467,7 @@ const CACHE_FETCH_TIMEOUT_MS = 10000;
  * Leave false in normal use.
  * Set true temporarily to verify the central cached-data fallback.
  */
-const FORCE_CACHED_DATA = true;
+const FORCE_CACHED_DATA = false;
 
 const GROUP_LABELS = {
 none: 'None',
@@ -4766,7 +4766,14 @@ return Math.hypot(px - closestX, py - closestY);
 }
 
 function findNearestRateTrendLine(event, maximumDistance = 8) {
-if (!chart?.chartArea || activeView !== 'per100') return null;
+if (!chart?.chartArea || selectedTab !== 'count') return null;
+
+const allowedRole =
+activeView === 'per100'
+? 'rateTrend'
+: activeView === 'proportion'
+? 'proportionTrend'
+: 'countTrend';
 
 const area = chart.chartArea;
 const x = Number.isFinite(event?.x) ? event.x : null;
@@ -4786,7 +4793,7 @@ return null;
 let bestMatch = null;
 
 chart.data.datasets.forEach((dataset, datasetIndex) => {
-if (dataset.datasetRole !== 'rateTrend') return;
+if (dataset.datasetRole !== allowedRole) return;
 
 for (let index = 0; index < dataset.data.length - 1; index++) {
 const first = dataset.data[index];
@@ -4842,6 +4849,35 @@ function handleChartHover(event, elements) {
 if (interactionLocked) {
 chart.canvas.style.cursor = 'default';
 return;
+}
+
+const interactiveElement = findInteractiveElement(elements);
+const rateTrendLine = interactiveElement
+? null
+: findNearestRateTrendLine(event);
+
+chart.canvas.style.cursor = interactiveElement || rateTrendLine
+? 'pointer'
+: 'default';
+
+if (!interactiveElement && rateTrendLine) {
+const renderedElement = chart
+.getDatasetMeta(rateTrendLine.datasetIndex)
+?.data?.[rateTrendLine.index];
+
+chart.tooltip.setActiveElements(
+[{
+datasetIndex: rateTrendLine.datasetIndex,
+index: rateTrendLine.index
+}],
+{
+x: renderedElement?.x ?? rateTrendLine.x,
+y: renderedElement?.y ?? rateTrendLine.y
+}
+);
+
+chart.update('none');
+}
 }
 
 const interactiveElement = findInteractiveElement(elements);
