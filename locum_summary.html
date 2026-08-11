@@ -14,6 +14,7 @@
       --muted: #69718a;
       --track: #e8eaf0;
       --live-red: #e53935;
+      --cached-amber: #c27c00;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -307,6 +308,10 @@
       background: var(--live-red);
     }
 
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
     /* ---------- Percentile table ---------- */
 
     .percentile-section {
@@ -488,9 +493,9 @@
 
         <div class="response-value-row">
           <div id="response-count" class="response-value"></div>
-          <div class="live-data" aria-label="Live data">
+          <div id="data-source-indicator" class="live-data" aria-label="Live data">
             <span class="live-data-dot" aria-hidden="true"></span>
-            <span>LIVE data</span>
+            <span id="data-source-text">LIVE data</span>
           </div>
         </div>
       </section>
@@ -512,10 +517,65 @@
     const PERCENTILE_VALUE_RANGE = 'AC2:AH2';
     const EXPECTED_PERCENTILE_COLS = 6;
 
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY =
+      'locum-rate-summary';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    const FORCE_CACHED_DATA =
+      true;
+
     const app = document.getElementById('app');
     const responseCount = document.getElementById('response-count');
     const percentileTable = document.getElementById('percentile-table');
     const loadingState = document.getElementById('loading-state');
+    const dataSourceIndicator = document.getElementById('data-source-indicator');
+    const dataSourceText = document.getElementById('data-source-text');
+
+    function setDataSource(source) {
+      const isCached = source === 'cached';
+
+      dataSourceIndicator.classList.toggle(
+        'is-cached',
+        isCached
+      );
+
+      if (source === 'cached') {
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Cached data'
+        );
+
+        dataSourceText.textContent =
+          'CACHED data';
+
+        return;
+      }
+
+      if (source === 'unavailable') {
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Data unavailable'
+        );
+
+        dataSourceText.textContent =
+          'DATA unavailable';
+
+        return;
+      }
+
+      dataSourceIndicator.setAttribute(
+        'aria-label',
+        'Live data'
+      );
+
+      dataSourceText.textContent =
+        'LIVE data';
+    }
 
     function hideLoadingState() {
       app.classList.remove('is-loading');
@@ -654,19 +714,179 @@
       return [headerRow, valueRow];
     }
 
+    function validateDashboardData(data) {
+      const cachedResponseCount =
+        String(data?.responseCount ?? '').trim();
+
+      const percentileValues =
+        Array.isArray(data?.percentileTable)
+          ? data.percentileTable
+          : [];
+
+      if (
+        !cachedResponseCount ||
+        cachedResponseCount === '—' ||
+        percentileValues.length !== 2
+      ) {
+        throw new Error(
+          'Locum Rate Summary data are incomplete'
+        );
+      }
+
+      const normalisedTable =
+        percentileValues.map((row, rowIndex) => {
+          if (
+            !Array.isArray(row) ||
+            row.length < EXPECTED_PERCENTILE_COLS
+          ) {
+            throw new Error(
+              `Locum Rate Summary row ${rowIndex + 1} is incomplete`
+            );
+          }
+
+          return row
+            .slice(0, EXPECTED_PERCENTILE_COLS)
+            .map(value =>
+              String(value ?? '').trim() || '—'
+            );
+        });
+
+      return {
+        responseCount: cachedResponseCount,
+        percentileTable: normalisedTable
+      };
+    }
+
+    async function loadLiveDashboardData() {
+      const [
+        responseCountData,
+        percentileHeaderData,
+        percentileValueData
+      ] = await Promise.all([
+        loadGvizRange(RESPONSE_CELL, 0),
+        loadGvizRange(PERCENTILE_HEADER_RANGE, 1),
+        loadGvizRange(PERCENTILE_VALUE_RANGE, 0)
+      ]);
+
+      return validateDashboardData({
+        responseCount:
+          normaliseResponseCount(
+            responseCountData
+          ),
+
+        percentileTable:
+          normalisePercentileTable(
+            percentileHeaderData,
+            percentileValueData
+          )
+      });
+    }
+
+    async function loadCachedDashboardData() {
+      const controller =
+        new AbortController();
+
+      const timeout =
+        window.setTimeout(
+          () => controller.abort(),
+          CACHE_FETCH_TIMEOUT_MS
+        );
+
+      try {
+        const url =
+          new URL(
+            CACHE_WEB_APP_URL
+          );
+
+        url.searchParams.set(
+          'appKey',
+          CACHE_APP_KEY
+        );
+
+        url.searchParams.set(
+          '_',
+          String(Date.now())
+        );
+
+        const response =
+          await fetch(
+            url.toString(),
+            {
+              cache: 'no-store',
+              signal: controller.signal
+            }
+          );
+
+        if (!response.ok) {
+          throw new Error(
+            `Cached data request failed with HTTP ${response.status}`
+          );
+        }
+
+        const payload =
+          await response.json();
+
+        if (
+          payload?.ok !== true ||
+          payload?.appKey !== CACHE_APP_KEY
+        ) {
+          throw new Error(
+            'Cached Locum Rate Summary response is invalid'
+          );
+        }
+
+        return validateDashboardData(
+          payload.data
+        );
+      } finally {
+        window.clearTimeout(
+          timeout
+        );
+      }
+    }
+
+    async function loadDashboardDataWithFallback() {
+      if (!FORCE_CACHED_DATA) {
+        try {
+          const liveData =
+            await loadLiveDashboardData();
+
+          setDataSource('live');
+
+          return liveData;
+        } catch (liveError) {
+          console.warn(
+            'Live Locum Rate Summary data unavailable; trying cache.',
+            liveError
+          );
+        }
+      }
+
+      const cachedData =
+        await loadCachedDashboardData();
+
+      setDataSource('cached');
+
+      return cachedData;
+    }
+
     async function loadDashboardData() {
       try {
-        const [responseCountData, percentileHeaderData, percentileValueData] = await Promise.all([
-          loadGvizRange(RESPONSE_CELL, 0),
-          loadGvizRange(PERCENTILE_HEADER_RANGE, 1),
-          loadGvizRange(PERCENTILE_VALUE_RANGE, 0)
-        ]);
-        
-        responseCount.textContent = normaliseResponseCount(responseCountData);
-        renderPercentileTable(normalisePercentileTable(percentileHeaderData, percentileValueData));
+        const data =
+          await loadDashboardDataWithFallback();
+
+        responseCount.textContent =
+          data.responseCount;
+
+        renderPercentileTable(
+          data.percentileTable
+        );
+
         hideLoadingState();
       } catch (error) {
         console.error(error);
+
+        setDataSource('unavailable');
 
         responseCount.textContent = '—';
         responseCount.classList.add('error');
