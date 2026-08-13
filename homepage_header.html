@@ -470,13 +470,8 @@
   </div>
 
   <script>
-    const SPREADSHEET_ID = '1G3BV5lA_jaRPRR3ZmFWL-j8nRVWk5k01D-gOeO5nVgQ';
-    const SHEET_GID = '0';
-    const CONTRIBUTION_RANGE = 'BU14';
-
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
-
     const CACHE_APP_KEY =
       'pff-contribution-count';
 
@@ -576,24 +571,6 @@
       );
     }
 
-    function getCellDisplayValue(
-      response
-    ) {
-      const cell =
-        response?.table?.rows?.[0]?.c?.[0];
-
-      if (!cell) {
-        return '—';
-      }
-
-      return String(
-        cell.f ??
-        cell.v ??
-        ''
-      ).trim() ||
-        '—';
-    }
-
     function saveLocalCachedCount(
       value
     ) {
@@ -637,7 +614,7 @@
           reject
         ) => {
           const callbackName =
-            `pffContributionCallback_${
+            `pffContributionLive_${
               Date.now()
             }_${
               Math.floor(
@@ -663,7 +640,7 @@
                   )
                 );
               },
-              10000
+              CACHE_FETCH_TIMEOUT_MS
             );
 
           function cleanup() {
@@ -716,14 +693,17 @@
           }
 
           window[callbackName] =
-            response => {
+            snapshot => {
               if (
-                response?.status ===
-                  'error'
+                !snapshot ||
+                snapshot.ok !== true ||
+                snapshot.appKey !==
+                  CACHE_APP_KEY
               ) {
                 finish(
                   new Error(
-                    'Live contribution count could not be loaded'
+                    snapshot?.error ||
+                    'Live contribution count is unavailable'
                   )
                 );
 
@@ -731,14 +711,13 @@
               }
 
               const value =
-                getCellDisplayValue(
-                  response
-                );
+                String(
+                  snapshot?.data
+                    ?.contributionCount ??
+                  ''
+                ).trim();
 
-              if (
-                !value ||
-                value === '—'
-              ) {
+              if (!value) {
                 finish(
                   new Error(
                     'Live contribution count is empty'
@@ -765,25 +744,24 @@
 
           const params =
             new URLSearchParams({
-              gid:
-                SHEET_GID,
+              action:
+                'liveContributionCount',
 
-              range:
-                CONTRIBUTION_RANGE,
-
-              headers:
-                '0',
-
-              tqx:
-                `responseHandler:${callbackName}`,
+              callback:
+                callbackName,
 
               _:
                 String(
                   Date.now()
                 )
             });
+
           script.src =
-            `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
+            `${
+              CACHE_WEB_APP_URL
+            }?${
+              params.toString()
+            }`;
 
           document.body.appendChild(
             script
@@ -791,7 +769,6 @@
         }
       );
     }
-
     function loadCachedContributionCount() {
       return new Promise(
         (
