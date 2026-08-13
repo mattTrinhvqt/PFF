@@ -5838,8 +5838,67 @@ function sortKeysByCountDesc(counts) {
 
     let headingAnimationToken = 0;
     let layoutTransitionTimer = null;
+    let benchmarkAutoScrollTimer = null;
 
     const LAYOUT_TRANSITION_MS = 920;
+
+    function cancelPendingBenchmarkAutoScroll_() {
+      if (benchmarkAutoScrollTimer !== null) {
+        window.clearTimeout(
+          benchmarkAutoScrollTimer
+        );
+
+        benchmarkAutoScrollTimer = null;
+      }
+    }
+
+    /*
+     * If the user starts navigating the page themselves,
+     * cancel any salary-field scroll that is still waiting
+     * for the mobile keyboard/layout to settle.
+     */
+    window.addEventListener(
+      'wheel',
+      cancelPendingBenchmarkAutoScroll_,
+      {
+        passive: true
+      }
+    );
+
+    window.addEventListener(
+      'touchmove',
+      cancelPendingBenchmarkAutoScroll_,
+      {
+        passive: true
+      }
+    );
+
+    window.addEventListener(
+      'pointerdown',
+      cancelPendingBenchmarkAutoScroll_,
+      {
+        passive: true
+      }
+    );
+
+    window.addEventListener(
+      'keydown',
+      event => {
+        if (
+          [
+            'ArrowUp',
+            'ArrowDown',
+            'PageUp',
+            'PageDown',
+            'Home',
+            'End',
+            ' '
+          ].includes(event.key)
+        ) {
+          cancelPendingBenchmarkAutoScroll_();
+        }
+      }
+    );
 
     const appElement = document.getElementById('app');
     const inputSummaryButton =
@@ -10105,10 +10164,24 @@ function sortKeysByCountDesc(counts) {
        * opens. The timeout is retained as a fallback for browsers
        * where that event is unavailable or fires too early.
        */
-      window.setTimeout(
-        scrollBenchmarkToTop,
-        reduceMotion ? 0 : 360
-      );
+      /*
+       * Only keep one pending automatic benchmark scroll.
+       * If this function is called twice during the view
+       * transition, the later call replaces the earlier one.
+       *
+       * Manual scrolling/navigation cancels this timer via
+       * cancelPendingBenchmarkAutoScroll_().
+       */
+      cancelPendingBenchmarkAutoScroll_();
+
+      benchmarkAutoScrollTimer =
+        window.setTimeout(
+          () => {
+            benchmarkAutoScrollTimer = null;
+            scrollBenchmarkToTop();
+          },
+          reduceMotion ? 0 : 360
+        );
 
       return false;
     }
