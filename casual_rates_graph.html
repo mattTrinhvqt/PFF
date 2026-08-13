@@ -4218,7 +4218,65 @@
 
       return bestMatch;
     }
+    function findRawBubbleElement(event) {
+      if (!chart?.chartArea) {
+        return null;
+      }
 
+      const x = Number(event?.x);
+      const y = Number(event?.y);
+      const area = chart.chartArea;
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        x < area.left ||
+        x > area.right ||
+        y < area.top ||
+        y > area.bottom
+      ) {
+        return null;
+      }
+
+      let nearestRawPoint = null;
+
+      chart.data.datasets.forEach((dataset, datasetIndex) => {
+        if (dataset.datasetRole !== 'bubbleRaw') {
+          return;
+        }
+
+        const renderedPoints =
+          chart.getDatasetMeta(datasetIndex)?.data || [];
+
+        renderedPoints.forEach((element, index) => {
+          if (
+            !element ||
+            typeof element.inRange !== 'function' ||
+            !element.inRange(x, y, true)
+          ) {
+            return;
+          }
+
+          const distance = Math.hypot(
+            x - element.x,
+            y - element.y
+          );
+
+          if (
+            !nearestRawPoint ||
+            distance < nearestRawPoint.distance
+          ) {
+            nearestRawPoint = {
+              datasetIndex,
+              index,
+              distance
+            };
+          }
+        });
+      });
+
+      return nearestRawPoint;
+    }
     function findPrioritySummaryElement(event) {
       if (!chart?.chartArea) {
         return null;
@@ -4328,7 +4386,8 @@
       if (
         dataset?.datasetRole !== 'regression' &&
         dataset?.datasetRole !== 'categoryMedian' &&
-        dataset?.datasetRole !== 'bubbleAggregate'
+        dataset?.datasetRole !== 'bubbleAggregate' &&
+        dataset?.datasetRole !== 'bubbleRaw'
       ) {
         return;
       }
@@ -4363,6 +4422,7 @@
       }
 
       const selectedElement =
+        findRawBubbleElement(event) ||
         findPrioritySummaryElement(event) ||
         getInteractiveElement(elements);
 
@@ -4386,10 +4446,12 @@
         selectedElement &&
         (
           dataset?.datasetRole === 'regression' ||
-          dataset?.datasetRole === 'categoryMedian'
+          dataset?.datasetRole === 'categoryMedian' ||
+          dataset?.datasetRole === 'bubbleAggregate' ||
+          dataset?.datasetRole === 'bubbleRaw'
         )
       ) {
-        showHoveredLineTooltip(
+        showHoveredSummaryTooltip(
           event,
           selectedElement
         );
@@ -4404,6 +4466,7 @@
       event?.native?.preventDefault?.();
 
       const selectedElement =
+        findRawBubbleElement(event) ||
         findPrioritySummaryElement(event) ||
         getInteractiveElement(elements);
 
