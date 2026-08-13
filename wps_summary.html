@@ -718,20 +718,29 @@
     const SHEET_GID =
       '0';
 
-    const RESPONSE_CELL =
-      'BU2';
-
-    const PODIUM_RANGE =
-      'AL64:AL66';
+    const RAW_DATA_RANGE =
+      'A2:C';
 
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
 
+    /*
+     * Reuse the existing Workplace Promoter Score raw-data cache.
+     * It already stores raw A:D, so this summary needs no
+     * separate summary-cell cache.
+     */
     const CACHE_APP_KEY =
-      'best-optometry-workplaces';
+      'workplace-promoter-score-graph';
 
     const CACHE_FETCH_TIMEOUT_MS =
       10000;
+
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     */
+    const FORCE_CACHED_DATA =
+      false;
 
 
     const app =
@@ -824,162 +833,370 @@
     }
 
 
-    function escapeRegExp(
-      text
+    const EMPLOYERS = [
+      {
+        fullName:
+          'George & Matilda Eyecare',
+
+        aliases: [
+          'G&M',
+          'George & Matilda',
+          'George & Matilda Eyecare'
+        ]
+      },
+
+      {
+        fullName:
+          'The Optical Super Store',
+
+        aliases: [
+          'TOSS',
+          'The Optical Superstore',
+          'The Optical Super Store'
+        ]
+      },
+
+      {
+        fullName:
+          "Teacher's Health",
+
+        aliases: [
+          'TH',
+          'THF',
+          'Teachers Health',
+          'Teachers Health Fund',
+          "Teacher's Health",
+          "Teacher's Health Fund",
+          'Teacher’s Health Fund'
+        ]
+      },
+
+      {
+        fullName:
+          'Costco Optical',
+
+        aliases: [
+          'Costco',
+          'Costco Optical'
+        ]
+      },
+
+      {
+        fullName:
+          'Oscar Wylee',
+
+        aliases: [
+          'OW',
+          'Oscar Wylee'
+        ]
+      },
+
+      {
+        fullName:
+          'Bailey Nelson',
+
+        aliases: [
+          'BN',
+          'Bailey Nelson'
+        ]
+      },
+
+      {
+        fullName:
+          '1001 Optometry',
+
+        aliases: [
+          '1001',
+          '1001 Optometry'
+        ]
+      },
+
+      {
+        fullName:
+          'Chemist Warehouse Optometry',
+
+        aliases: [
+          'CW',
+          'Chemist Warehouse',
+          'Chemist Warehouse Optometry',
+          'Chemist/Optometrist Warehouse'
+        ]
+      },
+
+      {
+        fullName:
+          'Independent',
+
+        aliases: [
+          'Indie',
+          'Independent'
+        ]
+      },
+
+      {
+        fullName:
+          'HCF Eyecare',
+
+        aliases: [
+          'HCF',
+          'HCF Eyecare'
+        ]
+      },
+
+      {
+        fullName:
+          'Ophthalmologist',
+
+        aliases: [
+          'Ophthal',
+          'Ophthalmologist'
+        ]
+      },
+
+      {
+        fullName:
+          'The Optical Company',
+
+        aliases: [
+          'NIB',
+          'TOC',
+          'The Optical Company',
+          'The Optical Company (incl. NIB)',
+          'NIB (incl. the Optical Company)'
+        ]
+      },
+
+      {
+        fullName:
+          'Specsavers',
+
+        aliases: [
+          'SS',
+          'Specsavers'
+        ]
+      },
+
+      {
+        fullName:
+          'Bupa Optical',
+
+        aliases: [
+          'Bupa',
+          'Bupa Optical'
+        ]
+      },
+
+      {
+        fullName:
+          'Other',
+
+        aliases: [
+          'Other',
+          'Other (e.g., uni, hospital, govt, not-for-profit)'
+        ]
+      },
+
+      {
+        fullName:
+          'OPSM',
+
+        aliases: [
+          'OPSM',
+          'OPSM (incl. L&P, EyeQ)'
+        ]
+      },
+
+      {
+        fullName:
+          'Dresden Vision',
+
+        aliases: [
+          'Dresden',
+          'Dresden Vision'
+        ]
+      },
+
+      {
+        fullName:
+          'Optical by National Pharmacies',
+
+        aliases: [
+          'ObNP',
+          'Optical by National Pharmacies'
+        ]
+      },
+
+      {
+        fullName:
+          'Eye Concepts',
+
+        aliases: [
+          'Eye Concepts',
+          'EyeConcepts'
+        ]
+      },
+
+      {
+        fullName:
+          'iContact',
+
+        aliases: [
+          'iContact',
+          'IContact',
+          'i Contact'
+        ]
+      }
+    ];
+
+
+    function normaliseEmployerName(
+      value
     ) {
-      return text.replace(
-        /[.*+?^${}()|[\]\\]/g,
-        '\\$&'
-      );
+      return String(
+        value ||
+        ''
+      )
+        .toLowerCase()
+        .normalize(
+          'NFKD'
+        )
+        .replace(
+          /[’‘]/g,
+          "'"
+        )
+        .replace(
+          /&/g,
+          ' and '
+        )
+        .replace(
+          /[^a-z0-9]+/g,
+          ' '
+        )
+        .trim()
+        .replace(
+          /\s+/g,
+          ' '
+        );
     }
+
+
+    const EMPLOYER_ALIAS_MAP =
+      new Map();
+
+
+    EMPLOYERS.forEach(
+      (
+        employer,
+        employerIndex
+      ) => {
+        [
+          employer.fullName,
+          ...employer.aliases
+        ].forEach(
+          alias => {
+            EMPLOYER_ALIAS_MAP.set(
+              normaliseEmployerName(
+                alias
+              ),
+              {
+                fullName:
+                  employer.fullName,
+
+                order:
+                  employerIndex
+              }
+            );
+          }
+        );
+      }
+    );
+
+
+    function getEmployerAppearance(
+      employerName
+    ) {
+      const original =
+        String(
+          employerName ||
+          ''
+        ).trim();
+
+
+      const normalised =
+        normaliseEmployerName(
+          original
+        );
+
+
+      const knownEmployer =
+        EMPLOYER_ALIAS_MAP.get(
+          normalised
+        );
+
+
+      if (
+        knownEmployer
+      ) {
+        return {
+          key:
+            normaliseEmployerName(
+              knownEmployer.fullName
+            ),
+
+          fullName:
+            knownEmployer.fullName,
+
+          order:
+            knownEmployer.order
+        };
+      }
+
+
+      return {
+        key:
+          normalised ||
+          original,
+
+        fullName:
+          original ||
+          'Unknown employer',
+
+        order:
+          Number.MAX_SAFE_INTEGER
+      };
+    }
+
+
+    const EMPLOYER_SEPARATOR =
+      '\u001F';
 
 
     function formatWorkplaceEmployers(
       value
     ) {
-      let text =
+      const text =
         String(
-          value || ''
-        ).trim();
-
-
-      text =
-        text.replace(
-          /^#(?:1|2|3)\s*/,
+          value ||
           ''
-        );
-
-
-      const protectedNames = [
-        [
-          'George & Matilda',
-          '__GEORGE_MATILDA__'
-        ]
-      ];
-
-
-      protectedNames.forEach(
-        (
-          [
-            name,
-            token
-          ]
-        ) => {
-          text =
-            text.replaceAll(
-              name,
-              token
-            );
-        }
-      );
+        )
+          .trim()
+          .replace(
+            /^#(?:1|2|3)\s*/,
+            ''
+          );
 
 
       const employers =
         text
           .split(
-            /\s+&\s+/
+            EMPLOYER_SEPARATOR
           )
           .map(
-            name =>
-              name.trim()
+            employer =>
+              employer.trim()
           )
           .filter(
             Boolean
-          )
-          .map(
-            name => {
-              protectedNames.forEach(
-                (
-                  [
-                    originalName,
-                    token
-                  ]
-                ) => {
-                  name =
-                    name.replaceAll(
-                      token,
-                      originalName
-                    );
-                }
-              );
-
-
-              const visualNames = [
-                [
-                  'Chemist/Optometrist Warehouse',
-                  'Chemist Warehouse Optometry'
-                ],
-
-                [
-                  'NIB (incl. the Optical Company)',
-                  'The Optical Company (incl. NIB)'
-                ],
-
-                [
-                  'Teacher’s Health Fund',
-                  'Teachers Health'
-                ],
-
-                [
-                  'Teachers Health Fund',
-                  'Teachers Health'
-                ],
-
-                [
-                  'George & Matilda',
-                  'George & Matilda Eyecare'
-                ],
-
-                [
-                  '1001',
-                  '1001 Optometry'
-                ],
-
-                [
-                  'Bupa',
-                  'Bupa Optical'
-                ],
-
-                [
-                  'Costco',
-                  'Costco Optical'
-                ],
-
-                [
-                  'Dresden',
-                  'Dresden Vision'
-                ],
-
-                [
-                  'HCF',
-                  'HCF Eyecare'
-                ]
-              ];
-
-
-              visualNames.forEach(
-                (
-                  [
-                    storedName,
-                    displayName
-                  ]
-                ) => {
-                  name =
-                    name.replace(
-                      new RegExp(
-                        escapeRegExp(
-                          storedName
-                        ),
-                        'g'
-                      ),
-                      displayName
-                    );
-                }
-              );
-
-
-              return name;
-            }
           );
 
 
@@ -989,7 +1206,6 @@
             'No result available'
           ];
     }
-
 
     function renderWorkplaceResult(
       target,
@@ -1714,61 +1930,305 @@
     }
 
 
-    function normaliseDashboard(
-      responseData,
-      podiumData
+    function calculateMedian(
+      values
     ) {
-      const responseCell =
-        responseData
-          ?.table
-          ?.rows
-          ?.[0]
-          ?.c
-          ?.[0];
+      const sorted =
+        values
+          .filter(
+            Number.isFinite
+          )
+          .slice()
+          .sort(
+            (
+              first,
+              second
+            ) =>
+              first -
+              second
+          );
 
-      const podiumDataRows =
-        podiumData
+
+      if (
+        !sorted.length
+      ) {
+        return NaN;
+      }
+
+
+      const middle =
+        Math.floor(
+          sorted.length /
+          2
+        );
+
+
+      if (
+        sorted.length %
+          2 ===
+        1
+      ) {
+        return sorted[
+          middle
+        ];
+      }
+
+
+      return (
+        sorted[
+          middle - 1
+        ] +
+        sorted[
+          middle
+        ]
+      ) /
+      2;
+    }
+
+
+    function buildDashboardFromRawData(
+      response
+    ) {
+      const rows =
+        response
           ?.table
           ?.rows ||
         [];
 
 
+      let totalResponses =
+        0;
+
+
+      const employerScores =
+        new Map();
+
+
+      rows.forEach(
+        row => {
+          const cells =
+            row?.c ||
+            [];
+
+
+          const timestamp =
+            getCellDisplayValue(
+              cells[0]
+            );
+
+
+          /*
+           * Equivalent to:
+           * =COUNTA(A2:A)
+           */
+          if (
+            timestamp !==
+            ''
+          ) {
+            totalResponses++;
+          }
+
+
+          const employerName =
+            getCellDisplayValue(
+              cells[1]
+            );
+
+
+          const scoreText =
+            getCellDisplayValue(
+              cells[2]
+            );
+
+
+          if (
+            !employerName ||
+            scoreText ===
+              ''
+          ) {
+            return;
+          }
+
+
+          const score =
+            Number(
+              scoreText
+            );
+
+
+          if (
+            !Number.isFinite(
+              score
+            )
+          ) {
+            return;
+          }
+
+
+          const appearance =
+            getEmployerAppearance(
+              employerName
+            );
+
+
+          if (
+            !employerScores.has(
+              appearance.key
+            )
+          ) {
+            employerScores.set(
+              appearance.key,
+              {
+                fullName:
+                  appearance.fullName,
+
+                order:
+                  appearance.order,
+
+                scores:
+                  []
+              }
+            );
+          }
+
+
+          employerScores
+            .get(
+              appearance.key
+            )
+            .scores
+            .push(
+              score
+            );
+        }
+      );
+
+
+      const employers =
+        [
+          ...employerScores.values()
+        ]
+          .map(
+            employer => ({
+              fullName:
+                employer.fullName,
+
+              order:
+                employer.order,
+
+              median:
+                calculateMedian(
+                  employer.scores
+                )
+            })
+          )
+          .filter(
+            employer =>
+              Number.isFinite(
+                employer.median
+              )
+          );
+
+
+      const distinctMedians =
+        [
+          ...new Set(
+            employers.map(
+              employer =>
+                employer.median
+            )
+          )
+        ]
+          .sort(
+            (
+              first,
+              second
+            ) =>
+              second -
+              first
+          );
+
+
+      function buildRankText(
+        rankIndex
+      ) {
+        const targetMedian =
+          distinctMedians[
+            rankIndex
+          ];
+
+
+        if (
+          !Number.isFinite(
+            targetMedian
+          )
+        ) {
+          return '';
+        }
+
+
+        const matchingEmployers =
+          employers
+            .filter(
+              employer =>
+                employer.median ===
+                targetMedian
+            )
+            .sort(
+              (
+                first,
+                second
+              ) =>
+                first.order -
+                  second.order ||
+                first.fullName.localeCompare(
+                  second.fullName
+                )
+            )
+            .map(
+              employer =>
+                employer.fullName
+            );
+
+
+        if (
+          !matchingEmployers.length
+        ) {
+          return '';
+        }
+
+
+        return (
+          `#${rankIndex + 1} ` +
+          matchingEmployers.join(
+            EMPLOYER_SEPARATOR
+          )
+        );
+      }
+
+
       return {
         responseCount:
-          getCellDisplayValue(
-            responseCell
-          ) ||
-          '—',
+          String(
+            totalResponses
+          ),
 
         gold:
-          getCellDisplayValue(
-            podiumDataRows
-              ?.[0]
-              ?.c
-              ?.[0]
-          ) ||
-          '',
+          buildRankText(
+            0
+          ),
 
         silver:
-          getCellDisplayValue(
-            podiumDataRows
-              ?.[1]
-              ?.c
-              ?.[0]
-          ) ||
-          '',
+          buildRankText(
+            1
+          ),
 
         bronze:
-          getCellDisplayValue(
-            podiumDataRows
-              ?.[2]
-              ?.c
-              ?.[0]
-          ) ||
-          ''
+          buildRankText(
+            2
+          )
       };
     }
-
 
     function isUsableDashboardText(
       value
@@ -1852,6 +2312,7 @@
       ) {
         throw new Error(
           response?.error ||
+          response?.message ||
           'The cached-data service did not return a snapshot'
         );
       }
@@ -1881,8 +2342,52 @@
       }
 
 
+      if (
+        !Array.isArray(
+          response.data?.rows
+        ) ||
+        !response.data.rows.length
+      ) {
+        throw new Error(
+          'The cached-data response has no survey rows'
+        );
+      }
+
+
+      const rawResponse = {
+        table: {
+          rows:
+            response.data.rows.map(
+              row => ({
+                c: [
+                  {
+                    v:
+                      row?.[0] ??
+                      ''
+                  },
+
+                  {
+                    v:
+                      row?.[1] ??
+                      ''
+                  },
+
+                  {
+                    v:
+                      row?.[2] ??
+                      ''
+                  }
+                ]
+              })
+            )
+        }
+      };
+
+
       return validateDashboardData(
-        response.data
+        buildDashboardFromRawData(
+          rawResponse
+        )
       );
     }
 
@@ -1983,52 +2488,51 @@
         null;
 
 
-      try {
-        const [
-          responseData,
-          podiumData
-        ] =
-          await Promise.all([
-            loadGvizRange(
-              RESPONSE_CELL
-            ),
-
-            loadGvizRange(
-              PODIUM_RANGE
-            )
-          ]);
+      if (
+        !FORCE_CACHED_DATA
+      ) {
+        try {
+          const rawData =
+            await loadGvizRange(
+              RAW_DATA_RANGE
+            );
 
 
-        const liveDashboard =
-          validateDashboardData(
-            normaliseDashboard(
-              responseData,
-              podiumData
-            )
+          const liveDashboard =
+            validateDashboardData(
+              buildDashboardFromRawData(
+                rawData
+              )
+            );
+
+
+          setDataSource(
+            'live'
           );
 
 
-        setDataSource(
-          'live'
-        );
+          renderDashboard(
+            liveDashboard
+          );
 
-
-        renderDashboard(
-          liveDashboard
-        );
-
-        return;
-      } catch (
-        error
-      ) {
-        liveError =
-          error;
-
-
-        console.warn(
-          'Live Google Sheets data could not be used',
+          return;
+        } catch (
           error
-        );
+        ) {
+          liveError =
+            error;
+
+
+          console.warn(
+            'Live Google Sheets data could not be used',
+            error
+          );
+        }
+      } else {
+        liveError =
+          new Error(
+            'Live data bypassed for cached-data test'
+          );
       }
 
 
