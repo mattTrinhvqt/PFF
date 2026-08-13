@@ -2183,6 +2183,17 @@
         visibility 0s linear 0s;
     }
 
+    .benchmark-field input.salary-currency-input {
+      border-top: 0 !important;
+      border-right: 0 !important;
+      border-left: 0 !important;
+      border-radius: 0 !important;
+      outline: 0 !important;
+      box-shadow: none !important;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+
     .benchmark-field.has-required-warning input.salary-currency-input {
       padding-right: 0 !important;
     }
@@ -3712,16 +3723,16 @@
       padding: 2px 0 7px;
     }
 
-    /* Restore the slightly more open vertical rhythm used before the
-       HPSS wording was shortened, while retaining the new wording. */
+    /* Keep the HPSS rows comfortably spaced while bringing the
+       heading slightly closer to the two work-pattern rows. */
     .hpss-input-details .hpss-hours-group {
-      gap: 3px;
+      gap: 1px;
     }
 
     .hpss-input-details .hpss-hours-heading {
       display: flex;
-      min-height: 20px;
-      margin: 0 0 2px;
+      min-height: 18px;
+      margin: 0;
       align-items: center;
       color: var(--muted);
       font-size: 12px;
@@ -3745,8 +3756,10 @@
       transition: opacity 180ms ease;
     }
 
-    .hpss-input-details input:disabled {
-      cursor: not-allowed;
+    .hpss-input-details.is-benchmark-locked input,
+    .hpss-input-details.is-benchmark-locked label,
+    .hpss-input-details.is-benchmark-locked .hpss-level-card {
+      cursor: pointer;
     }
 
     /* The result view is results-only. Reopening inputs removes the
@@ -3786,29 +3799,41 @@
       cursor: pointer;
     }
 
-    /* Temporary next-step cue after a valid Award level is chosen. */
+    /* Temporary next-step cue after a valid Award level is chosen.
+       Only the letters animate, keeping the button itself unchanged. */
     #estimateBtn.is-next-action {
-      animation:
-        estimateNextActionCue
-        900ms
-        cubic-bezier(0.22, 1, 0.36, 1)
-        1;
+      color: var(--ink);
+      background: transparent;
+      border-color: var(--ink);
+      box-shadow: none;
     }
 
-    @keyframes estimateNextActionCue {
+    #estimateBtn.is-next-action .estimate-cue-letter {
+      display: inline-block;
+      color: var(--ink);
+      animation:
+        estimateNextActionLetterCue
+        1150ms
+        ease-in-out
+        1
+        both;
+      animation-delay:
+        calc(var(--letter-index) * 55ms);
+    }
+
+    @keyframes estimateNextActionLetterCue {
       0%,
-      100% {
+      8% {
         color: var(--ink);
-        background: transparent;
-        border-color: var(--ink);
-        box-shadow: 0 0 0 0 rgba(102, 0, 255, 0);
       }
 
-      42% {
+      22%,
+      72% {
         color: var(--purple);
-        background: rgba(102, 0, 255, 0.035);
-        border-color: var(--purple);
-        box-shadow: 0 0 0 4px rgba(102, 0, 255, 0.08);
+      }
+
+      100% {
+        color: var(--ink);
       }
     }
 
@@ -5976,6 +6001,14 @@ function sortKeysByCountDesc(counts) {
     }
 
 
+    function hasAnyHpssInput_() {
+      return Boolean(
+        hpssSelectedLevel ||
+        hpssWeekendHours?.value?.trim() ||
+        hpssEveningHours?.value?.trim()
+      );
+    }
+
     function setInputPanelCollapsed(
       collapsed
     ) {
@@ -5997,20 +6030,25 @@ function sortKeysByCountDesc(counts) {
           !shouldCollapse &&
           lastRes
         ) {
+          const shouldAutoOpenHpss =
+            hasAnyHpssInput_();
+
           setHpssInputDetailsOpen_(
-            true,
+            shouldAutoOpenHpss,
             true
           );
 
-          requestAnimationFrame(
-            () => {
-              if (
-                !hasValidBenchmarkForHpss_()
-              ) {
-                requireBenchmarkForHpss_();
+          if (shouldAutoOpenHpss) {
+            requestAnimationFrame(
+              () => {
+                if (
+                  !hasValidBenchmarkForHpss_()
+                ) {
+                  requireBenchmarkForHpss_();
+                }
               }
-            }
-          );
+            );
+          }
         }
 
         return;
@@ -6067,14 +6105,18 @@ function sortKeysByCountDesc(counts) {
 
         hpssCompare.open = false;
 
+        const shouldAutoOpenHpss =
+          hasAnyHpssInput_();
+
         requestAnimationFrame(
           () => {
             setHpssInputDetailsOpen_(
-              true,
+              shouldAutoOpenHpss,
               true
             );
 
             if (
+              shouldAutoOpenHpss &&
               !hasValidBenchmarkForHpss_()
             ) {
               requireBenchmarkForHpss_();
@@ -8563,11 +8605,45 @@ function sortKeysByCountDesc(counts) {
       scheduleApplyScale();
     }
 
+    let calculateCueToken = 0;
+
     function cueCalculateButton_() {
       if (!estimateBtn) return;
 
+      const label =
+        estimateBtn.textContent.trim();
+
+      if (!label) return;
+
+      const token =
+        ++calculateCueToken;
+
       estimateBtn.classList.remove(
         'is-next-action'
+      );
+
+      estimateBtn.textContent = '';
+
+      [...label].forEach(
+        (character, index) => {
+          const span =
+            document.createElement('span');
+
+          span.className =
+            'estimate-cue-letter';
+
+          span.style.setProperty(
+            '--letter-index',
+            String(index)
+          );
+
+          span.textContent =
+            character === ' '
+              ? '\u00a0'
+              : character;
+
+          estimateBtn.appendChild(span);
+        }
       );
 
       void estimateBtn.offsetWidth;
@@ -8576,13 +8652,37 @@ function sortKeysByCountDesc(counts) {
         'is-next-action'
       );
 
+      const totalDuration =
+        1150 +
+        Math.max(0, label.length - 1) * 55 +
+        80;
+
       window.setTimeout(
         () => {
+          if (
+            token !== calculateCueToken ||
+            !estimateBtn.classList.contains(
+              'is-next-action'
+            )
+          ) {
+            return;
+          }
+
           estimateBtn.classList.remove(
             'is-next-action'
           );
+
+          /* Do not overwrite Calculating/Recalculating if the
+             button was pressed while the cue was running. */
+          if (
+            estimateBtn.querySelector(
+              '.estimate-cue-letter'
+            )
+          ) {
+            estimateBtn.textContent = label;
+          }
         },
-        950
+        totalDuration
       );
     }
 
@@ -8951,20 +9051,13 @@ function sortKeysByCountDesc(counts) {
       hpssLevelDataLocked =
         Boolean(disabled);
 
-      const benchmarkLocked =
-        Boolean(
-          hpssInputDetails?.open &&
-          !hasValidBenchmarkForHpss_()
-        );
-
       hpssLevelFieldset
         .querySelectorAll(
           'input[name="hpssLevel"]'
         )
         .forEach(input => {
           input.disabled =
-            hpssLevelDataLocked ||
-            benchmarkLocked;
+            hpssLevelDataLocked;
         });
     }
 
@@ -9606,12 +9699,15 @@ function sortKeysByCountDesc(counts) {
         locked
       );
 
+      /* Keep the HPSS controls clickable when salary is missing.
+         A capture handler below redirects the click to the benchmark
+         field and shows the warning, rather than using disabled inputs. */
       if (hpssWeekendHours) {
-        hpssWeekendHours.disabled = locked;
+        hpssWeekendHours.disabled = false;
       }
 
       if (hpssEveningHours) {
-        hpssEveningHours.disabled = locked;
+        hpssEveningHours.disabled = false;
       }
 
       setHpssLevelInputsDisabled(
@@ -9667,6 +9763,38 @@ function sortKeysByCountDesc(counts) {
 
       return false;
     }
+
+    /* When the HPSS panel is open without a salary benchmark,
+       keep it visibly available and clickable. Any attempted interaction
+       redirects to the salary field and shows the HPSS requirement cue. */
+    hpssInputsPanel?.addEventListener(
+      'pointerdown',
+      event => {
+        if (
+          hpssInputDetails?.open &&
+          !hasValidBenchmarkForHpss_()
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          requireBenchmarkForHpss_();
+        }
+      },
+      true
+    );
+
+    hpssInputsPanel?.addEventListener(
+      'focusin',
+      event => {
+        if (
+          hpssInputDetails?.open &&
+          !hasValidBenchmarkForHpss_()
+        ) {
+          event.preventDefault();
+          requireBenchmarkForHpss_();
+        }
+      },
+      true
+    );
 
     hpssInputDetailsSummary?.addEventListener(
       'click',
