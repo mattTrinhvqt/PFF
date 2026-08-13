@@ -4219,6 +4219,70 @@
       return bestMatch;
     }
 
+    function findPrioritySummaryElement(event) {
+      if (!chart?.chartArea) {
+        return null;
+      }
+
+      const x = Number(event?.x);
+      const y = Number(event?.y);
+      const area = chart.chartArea;
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        x < area.left ||
+        x > area.right ||
+        y < area.top ||
+        y > area.bottom
+      ) {
+        return null;
+      }
+
+      let nearestAggregate = null;
+
+      chart.data.datasets.forEach((dataset, datasetIndex) => {
+        if (dataset.datasetRole !== 'bubbleAggregate') {
+          return;
+        }
+
+        const renderedPoints =
+          chart.getDatasetMeta(datasetIndex)?.data || [];
+
+        renderedPoints.forEach((element, index) => {
+          if (
+            !element ||
+            typeof element.inRange !== 'function' ||
+            !element.inRange(x, y, true)
+          ) {
+            return;
+          }
+
+          const distance = Math.hypot(
+            x - element.x,
+            y - element.y
+          );
+
+          if (
+            !nearestAggregate ||
+            distance < nearestAggregate.distance
+          ) {
+            nearestAggregate = {
+              datasetIndex,
+              index,
+              distance
+            };
+          }
+        });
+      });
+
+      if (nearestAggregate) {
+        return nearestAggregate;
+      }
+
+      return findNearestInteractiveLine(event);
+    }
+
     function showSelectedTooltip(event, selectedElement) {
       const renderedElement = chart
         .getDatasetMeta(selectedElement.datasetIndex)
@@ -4298,8 +4362,8 @@
       }
 
       const selectedElement =
-        getInteractiveElement(elements) ||
-        findNearestInteractiveLine(event);
+        findPrioritySummaryElement(event) ||
+        getInteractiveElement(elements);
 
       const dataset = selectedElement
         ? chart.data.datasets[selectedElement.datasetIndex]
@@ -4339,8 +4403,8 @@
       event?.native?.preventDefault?.();
 
       const selectedElement =
-        getInteractiveElement(elements) ||
-        findNearestInteractiveLine(event);
+        findPrioritySummaryElement(event) ||
+        getInteractiveElement(elements);
 
       if (!selectedElement) {
         chart.tooltip.setActiveElements([], { x: 0, y: 0 });
