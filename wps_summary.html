@@ -16,6 +16,13 @@
       --purple: #6600ff;
       --ink: #151515;
       --muted: #69718a;
+
+      /*
+       * Each Gold/Silver/Bronze box is permanently the same height.
+       * 40px comfortably fits two employer lines at the normal 11px
+       * font size.
+       */
+      --podium-row-height: 40px;
       --live-red: #e53935;
       --cached-amber: #c27c00;
       --track: #e8eaf0;
@@ -411,16 +418,16 @@
      */
     .podium-list {
       display: grid;
-      flex: 1 1 0;
+      flex: 0 0 auto;
       grid-template-rows: repeat(
         3,
-        minmax(0, 1fr)
+        var(--podium-row-height)
       );
       gap: clamp(4px, 1.4vh, 8px);
       width: 100%;
       min-width: 0;
       min-height: 0;
-      overflow: hidden;
+      overflow: visible;
     }
 
     .podium-row {
@@ -466,18 +473,14 @@
       flex-direction: column;
       align-items: stretch;
       justify-content: center;
-      gap: clamp(0px, 0.4vh, 2px);
+      gap: 0;
       padding:
-        clamp(3px, 1.5vh, 10px)
+        4px
         clamp(6px, 2.7vw, 14px);
       overflow: hidden;
       color: var(--ink);
       background: #fff;
-      font-size: clamp(
-        15px,
-        3.8vw,
-        18px
-      );
+      font-size: 11px;
       font-weight: 400;
       line-height: 1.2;
     }
@@ -1253,45 +1256,24 @@
 
 
     /*
-     * Boxes with more employers receive proportionally more
-     * of the available podium height.
+     * Gold, Silver and Bronze always remain the same fixed height.
+     * The employer font is reduced separately if more than two
+     * employer lines need to fit inside a box.
      */
     function updatePodiumRowProportions() {
-      const results =
-        Array.from(
-          document.querySelectorAll(
-            '.result'
-          )
-        );
-
-      const employerCounts =
-        results.map(
-          result =>
-            Math.max(
-              1,
-              result.querySelectorAll(
-                '.employer-line'
-              ).length
-            )
-        );
-
-
       podiumList.style.gridTemplateRows =
-        employerCounts
-          .map(
-            count =>
-              `${count}fr`
-          )
-          .join(
-            ' '
-          );
+        'repeat(3, var(--podium-row-height))';
     }
 
 
     /*
-     * Calculate one shared font size that fits:
-     * 1. the longest employer name horizontally; and
-     * 2. every set of employer lines vertically.
+     * Each Gold/Silver/Bronze box normally uses an 11px
+     * employer font independently.
+     *
+     * If the employers in one box do not fit vertically
+     * or horizontally, only that box's employer font is
+     * reduced. The other boxes remain at 11px unless they
+     * independently need to shrink as well.
      */
     function fitSharedEmployerFontSize() {
       const results =
@@ -1301,94 +1283,13 @@
           )
         );
 
-      const lines =
-        Array.from(
-          document.querySelectorAll(
-            '.employer-line'
-          )
-        );
-
-
-      if (
-        !lines.length
-      ) {
-        return;
-      }
-
-
-      lines.forEach(
-        line => {
-          line.style.fontSize =
-            '';
-        }
-      );
-
-
       const baseFontSize =
-        Math.min(
-          ...lines.map(
-            line =>
-              parseFloat(
-                window
-                  .getComputedStyle(
-                    line
-                  )
-                  .fontSize
-              ) || 18
-          )
-        );
+        11;
 
 
-      lines.forEach(
-        line => {
-          line.style.fontSize =
-            `${baseFontSize}px`;
-        }
-      );
-
-
-      let sharedFontSize =
-        baseFontSize;
-
-
-      /*
-       * Horizontal limit: find the scale required by the
-       * widest employer name.
-       */
-      lines.forEach(
-        line => {
-          if (
-            line.clientWidth <=
-              1 ||
-            line.scrollWidth <=
-              0
-          ) {
-            return;
-          }
-
-
-          const widthScale =
-            line.clientWidth /
-            line.scrollWidth;
-
-
-          sharedFontSize =
-            Math.min(
-              sharedFontSize,
-              baseFontSize *
-              widthScale
-            );
-        }
-      );
-
-
-      /*
-       * Vertical limit: make sure every employer line fits within
-       * its assigned podium box.
-       */
       results.forEach(
         result => {
-          const resultLines =
+          const lines =
             Array.from(
               result.querySelectorAll(
                 '.employer-line'
@@ -1397,12 +1298,65 @@
 
 
           if (
-            !resultLines.length
+            !lines.length
           ) {
             return;
           }
 
 
+          /*
+           * Always begin this box at the normal 11px size.
+           */
+          lines.forEach(
+            line => {
+              line.style.fontSize =
+                `${baseFontSize}px`;
+            }
+          );
+
+
+          let boxFontSize =
+            baseFontSize;
+
+
+          /*
+           * Horizontal limit:
+           * if an employer name is too long for this particular
+           * box, reduce this box only enough to keep it on one line.
+           */
+          lines.forEach(
+            line => {
+              if (
+                line.clientWidth <=
+                  1 ||
+                line.scrollWidth <=
+                  0
+              ) {
+                return;
+              }
+
+
+              const widthScale =
+                line.clientWidth /
+                line.scrollWidth;
+
+
+              boxFontSize =
+                Math.min(
+                  boxFontSize,
+                  baseFontSize *
+                  widthScale
+                );
+            }
+          );
+
+
+          /*
+           * Vertical limit:
+           * a 40px box comfortably fits up to two employer
+           * lines at 11px. If there are more lines, reduce
+           * this box's font only as much as necessary.
+           */
           const styles =
             window.getComputedStyle(
               result
@@ -1428,7 +1382,7 @@
             parseFloat(
               window
                 .getComputedStyle(
-                  resultLines[0]
+                  lines[0]
                 )
                 .lineHeight
             ) ||
@@ -1448,7 +1402,7 @@
               gap *
               Math.max(
                 0,
-                resultLines.length -
+                lines.length -
                 1
               )
             );
@@ -1456,88 +1410,88 @@
           const verticalFontLimit =
             availableHeight /
             (
-              resultLines.length *
+              lines.length *
               lineHeightRatio
             );
 
 
-          sharedFontSize =
+          boxFontSize =
             Math.min(
-              sharedFontSize,
+              boxFontSize,
               verticalFontLimit
             );
-        }
-      );
 
 
-      sharedFontSize =
-        Math.max(
-          1,
-          Math.floor(
-            sharedFontSize *
-            10
-          ) /
-          10
-        );
+          boxFontSize =
+            Math.max(
+              1,
+              Math.floor(
+                boxFontSize *
+                10
+              ) /
+              10
+            );
 
 
-      lines.forEach(
-        line => {
-          line.style.fontSize =
-            `${sharedFontSize}px`;
-        }
-      );
-
-
-      /*
-       * Small final correction for browser rounding.
-       */
-      const finalWidthScale =
-        Math.min(
-          1,
-          ...lines.map(
+          lines.forEach(
             line => {
-              if (
-                line.clientWidth <=
-                  1 ||
-                line.scrollWidth <=
-                  0
-              ) {
-                return 1;
-              }
-
-              return (
-                line.clientWidth /
-                line.scrollWidth
-              );
+              line.style.fontSize =
+                `${boxFontSize}px`;
             }
-          )
-        );
-
-
-      if (
-        finalWidthScale <
-        1
-      ) {
-        sharedFontSize =
-          Math.max(
-            1,
-            sharedFontSize *
-            finalWidthScale *
-            0.995
           );
 
 
-        lines.forEach(
-          line => {
-            line.style.fontSize =
-              `${sharedFontSize}px`;
+          /*
+           * Final small correction for browser rounding,
+           * again affecting this box only.
+           */
+          const finalWidthScale =
+            Math.min(
+              1,
+              ...lines.map(
+                line => {
+                  if (
+                    line.clientWidth <=
+                      1 ||
+                    line.scrollWidth <=
+                      0
+                  ) {
+                    return 1;
+                  }
+
+
+                  return (
+                    line.clientWidth /
+                    line.scrollWidth
+                  );
+                }
+              )
+            );
+
+
+          if (
+            finalWidthScale <
+            1
+          ) {
+            boxFontSize =
+              Math.max(
+                1,
+                boxFontSize *
+                finalWidthScale *
+                0.995
+              );
+
+
+            lines.forEach(
+              line => {
+                line.style.fontSize =
+                  `${boxFontSize}px`;
+              }
+            );
           }
-        );
-      }
+        }
+      );
     }
-
-
     let responsiveLayoutFrame =
       null;
 
