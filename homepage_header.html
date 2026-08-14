@@ -72,6 +72,7 @@
       text-align: center;
       white-space: nowrap;
     }
+
     .response-value-row {
       position: relative;
       display: flex;
@@ -90,6 +91,7 @@
       text-align: center;
       white-space: nowrap;
     }
+
     .response-value.is-loading {
       display: flex;
       flex-direction: column;
@@ -245,6 +247,7 @@
         opacity: 0.45;
       }
     }
+
     .gradient-line {
       width: 100%;
       height: 1px;
@@ -274,6 +277,18 @@
       letter-spacing: 0.05em;
       line-height: 1;
       white-space: nowrap;
+
+      /*
+       * Keep source completely hidden until
+       * the first data load has finished.
+       */
+      visibility: hidden;
+      opacity: 0;
+    }
+
+    .live-data.is-visible {
+      visibility: visible;
+      opacity: 1;
     }
 
     .live-data-dot {
@@ -341,12 +356,11 @@
       min-width: 0;
     }
 
-
-
     .contribute-button:hover .button-icon,
     .contribute-button:focus-visible .button-icon {
       color: #fff;
     }
+
     .anonymous-note {
       max-width: 430px;
       margin: 12px auto 0;
@@ -374,9 +388,11 @@
         min-height: 38px;
         font-size: 14px;
       }
+
       .anonymous-note {
         font-size: 13px;
-      }      
+      }
+
       .response-value.is-loading {
         min-width: 76px;
         min-height: 50px;
@@ -472,6 +488,7 @@
   <script>
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
+
     const CACHE_APP_KEY =
       'pff-contribution-count';
 
@@ -480,6 +497,12 @@
 
     const LOCAL_CACHE_KEY =
       'pff-contribution-count-v1';
+
+    /*
+     * Duration of the number count-up animation.
+     */
+    const COUNT_UP_DURATION_MS =
+      1400;
 
     /*
      * Set true to skip the live Apps Script calculation
@@ -502,6 +525,15 @@
       document.getElementById(
         'data-source-text'
       );
+
+    let hasLoadedCount =
+      false;
+
+    let displayedCount =
+      null;
+
+    let countAnimationFrame =
+      null;
 
     function setDataSource(
       source
@@ -526,11 +558,7 @@
           'aria-label',
           'Cached data'
         );
-
-        return;
-      }
-
-      if (
+      } else if (
         source === 'unavailable'
       ) {
         dataSourceText.textContent =
@@ -540,16 +568,22 @@
           'aria-label',
           'Data unavailable'
         );
+      } else {
+        dataSourceText.textContent =
+          'LIVE data';
 
-        return;
+        dataSourceIndicator.setAttribute(
+          'aria-label',
+          'Live data'
+        );
       }
 
-      dataSourceText.textContent =
-        'LIVE data';
-
-      dataSourceIndicator.setAttribute(
-        'aria-label',
-        'Live data'
+      /*
+       * Do not reveal LIVE / CACHED / unavailable
+       * until a load has actually finished.
+       */
+      dataSourceIndicator.classList.add(
+        'is-visible'
       );
     }
 
@@ -557,6 +591,17 @@
       value,
       isError = false
     ) {
+      if (
+        countAnimationFrame
+      ) {
+        cancelAnimationFrame(
+          countAnimationFrame
+        );
+
+        countAnimationFrame =
+          null;
+      }
+
       contributionCount.classList.remove(
         'is-loading'
       );
@@ -569,6 +614,199 @@
         'error',
         isError
       );
+    }
+
+    function animateContributionCount(
+      value
+    ) {
+      const numericValue =
+        Number(
+          String(
+            value ?? ''
+          ).replace(
+            /,/g,
+            ''
+          )
+        );
+
+      /*
+       * If the returned value is not a normal
+       * non-negative number, just display it.
+       */
+      if (
+        !Number.isFinite(
+          numericValue
+        ) ||
+        numericValue < 0
+      ) {
+        showContributionCount(
+          value
+        );
+
+        displayedCount =
+          null;
+
+        hasLoadedCount =
+          true;
+
+        return;
+      }
+
+      const target =
+        Math.round(
+          numericValue
+        );
+
+      /*
+       * First load:
+       * count upward from 1.
+       *
+       * Later refreshes:
+       * animate from the currently displayed count
+       * if the value has changed.
+       */
+      let startValue;
+
+      if (
+        !hasLoadedCount ||
+        displayedCount === null
+      ) {
+        startValue =
+          0;
+      } else {
+        startValue =
+          displayedCount;
+      }
+
+      if (
+        countAnimationFrame
+      ) {
+        cancelAnimationFrame(
+          countAnimationFrame
+        );
+
+        countAnimationFrame =
+          null;
+      }
+
+      contributionCount.classList.remove(
+        'is-loading'
+      );
+
+      contributionCount.classList.remove(
+        'error'
+      );
+
+      /*
+       * No animation is needed if a refresh returns
+       * exactly the same count.
+       */
+      if (
+        startValue === target
+      ) {
+        contributionCount.textContent =
+          target.toLocaleString(
+            'en-AU'
+          );
+
+        displayedCount =
+          target;
+
+        hasLoadedCount =
+          true;
+
+        return;
+      }
+
+      const startTime =
+        performance.now();
+
+      function drawCount(
+        now
+      ) {
+        const elapsed =
+          now -
+          startTime;
+
+        const progress =
+          Math.min(
+            elapsed /
+              COUNT_UP_DURATION_MS,
+            1
+          );
+
+        /*
+         * Ease-out animation:
+         * fast at first, then gently settles
+         * onto the final number.
+         */
+        const eased =
+          1 -
+          Math.pow(
+            1 - progress,
+            3
+          );
+
+        let current =
+          Math.round(
+            startValue +
+            (
+              target -
+              startValue
+            ) *
+            eased
+          );
+
+        /*
+         * On the initial upward count, make the
+         * first visible number 1 rather than 0.
+         */
+        if (
+          !hasLoadedCount &&
+          target > 0
+        ) {
+          current =
+            Math.max(
+              1,
+              current
+            );
+        }
+
+        contributionCount.textContent =
+          current.toLocaleString(
+            'en-AU'
+          );
+
+        if (
+          progress < 1
+        ) {
+          countAnimationFrame =
+            requestAnimationFrame(
+              drawCount
+            );
+
+          return;
+        }
+
+        contributionCount.textContent =
+          target.toLocaleString(
+            'en-AU'
+          );
+
+        displayedCount =
+          target;
+
+        hasLoadedCount =
+          true;
+
+        countAnimationFrame =
+          null;
+      }
+
+      countAnimationFrame =
+        requestAnimationFrame(
+          drawCount
+        );
     }
 
     function saveLocalCachedCount(
@@ -769,6 +1007,7 @@
         }
       );
     }
+
     function loadCachedContributionCount() {
       return new Promise(
         (
@@ -947,7 +1186,7 @@
             liveValue
           );
 
-          showContributionCount(
+          animateContributionCount(
             liveValue
           );
 
@@ -972,7 +1211,7 @@
           cachedValue
         );
 
-        showContributionCount(
+        animateContributionCount(
           cachedValue
         );
 
@@ -999,7 +1238,7 @@
         loadLocalCachedCount();
 
       if (localValue) {
-        showContributionCount(
+        animateContributionCount(
           localValue
         );
 
@@ -1014,6 +1253,12 @@
         '—',
         true
       );
+
+      hasLoadedCount =
+        true;
+
+      displayedCount =
+        null;
 
       setDataSource(
         'unavailable'
