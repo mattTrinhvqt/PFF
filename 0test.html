@@ -4135,7 +4135,7 @@
                 class="hpss-fieldset"
               >
                 <legend>
-                  <span id="hpssLevelPrompt" class="hpss-question-row" hidden>Award level – which best describes you?</span>
+                  <span id="hpssLevelPrompt" class="hpss-question-row" hidden>Award level – which best describes you?<span id="hpssAwardLevelWarning" class="hpss-award-level-warning" aria-hidden="true">⚠</span></span>
                   <button
                     id="hpssLoadStatus"
                     class="hpss-status"
@@ -9634,7 +9634,9 @@ function sortKeysByCountDesc(counts) {
         )
       ) {
         showInputError(
-          '⚠ Please enter valid FTE salary or leave blank'
+          viewMode === 'hourly'
+            ? '⚠ Please enter valid hourly rate or leave blank'
+            : '⚠ Please enter valid FTE salary or leave blank'
         );
 
         return;
@@ -9645,7 +9647,9 @@ function sortKeysByCountDesc(counts) {
         enteredBenchmarkSalary === null
       ) {
         showInputError(
-          '⚠ Fill current FTE salary benchmark for HPSS comparison'
+          viewMode === 'hourly'
+            ? '⚠ Fill current hourly rate benchmark for HPSS comparison'
+            : '⚠ Fill current FTE salary benchmark for HPSS comparison'
         );
 
         setHpssInputDetailsOpen_(
@@ -9848,33 +9852,83 @@ function sortKeysByCountDesc(counts) {
       .getElementById('currentSalary')
       .addEventListener('input', event => {
         const input = event.target;
-        const numericValue = parseSalaryInput_(input.value);
 
-        if (numericValue === null) {
-          input.value = '';
-          benchmarkSalary = null;
+        if (viewMode === 'hourly') {
+          /*
+           * Keep hourly typing natural while the field is active.
+           * Previously the value was rewritten as $xx.xx on every
+           * keystroke, which made editing after returning from results
+           * behave like an invalid benchmark.
+           */
+          const cleaned =
+            String(input.value ?? '')
+              .replace(/[$,\s]/g, '')
+              .trim();
 
-          benchmarkRequiredForHpss =
-            Boolean(
-              hpssInputDetails?.open ||
-              hpssSelectedLevel
-            );
+          const looksLikeHourly =
+            /^\d*(?:\.\d{0,2})?$/.test(cleaned);
+
+          if (
+            cleaned === '' ||
+            cleaned === '.' ||
+            !looksLikeHourly
+          ) {
+            benchmarkSalary = null;
+          } else {
+            const displayedHourly =
+              Number(cleaned);
+
+            benchmarkSalary =
+              Number.isFinite(displayedHourly) &&
+              displayedHourly > 0
+                ? displayedHourly *
+                    getUserFteAnnualHours_()
+                : null;
+          }
         } else {
-          benchmarkSalary = numericValue;
-          input.value = formatSalaryInput_(numericValue);
-          benchmarkRequiredForHpss = false;
+          const numericValue =
+            parseSalaryInput_(
+              input.value
+            );
 
-          try {
-            const end = input.value.length;
-            input.setSelectionRange(end, end);
-          } catch (error) {}
+          if (numericValue === null) {
+            input.value = '';
+            benchmarkSalary = null;
+          } else {
+            benchmarkSalary =
+              numericValue;
+
+            input.value =
+              formatSalaryInput_(
+                numericValue
+              );
+
+            try {
+              const end =
+                input.value.length;
+
+              input.setSelectionRange(
+                end,
+                end
+              );
+            } catch (error) {}
+          }
         }
+
+        benchmarkRequiredForHpss =
+          benchmarkSalary
+            ? false
+            : Boolean(
+                hpssInputDetails?.open ||
+                hpssSelectedLevel
+              );
 
         updateHpssBenchmarkGate_();
 
         if (
           lastRes &&
-          hpssSelectedLevel
+          hpssSelectedLevel &&
+          benchmarkSalary
         ) {
           refreshHpssProjection(true);
         } else if (lastRes) {
@@ -11206,6 +11260,62 @@ function sortKeysByCountDesc(counts) {
 
     .abs-results-title-on em {
       font-style: italic;
+    }
+
+    .hpss-award-level-warning {
+      display: inline-block;
+      margin-left: 4px;
+      color: var(--benchmark-red);
+      font-style: normal;
+      font-weight: 700;
+      opacity: 0;
+      transform: translateY(1px) scale(0.72);
+      transform-origin: center;
+      transition:
+        opacity 180ms ease,
+        transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+    }
+
+    .hpss-award-level-warning.is-visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .hpss-award-level-warning.is-attention {
+      animation: hpssAwardLevelAttention 520ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes hpssAwardLevelAttention {
+      0%, 100% {
+        transform: translateY(0) scale(1);
+      }
+      45% {
+        transform: translateY(0) scale(1.22);
+      }
+    }
+
+    .abs-projected-word-wrap {
+      display: inline-block;
+      width: 0;
+      overflow: hidden;
+      vertical-align: bottom;
+      white-space: nowrap;
+      opacity: 1;
+      will-change: width;
+    }
+
+    .abs-projected-word {
+      display: inline-block;
+      white-space: nowrap;
+      opacity: 0;
+      transform: translateX(-6px);
+      will-change: transform, opacity;
+    }
+
+    .abs-income-medians-stable {
+      display: inline;
+      white-space: nowrap;
     }
 
     .abs-input-checkbox-wrap,
@@ -13223,6 +13333,13 @@ function sortKeysByCountDesc(counts) {
             : 'Current FTE salary benchmark in Australian dollars'
         );
 
+        currentSalaryInputPatch.setAttribute(
+          'inputmode',
+          showHourly
+            ? 'decimal'
+            : 'numeric'
+        );
+
         if (
           benchmarkSalary !== null &&
           benchmarkSalary !== undefined &&
@@ -13348,6 +13465,130 @@ function sortKeysByCountDesc(counts) {
         'hourly'
       );
     }
+  );
+
+  /* ========================================================
+   * REQUIRE AWARD LEVEL WHEN HPSS PENALTY HOURS WERE ENTERED
+   * ======================================================== */
+
+  const hpssAwardLevelWarningPatch =
+    document.getElementById(
+      'hpssAwardLevelWarning'
+    );
+
+  function hasAnyHpssHoursAnswer_() {
+    return Boolean(
+      hpssWeekendHours?.value.trim() ||
+      hpssEveningHours?.value.trim()
+    );
+  }
+
+  function setHpssAwardLevelWarning_(
+    show,
+    drawAttention = false
+  ) {
+    if (!hpssAwardLevelWarningPatch) {
+      return;
+    }
+
+    hpssAwardLevelWarningPatch.classList.toggle(
+      'is-visible',
+      Boolean(show)
+    );
+
+    hpssAwardLevelWarningPatch.setAttribute(
+      'aria-hidden',
+      String(!show)
+    );
+
+    if (
+      show &&
+      drawAttention
+    ) {
+      hpssAwardLevelWarningPatch.classList.remove(
+        'is-attention'
+      );
+
+      void hpssAwardLevelWarningPatch.offsetWidth;
+
+      hpssAwardLevelWarningPatch.classList.add(
+        'is-attention'
+      );
+    }
+  }
+
+  [
+    hpssWeekendHours,
+    hpssEveningHours
+  ].forEach(input => {
+    input?.addEventListener(
+      'input',
+      () => {
+        if (
+          !hasAnyHpssHoursAnswer_() ||
+          hpssSelectedLevel
+        ) {
+          setHpssAwardLevelWarning_(false);
+        }
+      }
+    );
+  });
+
+  document
+    .querySelectorAll(
+      'input[name="hpssLevel"]'
+    )
+    .forEach(input => {
+      input.addEventListener(
+        'change',
+        () => {
+          if (input.checked) {
+            setHpssAwardLevelWarning_(false);
+          }
+        }
+      );
+    });
+
+  estimateBtnPatch?.addEventListener(
+    'click',
+    event => {
+      if (
+        hasAnyHpssHoursAnswer_() &&
+        !hpssSelectedLevel
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        setHpssAwardLevelWarning_(
+          true,
+          true
+        );
+
+        setHpssInputDetailsOpen_(
+          true,
+          true
+        );
+
+        const reduceMotion =
+          window.matchMedia(
+            '(prefers-reduced-motion: reduce)'
+          ).matches;
+
+        hpssLevelFieldset?.scrollIntoView({
+          behavior:
+            reduceMotion
+              ? 'auto'
+              : 'smooth',
+          block: 'center',
+          inline: 'nearest'
+        });
+
+        return;
+      }
+
+      setHpssAwardLevelWarning_(false);
+    },
+    true
   );
 
   /* ========================================================
@@ -14131,8 +14372,16 @@ function sortKeysByCountDesc(counts) {
         href="${PATCH_ABS_SOURCE_URL}"
         target="_blank"
         rel="noopener noreferrer"
-      >ABS</a>
-      income <em>medians</em>:
+      >ABS</a><span
+        id="absProjectedWordWrapPatch"
+        class="abs-projected-word-wrap"
+        aria-hidden="true"
+      ><span
+        id="absProjectedWordPatch"
+        class="abs-projected-word"
+      > projected</span></span><span
+        class="abs-income-medians-stable"
+      > income <em>medians</em>:</span>
     `;
   }
 
@@ -14759,6 +15008,163 @@ function sortKeysByCountDesc(counts) {
     });
   }
 
+  function setAbsProjectedTitleState_(
+    projected,
+    animate = true
+  ) {
+    const wrap =
+      document.getElementById(
+        'absProjectedWordWrapPatch'
+      );
+
+    const word =
+      document.getElementById(
+        'absProjectedWordPatch'
+      );
+
+    if (!wrap || !word) {
+      return;
+    }
+
+    const previousState =
+      wrap.dataset.projected === 'true'
+        ? true
+        : wrap.dataset.projected === 'false'
+          ? false
+          : null;
+
+    if (previousState === projected) {
+      return;
+    }
+
+    wrap.dataset.projected =
+      String(projected);
+
+    const targetWidth =
+      projected
+        ? Math.ceil(
+            word.getBoundingClientRect().width ||
+            word.scrollWidth ||
+            0
+          )
+        : 0;
+
+    const currentWidth =
+      wrap.getBoundingClientRect().width;
+
+    const reduceMotion =
+      window.matchMedia(
+        '(prefers-reduced-motion: reduce)'
+      ).matches;
+
+    wrap
+      .getAnimations?.()
+      .forEach(animation => {
+        try {
+          animation.cancel();
+        } catch (_) {}
+      });
+
+    word
+      .getAnimations?.()
+      .forEach(animation => {
+        try {
+          animation.cancel();
+        } catch (_) {}
+      });
+
+    if (
+      !animate ||
+      reduceMotion ||
+      !wrap.animate ||
+      !word.animate
+    ) {
+      wrap.style.width =
+        `${targetWidth}px`;
+
+      word.style.opacity =
+        projected ? '1' : '0';
+
+      word.style.transform =
+        projected
+          ? 'translateX(0)'
+          : 'translateX(-6px)';
+
+      return;
+    }
+
+    const widthAnimation =
+      wrap.animate(
+        [
+          { width: `${currentWidth}px` },
+          { width: `${targetWidth}px` }
+        ],
+        {
+          duration: 340,
+          easing:
+            'cubic-bezier(0.22, 1, 0.36, 1)',
+          fill: 'forwards'
+        }
+      );
+
+    const wordAnimation =
+      word.animate(
+        projected
+          ? [
+              {
+                opacity: 0,
+                transform: 'translateX(-6px)'
+              },
+              {
+                opacity: 1,
+                transform: 'translateX(0)'
+              }
+            ]
+          : [
+              {
+                opacity: 1,
+                transform: 'translateX(0)'
+              },
+              {
+                opacity: 0,
+                transform: 'translateX(-6px)'
+              }
+            ],
+        {
+          duration: projected ? 300 : 180,
+          easing:
+            projected
+              ? 'cubic-bezier(0.16, 1, 0.3, 1)'
+              : 'ease-in',
+          fill: 'forwards'
+        }
+      );
+
+    Promise.allSettled([
+      widthAnimation.finished,
+      wordAnimation.finished
+    ]).then(() => {
+      wrap.style.width =
+        `${targetWidth}px`;
+
+      word.style.opacity =
+        projected ? '1' : '0';
+
+      word.style.transform =
+        projected
+          ? 'translateX(0)'
+          : 'translateX(-6px)';
+
+      try {
+        widthAnimation.cancel();
+      } catch (_) {}
+
+      try {
+        wordAnimation.cancel();
+      } catch (_) {}
+    });
+  }
+
   function getAbsDifferenceData_(
     benchmarkValue,
     medianValue,
@@ -14796,7 +15202,8 @@ function sortKeysByCountDesc(counts) {
     absMultiplier,
     animate,
     duration,
-    absData = patchedAbsData
+    absData = patchedAbsData,
+    absYear = patchedAbsData?.year
   ) {
     if (
       !differenceLine ||
@@ -14863,8 +15270,13 @@ function sortKeysByCountDesc(counts) {
       );
     }
 
+    const comparisonYear =
+      absPatchDisplayYear_(
+        absYear
+      );
+
     differenceLine.innerHTML =
-      'Compared to ABS <em>medians</em>, you earn: ' +
+      `Compared to ABS ${comparisonYear} <em>medians</em>, you earn: ` +
       itemHtml(items[0]) +
       ', ' +
       itemHtml(items[1]) +
@@ -15056,11 +15468,10 @@ function sortKeysByCountDesc(counts) {
     }
 
     if (titleOn) {
-      titleOn.innerHTML =
-        `<a id="absSourceYearLinkPatch" class="abs-source-year-link" href="${PATCH_ABS_SOURCE_URL}" target="_blank" rel="noopener noreferrer">ABS ${absPatchDisplayYear_(activeAbsData.displayYear)}</a>` +
-        (activeAbsData.isProjected
-          ? ' projected income <em>medians</em>:'
-          : ' income <em>medians</em>:');
+      setAbsProjectedTitleState_(
+        activeAbsData.isProjected,
+        animate
+      );
     }
 
     const allFtValue =
@@ -15162,22 +15573,18 @@ function sortKeysByCountDesc(counts) {
       return;
     }
 
+    /*
+     * Keep the written ABS conclusion anchored to the latest actual
+     * ABS year and the user's current benchmark. The future slider
+     * may project the visible ABS medians/markers, but it does not
+     * rewrite the current-year conclusion.
+     */
     const currentBenchmark =
       Number(benchmarkSalary);
 
-    const projectedBenchmark =
-      Number(activePoint?.projectedPay);
-
-    const benchmarkForYear =
-      activeAbsData.isProjected &&
-      Number.isFinite(projectedBenchmark) &&
-      projectedBenchmark > 0
-        ? projectedBenchmark
-        : currentBenchmark;
-
     const hasBenchmark =
-      Number.isFinite(benchmarkForYear) &&
-      benchmarkForYear > 0;
+      Number.isFinite(currentBenchmark) &&
+      currentBenchmark > 0;
 
     if (!hasBenchmark) {
       differenceLine.hidden =
@@ -15191,9 +15598,9 @@ function sortKeysByCountDesc(counts) {
 
     const userValue =
       viewMode === 'hourly'
-        ? benchmarkForYear /
+        ? currentBenchmark /
           getUserFteAnnualHours_()
-        : benchmarkForYear;
+        : currentBenchmark;
 
     const absMultiplier =
       viewMode === 'hourly'
@@ -15206,7 +15613,8 @@ function sortKeysByCountDesc(counts) {
       absMultiplier,
       animate,
       duration,
-      activeAbsData
+      patchedAbsData,
+      patchedAbsData?.year
     );
   }
 
@@ -15651,6 +16059,35 @@ function sortKeysByCountDesc(counts) {
           currentSalaryInputPatch
         ) || 0) + 1
       );
+    }
+  );
+
+  currentSalaryInputPatch?.addEventListener(
+    'blur',
+    () => {
+      const parsedAnnual =
+        parseSalaryInput_(
+          currentSalaryInputPatch.value
+        );
+
+      if (
+        parsedAnnual !== null &&
+        Number.isFinite(Number(parsedAnnual)) &&
+        Number(parsedAnnual) > 0
+      ) {
+        benchmarkSalary =
+          Number(parsedAnnual);
+
+        currentSalaryInputPatch.value =
+          formatSalaryInput_(
+            benchmarkSalary
+          );
+
+        benchmarkRequiredForHpss =
+          false;
+
+        updateHpssBenchmarkGate_();
+      }
     }
   );
 
