@@ -3668,38 +3668,9 @@
      * ========================================================== */
 
     .calculator-notice-copy {
-      display: flex;
-      width: 100%;
-      align-items: baseline;
-      justify-content: center;
-      flex-wrap: wrap;
       white-space: normal;
     }
 
-    .calculator-notice-part-one {
-      flex: 0 0 auto;
-      white-space: nowrap;
-    }
-
-    .calculator-notice-part-two {
-      display: inline-flex;
-      width: max-content;
-      max-width: 100%;
-      flex: 0 0 auto;
-      align-items: baseline;
-      justify-content: center;
-      white-space: normal;
-    }
-
-    .calculator-notice-part-two-text {
-      min-width: 0;
-      text-align: center;
-      white-space: normal;
-    }
-    .calculator-notice-copy.is-two-line
-    .calculator-notice-dot {
-      display: none;
-    }
     .calculator-notice-dot {
       display: inline-block;
       margin: 0 0.38em;
@@ -3998,20 +3969,7 @@
         class="calculator-notice"
         role="note"
       >
-        <p class="calculator-notice-copy">
-          <span class="calculator-notice-part-one">
-            Shows what employers pay
-          </span>
-          <span class="calculator-notice-part-two">
-            <span
-              class="calculator-notice-dot"
-              aria-hidden="true"
-            >·</span>
-            <span class="calculator-notice-part-two-text">
-              Compare against HPSS Award and ABS incomes
-            </span>
-          </span>
-        </p>
+        <p class="calculator-notice-copy">Shows what employers pay<span class="calculator-notice-dot" aria-hidden="true">·</span>Compare against HPSS Award and ABS incomes</p>
         <p
           id="modelMeta"
           aria-live="polite"
@@ -4430,7 +4388,17 @@
                   </span>
                 </span>
 
-                <span class="hpss-summary-hint">Edit</span>
+                <label
+                  class="hpss-results-checkbox-wrap"
+                  for="hpssResultsEnabledToggle"
+                  aria-label="Turn HPSS Award comparison on or off"
+                >
+                  <input
+                    id="hpssResultsEnabledToggle"
+                    class="hpss-results-checkbox"
+                    type="checkbox"
+                  >
+                </label>
               </summary>
 
               <div class="hpss-body">
@@ -5815,6 +5783,7 @@ function sortKeysByCountDesc(counts) {
     let benchmarkSalary = null;
     let hpssAwardData = null;
     let hpssSelectedLevel = '';
+    let hpssResultsEnabled = true;
     let hpssProjection = [];
     let hpssActiveProjectionIndex = 0;
     let hpssLoadPromise = null;
@@ -7454,7 +7423,14 @@ function sortKeysByCountDesc(counts) {
           : 'You are here'
       );
 
-      if (comparisonPoint) {
+      const hpssResultsActive =
+        Boolean(
+          hpssResultsEnabled &&
+          hpssSelectedLevel &&
+          comparisonPoint
+        );
+
+      if (hpssResultsActive) {
         renderHpssAwardMarker(
           comparisonPoint
         );
@@ -7467,6 +7443,10 @@ function sortKeysByCountDesc(counts) {
 
         if (hpssPaySliderMarker) {
           hpssPaySliderMarker.hidden = true;
+        }
+
+        if (hpssProjectionElement) {
+          hpssProjectionElement.hidden = true;
         }
       }
 
@@ -8794,13 +8774,29 @@ function sortKeysByCountDesc(counts) {
         return;
       }
 
-      hpssProjectionElement.hidden = false;
       hpssYearSlider.max = String(
         Math.min(
           HPSS_PROJECTION_YEARS,
           hpssProjection.length - 1
         )
       );
+
+      if (!hpssResultsEnabled) {
+        hpssActiveProjectionIndex = 0;
+        hpssYearSlider.value = '0';
+        hpssProjectionElement.hidden = true;
+        hideHpssAwardMarker();
+
+        if (hpssPaySliderMarker) {
+          hpssPaySliderMarker.hidden = true;
+        }
+
+        updateView(false);
+        scheduleApplyScale();
+        return;
+      }
+
+      hpssProjectionElement.hidden = false;
 
       renderHpssOvertakeText();
       updateHpssPaySliderMarker_();
@@ -9262,9 +9258,15 @@ function sortKeysByCountDesc(counts) {
       const hasSelection =
         Boolean(hpssSelectedLevel);
 
+      const resultsActive =
+        Boolean(
+          hasSelection &&
+          hpssResultsEnabled
+        );
+
       hpssCompare.classList.toggle(
         'has-selection',
-        hasSelection
+        resultsActive
       );
 
       hpssCompare.classList.remove(
@@ -9272,27 +9274,27 @@ function sortKeysByCountDesc(counts) {
       );
 
       hpssSummaryTitle.innerHTML =
-        hasSelection
+        resultsActive
           ? 'HPSS Award:'
           : 'HPSS Award comparison <em>(optional)</em>';
 
       hpssSummaryValues.hidden =
-        !hasSelection;
+        !resultsActive;
 
-      const summaryHint =
-        hpssCompareSummary
-          ?.querySelector(
-            '.hpss-summary-hint'
-          );
+      const resultsToggle =
+        document.getElementById(
+          'hpssResultsEnabledToggle'
+        );
 
-      if (summaryHint) {
-        summaryHint.textContent =
-          'EDIT';
+      if (resultsToggle) {
+        resultsToggle.checked =
+          resultsActive;
       }
     }
 
     function selectHpssLevel(levelName) {
       hpssSelectedLevel = levelName;
+      hpssResultsEnabled = true;
       hpssActiveProjectionIndex = 0;
       syncHpssSelectedLevelUnderline_();
       refreshHpssProjection(false);
@@ -10057,7 +10059,8 @@ function sortKeysByCountDesc(counts) {
         );
 
       const locked =
-        false;
+        inputSectionOpen &&
+        !hasBenchmark;
 
       if (locked) {
         benchmarkRequiredForHpss = true;
@@ -10211,31 +10214,103 @@ function sortKeysByCountDesc(counts) {
     hpssCompareSummary?.addEventListener(
       'click',
       event => {
-        event.preventDefault();
-        event.stopPropagation();
-
         if (
-          appElement.classList.contains(
-            'is-input-collapsed'
+          event.target.closest?.(
+            '.hpss-results-checkbox-wrap'
           )
         ) {
-          setInputPanelCollapsed(false);
+          return;
         }
 
-        requestAnimationFrame(
-          () => {
-            setHpssInputDetailsOpen_(
-              true,
-              true
-            );
+        /* Results HPSS is controlled by its checkbox, not by an Edit action. */
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    );
 
-            if (
-              !hasValidBenchmarkForHpss_()
-            ) {
-              requireBenchmarkForHpss_();
-            }
+    const hpssResultsEnabledToggle =
+      document.getElementById(
+        'hpssResultsEnabledToggle'
+      );
+
+    document
+      .querySelector(
+        '.hpss-results-checkbox-wrap'
+      )
+      ?.addEventListener(
+        'click',
+        event => {
+          event.stopPropagation();
+        }
+      );
+
+    hpssResultsEnabledToggle?.addEventListener(
+      'change',
+      event => {
+        const wantsEnabled =
+          Boolean(event.currentTarget.checked);
+
+        if (
+          wantsEnabled &&
+          !hpssSelectedLevel
+        ) {
+          hpssResultsEnabled = false;
+          event.currentTarget.checked = false;
+
+          if (
+            appElement.classList.contains(
+              'is-input-collapsed'
+            )
+          ) {
+            setInputPanelCollapsed(false);
           }
-        );
+
+          requestAnimationFrame(
+            () => {
+              setHpssInputDetailsOpen_(
+                true,
+                true
+              );
+
+              if (
+                !hpssAwardData &&
+                !hpssLoadPromise
+              ) {
+                requestHpssAwardData(true);
+              }
+
+              if (
+                !hasValidBenchmarkForHpss_()
+              ) {
+                requireBenchmarkForHpss_();
+              }
+            }
+          );
+
+          updateHpssInputSummary_();
+          return;
+        }
+
+        hpssResultsEnabled =
+          wantsEnabled;
+
+        if (!hpssResultsEnabled) {
+          hpssActiveProjectionIndex = 0;
+          hpssYearSlider.value = '0';
+          hpssProjectionElement.hidden = true;
+          hideHpssAwardMarker();
+
+          if (hpssPaySliderMarker) {
+            hpssPaySliderMarker.hidden = true;
+          }
+
+          updateView(false);
+        } else {
+          refreshHpssProjection(false);
+        }
+
+        updateHpssInputSummary_();
+        refreshCalculatorLayout();
       }
     );
 
@@ -11755,7 +11830,7 @@ function sortKeysByCountDesc(counts) {
             inputmode="decimal"
             min="${USER_FTE_HOURS_MIN}"
             max="${USER_FTE_HOURS_MAX}"
-            step="0.01"
+            step="0.25"
             value="${USER_FTE_HOURS_DEFAULT}"
             aria-label="Paid full-time hours per week"
           >
@@ -13178,6 +13253,8 @@ function sortKeysByCountDesc(counts) {
           false
         );
       }
+
+      refreshCalculatorLayout();
     }
   );
 
@@ -13816,7 +13893,9 @@ function sortKeysByCountDesc(counts) {
       };
     };
 
-  function getHpssConclusionPatch_() {
+  function getHpssConclusionPatch_(
+    activePoint = null
+  ) {
     const hasBenchmark =
       benchmarkSalary !== null &&
       benchmarkSalary !== undefined &&
@@ -13829,26 +13908,29 @@ function sortKeysByCountDesc(counts) {
       };
     }
 
-    const currentPoint =
+    const comparisonPoint =
+      activePoint ||
       hpssProjection[0] ||
       null;
 
-    const currentAwardAbove =
+    const awardAboveAtActivePoint =
       Boolean(
-        currentPoint &&
-        Number.isFinite(Number(currentPoint.annualSalary)) &&
-        currentPoint.projectedPay !== null &&
-        Number.isFinite(Number(currentPoint.projectedPay)) &&
-        Number(currentPoint.annualSalary) >
-          Number(currentPoint.projectedPay)
+        comparisonPoint &&
+        Number.isFinite(Number(comparisonPoint.annualSalary)) &&
+        comparisonPoint.projectedPay !== null &&
+        Number.isFinite(Number(comparisonPoint.projectedPay)) &&
+        Number(comparisonPoint.annualSalary) >
+          Number(comparisonPoint.projectedPay)
       );
 
-    if (currentAwardAbove) {
+    if (awardAboveAtActivePoint) {
       return {
         type: 'already',
+        forecast:
+          Number(comparisonPoint.offset) > 0,
         difference:
-          Number(currentPoint.annualSalary) -
-          Number(currentPoint.projectedPay)
+          Number(comparisonPoint.annualSalary) -
+          Number(comparisonPoint.projectedPay)
       };
     }
 
@@ -13911,13 +13993,19 @@ function sortKeysByCountDesc(counts) {
         );
 
       const conclusion =
-        getHpssConclusionPatch_();
+        getHpssConclusionPatch_(
+          point
+        );
 
       let conclusionHtml = '';
 
       if (conclusion.type === 'already') {
         conclusionHtml =
-          'has overtaken your pay' +
+          (
+            conclusion.forecast
+              ? 'has overtaken your forecast pay'
+              : 'has overtaken your pay'
+          ) +
           (
             Number.isFinite(Number(conclusion.difference)) &&
             Number(conclusion.difference) > 0
@@ -14393,17 +14481,17 @@ function sortKeysByCountDesc(counts) {
       <span class="abs-median-item" data-abs-key="allFt">
         <span id="absCategoryConclusion_allFt" class="abs-category-conclusion"></span>
         <span class="abs-series-dot abs-dot-all-ft" aria-hidden="true"></span>
-        <span class="abs-category-legend">All FT employees' <em>median</em>: <span id="absAllFtValuePatch">–</span></span>
+        <span class="abs-category-legend">All FT employees' <em>median</em>:&nbsp;<span id="absAllFtValuePatch">–</span></span>
       </span>
       <span class="abs-median-item" data-abs-key="professionals">
         <span id="absCategoryConclusion_professionals" class="abs-category-conclusion"></span>
         <span class="abs-series-dot abs-dot-professionals" aria-hidden="true"></span>
-        <span class="abs-category-legend">All Professionals' <em>median</em>: <span id="absProfessionalsValuePatch">–</span></span>
+        <span class="abs-category-legend">All Professionals' <em>median</em>:&nbsp;<span id="absProfessionalsValuePatch">–</span></span>
       </span>
       <span class="abs-median-item" data-abs-key="healthProfessionals">
         <span id="absCategoryConclusion_healthProfessionals" class="abs-category-conclusion"></span>
         <span class="abs-series-dot abs-dot-health-professionals" aria-hidden="true"></span>
-        <span class="abs-category-legend">Health professionals' <em>median</em>: <span id="absHealthProfessionalsValuePatch">–</span></span>
+        <span class="abs-category-legend">Health professionals' <em>median</em>:&nbsp;<span id="absHealthProfessionalsValuePatch">–</span></span>
       </span>
     `;
 
@@ -15409,8 +15497,6 @@ function sortKeysByCountDesc(counts) {
     if (!enabled) {
       hidePatchedAbsMarkers_();
 
-      clearAbsCategoryConclusions_();
-
       if (medianLine) {
         medianLine.hidden =
           true;
@@ -15419,9 +15505,6 @@ function sortKeysByCountDesc(counts) {
       if (differenceLine) {
         differenceLine.hidden =
           true;
-
-        differenceLine.textContent =
-          '';
       }
 
       return;
@@ -18660,7 +18743,7 @@ function sortKeysByCountDesc(counts) {
     const href = absSourceHrefFinal_();
 
     return (
-      `<a id="absTitleYearLinkFinal" href="${escapeHtmlFinal_(href)}" target="_blank" rel="noopener noreferrer">${escapeHtmlFinal_(yearText)}</a> ` +
+      `<a id="absTitleYearLinkFinal" href="${escapeHtmlFinal_(href)}" target="_blank" rel="noopener noreferrer">${escapeHtmlFinal_(yearText)}</a>&nbsp;` +
       '<span id="absTitleForecastInsertFinal" class="abs-title-forecast-insert-final"></span>' +
       '<span class="abs-title-income-fixed-final">income</span>' +
       '<span id="absTitleSuffixFinal" class="abs-title-suffix-final"></span>'
@@ -18786,6 +18869,11 @@ function sortKeysByCountDesc(counts) {
 
     const enabled = absEnabledFinal_();
     const forecast = enabled && absForecastFinal_();
+
+    absAnimatedTitleFinal?.classList.toggle(
+      'is-disabled-title',
+      !enabled
+    );
 
     const yearLink =
       document.getElementById('absTitleYearLinkFinal');
@@ -19199,25 +19287,18 @@ function sortKeysByCountDesc(counts) {
 </style>
 
 
-<style id="stableLastRequestedFix20260818">
-  /* ==========================================================
-   * Stable follow-up fixes — applied to the known-working base
-   * ========================================================== */
-
-  /* Results left/right benchmark typography and vertical geometry match. */
+<style id="requestedStableResultsFix20260818">
+  /* Match the right forecast descriptor/value exactly to the left benchmark. */
   .benchmark-results-slot #currentSalaryLabel,
   .projected-benchmark-label {
     font-size: 12px !important;
     font-weight: 400 !important;
     line-height: 16px !important;
-    height: 16px !important;
-    min-height: 16px !important;
     vertical-align: baseline !important;
   }
 
-  .benchmark-results-slot .benchmark-field input[type="number"],
   .benchmark-results-slot .benchmark-field input.salary-currency-input,
-  .projected-benchmark-value {
+  #projectedBenchmarkValue {
     height: 30px !important;
     min-height: 30px !important;
     max-height: 30px !important;
@@ -19225,38 +19306,81 @@ function sortKeysByCountDesc(counts) {
     font-size: 14px !important;
     font-weight: 400 !important;
     line-height: 30px !important;
-    vertical-align: baseline !important;
+    font-variant-numeric: tabular-nums !important;
   }
 
-  .projected-benchmark-value {
-    display: flex !important;
+  #projectedBenchmarkValue {
     align-items: center !important;
-    justify-content: flex-end !important;
   }
 
-  @media (max-width: 430px) {
-    .benchmark-results-slot .benchmark-field input[type="number"],
-    .benchmark-results-slot .benchmark-field input.salary-currency-input,
-    .projected-benchmark-value {
-      font-size: 12px !important;
-    }
+  /* HPSS results now use a checkbox, with no Edit-style summary action. */
+  .hpss-compare > summary {
+    cursor: default !important;
   }
 
-  /* Guaranteed visual whitespace after ABS YYYY. This is spacing rather
-     than a text character, so the title animation cannot clip it. */
-  #absTitleYearLinkFinal {
-    margin-right: 0.30em !important;
+  .hpss-results-checkbox-wrap {
+    display: inline-flex;
+    flex: 0 0 auto;
+    margin-left: auto;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
   }
 
-  /* Unticked results title mirrors the input title typography. */
-  .abs-animated-title-final,
-  .abs-title-switch-final {
+  .hpss-results-checkbox {
+    width: 17px;
+    height: 17px;
+    margin: 0;
+    accent-color: var(--purple);
+    cursor: pointer;
+  }
+
+  /* Keep all three ABS square legends on one shared vertical axis. */
+  .abs-median-line {
+    align-items: stretch !important;
+  }
+
+  .abs-median-item {
+    display: grid !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    grid-template-columns: minmax(0, 1fr) 7px minmax(0, 1fr) !important;
+    align-items: baseline !important;
+    column-gap: 0.32em !important;
+    white-space: nowrap !important;
+  }
+
+  .abs-category-conclusion {
+    grid-column: 1;
+    justify-self: end;
+    text-align: right;
+  }
+
+  .abs-series-dot {
+    grid-column: 2;
+    justify-self: center;
+    align-self: center;
+  }
+
+  .abs-category-legend {
+    grid-column: 3;
+    justify-self: start;
+    gap: 0 !important;
+    text-align: left;
+  }
+
+  /* When ABS is off, mirror the input-screen title styling and spacing. */
+  .abs-animated-title-final.is-disabled-title {
     color: var(--ink) !important;
     font-size: 11px !important;
     font-weight: 700 !important;
     line-height: 1.25 !important;
-    text-transform: none !important;
-    letter-spacing: normal !important;
+  }
+
+  .abs-animated-title-final.is-disabled-title #absTitleYearLinkFinal {
+    color: var(--ink) !important;
+    font-weight: 700 !important;
+    text-decoration: none !important;
   }
 
   .abs-title-suffix-final em {
@@ -19265,677 +19389,17 @@ function sortKeysByCountDesc(counts) {
     font-weight: 400 !important;
   }
 
-  /* ABS rows use one shared grid. The conclusion can change length without
-     moving the square/category legend horizontally. */
-  #absMedianLine.abs-aligned-grid-final {
-    display: grid !important;
-    grid-template-columns: max-content 7px max-content max-content !important;
-    align-items: baseline !important;
-    justify-content: center !important;
-    column-gap: 0.32em !important;
-    row-gap: 3px !important;
-    width: 100% !important;
-  }
-
-  #absMedianLine.abs-aligned-grid-final .abs-median-item {
-    display: contents !important;
-  }
-
-  #absMedianLine.abs-aligned-grid-final .abs-category-conclusion {
-    grid-column: 1;
-    justify-self: end;
-    margin: 0 !important;
-    white-space: nowrap !important;
-  }
-
-  #absMedianLine.abs-aligned-grid-final .abs-series-dot {
-    grid-column: 2;
-    justify-self: center;
-    align-self: center;
-    margin: 0 !important;
-  }
-
-  #absMedianLine.abs-aligned-grid-final .abs-category-legend {
-    grid-column: 3;
-    display: inline-block !important;
-    justify-self: start;
-    margin: 0 !important;
-    color: var(--ink) !important;
-    font-weight: 700 !important;
-    white-space: nowrap !important;
-  }
-
-  #absMedianLine.abs-aligned-grid-final .abs-category-legend em {
-    margin: 0 !important;
-    color: var(--ink) !important;
-    font-style: italic !important;
-    font-weight: 700 !important;
-  }
-
-  #absMedianLine.abs-aligned-grid-final .abs-category-value-final {
-    grid-column: 4;
-    justify-self: start;
-    color: var(--ink);
-    font-weight: 700;
-    white-space: nowrap;
-  }
-
   @media (max-width: 430px) {
-    #absMedianLine.abs-aligned-grid-final {
-      column-gap: 0.24em !important;
-      font-size: clamp(7.4px, 2.15vw, 9px) !important;
+    .benchmark-results-slot .benchmark-field input.salary-currency-input,
+    #projectedBenchmarkValue {
+      font-size: 12px !important;
     }
-  }
 
-  /* Replace the HPSS result EDIT affordance with a checkbox in the same
-     top-right position. It is intentionally outside <summary>, so toggling
-     it cannot accidentally fire the existing Edit/open-input handler. */
-  #hpssCompare {
-    position: relative !important;
-  }
-
-  #hpssCompare .hpss-summary-hint {
-    display: none !important;
-  }
-
-  .hpss-results-checkbox-wrap-final {
-    position: absolute;
-    top: 8px;
-    right: 2px;
-    z-index: 40;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-  }
-
-  .hpss-results-checkbox-final {
-    width: 17px;
-    height: 17px;
-    margin: 0;
-    accent-color: var(--purple);
-    cursor: pointer;
-  }
-
-  html.hpss-results-disabled-final #hpssCompare .hpss-body,
-  html.hpss-results-disabled-final #hpssCompare .hpss-summary-values,
-  html.hpss-results-disabled-final #hpssTimelinePatch,
-  html.hpss-results-disabled-final #hpssAwardMarker {
-    display: none !important;
+    .abs-median-item {
+      column-gap: 0.24em !important;
+    }
   }
 </style>
-
-<script>
-(() => {
-  'use strict';
-
-  function runStableLastRequestedFix_() {
-    try {
-      /* ------------------------------------------------------
-       * HPSS: after the existing renderer runs, replace the displayed
-       * "overtaken ... by" amount with the ACTIVE slider year's
-       * Award-vs-forecast-pay gap. This leaves the working HPSS renderer
-       * and its text structure untouched.
-       * ------------------------------------------------------ */
-      if (typeof updateHpssProjectionSummary === 'function') {
-        const previousUpdateHpssProjectionSummaryStableFinal_ =
-          updateHpssProjectionSummary;
-
-        let hpssDifferenceAnimationTokenStableFinal_ = 0;
-
-        function parseMoneyStableFinal_(text) {
-          const cleaned = String(text ?? '')
-            .replace(/[^0-9.\-]/g, '')
-            .trim();
-
-          const value = Number(cleaned);
-          return Number.isFinite(value) ? value : NaN;
-        }
-
-        function formatHpssDifferenceStableFinal_(value) {
-          const numeric = Math.max(0, Number(value) || 0);
-          const hourly =
-            typeof viewMode !== 'undefined' &&
-            viewMode === 'hourly';
-
-          if (hourly) {
-            return new Intl.NumberFormat('en-AU', {
-              style: 'currency',
-              currency: 'AUD',
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2
-            }).format(numeric);
-          }
-
-          return '$' + Math.round(numeric).toLocaleString('en-AU');
-        }
-
-        function animateActiveHpssDifferenceStableFinal_(point) {
-          const valueElement =
-            document.getElementById('hpssCombinedDifferenceValuePatch');
-
-          const suffixElement =
-            document.getElementById('hpssCombinedDifferenceSuffixPatch');
-
-          if (!valueElement || !point) {
-            return;
-          }
-
-          const annualAward = Number(point.annualSalary);
-          const annualPay = Number(point.projectedPay);
-
-          if (
-            !Number.isFinite(annualAward) ||
-            !Number.isFinite(annualPay) ||
-            annualPay <= 0 ||
-            annualAward <= annualPay
-          ) {
-            return;
-          }
-
-          const annualDifference = annualAward - annualPay;
-          const hourly =
-            typeof viewMode !== 'undefined' &&
-            viewMode === 'hourly';
-
-          const annualHours =
-            typeof getUserFteAnnualHours_ === 'function'
-              ? Number(getUserFteAnnualHours_())
-              : 38 * 52;
-
-          const target =
-            hourly && Number.isFinite(annualHours) && annualHours > 0
-              ? annualDifference / annualHours
-              : annualDifference;
-
-          const start = parseMoneyStableFinal_(valueElement.textContent);
-          const reduceMotion =
-            window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-          const token =
-            ++hpssDifferenceAnimationTokenStableFinal_;
-
-          if (suffixElement) {
-            suffixElement.textContent = hourly ? '/hr' : '';
-          }
-
-          if (
-            reduceMotion ||
-            !Number.isFinite(start) ||
-            Math.abs(start - target) < 0.005
-          ) {
-            valueElement.textContent =
-              formatHpssDifferenceStableFinal_(target);
-            return;
-          }
-
-          const startedAt = performance.now();
-          const duration = 240;
-
-          function frame(now) {
-            if (token !== hpssDifferenceAnimationTokenStableFinal_) {
-              return;
-            }
-
-            const progress = Math.min(
-              (now - startedAt) / duration,
-              1
-            );
-
-            const eased = 1 - Math.pow(1 - progress, 3);
-            const current = start + (target - start) * eased;
-
-            valueElement.textContent =
-              formatHpssDifferenceStableFinal_(current);
-
-            if (progress < 1) {
-              requestAnimationFrame(frame);
-            } else {
-              valueElement.textContent =
-                formatHpssDifferenceStableFinal_(target);
-            }
-          }
-
-          requestAnimationFrame(frame);
-        }
-
-        updateHpssProjectionSummary = function(point) {
-          previousUpdateHpssProjectionSummaryStableFinal_(point);
-
-          requestAnimationFrame(() => {
-            animateActiveHpssDifferenceStableFinal_(point);
-          });
-        };
-      }
-
-      /* ------------------------------------------------------
-       * ABS: split the value from the category label while keeping
-       * the SAME value DOM nodes. Existing MutationObservers and
-       * number renderers therefore continue to work unchanged.
-       * ------------------------------------------------------ */
-      const absMedianLine =
-        document.getElementById('absMedianLine');
-
-      const absRows = [
-        {
-          key: 'allFt',
-          label: "All FT employees'",
-          valueId: 'absAllFtValuePatch'
-        },
-        {
-          key: 'healthProfessionals',
-          label: "Health professionals'",
-          valueId: 'absHealthProfessionalsValuePatch'
-        },
-        {
-          key: 'professionals',
-          label: "All Professionals'",
-          valueId: 'absProfessionalsValuePatch'
-        }
-      ];
-
-      if (absMedianLine) {
-        absMedianLine.classList.add(
-          'abs-aligned-grid-final'
-        );
-
-        absRows.forEach(row => {
-          const item =
-            absMedianLine.querySelector(
-              `[data-abs-key="${row.key}"]`
-            );
-
-          const legend =
-            item?.querySelector('.abs-category-legend');
-
-          const value =
-            document.getElementById(row.valueId);
-
-          if (!item || !legend || !value) {
-            return;
-          }
-
-          /* Moving, not replacing, preserves all existing observers. */
-          value.remove();
-
-          legend.innerHTML =
-            `${row.label} <em>median</em>:`;
-
-          value.classList.add(
-            'abs-category-value-final'
-          );
-
-          item.appendChild(value);
-        });
-
-        /* Keep requested order explicit. */
-        absRows.forEach(row => {
-          const item =
-            absMedianLine.querySelector(
-              `[data-abs-key="${row.key}"]`
-            );
-
-          if (item) {
-            absMedianLine.appendChild(item);
-          }
-        });
-      }
-
-      /* ------------------------------------------------------
-       * HPSS results checkbox. This controls only result visibility;
-       * it deliberately does NOT participate in data/model loading.
-       * ------------------------------------------------------ */
-      const hpssCompare =
-        document.getElementById('hpssCompare');
-
-      const hpssSummary =
-        document.getElementById('hpssCompareSummary');
-
-      const hpssSummaryTitle =
-        document.getElementById('hpssSummaryTitle');
-
-      const hpssSummaryValues =
-        document.getElementById('hpssSummaryValues');
-
-      const oldHint =
-        hpssSummary?.querySelector('.hpss-summary-hint');
-
-      let hpssCheckbox =
-        document.getElementById('hpssResultsToggleFinal');
-
-      if (hpssCompare && !hpssCheckbox) {
-        const wrap = document.createElement('label');
-        wrap.className =
-          'hpss-results-checkbox-wrap-final';
-        wrap.setAttribute(
-          'aria-label',
-          'Turn HPSS Award comparison on or off'
-        );
-        wrap.setAttribute(
-          'for',
-          'hpssResultsToggleFinal'
-        );
-
-        hpssCheckbox = document.createElement('input');
-        hpssCheckbox.id = 'hpssResultsToggleFinal';
-        hpssCheckbox.className =
-          'hpss-results-checkbox-final';
-        hpssCheckbox.type = 'checkbox';
-
-        wrap.appendChild(hpssCheckbox);
-        hpssCompare.appendChild(wrap);
-      }
-
-      if (oldHint) {
-        oldHint.style.display = 'none';
-        oldHint.setAttribute('aria-hidden', 'true');
-      }
-
-      function hasHpssSetupFinal_() {
-        const checkedLevel =
-          document.querySelector(
-            'input[name="hpssLevel"]:checked'
-          );
-
-        const selectedByState =
-          typeof hpssSelectedLevel !== 'undefined'
-            ? String(hpssSelectedLevel || '').trim()
-            : '';
-
-        return Boolean(
-          checkedLevel ||
-          selectedByState
-        );
-      }
-
-      function setHpssResultEnabledFinal_(enabled) {
-        const shouldEnable = Boolean(enabled);
-
-        document.documentElement.classList.toggle(
-          'hpss-results-disabled-final',
-          !shouldEnable
-        );
-
-        if (hpssCheckbox) {
-          hpssCheckbox.checked = shouldEnable;
-        }
-
-        if (!shouldEnable) {
-          if (hpssSummaryTitle) {
-            hpssSummaryTitle.innerHTML =
-              'HPSS Award comparison <em>(optional)</em>';
-          }
-
-          if (hpssSummaryValues) {
-            hpssSummaryValues.hidden = true;
-          }
-
-          return;
-        }
-
-        if (
-          hasHpssSetupFinal_() &&
-          typeof updateHpssInputSummary_ === 'function'
-        ) {
-          updateHpssInputSummary_();
-        }
-      }
-
-      function openHpssInputsFinal_() {
-        if (
-          typeof setInputPanelCollapsed === 'function'
-        ) {
-          setInputPanelCollapsed(false);
-        }
-
-        requestAnimationFrame(() => {
-          if (
-            typeof setHpssInputDetailsOpen_ === 'function'
-          ) {
-            setHpssInputDetailsOpen_(true, true);
-          }
-
-          if (
-            typeof hasValidBenchmarkForHpss_ === 'function' &&
-            typeof requireBenchmarkForHpss_ === 'function' &&
-            !hasValidBenchmarkForHpss_()
-          ) {
-            requireBenchmarkForHpss_();
-          }
-        });
-      }
-
-      if (hpssCheckbox) {
-        const initiallyEnabled =
-          hasHpssSetupFinal_();
-
-        setHpssResultEnabledFinal_(
-          initiallyEnabled
-        );
-
-        hpssCheckbox.addEventListener(
-          'change',
-          () => {
-            if (!hpssCheckbox.checked) {
-              setHpssResultEnabledFinal_(false);
-              return;
-            }
-
-            if (!hasHpssSetupFinal_()) {
-              /* Leave it visually selected: choosing an Award level in the
-                 input view completes the requested enable action. */
-              document.documentElement.classList.add(
-                'hpss-results-disabled-final'
-              );
-              openHpssInputsFinal_();
-              return;
-            }
-
-            setHpssResultEnabledFinal_(true);
-          }
-        );
-      }
-
-      /* Selecting an Award level after entering from the results checkbox
-         completes the enable action automatically. */
-      document
-        .querySelectorAll('input[name="hpssLevel"]')
-        .forEach(input => {
-          input.addEventListener(
-            'change',
-            event => {
-              if (!event.target.checked) {
-                return;
-              }
-
-              if (hpssCheckbox) {
-                hpssCheckbox.checked = true;
-              }
-
-              setHpssResultEnabledFinal_(true);
-            }
-          );
-        });
-
-      /* If an existing recalculation refreshes the summary while HPSS is
-         switched off, immediately restore the optional/off presentation. */
-      if (
-        hpssSummaryTitle &&
-        window.MutationObserver
-      ) {
-        let restoringHpssOff = false;
-
-        const observer = new MutationObserver(() => {
-          if (
-            restoringHpssOff ||
-            !hpssCheckbox ||
-            hpssCheckbox.checked
-          ) {
-            return;
-          }
-
-          restoringHpssOff = true;
-          setHpssResultEnabledFinal_(false);
-          restoringHpssOff = false;
-        });
-
-        observer.observe(hpssSummaryTitle, {
-          childList: true,
-          characterData: true,
-          subtree: true
-        });
-      }
-
-      /* ------------------------------------------------------
-       * ABS title spacing/style: use layout spacing rather than
-       * whitespace characters, so the existing animation remains intact.
-       * ------------------------------------------------------ */
-      const absTitleSwitch =
-        document.getElementById('absTitleSwitchFinal');
-
-      if (absTitleSwitch) {
-        const normalizeAbsTitleSpacingFinal_ = () => {
-          const yearLink =
-            document.getElementById('absTitleYearLinkFinal');
-
-          if (yearLink) {
-            yearLink.style.marginRight = '0.30em';
-          }
-        };
-
-        normalizeAbsTitleSpacingFinal_();
-
-        if (window.MutationObserver) {
-          new MutationObserver(
-            normalizeAbsTitleSpacingFinal_
-          ).observe(absTitleSwitch, {
-            childList: true,
-            subtree: true
-          });
-        }
-      }
-
-      if (
-        typeof refreshCalculatorLayout === 'function'
-      ) {
-        requestAnimationFrame(
-          refreshCalculatorLayout
-        );
-      }
-    } catch (error) {
-      /* Never allow a presentation patch to block the working calculator. */
-      console.error(
-        'Stable follow-up presentation patch failed:',
-        error
-      );
-    }
-  }
-
-  if (document.readyState === 'complete') {
-    runStableLastRequestedFix_();
-  } else {
-    window.addEventListener(
-      'load',
-      runStableLastRequestedFix_,
-      { once: true }
-    );
-  }
-})();
-    function updateCalculatorNoticeLayout_() {
-      const notice =
-        document.querySelector(
-          '.calculator-notice-copy'
-        );
-
-      const partOne =
-        notice?.querySelector(
-          '.calculator-notice-part-one'
-        );
-
-      const partTwo =
-        notice?.querySelector(
-          '.calculator-notice-part-two'
-        );
-
-      const dot =
-        notice?.querySelector(
-          '.calculator-notice-dot'
-        );
-
-      const partTwoText =
-        notice?.querySelector(
-          '.calculator-notice-part-two-text'
-        );
-
-      if (
-        !notice ||
-        !partOne ||
-        !partTwo ||
-        !dot ||
-        !partTwoText
-      ) {
-        return;
-      }
-
-      /*
-       * Measure whether both parts would fit on one line
-       * with the separator dot present.
-       *
-       * This avoids a feedback loop where hiding the dot
-       * itself changes whether the second part wraps.
-       */
-      notice.classList.remove(
-        'is-two-line'
-      );
-
-      const availableWidth =
-        notice.clientWidth;
-
-      const partOneWidth =
-        partOne.getBoundingClientRect().width;
-
-      const partTwoWidth =
-        partTwo.scrollWidth;
-
-      const needsSecondLine =
-        partOneWidth +
-        partTwoWidth >
-        availableWidth + 1;
-
-      notice.classList.toggle(
-        'is-two-line',
-        needsSecondLine
-      );
-    }
-    function scheduleCalculatorNoticeLayout_() {
-      requestAnimationFrame(
-        updateCalculatorNoticeLayout_
-      );
-    }
-
-    window.addEventListener(
-      'load',
-      scheduleCalculatorNoticeLayout_
-    );
-
-    window.addEventListener(
-      'resize',
-      scheduleCalculatorNoticeLayout_
-    );
-
-    window.addEventListener(
-      'orientationchange',
-      scheduleCalculatorNoticeLayout_
-    );
-
-    if (document.fonts?.ready) {
-      document.fonts.ready.then(
-        scheduleCalculatorNoticeLayout_
-      );
-    }
-
-    scheduleCalculatorNoticeLayout_();  
-</script>
 
 </body>
 </html>
