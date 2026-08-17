@@ -10838,6 +10838,15 @@ function sortKeysByCountDesc(counts) {
 
   let patchedAbsData = null;
   let patchedAbsLoadPromise = null;
+  let absPatchObserverSuppressed_ = false;
+  let absPatchObserverSuppressionTimer_ = null;
+
+  /*
+   * The wrapped updateView() exposes its current animation settings to
+   * HPSS summary/conclusion renderers so their numbers count smoothly too.
+   */
+  let currentPatchViewAnimate_ = false;
+  let currentPatchViewDuration_ = VIEW_SWITCH_ANIMATION_MS;
 
   /* ========================================================
    * PATCH STYLES
@@ -10848,41 +10857,89 @@ function sortKeysByCountDesc(counts) {
 
   patchStyle.textContent = `
     #app:not(.is-input-collapsed) #benchmarkField {
-      margin-top: 10px !important;
+      margin-top: 15px !important;
     }
 
     #app:not(.is-input-collapsed) .hpss-input-details {
-      margin-top: 13px;
+      margin-top: 17px;
     }
 
     #app:not(.is-input-collapsed) .abs-input-toggle {
-      margin-top: 8px;
+      margin-top: 11px;
     }
 
     .benchmark-label-mode-row {
-      display: flex;
+      position: relative;
+      display: block;
       width: 100%;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
+      min-height: 20px;
     }
 
+    /*
+     * Keep the benchmark label centred over the salary field itself.
+     * The mode toggle occupies the space to its right without becoming
+     * part of the label's centring calculation.
+     */
     .benchmark-label-mode-row > .field-label-with-help {
+      width: calc(100% - 94px);
       min-width: 0;
+      margin-right: 94px;
+      justify-content: center;
+      transition:
+        width 360ms cubic-bezier(0.22, 1, 0.36, 1),
+        margin-right 360ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .benchmark-label-mode-row.is-hourly-mode > .field-label-with-help {
+      width: 100%;
+      margin-right: 0;
     }
 
     .benchmark-mode-toggle {
-      display: inline-flex;
-      flex: 0 0 auto;
+      position: absolute;
+      top: -2px;
+      right: 0;
+      display: grid;
+      width: 82px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       align-items: center;
       padding: 1px;
+      overflow: hidden;
       background: rgba(232, 234, 240, 0.55);
       border-radius: 4px;
+      isolation: isolate;
+    }
+
+    /*
+     * One sliding selection pill, rather than two buttons popping
+     * between active/inactive states.
+     */
+    .benchmark-mode-toggle::before {
+      content: "";
+      position: absolute;
+      top: 1px;
+      bottom: 1px;
+      left: 1px;
+      z-index: 0;
+      width: calc((100% - 2px) / 2);
+      background: #fff;
+      border-radius: 3px;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.08);
+      transform: translateX(0);
+      transition:
+        transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .benchmark-mode-toggle.is-hourly-selected::before {
+      transform: translateX(100%);
     }
 
     .benchmark-mode-button {
+      position: relative;
+      z-index: 1;
+      min-width: 0;
       min-height: 20px;
-      padding: 0 6px;
+      padding: 0 4px;
       color: var(--muted);
       background: transparent;
       border: 0;
@@ -10892,17 +10949,63 @@ function sortKeysByCountDesc(counts) {
       font-weight: 700;
       line-height: 1;
       cursor: pointer;
+      transition:
+        color 220ms ease,
+        transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
     }
 
     .benchmark-mode-button.is-active {
       color: var(--purple);
-      background: #fff;
-      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.08);
+      background: transparent;
+      box-shadow: none;
     }
 
     .benchmark-mode-button:focus-visible {
       outline: 2px solid rgba(102, 0, 255, 0.22);
-      outline-offset: 1px;
+      outline-offset: -1px;
+    }
+
+    /*
+     * Only the changing phrase fades/slides. Shared words such as
+     * "Current", "benchmark" and "Your projected" stay visible.
+     */
+    .benchmark-switch-text {
+      display: inline-block;
+      overflow: hidden;
+      vertical-align: baseline;
+      white-space: nowrap;
+      will-change: width, opacity, transform;
+    }
+
+    .benchmark-hours-tag,
+    .results-heading-hours {
+      display: inline-block;
+      max-width: 0;
+      margin-left: 0;
+      overflow: hidden;
+      vertical-align: baseline;
+      white-space: nowrap;
+      opacity: 0;
+      transition:
+        max-width 340ms cubic-bezier(0.22, 1, 0.36, 1),
+        margin-left 340ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 180ms ease;
+    }
+
+    .benchmark-hours-tag.is-visible,
+    .results-heading-hours.is-visible {
+      max-width: 110px;
+      margin-left: 0.28em;
+      opacity: 1;
+    }
+
+    #currentSalaryLabel .benchmark-hours-tag,
+    .projected-benchmark-label .benchmark-hours-tag {
+      font-size: 0.82em;
+    }
+
+    .results-heading-hours {
+      text-transform: none;
     }
 
     .benchmark-entry-grid {
@@ -10910,28 +11013,57 @@ function sortKeysByCountDesc(counts) {
       grid-template-columns: minmax(0, 1fr) 82px;
       width: 100%;
       align-items: end;
-      gap: 12px;
+      column-gap: 12px;
+      transition:
+        grid-template-columns 380ms cubic-bezier(0.22, 1, 0.36, 1),
+        column-gap 380ms cubic-bezier(0.22, 1, 0.36, 1);
     }
 
+    /*
+     * Keep both grid tracks alive while switching. The right underline
+     * shrinks away as the main underline expands into the freed space.
+     */
     .benchmark-entry-grid.is-hourly-mode {
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr) 0px;
+      column-gap: 0;
     }
 
     .benchmark-entry-grid.is-hourly-mode .benchmark-ft-hours-wrap {
-      display: none;
+      display: grid !important;
+      max-width: 0;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateX(8px);
+      pointer-events: none;
+      transition:
+        max-width 380ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 150ms ease,
+        transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+        visibility 0s linear 380ms;
     }
 
     .benchmark-ft-hours-wrap {
       position: relative;
       display: grid;
+      width: 100%;
+      max-width: 82px;
       min-width: 0;
       grid-template-rows: auto 20px;
       align-items: end;
+      overflow: hidden;
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(0);
+      transition:
+        max-width 380ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 180ms ease 80ms,
+        transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
+        visibility 0s linear 0s;
     }
 
     .benchmark-ft-hours-label {
       color: var(--muted);
-      font-size: 9px;
+      font-size: 12px;
       font-weight: 400;
       line-height: 1.05;
       text-align: center;
@@ -10952,8 +11084,16 @@ function sortKeysByCountDesc(counts) {
       border-bottom-color: var(--purple);
     }
 
+    .benchmark-entry-grid .salary-currency-input,
     .benchmark-ft-hours-line input {
-      width: 36px !important;
+      font-family: inherit !important;
+      font-size: 15px !important;
+      font-weight: 400 !important;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .benchmark-ft-hours-line input {
+      width: 40px !important;
       height: 19px !important;
       margin: 0 !important;
       padding: 0 !important;
@@ -10961,9 +11101,6 @@ function sortKeysByCountDesc(counts) {
       background: transparent !important;
       border: 0 !important;
       box-shadow: none !important;
-      font: inherit !important;
-      font-size: 12px !important;
-      font-weight: 700 !important;
       line-height: 1 !important;
       text-align: right !important;
       outline: none !important;
@@ -11004,6 +11141,14 @@ function sortKeysByCountDesc(counts) {
     }
 
     .benchmark-results-slot .benchmark-label-mode-row {
+      display: block;
+      min-height: 14px;
+    }
+
+    .benchmark-results-slot .benchmark-label-mode-row > .field-label-with-help,
+    .benchmark-results-slot .benchmark-label-mode-row.is-hourly-mode > .field-label-with-help {
+      width: 100%;
+      margin-right: 0;
       justify-content: flex-start;
     }
 
@@ -11233,10 +11378,16 @@ function sortKeysByCountDesc(counts) {
     .abs-dot-health-professionals { background: #D97706; }
 
     .abs-benchmark-dot {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      display: block !important;
       width: 7px !important;
       height: 7px !important;
+      transform: translate(-50%, -50%);
       background: var(--abs-color) !important;
       border: 0 !important;
+      border-radius: 0 !important;
       box-shadow: none !important;
     }
 
@@ -11260,23 +11411,48 @@ function sortKeysByCountDesc(counts) {
     }
 
     @media (max-width: 430px) {
-      .benchmark-label-mode-row {
-        gap: 5px;
+      .benchmark-label-mode-row > .field-label-with-help {
+        width: calc(100% - 85px);
+        margin-right: 85px;
+      }
+
+      .benchmark-label-mode-row.is-hourly-mode > .field-label-with-help {
+        width: 100%;
+        margin-right: 0;
+      }
+
+      .benchmark-mode-toggle {
+        width: 76px;
       }
 
       .benchmark-mode-button {
-        padding-right: 5px;
-        padding-left: 5px;
+        padding-right: 3px;
+        padding-left: 3px;
         font-size: 8px;
       }
 
       .benchmark-entry-grid {
         grid-template-columns: minmax(0, 1fr) 76px;
-        gap: 9px;
+        column-gap: 9px;
+      }
+
+      .benchmark-entry-grid.is-hourly-mode {
+        grid-template-columns: minmax(0, 1fr) 0px;
+        column-gap: 0;
+      }
+
+      .benchmark-ft-hours-wrap {
+        width: 100%;
+        max-width: 76px;
       }
 
       .benchmark-ft-hours-label {
-        font-size: 8px;
+        font-size: 12px;
+      }
+
+      .benchmark-entry-grid .salary-currency-input,
+      .benchmark-ft-hours-line input {
+        font-size: 14px !important;
       }
 
       .abs-difference-line {
@@ -11285,7 +11461,16 @@ function sortKeysByCountDesc(counts) {
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .benchmark-mode-button {
+      .benchmark-mode-button,
+      .benchmark-entry-grid,
+      .benchmark-ft-hours-wrap,
+      .benchmark-label-mode-row > .field-label-with-help,
+      .benchmark-hours-tag,
+      .results-heading-hours {
+        transition-duration: 0.01ms !important;
+      }
+
+      .benchmark-mode-toggle::before {
         transition-duration: 0.01ms !important;
       }
     }
@@ -11441,6 +11626,475 @@ function sortKeysByCountDesc(counts) {
 
   const benchmarkModeHourly =
     document.getElementById('benchmarkModeHourly');
+
+
+  const benchmarkModeTogglePatch =
+    document.getElementById('benchmarkModeToggle');
+
+  const benchmarkLabelModeRowPatch =
+    benchmarkFieldPatch?.querySelector(
+      '.benchmark-label-mode-row'
+    ) ||
+    null;
+
+  /*
+   * Split labels into stable and changing fragments so shared words
+   * remain visible while only "FTE salary" / "hourly rate" changes.
+   */
+  function ensureBenchmarkSwitchLabelDom_() {
+    if (
+      currentSalaryLabelPatch &&
+      !document.getElementById(
+        'currentBenchmarkDynamicLabel'
+      )
+    ) {
+      currentSalaryLabelPatch.innerHTML =
+        '<span class="benchmark-label-fixed">Current </span>' +
+        '<span id="currentBenchmarkDynamicLabel" class="benchmark-switch-text">FTE salary</span>' +
+        '<span id="currentBenchmarkHoursTag" class="benchmark-hours-tag"></span>' +
+        '<span class="benchmark-label-fixed"> benchmark</span>';
+    }
+
+    if (
+      projectedBenchmarkLabelPatch &&
+      !document.getElementById(
+        'projectedBenchmarkDynamicLabel'
+      )
+    ) {
+      projectedBenchmarkLabelPatch.innerHTML =
+        '<span class="benchmark-label-fixed">Your projected </span>' +
+        '<span id="projectedBenchmarkDynamicLabel" class="benchmark-switch-text">FTE salary</span>' +
+        '<span id="projectedBenchmarkHoursTag" class="benchmark-hours-tag"></span>';
+    }
+
+    const headingDetail =
+      document.getElementById(
+        'resultsHeadingDetail'
+      );
+
+    if (
+      headingDetail &&
+      !document.getElementById(
+        'resultsHeadingHours'
+      )
+    ) {
+      const hoursTag =
+        document.createElement('span');
+
+      hoursTag.id =
+        'resultsHeadingHours';
+
+      hoursTag.className =
+        'results-heading-hours';
+
+      headingDetail.insertAdjacentElement(
+        'afterend',
+        hoursTag
+      );
+    }
+  }
+
+  ensureBenchmarkSwitchLabelDom_();
+
+  const currentBenchmarkDynamicLabelPatch =
+    document.getElementById(
+      'currentBenchmarkDynamicLabel'
+    );
+
+  const projectedBenchmarkDynamicLabelPatch =
+    document.getElementById(
+      'projectedBenchmarkDynamicLabel'
+    );
+
+  const currentBenchmarkHoursTagPatch =
+    document.getElementById(
+      'currentBenchmarkHoursTag'
+    );
+
+  const projectedBenchmarkHoursTagPatch =
+    document.getElementById(
+      'projectedBenchmarkHoursTag'
+    );
+
+  const resultsHeadingHoursPatch =
+    document.getElementById(
+      'resultsHeadingHours'
+    );
+
+  function measureSwitchPhraseWidth_(
+    element,
+    text
+  ) {
+    if (
+      !element ||
+      !element.parentNode
+    ) {
+      return 0;
+    }
+
+    const measure =
+      element.cloneNode(false);
+
+    measure.removeAttribute('id');
+    measure.textContent =
+      String(text ?? '');
+
+    Object.assign(
+      measure.style,
+      {
+        position:
+          'absolute',
+
+        width:
+          'auto',
+
+        maxWidth:
+          'none',
+
+        minWidth:
+          '0',
+
+        visibility:
+          'hidden',
+
+        opacity:
+          '0',
+
+        transform:
+          'none',
+
+        pointerEvents:
+          'none'
+      }
+    );
+
+    element.parentNode.appendChild(
+      measure
+    );
+
+    const width =
+      measure
+        .getBoundingClientRect()
+        .width;
+
+    measure.remove();
+
+    return width;
+  }
+
+  function animateSwitchPhrase_(
+    element,
+    nextText,
+    animate = true
+  ) {
+    if (!element) {
+      return;
+    }
+
+    const targetText =
+      String(nextText ?? '');
+
+    const currentText =
+      element.textContent;
+
+    if (currentText === targetText) {
+      return;
+    }
+
+    const reduceMotion =
+      window.matchMedia(
+        '(prefers-reduced-motion: reduce)'
+      ).matches;
+
+    const token =
+      (labelAnimationTokens.get(element) || 0) + 1;
+
+    labelAnimationTokens.set(
+      element,
+      token
+    );
+
+    element
+      .getAnimations?.()
+      .forEach(animation => {
+        try {
+          animation.cancel();
+        } catch (_) {}
+      });
+
+    if (
+      !animate ||
+      reduceMotion ||
+      !element.animate
+    ) {
+      element.style.width =
+        '';
+
+      element.style.opacity =
+        '';
+
+      element.style.transform =
+        '';
+
+      element.textContent =
+        targetText;
+
+      return;
+    }
+
+    const oldWidth =
+      element
+        .getBoundingClientRect()
+        .width;
+
+    const newWidth =
+      measureSwitchPhraseWidth_(
+        element,
+        targetText
+      );
+
+    element.style.width =
+      `${oldWidth}px`;
+
+    const fadeOut =
+      element.animate(
+        [
+          {
+            opacity:
+              1,
+
+            transform:
+              'translateX(0)'
+          },
+          {
+            opacity:
+              0,
+
+            transform:
+              'translateX(-6px)'
+          }
+        ],
+        {
+          duration:
+            120,
+
+          easing:
+            'ease-in',
+
+          fill:
+            'forwards'
+        }
+      );
+
+    fadeOut.finished
+      .then(() => {
+        if (
+          labelAnimationTokens.get(
+            element
+          ) !== token
+        ) {
+          return;
+        }
+
+        try {
+          fadeOut.cancel();
+        } catch (_) {}
+
+        element.textContent =
+          targetText;
+
+        element.style.width =
+          `${oldWidth}px`;
+
+        const widthAnimation =
+          element.animate(
+            [
+              {
+                width:
+                  `${oldWidth}px`
+              },
+              {
+                width:
+                  `${newWidth}px`
+              }
+            ],
+            {
+              duration:
+                340,
+
+              easing:
+                'cubic-bezier(0.22, 1, 0.36, 1)',
+
+              fill:
+                'forwards'
+            }
+          );
+
+        const fadeIn =
+          element.animate(
+            [
+              {
+                opacity:
+                  0,
+
+                transform:
+                  'translateX(6px)'
+              },
+              {
+                opacity:
+                  1,
+
+                transform:
+                  'translateX(0)'
+              }
+            ],
+            {
+              duration:
+                300,
+
+              easing:
+                'cubic-bezier(0.16, 1, 0.3, 1)',
+
+              fill:
+                'forwards'
+            }
+          );
+
+        Promise.allSettled([
+          widthAnimation.finished,
+          fadeIn.finished
+        ]).then(() => {
+          if (
+            labelAnimationTokens.get(
+              element
+            ) !== token
+          ) {
+            return;
+          }
+
+          element.style.width =
+            '';
+
+          try {
+            widthAnimation.cancel();
+          } catch (_) {}
+
+          try {
+            fadeIn.cancel();
+          } catch (_) {}
+        });
+      })
+      .catch(() => {
+        if (
+          labelAnimationTokens.get(
+            element
+          ) === token
+        ) {
+          element.style.width =
+            '';
+
+          element.textContent =
+            targetText;
+        }
+      });
+  }
+
+  function formatHoursTagNumber_(
+    value
+  ) {
+    const numeric =
+      Number(value);
+
+    if (!Number.isFinite(numeric)) {
+      return '';
+    }
+
+    const rounded =
+      Math.round(numeric * 100) /
+      100;
+
+    return Number.isInteger(rounded)
+      ? String(rounded)
+      : String(rounded);
+  }
+
+  function setHoursTagState_(
+    element,
+    text,
+    visible
+  ) {
+    if (!element) {
+      return;
+    }
+
+    const targetText =
+      String(text ?? '');
+
+    if (
+      targetText &&
+      element.textContent !== targetText
+    ) {
+      element.textContent =
+        targetText;
+    }
+
+    element.classList.toggle(
+      'is-visible',
+      Boolean(visible)
+    );
+  }
+
+  function updateBenchmarkHoursAnnotations_() {
+    const hours =
+      getUserFteWeeklyHours_();
+
+    const nonStandardHours =
+      Number.isFinite(hours) &&
+      Math.abs(
+        hours -
+        HPSS_AWARD_BASE_WEEKLY_HOURS
+      ) > 0.0001;
+
+    const showSalaryHours =
+      viewMode === 'salary' &&
+      nonStandardHours;
+
+    const isResultsView =
+      Boolean(
+        appElement?.classList.contains(
+          'is-input-collapsed'
+        )
+      );
+
+    const hoursText =
+      nonStandardHours
+        ? `(${formatHoursTagNumber_(hours)} hrs/wk)`
+        : '';
+
+    /*
+     * Top-left/current benchmark gets the hours note only after it has
+     * moved into the results header. The input screen stays uncluttered.
+     */
+    setHoursTagState_(
+      currentBenchmarkHoursTagPatch,
+      hoursText,
+      showSalaryHours &&
+        isResultsView
+    );
+
+    setHoursTagState_(
+      projectedBenchmarkHoursTagPatch,
+      hoursText,
+      showSalaryHours &&
+        isResultsView
+    );
+
+    setHoursTagState_(
+      resultsHeadingHoursPatch,
+      hoursText,
+      showSalaryHours
+    );
+  }
 
   function rawCurrencyNumber_(value) {
     const cleaned =
@@ -11873,6 +12527,16 @@ function sortKeysByCountDesc(counts) {
       String(showHourly)
     );
 
+    benchmarkModeTogglePatch?.classList.toggle(
+      'is-hourly-selected',
+      showHourly
+    );
+
+    benchmarkLabelModeRowPatch?.classList.toggle(
+      'is-hourly-mode',
+      showHourly
+    );
+
     benchmarkEntryGridPatch?.classList.toggle(
       'is-hourly-mode',
       showHourly
@@ -11946,6 +12610,8 @@ function sortKeysByCountDesc(counts) {
           Number(
             benchmarkFtHoursInput.value
           );
+
+        updateBenchmarkHoursAnnotations_();
       }
 
       if (
@@ -12129,13 +12795,23 @@ function sortKeysByCountDesc(counts) {
 
       syncBenchmarkModeUi_();
 
-      animateTextSwap_(
-        currentSalaryLabelPatch,
+      animateSwitchPhrase_(
+        currentBenchmarkDynamicLabelPatch,
         showHourly
-          ? 'Current hourly rate benchmark'
-          : 'Current FTE salary benchmark',
+          ? 'hourly rate'
+          : 'FTE salary',
         animate
       );
+
+      animateSwitchPhrase_(
+        projectedBenchmarkDynamicLabelPatch,
+        showHourly
+          ? 'hourly rate'
+          : 'FTE salary',
+        animate
+      );
+
+      updateBenchmarkHoursAnnotations_();
 
       if (currentSalaryInputPatch) {
         currentSalaryInputPatch.setAttribute(
@@ -12170,19 +12846,27 @@ function sortKeysByCountDesc(counts) {
           );
         }
       }
+    };
 
-      if (
-        projectedBenchmarkLabelPatch &&
-        !lastRes
-      ) {
-        animateTextSwap_(
-          projectedBenchmarkLabelPatch,
-          showHourly
-            ? 'Your projected hourly rate'
-            : 'Your projected FTE salary',
-          animate
-        );
-      }
+  const baseSetInputPanelCollapsedPatch_ =
+    setInputPanelCollapsed;
+
+  setInputPanelCollapsed =
+    function(
+      ...args
+    ) {
+      const result =
+        baseSetInputPanelCollapsedPatch_
+          .apply(
+            this,
+            args
+          );
+
+      requestAnimationFrame(
+        updateBenchmarkHoursAnnotations_
+      );
+
+      return result;
     };
 
   function setBenchmarkViewMode_(
@@ -12449,6 +13133,157 @@ function sortKeysByCountDesc(counts) {
       };
     };
 
+  updateHpssProjectionSummary =
+    function(
+      point
+    ) {
+      if (!point) {
+        return;
+      }
+
+      const projectionYear =
+        document.getElementById(
+          'hpssProjectionYear'
+        );
+
+      if (projectionYear) {
+        projectionYear.textContent =
+          point.offset === 0
+            ? `Now (${point.year})`
+            : `+${point.offset}y (${point.year})`;
+      }
+
+      const projectionText =
+        document.getElementById(
+          'hpssProjectionText'
+        );
+
+      if (!projectionText) {
+        return;
+      }
+
+      const oldAwardValue =
+        rawCurrencyNumber_(
+          document.getElementById(
+            'hpssProjectionAwardValuePatch'
+          )?.textContent
+        );
+
+      const oldPayValue =
+        rawCurrencyNumber_(
+          document.getElementById(
+            'hpssProjectionPayValuePatch'
+          )?.textContent
+        );
+
+      const hasProjectedPay =
+        point.projectedPay !== null &&
+        point.projectedPay !== undefined &&
+        Number.isFinite(
+          Number(point.projectedPay)
+        ) &&
+        Number(point.projectedPay) > 0;
+
+      const payLabel =
+        point.offset === 0
+          ? 'Your current pay'
+          : 'Your projected pay';
+
+      projectionText.innerHTML =
+        '<span class="hpss-projection-key hpss-projection-key-award" aria-hidden="true"></span>' +
+        'HPSS Award <em>minimum</em>: ' +
+        '<span id="hpssProjectionAwardValuePatch"></span>' +
+        '<span id="hpssProjectionAwardSuffixPatch"></span>' +
+        ' <span class="hpss-inline-dot" aria-hidden="true">·</span> ' +
+        '<span class="hpss-projection-key hpss-projection-key-pay" aria-hidden="true"></span>' +
+        `${payLabel}: ` +
+        '<span id="hpssProjectionPayValuePatch"></span>' +
+        '<span id="hpssProjectionPaySuffixPatch"></span>';
+
+      const showHourly =
+        viewMode === 'hourly';
+
+      const awardValue =
+        document.getElementById(
+          'hpssProjectionAwardValuePatch'
+        );
+
+      const awardSuffix =
+        document.getElementById(
+          'hpssProjectionAwardSuffixPatch'
+        );
+
+      const payValue =
+        document.getElementById(
+          'hpssProjectionPayValuePatch'
+        );
+
+      const paySuffix =
+        document.getElementById(
+          'hpssProjectionPaySuffixPatch'
+        );
+
+      const awardTarget =
+        showHourly
+          ? Number(point.annualSalary) /
+            getUserFteAnnualHours_()
+          : Number(point.annualSalary);
+
+      animateNumericText_(
+        awardValue,
+        awardTarget,
+        showHourly
+          ? formatCurrency2NoSuffix_
+          : formatAnnualCurrency_,
+        currentPatchViewAnimate_,
+        currentPatchViewDuration_,
+        oldAwardValue
+      );
+
+      if (awardSuffix) {
+        awardSuffix.textContent =
+          showHourly
+            ? '/hr'
+            : '';
+      }
+
+      if (hasProjectedPay) {
+        const payTarget =
+          showHourly
+            ? Number(point.projectedPay) /
+              getUserFteAnnualHours_()
+            : Number(point.projectedPay);
+
+        animateNumericText_(
+          payValue,
+          payTarget,
+          showHourly
+            ? formatCurrency2NoSuffix_
+            : formatAnnualCurrency_,
+          currentPatchViewAnimate_,
+          currentPatchViewDuration_,
+          oldPayValue
+        );
+
+        if (paySuffix) {
+          paySuffix.textContent =
+            showHourly
+              ? '/hr'
+              : '';
+        }
+      } else {
+        if (payValue) {
+          payValue.textContent =
+            '–';
+        }
+
+        if (paySuffix) {
+          paySuffix.textContent =
+            '';
+        }
+      }
+    };
+
   renderHpssOvertakeText =
     function() {
       if (!hpssOvertakeText) {
@@ -12511,23 +13346,63 @@ function sortKeysByCountDesc(counts) {
             currentPoint.projectedPay
           );
 
-        const differenceText =
-          Number.isFinite(currentDifference) &&
-          currentDifference > 0
-            ? (
-                viewMode === 'hourly'
-                  ? `${formatHpssHourly(currentDifference)}/hr`
-                  : `${formatHpssSalary(currentDifference)}/year`
-              )
-            : '';
+        const oldDifferenceValue =
+          rawCurrencyNumber_(
+            document.getElementById(
+              'hpssOvertakeDifferenceValuePatch'
+            )?.textContent
+          );
 
         hpssOvertakeText.innerHTML =
-          `HPSS Award <em>minimum</em> has already overtaken your pay` +
+          'HPSS Award <em>minimum</em> has already overtaken your pay' +
           (
-            differenceText
-              ? ` by ${differenceText}`
+            Number.isFinite(currentDifference) &&
+            currentDifference > 0
+              ? ' by <span id="hpssOvertakeDifferenceValuePatch"></span><span id="hpssOvertakeDifferenceSuffixPatch"></span>'
               : ''
           );
+
+        if (
+          Number.isFinite(currentDifference) &&
+          currentDifference > 0
+        ) {
+          const differenceValue =
+            document.getElementById(
+              'hpssOvertakeDifferenceValuePatch'
+            );
+
+          const differenceSuffix =
+            document.getElementById(
+              'hpssOvertakeDifferenceSuffixPatch'
+            );
+
+          const showHourly =
+            viewMode === 'hourly';
+
+          const targetValue =
+            showHourly
+              ? currentDifference /
+                getUserFteAnnualHours_()
+              : currentDifference;
+
+          animateNumericText_(
+            differenceValue,
+            targetValue,
+            showHourly
+              ? formatCurrency2NoSuffix_
+              : formatAnnualCurrency_,
+            currentPatchViewAnimate_,
+            currentPatchViewDuration_,
+            oldDifferenceValue
+          );
+
+          if (differenceSuffix) {
+            differenceSuffix.textContent =
+              showHourly
+                ? '/hr'
+                : '';
+          }
+        }
 
         return;
       }
@@ -13346,48 +14221,169 @@ function sortKeysByCountDesc(counts) {
     });
   }
 
-  function buildAbsDifferencePhrase_(
+  function getAbsDifferenceData_(
     benchmarkValue,
     medianValue,
-    label
+    label,
+    key
   ) {
     const diff =
       Number(benchmarkValue) -
       Number(medianValue);
 
     if (!Number.isFinite(diff)) {
-      return '';
+      return null;
     }
 
-    const magnitude =
-      Math.abs(diff);
+    return {
+      key,
+      label,
+      diff,
+      magnitude:
+        Math.abs(diff),
+      relation:
+        diff > 0
+          ? 'more than'
+          : diff < 0
+            ? 'less than'
+            : 'about the same as',
+      isSame:
+        Math.abs(diff) < 0.005
+    };
+  }
 
-    const amount =
-      viewMode === 'hourly'
-        ? formatCurrency2NoSuffix_(
-            magnitude
-          ) + '/hr'
-        : formatAnnualCurrency_(
-            magnitude
-          );
-
+  function renderAbsDifferenceSummary_(
+    differenceLine,
+    userValue,
+    absMultiplier,
+    animate,
+    duration
+  ) {
     if (
-      Math.abs(diff) < 0.005
+      !differenceLine ||
+      !patchedAbsData
     ) {
-      return `You earn about the same as the ${label} median`;
+      return;
     }
 
-    return (
-      `You earn ${amount} ` +
-      `${diff > 0 ? 'more' : 'less'} ` +
-      `than the ${label} median`
-    );
+    const items = [
+      getAbsDifferenceData_(
+        userValue,
+        patchedAbsData.allFtHourly *
+          absMultiplier,
+        'All FT employees',
+        'allFt'
+      ),
+      getAbsDifferenceData_(
+        userValue,
+        patchedAbsData.professionalsHourly *
+          absMultiplier,
+        'All Professionals',
+        'professionals'
+      ),
+      getAbsDifferenceData_(
+        userValue,
+        patchedAbsData.healthProfessionalsHourly *
+          absMultiplier,
+        'Health professionals',
+        'healthProfessionals'
+      )
+    ].filter(Boolean);
+
+    if (items.length !== 3) {
+      differenceLine.hidden =
+        true;
+
+      differenceLine.textContent =
+        '';
+
+      return;
+    }
+
+    const oldValues = {};
+
+    items.forEach(item => {
+      oldValues[item.key] =
+        rawCurrencyNumber_(
+          document.getElementById(
+            `absDifferenceAmount_${item.key}`
+          )?.textContent
+        );
+    });
+
+    function itemHtml(item) {
+      if (item.isSame) {
+        return (
+          `about the same as ${item.label}`
+        );
+      }
+
+      return (
+        `<span id="absDifferenceAmount_${item.key}"></span> ` +
+        `${item.relation} ${item.label}`
+      );
+    }
+
+    differenceLine.innerHTML =
+      'Compared to ABS medians, you earn ' +
+      itemHtml(items[0]) +
+      ', ' +
+      itemHtml(items[1]) +
+      ', and ' +
+      itemHtml(items[2]);
+
+    items.forEach(item => {
+      if (item.isSame) {
+        return;
+      }
+
+      const element =
+        document.getElementById(
+          `absDifferenceAmount_${item.key}`
+        );
+
+      animateNumericText_(
+        element,
+        item.magnitude,
+        viewMode === 'hourly'
+          ? value =>
+              formatCurrency2NoSuffix_(
+                value
+              ) + '/hr'
+          : formatAnnualCurrency_,
+        animate,
+        duration,
+        oldValues[item.key]
+      );
+    });
+
+    differenceLine.hidden =
+      false;
   }
 
   function syncPatchedAbs_(
     animate = false,
     duration = VIEW_SWITCH_ANIMATION_MS
   ) {
+    absPatchObserverSuppressed_ =
+      true;
+
+    window.clearTimeout(
+      absPatchObserverSuppressionTimer_
+    );
+
+    absPatchObserverSuppressionTimer_ =
+      window.setTimeout(
+        () => {
+          absPatchObserverSuppressed_ =
+            false;
+        },
+        Math.max(
+          60,
+          Number(duration) + 40
+        )
+      );
+
     const resultsSection =
       document.getElementById(
         'absCompareResults'
@@ -13446,6 +14442,19 @@ function sortKeysByCountDesc(counts) {
 
     if (titleOff) {
       titleOff.hidden = enabled;
+    }
+
+    if (
+      patchedAbsData &&
+      titleOff
+    ) {
+      const displayYear =
+        absPatchDisplayYear_(
+          patchedAbsData.year
+        );
+
+      titleOff.innerHTML =
+        `<a class="abs-source-year-link" href="${PATCH_ABS_SOURCE_URL}" target="_blank" rel="noopener noreferrer">ABS ${displayYear}</a> income comparisons <em>(optional)</em>`;
     }
 
     if (!enabled) {
@@ -13640,32 +14649,13 @@ function sortKeysByCountDesc(counts) {
         ? 1
         : getUserFteAnnualHours_();
 
-    const phrases = [
-      buildAbsDifferencePhrase_(
-        userValue,
-        patchedAbsData.allFtHourly *
-          absMultiplier,
-        'All FT employees'
-      ),
-      buildAbsDifferencePhrase_(
-        userValue,
-        patchedAbsData.professionalsHourly *
-          absMultiplier,
-        'All Professionals'
-      ),
-      buildAbsDifferencePhrase_(
-        userValue,
-        patchedAbsData.healthProfessionalsHourly *
-          absMultiplier,
-        'Health professionals'
-      )
-    ].filter(Boolean);
-
-    differenceLine.textContent =
-      phrases.join(' · ');
-
-    differenceLine.hidden =
-      phrases.length === 0;
+    renderAbsDifferenceSummary_(
+      differenceLine,
+      userValue,
+      absMultiplier,
+      animate,
+      duration
+    );
   }
 
   /* ========================================================
@@ -13696,11 +14686,6 @@ function sortKeysByCountDesc(counts) {
           oldProjectedText
         );
 
-      const oldProjectedLabel =
-        projectedBenchmarkLabelPatch
-          ?.textContent ||
-        '';
-
       const hpssPill =
         document.getElementById(
           'hpssAwardMarkerValue'
@@ -13710,6 +14695,12 @@ function sortKeysByCountDesc(counts) {
         rawCurrencyNumber_(
           hpssPill?.textContent
         );
+
+      currentPatchViewAnimate_ =
+        animate;
+
+      currentPatchViewDuration_ =
+        duration;
 
       const result =
         baseUpdateViewPatched_
@@ -13721,25 +14712,23 @@ function sortKeysByCountDesc(counts) {
       const showHourly =
         viewMode === 'hourly';
 
-      const targetProjectedLabel =
+      animateSwitchPhrase_(
+        currentBenchmarkDynamicLabelPatch,
         showHourly
-          ? 'Your projected hourly rate'
-          : 'Your projected FTE salary';
+          ? 'hourly rate'
+          : 'FTE salary',
+        animate
+      );
 
-      if (
-        projectedBenchmarkLabelPatch &&
-        oldProjectedLabel !==
-          targetProjectedLabel
-      ) {
-        projectedBenchmarkLabelPatch.textContent =
-          oldProjectedLabel;
+      animateSwitchPhrase_(
+        projectedBenchmarkDynamicLabelPatch,
+        showHourly
+          ? 'hourly rate'
+          : 'FTE salary',
+        animate
+      );
 
-        animateTextSwap_(
-          projectedBenchmarkLabelPatch,
-          targetProjectedLabel,
-          animate
-        );
-      }
+      updateBenchmarkHoursAnnotations_();
 
       const currentPoint =
         getCurrentHpssPointForPatch_();
@@ -13821,10 +14810,23 @@ function sortKeysByCountDesc(counts) {
           );
       }
 
+      if (
+        Array.isArray(hpssProjection) &&
+        hpssProjection.length > 0
+      ) {
+        renderHpssOvertakeText();
+      }
+
       syncPatchedAbs_(
         animate,
         duration
       );
+
+      currentPatchViewAnimate_ =
+        false;
+
+      currentPatchViewDuration_ =
+        VIEW_SWITCH_ANIMATION_MS;
 
       return result;
     };
@@ -13954,6 +14956,12 @@ function sortKeysByCountDesc(counts) {
 
     absPatchObserver =
       new MutationObserver(() => {
+        if (
+          absPatchObserverSuppressed_
+        ) {
+          return;
+        }
+
         absPatchObserver?.disconnect();
 
         syncPatchedAbs_(false);
