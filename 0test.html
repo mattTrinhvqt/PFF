@@ -7373,10 +7373,49 @@ function sortKeysByCountDesc(counts) {
     ) {
       if (!lastRes) return;
 
+      if (
+        !Array.isArray(hpssProjection) ||
+        hpssProjection.length === 0
+      ) {
+        hpssProjection =
+          buildHpssProjection();
+
+        hpssActiveProjectionIndex =
+          Math.max(
+            0,
+            Math.min(
+              hpssProjection.length - 1,
+              Number(hpssActiveProjectionIndex) || 0
+            )
+          );
+
+        if (hpssYearSlider) {
+          hpssYearSlider.max = String(
+            Math.max(
+              0,
+              hpssProjection.length - 1
+            )
+          );
+
+          hpssYearSlider.value = String(
+            hpssActiveProjectionIndex
+          );
+        }
+      }
+
       const comparisonPoint =
         hpssProjection[
           hpssActiveProjectionIndex
         ] || null;
+
+      if (
+        comparisonPoint?.marketRes
+      ) {
+        comparisonPoint.projectedPay =
+          projectBenchmarkPay_(
+            comparisonPoint.marketRes
+          );
+      }
 
       const annualMarketRes =
         comparisonPoint?.marketRes ||
@@ -7431,6 +7470,11 @@ function sortKeysByCountDesc(counts) {
         );
 
       if (hpssResultsActive) {
+        if (hpssProjectionElement) {
+          hpssProjectionElement.hidden =
+            false;
+        }
+
         renderHpssAwardMarker(
           comparisonPoint
         );
@@ -7496,6 +7540,16 @@ function sortKeysByCountDesc(counts) {
       updateToggleButtonText(
         showHourly
       );
+
+      const independentTimeline =
+        document.getElementById(
+          'hpssTimelinePatch'
+        );
+
+      if (independentTimeline) {
+        independentTimeline.hidden =
+          false;
+      }
 
       scheduleApplyScale();
     }
@@ -8184,22 +8238,54 @@ function sortKeysByCountDesc(counts) {
 
     function buildHpssProjection() {
       const projection = [];
+      const currentCalendarYear =
+        new Date().getFullYear();
 
       for (
         let offset = 0;
         offset <= HPSS_PROJECTION_YEARS;
         offset++
       ) {
-        const point =
+        const awardPoint =
           buildHpssProjectionPoint_(
             offset
           );
 
-        if (!point) {
-          return [];
+        if (awardPoint) {
+          projection.push(
+            awardPoint
+          );
+          continue;
         }
 
-        projection.push(point);
+        /*
+         * The time slider is a general income-projection control, not an
+         * HPSS control. Even without an Award selection, keep a market/pay
+         * projection point so the slider can continue to drive the salary
+         * estimate, benchmark marker and optional ABS comparisons.
+         */
+        const marketRes =
+          getHpssProjectedMarketResult(
+            offset
+          );
+
+        const projectedPay =
+          marketRes
+            ? projectBenchmarkPay_(
+                marketRes
+              )
+            : null;
+
+        projection.push({
+          offset,
+          year:
+            currentCalendarYear +
+            offset,
+          marketRes,
+          projectedPay,
+          annualSalary: NaN,
+          percentile: null
+        });
       }
 
       return projection;
@@ -8781,25 +8867,26 @@ function sortKeysByCountDesc(counts) {
         )
       );
 
-      if (!hpssResultsEnabled) {
-        hpssActiveProjectionIndex = 0;
-        hpssYearSlider.value = '0';
-        hpssProjectionElement.hidden = true;
+      const hpssResultsActive =
+        Boolean(
+          hpssResultsEnabled &&
+          hpssSelectedLevel
+        );
+
+      hpssProjectionElement.hidden =
+        !hpssResultsActive;
+
+      if (hpssResultsActive) {
+        renderHpssOvertakeText();
+        updateHpssPaySliderMarker_();
+      } else {
         hideHpssAwardMarker();
 
         if (hpssPaySliderMarker) {
           hpssPaySliderMarker.hidden = true;
         }
-
-        updateView(false);
-        scheduleApplyScale();
-        return;
       }
 
-      hpssProjectionElement.hidden = false;
-
-      renderHpssOvertakeText();
-      updateHpssPaySliderMarker_();
       renderHpssProjectionStep(
         Math.min(previousIndex, hpssProjection.length - 1),
         false
@@ -9774,18 +9861,46 @@ function sortKeysByCountDesc(counts) {
           }
 
           /*
+           * Rebuild the general time projection for the new model result.
+           * HPSS data is merged into these points only when selected.
+           */
+          const preservedProjectionIndex =
+            Math.max(
+              0,
+              Math.min(
+                HPSS_PROJECTION_YEARS,
+                Number(hpssActiveProjectionIndex) || 0
+              )
+            );
+
+          hpssProjection =
+            buildHpssProjection();
+
+          hpssActiveProjectionIndex =
+            Math.min(
+              preservedProjectionIndex,
+              Math.max(
+                0,
+                hpssProjection.length - 1
+              )
+            );
+
+          hpssYearSlider.max = String(
+            Math.max(
+              0,
+              hpssProjection.length - 1
+            )
+          );
+
+          hpssYearSlider.value = String(
+            hpssActiveProjectionIndex
+          );
+
+          /*
            * Animate the first result from zero and animate later
            * recalculations from the previously displayed values.
            */
           updateView(true);
-
-          if (
-            hpssSelectedLevel
-          ) {
-            refreshHpssProjection(
-              true
-            );
-          }
 
           updateInputSummary();
 
@@ -10295,8 +10410,6 @@ function sortKeysByCountDesc(counts) {
           wantsEnabled;
 
         if (!hpssResultsEnabled) {
-          hpssActiveProjectionIndex = 0;
-          hpssYearSlider.value = '0';
           hpssProjectionElement.hidden = true;
           hideHpssAwardMarker();
 
@@ -10306,7 +10419,7 @@ function sortKeysByCountDesc(counts) {
 
           updateView(false);
         } else {
-          refreshHpssProjection(false);
+          refreshHpssProjection(true);
         }
 
         updateHpssInputSummary_();
@@ -13966,7 +14079,7 @@ function sortKeysByCountDesc(counts) {
         projectionYear.textContent =
           point.offset === 0
             ? `Now (${point.year})`
-            : `+${point.offset} yrs (${point.year})`;
+            : `+${point.offset} ${point.offset === 1 ? 'yr' : 'yrs'} (${point.year})`;
       }
 
       const projectionText =
@@ -13978,70 +14091,47 @@ function sortKeysByCountDesc(counts) {
         return;
       }
 
-      const oldAwardValue =
-        rawCurrencyNumber_(
-          document.getElementById(
-            'hpssProjectionAwardValuePatch'
-          )?.textContent
-        );
-
-      const oldDifferenceValue =
-        rawCurrencyNumber_(
-          document.getElementById(
-            'hpssCombinedDifferenceValuePatch'
-          )?.textContent
-        );
+      /*
+       * Keep the HPSS sentence DOM stable. Shared words never disappear;
+       * changing words slide/fade and changing monetary values count.
+       * This also avoids repeatedly rebuilding the whole line during a
+       * salary/hourly switch or timeline drag.
+       */
+      if (
+        !document.getElementById(
+          'hpssProjectionAwardValuePatch'
+        )
+      ) {
+        projectionText.innerHTML =
+          '<span class="hpss-combined-row">' +
+            '<span class="hpss-combined-legend">' +
+              '<span class="hpss-projection-key hpss-projection-key-award" aria-hidden="true"></span>' +
+              '<span class="hpss-combined-fixed">HPSS&nbsp;</span>' +
+              '<span id="hpssProjectionForecastWordPatch" class="benchmark-switch-text"></span>' +
+              '<em>minimum</em>:&nbsp;' +
+              '<span id="hpssProjectionAwardValuePatch"></span>' +
+              '<span id="hpssProjectionAwardSuffixPatch" class="benchmark-switch-text"></span>' +
+            '</span>' +
+            '<span id="hpssCombinedConclusionPatch" class="hpss-combined-conclusion">' +
+              '<span id="hpssCombinedConclusionTextPatch" class="benchmark-switch-text"></span>' +
+              '<span id="hpssCombinedDifferenceValuePatch"></span>' +
+              '<span id="hpssCombinedDifferenceSuffixPatch" class="benchmark-switch-text"></span>' +
+            '</span>' +
+          '</span>';
+      }
 
       const conclusion =
         getHpssConclusionPatch_(
           point
         );
 
-      let conclusionHtml = '';
-
-      if (conclusion.type === 'already') {
-        conclusionHtml =
-          (
-            conclusion.forecast
-              ? 'has overtaken your forecast pay'
-              : 'has overtaken your pay'
-          ) +
-          (
-            Number.isFinite(Number(conclusion.difference)) &&
-            Number(conclusion.difference) > 0
-              ? ' by&nbsp;<span id="hpssCombinedDifferenceValuePatch"></span><span id="hpssCombinedDifferenceSuffixPatch"></span>'
-              : ''
-          );
-      } else if (conclusion.type === 'future') {
-        conclusionHtml =
-          `overtakes your forecast pay in ${conclusion.point.offset} yrs (${conclusion.point.year})`;
-      } else if (conclusion.type === 'not-within-range') {
-        conclusionHtml =
-          `is not forecast to overtake your forecast pay within ${HPSS_OVERTAKE_SEARCH_YEARS} yrs`;
-      }
-
-      const hpssProjectedWord =
-        Number(point.offset) > 0
-          ? 'forecast '
-          : '';
-
-      projectionText.innerHTML =
-        '<span class="hpss-combined-row">' +
-          '<span class="hpss-combined-legend">' +
-            '<span class="hpss-projection-key hpss-projection-key-award" aria-hidden="true"></span>' +
-            'HPSS ' + hpssProjectedWord + '<em>minimum</em>:&nbsp;' +
-            '<span id="hpssProjectionAwardValuePatch"></span>' +
-            '<span id="hpssProjectionAwardSuffixPatch"></span>' +
-          '</span>' +
-          (
-            conclusionHtml
-              ? '<span class="hpss-combined-conclusion">&nbsp;' + conclusionHtml + '</span>'
-              : ''
-          ) +
-        '</span>';
-
       const showHourly =
         viewMode === 'hourly';
+
+      const forecastWord =
+        document.getElementById(
+          'hpssProjectionForecastWordPatch'
+        );
 
       const awardValue =
         document.getElementById(
@@ -14052,6 +14142,34 @@ function sortKeysByCountDesc(counts) {
         document.getElementById(
           'hpssProjectionAwardSuffixPatch'
         );
+
+      const conclusionWrap =
+        document.getElementById(
+          'hpssCombinedConclusionPatch'
+        );
+
+      const conclusionText =
+        document.getElementById(
+          'hpssCombinedConclusionTextPatch'
+        );
+
+      const differenceValue =
+        document.getElementById(
+          'hpssCombinedDifferenceValuePatch'
+        );
+
+      const differenceSuffix =
+        document.getElementById(
+          'hpssCombinedDifferenceSuffixPatch'
+        );
+
+      animateSwitchPhrase_(
+        forecastWord,
+        Number(point.offset) > 0
+          ? 'forecast '
+          : '',
+        currentPatchViewAnimate_
+      );
 
       const awardTarget =
         showHourly
@@ -14066,55 +14184,96 @@ function sortKeysByCountDesc(counts) {
           ? formatCurrency2NoSuffix_
           : formatAnnualCurrency_,
         currentPatchViewAnimate_,
-        currentPatchViewDuration_,
-        oldAwardValue
+        currentPatchViewDuration_
       );
 
-      if (awardSuffix) {
-        awardSuffix.textContent =
-          showHourly
-            ? '/hr'
-            : '';
+      animateSwitchPhrase_(
+        awardSuffix,
+        showHourly
+          ? '/hr'
+          : '',
+        currentPatchViewAnimate_
+      );
+
+      let conclusionTextTarget = '';
+      let differenceTarget = NaN;
+      let showDifference = false;
+
+      if (conclusion.type === 'already') {
+        conclusionTextTarget =
+          conclusion.forecast
+            ? 'has overtaken your forecast pay by\u00a0'
+            : 'has overtaken your pay by\u00a0';
+
+        differenceTarget =
+          Number(conclusion.difference);
+
+        showDifference =
+          Number.isFinite(differenceTarget) &&
+          differenceTarget > 0;
+
+        if (!showDifference) {
+          conclusionTextTarget =
+            conclusion.forecast
+              ? 'has overtaken your forecast pay'
+              : 'has overtaken your pay';
+        }
+      } else if (conclusion.type === 'future') {
+        const years =
+          Number(conclusion.point.offset);
+
+        conclusionTextTarget =
+          `overtakes your forecast pay in ${years} ${years === 1 ? 'yr' : 'yrs'} (${conclusion.point.year})`;
+      } else if (conclusion.type === 'not-within-range') {
+        conclusionTextTarget =
+          `is not forecast to overtake your forecast pay within ${HPSS_OVERTAKE_SEARCH_YEARS} yrs`;
       }
 
-      if (
-        conclusion.type === 'already' &&
-        Number.isFinite(Number(conclusion.difference)) &&
-        Number(conclusion.difference) > 0
-      ) {
-        const differenceValue =
-          document.getElementById(
-            'hpssCombinedDifferenceValuePatch'
-          );
+      if (conclusionWrap) {
+        conclusionWrap.hidden =
+          !conclusionTextTarget;
+      }
 
-        const differenceSuffix =
-          document.getElementById(
-            'hpssCombinedDifferenceSuffixPatch'
-          );
+      animateSwitchPhrase_(
+        conclusionText,
+        conclusionTextTarget,
+        currentPatchViewAnimate_
+      );
 
-        const differenceTarget =
+      if (showDifference) {
+        const displayDifference =
           showHourly
-            ? Number(conclusion.difference) /
+            ? differenceTarget /
               getUserFteAnnualHours_()
-            : Number(conclusion.difference);
+            : differenceTarget;
 
         animateNumericText_(
           differenceValue,
-          differenceTarget,
+          displayDifference,
           showHourly
             ? formatCurrency2NoSuffix_
             : formatAnnualCurrency_,
           currentPatchViewAnimate_,
-          currentPatchViewDuration_,
-          oldDifferenceValue
+          currentPatchViewDuration_
         );
 
-        if (differenceSuffix) {
-          differenceSuffix.textContent =
-            showHourly
-              ? '/hr'
-              : '';
+        animateSwitchPhrase_(
+          differenceSuffix,
+          showHourly
+            ? '/hr'
+            : '',
+          currentPatchViewAnimate_
+        );
+      } else {
+        if (differenceValue) {
+          differenceValue.textContent = '';
         }
+
+        animateSwitchPhrase_(
+          differenceSuffix,
+          '',
+          currentPatchViewAnimate_
+        );
       }
 
       if (hpssOvertakeText) {
@@ -14125,25 +14284,10 @@ function sortKeysByCountDesc(counts) {
 
   renderHpssOvertakeText =
     function() {
+      /* The active HPSS sentence is rendered once by updateView(). */
       if (hpssOvertakeText) {
         hpssOvertakeText.hidden = true;
         hpssOvertakeText.textContent = '';
-      }
-
-      const activePoint =
-        hpssProjection[
-          Math.min(
-            Math.max(0, Number(hpssActiveProjectionIndex) || 0),
-            Math.max(0, hpssProjection.length - 1)
-          )
-        ] ||
-        hpssProjection[0] ||
-        null;
-
-      if (activePoint) {
-        updateHpssProjectionSummary(
-          activePoint
-        );
       }
     };
 
@@ -16744,10 +16888,11 @@ function sortKeysByCountDesc(counts) {
       return;
     }
 
+    /* The timeline belongs to the overall income projection, not HPSS. */
     hpssTimelinePatch.hidden =
-      Boolean(
-        !hpssProjectionPatch ||
-        hpssProjectionPatch.hidden
+      !Boolean(
+        typeof lastRes !== 'undefined' &&
+        lastRes
       );
   }
 
@@ -18262,7 +18407,7 @@ function sortKeysByCountDesc(counts) {
   if (projectedTooltipFinal) {
     projectedTooltipFinal.innerHTML =
       'Assumes salaries <em>increase</em> over time. ' +
-      'Uses linear regression, with years since graduation modelled logarithmically as ln(1 + years).';
+      'Uses linear regression, with years since graduation modelled logarithmically as ln(1 + years)';
   }
 
   /* ========================================================
@@ -18741,9 +18886,16 @@ function sortKeysByCountDesc(counts) {
   function absStableTitleHtmlFinal_() {
     const yearText = currentAbsYearTextFinal_(absEnabledFinal_());
     const href = absSourceHrefFinal_();
+    const yearMatch =
+      String(yearText).match(/\b(19|20)\d{2}\b/);
+    const yearNumber =
+      yearMatch ? yearMatch[0] : '';
 
     return (
-      `<a id="absTitleYearLinkFinal" href="${escapeHtmlFinal_(href)}" target="_blank" rel="noopener noreferrer">${escapeHtmlFinal_(yearText)}</a>&nbsp;` +
+      `<a id="absTitleYearLinkFinal" href="${escapeHtmlFinal_(href)}" target="_blank" rel="noopener noreferrer">` +
+        '<span class="abs-title-abs-fixed-final">ABS&nbsp;</span>' +
+        `<span id="absTitleYearNumberFinal" class="abs-title-dynamic-word-final">${escapeHtmlFinal_(yearNumber)}</span>` +
+      '</a>&nbsp;' +
       '<span id="absTitleForecastInsertFinal" class="abs-title-forecast-insert-final"></span>' +
       '<span class="abs-title-income-fixed-final">income</span>' +
       '<span id="absTitleSuffixFinal" class="abs-title-suffix-final"></span>'
@@ -18757,6 +18909,7 @@ function sortKeysByCountDesc(counts) {
 
     if (
       !document.getElementById('absTitleYearLinkFinal') ||
+      !document.getElementById('absTitleYearNumberFinal') ||
       !document.getElementById('absTitleForecastInsertFinal') ||
       !document.getElementById('absTitleSuffixFinal')
     ) {
@@ -18878,38 +19031,68 @@ function sortKeysByCountDesc(counts) {
     const yearLink =
       document.getElementById('absTitleYearLinkFinal');
 
+    const yearNumber =
+      document.getElementById('absTitleYearNumberFinal');
+
     const forecastInsert =
       document.getElementById('absTitleForecastInsertFinal');
 
     const suffix =
       document.getElementById('absTitleSuffixFinal');
 
+    const currentYearText =
+      currentAbsYearTextFinal_(enabled);
+
+    const yearMatch =
+      String(currentYearText).match(/\b(19|20)\d{2}\b/);
+
     if (yearLink) {
-      yearLink.textContent = currentAbsYearTextFinal_(enabled);
       yearLink.href = absSourceHrefFinal_();
     }
 
-    /* ABS YYYY + income stay in place. Only "forecast" inserts before
-       income, while the comparison/colon suffix slides in/out. */
+    animateAbsInlineHtmlFinal_(
+      yearNumber,
+      yearMatch
+        ? escapeHtmlFinal_(yearMatch[0])
+        : '',
+      animateWord
+    );
+
+    /* ABS + year + income remain fixed wherever possible. Only genuinely
+       new/changed words slide into place. */
     animateAbsInlineHtmlFinal_(
       forecastInsert,
       forecast ? 'forecast&nbsp;' : '',
       animateWord
     );
 
+    const contextHtml =
+      absContextMetaSourceFinal?.innerHTML ||
+      '';
+
+    const enabledTail =
+      ':' +
+      (
+        contextHtml
+          ? `<span class="abs-context-meta">${contextHtml}</span>`
+          : ''
+      );
+
     animateAbsInlineHtmlFinal_(
       suffix,
       enabled
-        ? ':'
+        ? enabledTail
         : '&nbsp;comparisons&nbsp;<em>(optional)</em>',
-      animateMode
+      animateMode || animateWord
     );
 
     absTitleModeFinal = enabled;
     absTitleForecastFinal = forecast;
 
+    /* Context is copied into the animated suffix above. Keep the original
+       data node available for the existing renderer, but never display it. */
     if (absTitleContextFinal) {
-      absTitleContextFinal.hidden = !enabled;
+      absTitleContextFinal.hidden = true;
     }
   }
 
@@ -19397,6 +19580,121 @@ function sortKeysByCountDesc(counts) {
 
     .abs-median-item {
       column-gap: 0.24em !important;
+    }
+  }
+</style>
+
+
+<style id="minorAnimationTimelineRefinement20260818">
+  /* ABS year stays linked in both enabled and disabled states. */
+  .abs-animated-title-final.is-disabled-title #absTitleYearLinkFinal,
+  #absTitleYearLinkFinal,
+  #absTitleYearLinkFinal:visited {
+    color: var(--purple) !important;
+    font-weight: 700 !important;
+    text-decoration: underline !important;
+    text-decoration-thickness: 1px !important;
+    text-underline-offset: 2px !important;
+  }
+
+  .abs-title-abs-fixed-final,
+  .abs-title-income-fixed-final {
+    display: inline-block;
+    line-height: inherit;
+    vertical-align: baseline;
+  }
+
+  /* New hours text joins/leaves the Estimated heading with the same
+     horizontal slide/fade language as the salary/hourly wording. */
+  .benchmark-hours-tag,
+  .results-heading-hours {
+    transform: translateX(-6px);
+    transition:
+      max-width 340ms cubic-bezier(0.22, 1, 0.36, 1),
+      margin-left 340ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 180ms ease,
+      transform 300ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+
+  .benchmark-hours-tag.is-visible,
+  .results-heading-hours.is-visible {
+    transform: translateX(0);
+  }
+
+  /* Stable HPSS text fragments use the same animation-capable span. */
+  #hpssProjectionForecastWordPatch,
+  #hpssCombinedConclusionTextPatch,
+  #hpssProjectionAwardSuffixPatch,
+  #hpssCombinedDifferenceSuffixPatch {
+    display: inline-block;
+    overflow: hidden;
+    vertical-align: baseline;
+    white-space: nowrap;
+    will-change: width, opacity, transform;
+  }
+
+  #hpssCombinedConclusionPatch[hidden] {
+    display: none !important;
+  }
+
+  /* The timeline is a three-column control: equal left/right label zones
+     keep the scale itself geometrically centred, with equal label gaps. */
+  .hpss-timeline-section {
+    display: grid !important;
+    grid-template-columns: 88px minmax(0, 1fr) 88px !important;
+    width: 100% !important;
+    align-items: center !important;
+    column-gap: 8px !important;
+  }
+
+  .hpss-timeline-section > .hpss-timeline-label {
+    grid-column: 1 !important;
+    justify-self: end !important;
+    margin: 0 !important;
+  }
+
+  .hpss-timeline-section > .hpss-slider-row {
+    display: contents !important;
+  }
+
+  .hpss-timeline-section .hpss-slider-wrap {
+    grid-column: 2 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+  }
+
+  .hpss-timeline-section .hpss-projection-year {
+    grid-column: 3 !important;
+    min-width: 0 !important;
+    width: auto !important;
+    margin: 0 !important;
+    justify-self: start !important;
+    text-align: left !important;
+  }
+
+  @media (max-width: 430px) {
+    .hpss-timeline-section {
+      grid-template-columns: 74px minmax(0, 1fr) 74px !important;
+      column-gap: 6px !important;
+    }
+  }
+
+  @media (max-width: 365px) {
+    .hpss-timeline-section {
+      grid-template-columns: 68px minmax(0, 1fr) 68px !important;
+      column-gap: 5px !important;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .benchmark-hours-tag,
+    .results-heading-hours,
+    #hpssProjectionForecastWordPatch,
+    #hpssCombinedConclusionTextPatch,
+    #hpssProjectionAwardSuffixPatch,
+    #hpssCombinedDifferenceSuffixPatch {
+      transition-duration: 0.01ms !important;
     }
   }
 </style>
