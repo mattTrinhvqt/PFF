@@ -1103,8 +1103,24 @@
       refreshBasisOptionStates();
     });
     
-    window.addEventListener('load', applyScale);
-    window.addEventListener('resize', applyScale);
+    window.addEventListener(
+      'load',
+      () => {
+        applyScale();
+
+        if (
+          cur === 0 &&
+          !isTerminalState
+        ) {
+          autoScrollMobileStep_(0);
+        }
+      }
+    );
+
+    window.addEventListener(
+      'resize',
+      applyScale
+    );
 
     // ----- Wizard controller -----
     const steps = [...document.querySelectorAll('.step')];
@@ -1114,6 +1130,7 @@
     let cur = 0;
 
     let mobileStepScrollTimer = null;
+    let mobileStepScrollCorrectionTimer = null;
 
     function autoScrollMobileStep_(index) {
       const isMobile =
@@ -1129,58 +1146,62 @@
         mobileStepScrollTimer
       );
 
+      window.clearTimeout(
+        mobileStepScrollCorrectionTimer
+      );
+
+      const scrollToTarget = () => {
+        const target =
+          index === 0
+            ? document.querySelector(
+                '.tracker-notice'
+              )
+            : steps[index]
+                ?.querySelector(
+                  '.progress'
+                );
+
+        if (!target) {
+          return;
+        }
+
+        /*
+         * scrollIntoView is deliberate here rather than
+         * window.scrollTo(). This allows the embedded tracker
+         * itself to be brought into view on the host page.
+         */
+        target.scrollIntoView({
+          behavior: 'auto',
+          block: 'start',
+          inline: 'nearest'
+        });
+      };
+
+      /*
+       * First scroll after focus / keyboard handling.
+       */
       mobileStepScrollTimer =
         window.setTimeout(
           () => {
             mobileStepScrollTimer = null;
 
-            const reduceMotion =
-              window.matchMedia(
-                '(prefers-reduced-motion: reduce)'
-              ).matches;
+            scrollToTarget();
 
             /*
-             * Q1:
-             * Go to the absolute top of the survey so the
-             * tracker notice starts at the top of the screen.
+             * Correct once more after the mobile browser and
+             * Google Sites have finished changing the visual
+             * viewport / embedded-app position.
              */
-            if (index === 0) {
-              window.scrollTo({
-                top: 0,
-                left: 0,
-                behavior:
-                  reduceMotion
-                    ? 'auto'
-                    : 'smooth'
-              });
-
-              return;
-            }
-
-            /*
-             * Q2 onward:
-             * Put the question progress text at the top.
-             */
-            const target =
-              steps[index]
-                ?.querySelector(
-                  '.progress'
-                );
-
-            if (!target) {
-              return;
-            }
-
-            target.scrollIntoView({
-              behavior:
-                reduceMotion
-                  ? 'auto'
-                  : 'smooth',
-              block: 'start',
-              inline: 'nearest'
-            });
+            mobileStepScrollCorrectionTimer =
+              window.setTimeout(
+                () => {
+                  mobileStepScrollCorrectionTimer = null;
+                  scrollToTarget();
+                },
+                350
+              );
           },
-          300
+          250
         );
     }
 
@@ -1610,43 +1631,187 @@
       if (e.target.classList.contains('back')) toBack();
     });
 
-    // Keep the mobile keyboard action inside this tracker.
-    // The browser's native "next field" behaviour is cancelled,
-    // and this wizard decides which question receives focus next.
-    document.addEventListener(
-      'keydown',
-      e => {
-        if (e.key !== 'Enter') {
-          return;
-        }
+    let mobileAdvanceFocusGuardUntil = 0;
 
-        const activeStep =
-          e.target.closest('.step');
+    function refocusActiveStepField_() {
+      const isMobile =
+        window.matchMedia(
+          '(max-width: 430px)'
+        ).matches;
 
-        const inActiveStep =
-          activeStep?.classList.contains(
+      if (
+        !isMobile ||
+        isLockedOut ||
+        isTerminalState
+      ) {
+        return;
+      }
+
+      const field =
+        steps[cur]
+          ?.querySelector(
+            'input, select, textarea'
+          );
+
+      if (
+        !field ||
+        field.disabled
+      ) {
+        return;
+      }
+
+      try {
+        field.focus({
+          preventScroll: true
+        });
+      } catch (error) {
+        field.focus();
+      }
+    }
+
+    function handleWizardKeyboardAdvance_(e) {
+      const isMobile =
+        window.matchMedia(
+          '(max-width: 430px)'
+        ).matches;
+
+      const isEnter =
+        e.key === 'Enter' ||
+        e.keyCode === 13;
+
+      /*
+       * Some mobile keyboards / browsers can expose their
+       * "Next" action as Tab-style focus navigation.
+       */
+      const isMobileTab =
+        isMobile &&
+        (
+          e.key === 'Tab' ||
+          e.keyCode === 9
+        );
+
+      if (
+        !isEnter &&
+        !isMobileTab
+      ) {
+        return;
+      }
+
+      const activeStep =
+        e.target
+          ?.closest?.('.step');
+
+      const inActiveStep =
+        activeStep
+          ?.classList.contains(
             'active'
           );
 
+      if (
+        !inActiveStep ||
+        e.target.tagName === 'SELECT'
+      ) {
+        return;
+      }
+
+      /*
+       * Stop the browser from performing its own Enter/Next
+       * focus traversal outside this embedded tracker.
+       */
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (
+        typeof e.stopImmediatePropagation ===
+        'function'
+      ) {
+        e.stopImmediatePropagation();
+      }
+
+      if (isMobile) {
+        mobileAdvanceFocusGuardUntil =
+          performance.now() + 800;
+      }
+
+      if (cur < steps.length - 1) {
+        toNext();
+      }
+
+      /*
+       * Mobile browsers can perform delayed focus handling
+       * after the keyboard action. Reassert focus on the
+       * active question a few times during that period.
+       */
+      if (isMobile) {
+        requestAnimationFrame(
+          refocusActiveStepField_
+        );
+
+        window.setTimeout(
+          refocusActiveStepField_,
+          60
+        );
+
+        window.setTimeout(
+          refocusActiveStepField_,
+          180
+        );
+      }
+    }
+
+    window.addEventListener(
+      'keydown',
+      handleWizardKeyboardAdvance_,
+      true
+    );
+
+    /*
+     * If Google Sites / the browser nevertheless tries to
+     * move focus out of this iframe immediately after the
+     * mobile keyboard action, pull focus back into the
+     * currently active survey question.
+     */
+    document.addEventListener(
+      'focusout',
+      () => {
         if (
-          !inActiveStep ||
-          e.target.tagName === 'SELECT'
+          performance.now() >
+          mobileAdvanceFocusGuardUntil
         ) {
           return;
         }
 
-        /*
-         * Prevent the browser / Google Sites from moving
-         * focus to another embedded web app.
-         */
-        e.preventDefault();
-        e.stopPropagation();
-
-        if (cur < steps.length - 1) {
-          toNext();
-        }
+        window.setTimeout(
+          refocusActiveStepField_,
+          0
+        );
       },
       true
+    );
+
+    window.addEventListener(
+      'blur',
+      () => {
+        if (
+          performance.now() >
+          mobileAdvanceFocusGuardUntil
+        ) {
+          return;
+        }
+
+        window.setTimeout(
+          () => {
+            try {
+              window.focus();
+            } catch (error) {
+              // Ignore if the browser blocks window.focus().
+            }
+
+            refocusActiveStepField_();
+          },
+          0
+        );
+      }
     );
 
     // Auto-advance after choosing an option in an active dropdown
