@@ -21049,6 +21049,17 @@ function sortKeysByCountDesc(counts) {
     display: none !important;
   }
 
+  /*
+   * The underlying ABS renderer hides markers immediately when ABS is
+   * switched off. Keep an exiting marker visually present long enough
+   * to complete its rightward slide, even though its hidden attribute
+   * has already been set.
+   */
+  .abs-benchmark-marker.abs-marker-exiting-final[hidden] {
+    display: block !important;
+    pointer-events: none !important;
+  }
+
   /* Only the ABS legend square + black category/value occupy fixed shared
      grid columns. The purple conclusion remains natural-width. */
   .abs-category-conclusion {
@@ -21120,6 +21131,10 @@ function sortKeysByCountDesc(counts) {
 
     marker.dataset.absEntranceRunning = 'true';
 
+    marker.classList.remove(
+      'abs-marker-exiting-final'
+    );
+
     marker.getAnimations?.().forEach(animation => {
       try { animation.cancel(); } catch (_) {}
     });
@@ -21155,119 +21170,100 @@ function sortKeysByCountDesc(counts) {
   function animateAbsMarkersOutFinal_(visibleMarkers) {
     visibleMarkers.forEach(marker => {
       const targetLeft =
-        Number.parseFloat(marker.style.left);
+        Number.parseFloat(
+          marker.style.left
+        );
 
-      if (!Number.isFinite(targetLeft)) {
-        marker.hidden = true;
+      if (
+        !Number.isFinite(targetLeft)
+      ) {
+        marker.hidden =
+          true;
+
         return;
       }
 
-      marker.hidden = false;
-
-      marker.getAnimations?.().forEach(animation => {
-        try { animation.cancel(); } catch (_) {}
-      });
-
-      if (!marker.animate) {
-        marker.hidden = true;
-        return;
-      }
-
-      const animation = marker.animate(
-        [
-          {
-            left: `${targetLeft}%`
-          },
-          {
-            left: '102%'
-          }
-        ],
-        {
-          duration: 360,
-          easing: 'cubic-bezier(0.4, 0, 0.6, 1)'
+      marker.getAnimations?.().forEach(
+        animation => {
+          try {
+            animation.cancel();
+          } catch (_) {}
         }
       );
+
+      /*
+       * The normal ABS renderer is allowed to set hidden=true
+       * immediately. This class temporarily overrides the hidden
+       * display rule so the marker can visibly finish moving right.
+       */
+      marker.classList.add(
+        'abs-marker-exiting-final'
+      );
+
+      marker.hidden =
+        true;
+
+      if (!marker.animate) {
+        marker.classList.remove(
+          'abs-marker-exiting-final'
+        );
+
+        return;
+      }
+
+      const animation =
+        marker.animate(
+          [
+            {
+              left:
+                `${targetLeft}%`
+            },
+            {
+              left:
+                '102%'
+            }
+          ],
+          {
+            duration:
+              420,
+
+            easing:
+              'cubic-bezier(0.4, 0, 0.6, 1)',
+
+            fill:
+              'forwards'
+          }
+        );
 
       animation.finished
         .catch(() => {})
         .finally(() => {
-          try { animation.cancel(); } catch (_) {}
-
           const absStillEnabled =
             Boolean(
-              document.getElementById('absComparisonToggle')?.checked ||
-              document.getElementById('absResultsToggle')?.checked
+              document.getElementById(
+                'absComparisonToggle'
+              )?.checked ||
+              document.getElementById(
+                'absResultsToggle'
+              )?.checked
             );
 
-          if (!absStillEnabled) {
-            marker.hidden = true;
+          if (absStillEnabled) {
+            marker.hidden =
+              false;
+          } else {
+            marker.hidden =
+              true;
           }
 
-        });
-    });
-  }
-
-  absMarkerTogglesFinal.forEach(toggle => {
-    toggle.addEventListener(
-      'change',
-      event => {
-        const enabling =
-          Boolean(event.currentTarget.checked);
-
-        if (enabling) {
-          absMarkerEntranceUntilFinal =
-            performance.now() + 1800;
-
-          requestAnimationFrame(() => {
-            absMarkersFinal()
-              .filter(marker => !marker.hidden)
-              .forEach(animateAbsMarkerInFinal_);
-          });
-          return;
-        }
-
-        const visibleBeforeExistingHandlers =
-          absMarkersFinal().filter(
-            marker => !marker.hidden
+          marker.classList.remove(
+            'abs-marker-exiting-final'
           );
 
-        requestAnimationFrame(() => {
-          animateAbsMarkersOutFinal_(
-            visibleBeforeExistingHandlers
-          );
+          try {
+            animation.cancel();
+          } catch (_) {}
         });
-      },
-      true
-    );
-  });
-
-  if (window.MutationObserver) {
-    const markerObserver =
-      new MutationObserver(mutations => {
-        if (
-          performance.now() >
-          absMarkerEntranceUntilFinal
-        ) {
-          return;
-        }
-
-        mutations.forEach(mutation => {
-          const marker = mutation.target;
-
-          if (
-            mutation.attributeName === 'hidden' &&
-            !marker.hidden
-          ) {
-            animateAbsMarkerInFinal_(marker);
-          }
-        });
-      });
-
-    absMarkersFinal().forEach(marker => {
-      markerObserver.observe(marker, {
-        attributes: true,
-        attributeFilter: ['hidden']
-      });
     });
   }
 })();
