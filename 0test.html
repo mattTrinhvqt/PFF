@@ -7151,149 +7151,99 @@ function sortKeysByCountDesc(counts) {
             animation.cancel()
         );
 
-      if (
-        reduceMotion ||
-        !resultsHeadingFixed.animate ||
-        !resultsHeadingDetail.animate
-      ) {
-        resultsHeadingDetail.textContent =
-          nextText;
-
-        return;
-      }
-
       const oldFixedLeft =
         resultsHeadingFixed
           .getBoundingClientRect()
           .left;
 
-      const fadeOut =
-        resultsHeadingDetail.animate(
+      /* Change the dynamic phrase once, then move the stable and new
+         phrase together in one coordinated transition. This avoids the
+         previous fade-out -> recenter -> fade-in double movement. */
+      resultsHeadingDetail.textContent =
+        nextText;
+
+      if (
+        reduceMotion ||
+        !resultsHeadingFixed.animate ||
+        !resultsHeadingDetail.animate
+      ) {
+        return;
+      }
+
+      const newFixedLeft =
+        resultsHeadingFixed
+          .getBoundingClientRect()
+          .left;
+
+      const fixedOffset =
+        oldFixedLeft -
+        newFixedLeft;
+
+      const fixedSlide =
+        resultsHeadingFixed.animate(
           [
             {
-              opacity:
-                1,
-
+              transform:
+                `translateX(${fixedOffset}px)`
+            },
+            {
               transform:
                 'translateX(0)'
-            },
-
-            {
-              opacity:
-                0,
-
-              transform:
-                'translateX(-9px)'
             }
           ],
           {
             duration:
-              260,
-
+              380,
             easing:
-              'ease-in',
-
-            fill:
-              'forwards'
+              'cubic-bezier(0.16, 1, 0.3, 1)'
           }
         );
 
-      fadeOut.finished
-        .then(
-          () => {
-            if (
-              token !==
-              headingAnimationToken
-            ) {
-              return;
+      const detailEnter =
+        resultsHeadingDetail.animate(
+          [
+            {
+              opacity:
+                0,
+              transform:
+                'translateX(8px)'
+            },
+            {
+              opacity:
+                1,
+              transform:
+                'translateX(0)'
             }
-
-            fadeOut.cancel();
-
-            resultsHeadingDetail.textContent =
-              nextText;
-
-            const newFixedLeft =
-              resultsHeadingFixed
-                .getBoundingClientRect()
-                .left;
-
-            const fixedOffset =
-              oldFixedLeft -
-              newFixedLeft;
-
-            const fixedSlide =
-              resultsHeadingFixed.animate(
-                [
-                  {
-                    transform:
-                      `translateX(${fixedOffset}px)`
-                  },
-
-                  {
-                    transform:
-                      'translateX(0)'
-                  }
-                ],
-                {
-                  duration:
-                    620,
-
-                  easing:
-                    'cubic-bezier(0.16, 1, 0.3, 1)'
-                }
-              );
-
-            const detailFadeIn =
-              resultsHeadingDetail.animate(
-                [
-                  {
-                    opacity:
-                      0,
-
-                    transform:
-                      'translateX(10px)'
-                  },
-
-                  {
-                    opacity:
-                      1,
-
-                    transform:
-                      'translateX(0)'
-                  }
-                ],
-                {
-                  duration:
-                    620,
-
-                  easing:
-                    'cubic-bezier(0.16, 1, 0.3, 1)'
-                }
-              );
-
-            Promise.allSettled([
-              fixedSlide.finished,
-              detailFadeIn.finished
-            ]).then(
-              () => {
-                fixedSlide.cancel();
-                detailFadeIn.cancel();
-              }
-            );
-          }
-        )
-        .catch(
-          () => {
-            if (
-              token ===
-              headingAnimationToken
-            ) {
-              resultsHeadingDetail.textContent =
-                nextText;
-            }
+          ],
+          {
+            duration:
+              380,
+            easing:
+              'cubic-bezier(0.16, 1, 0.3, 1)'
           }
         );
+
+      Promise.allSettled([
+        fixedSlide.finished,
+        detailEnter.finished
+      ]).then(
+        () => {
+          if (
+            token !==
+            headingAnimationToken
+          ) {
+            return;
+          }
+
+          try {
+            fixedSlide.cancel();
+          } catch (_) {}
+
+          try {
+            detailEnter.cancel();
+          } catch (_) {}
+        }
+      );
     }
 
     function updateResultsProjectionHeading(
@@ -12791,7 +12741,7 @@ function sortKeysByCountDesc(counts) {
 
       const entranceDelay =
         element === resultsHeadingHoursPatch
-          ? 260
+          ? 0
           : 120;
 
       const entrance =
@@ -19652,15 +19602,76 @@ function sortKeysByCountDesc(counts) {
 
       const diff = userValue - median;
 
+      let prefix =
+        conclusion.querySelector(
+          '.abs-conclusion-prefix-final'
+        );
+
+      let amount =
+        conclusion.querySelector(
+          '.abs-live-difference-final'
+        );
+
+      let relation =
+        conclusion.querySelector(
+          '.abs-conclusion-relation-final'
+        );
+
+      if (
+        !prefix ||
+        !amount ||
+        !relation
+      ) {
+        conclusion.innerHTML =
+          '<span class="abs-conclusion-prefix-final">You earn</span>' +
+          '<span class="abs-live-difference-final"></span>' +
+          '<span class="abs-conclusion-relation-final"></span>';
+
+        prefix =
+          conclusion.querySelector(
+            '.abs-conclusion-prefix-final'
+          );
+
+        amount =
+          conclusion.querySelector(
+            '.abs-live-difference-final'
+          );
+
+        relation =
+          conclusion.querySelector(
+            '.abs-conclusion-relation-final'
+          );
+      }
+
       if (Math.abs(diff) < 0.005) {
-        conclusion.textContent = 'You earn about the same as';
+        prefix.textContent =
+          'You earn about the same as';
+
+        amount.textContent =
+          '';
+
+        amount.hidden =
+          true;
+
+        relation.textContent =
+          '';
+
         return;
       }
 
-      conclusion.innerHTML =
-        'You earn&nbsp;' +
-        `<span class="abs-live-difference-final">${formattedDifferenceFinal_(diff)}</span>&nbsp;` +
-        (diff > 0 ? 'more than' : 'less than');
+      prefix.textContent =
+        'You earn';
+
+      amount.hidden =
+        false;
+
+      amount.textContent =
+        formattedDifferenceFinal_(diff);
+
+      relation.textContent =
+        diff > 0
+          ? 'more than'
+          : 'less than';
     });
   }
 
@@ -19706,6 +19717,54 @@ function sortKeysByCountDesc(counts) {
     'input',
     scheduleAbsConclusionFinal_
   );
+
+  /* HPSS on/off can make the ABS source renderer move from a forecast
+     year back to the latest actual year. Keep the visible old year in
+     place until the new source year is ready, then count to it. */
+  document
+    .getElementById(
+      'hpssResultsEnabledToggle'
+    )
+    ?.addEventListener(
+      'change',
+      () => {
+        const yearNumber =
+          document.getElementById(
+            'absTitleYearNumberFinal'
+          );
+
+        const visibleYear =
+          Number(
+            yearNumber?.textContent
+          );
+
+        requestAnimationFrame(
+          () => {
+            if (
+              yearNumber &&
+              Number.isFinite(visibleYear)
+            ) {
+              yearNumber.textContent =
+                String(
+                  Math.round(visibleYear)
+                );
+
+              yearNumber.dataset.absYearTarget =
+                String(
+                  Math.round(visibleYear)
+                );
+            }
+
+            syncAbsVisualTitleFinal_(
+              false,
+              true
+            );
+
+            scheduleAbsConclusionFinal_();
+          }
+        );
+      }
+    );
 
   [
     absResultsCheckboxFinal,
@@ -20503,6 +20562,57 @@ function sortKeysByCountDesc(counts) {
     #hpssCombinedForecastWordPatch {
       transition-duration: 0.01ms !important;
     }
+  }
+</style>
+
+
+<style id="finalMinorMotionAlignmentFix20260818_1223">
+  /* Forecast value stays right-aligned, while its underline reaches the
+     actual right edge of the forecast column instead of stopping beside
+     the centre toggle. */
+  #benchmarkResultsSlot .projected-benchmark-value,
+  #benchmarkResultsSlot #projectedBenchmarkValue {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-right: 0 !important;
+    margin-left: 0 !important;
+    justify-content: flex-end !important;
+    text-align: right !important;
+  }
+
+  /* The hours annotation may still fade/slide, but it no longer performs a
+     second width animation that re-centres the Estimated heading after the
+     salary/hourly phrase has already moved. */
+  #resultsHeadingHours {
+    transition:
+      opacity 180ms ease,
+      transform 300ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+
+  /* Keep the fixed 'You earn' fragment stationary while forecast amounts
+     update continuously during slider movement. */
+  .abs-category-conclusion {
+    column-gap: 0.28em;
+  }
+
+  .abs-conclusion-prefix-final,
+  .abs-conclusion-relation-final {
+    display: inline-block;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .abs-live-difference-final {
+    display: inline-block;
+    width: 10ch;
+    flex: 0 0 10ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .abs-live-difference-final[hidden] {
+    display: none !important;
   }
 </style>
 
