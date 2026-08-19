@@ -1134,26 +1134,22 @@
       }
     
       /*
-       * Do not automatically focus fields on mobile.
-       * In a Google Sites iframe this can make the
-       * parent page jump down to the embedded app.
+       * Keep focus inside the tracker whenever the user
+       * advances to another question.
+       *
+       * Initial page load still passes autoFocus: false,
+       * so this does not affect the initial mobile load.
        */
       setTimeout(() => {
-        const isMobile =
-          window.matchMedia(
-            '(max-width: 430px)'
-          ).matches;
-    
         if (
           !isLockedOut &&
-          autoFocus &&
-          !isMobile
+          autoFocus
         ) {
           const first =
             steps[index].querySelector(
               'input, select, textarea'
             );
-    
+
           if (
             first &&
             first.id !== 'submit'
@@ -1167,7 +1163,7 @@
             }
           }
         }
-    
+
         applyScale();
       }, 0);
     
@@ -1528,16 +1524,61 @@
       if (e.target.classList.contains('back')) toBack();
     });
 
-    // allow Enter to act as Next within step fields (except on selects)
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const inActiveStep = e.target.closest('.step')?.classList.contains('active');
-        if (inActiveStep && e.target.tagName !== 'SELECT') {
-          e.preventDefault();
-          if (cur < steps.length - 1) toNext();
+    /*
+     * Prevent the mobile keyboard's native "Next field"
+     * behaviour from escaping this tracker iframe.
+     *
+     * "go" avoids asking the browser to search globally
+     * for another focusable field. The tracker handles
+     * progression itself below.
+     */
+    document
+      .querySelectorAll(
+        '.step input[type="number"], .step input[type="text"], .step textarea'
+      )
+      .forEach(field => {
+        if (
+          field.id !==
+          'q15_extraTimePaidPct'
+        ) {
+          field.setAttribute(
+            'enterkeyhint',
+            'go'
+          );
         }
-      }
-    });
+      });
+
+    document.addEventListener(
+      'keydown',
+      e => {
+        if (e.key !== 'Enter') {
+          return;
+        }
+
+        const activeStep =
+          e.target.closest('.step');
+
+        if (
+          !activeStep ||
+          !activeStep.classList.contains('active') ||
+          e.target.tagName === 'SELECT'
+        ) {
+          return;
+        }
+
+        /*
+         * Stop the browser before it can perform native
+         * focus traversal to another Google Sites embed.
+         */
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (cur < steps.length - 1) {
+          toNext();
+        }
+      },
+      true
+    );
 
     // Auto-advance after choosing an option in an active dropdown
     document.addEventListener('change', event => {
