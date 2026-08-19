@@ -224,7 +224,7 @@
     line-height: 1;
   }
 
-  .rate-field input[type="number"] {
+  .rate-field input {
     flex: 1;
     width: auto;
     min-width: 0;
@@ -588,7 +588,7 @@
       font-size: 30px;
     }
 
-    .rate-field input[type="number"] {
+    .rate-field input {
       font-size: 24px;
     }
   }
@@ -623,13 +623,13 @@
       <span class="rate-prefix">$</span>
       <input
         id="q1_salary"
-        type="number"
+        type="text"
         inputmode="numeric"
         enterkeyhint="next"
-        min="0"
-        step="1"
+        autocomplete="off"
         required
         aria-label="Annual salary"
+      >-label="Annual salary"
       >
       <span class="rate-suffix">/year</span>
     </div>
@@ -1134,22 +1134,26 @@
       }
     
       /*
-       * Keep focus inside the tracker whenever the user
-       * advances to another question.
-       *
-       * Initial page load still passes autoFocus: false,
-       * so this does not affect the initial mobile load.
+       * Do not automatically focus fields on mobile.
+       * In a Google Sites iframe this can make the
+       * parent page jump down to the embedded app.
        */
       setTimeout(() => {
+        const isMobile =
+          window.matchMedia(
+            '(max-width: 430px)'
+          ).matches;
+    
         if (
           !isLockedOut &&
-          autoFocus
+          autoFocus &&
+          !isMobile
         ) {
           const first =
             steps[index].querySelector(
               'input, select, textarea'
             );
-
+    
           if (
             first &&
             first.id !== 'submit'
@@ -1163,7 +1167,7 @@
             }
           }
         }
-
+    
         applyScale();
       }, 0);
     
@@ -1456,7 +1460,15 @@
 
       if (!rule) return true;
 
-      const value = Number(field.value);
+      const value =
+        field.id === 'q1_salary'
+          ? Number(
+              field.value.replace(
+                /,/g,
+                ''
+              )
+            )
+          : Number(field.value);
 
       if (!Number.isFinite(value)) {
         showFieldWarning(field, '⚠️ Enter a valid number');
@@ -1484,6 +1496,25 @@
       const field = event.target;
 
       if (!field.matches('input, select')) return;
+
+      /*
+       * Salary:
+       * - digits only
+       * - maximum 6 digits
+       * - comma separators are visual only
+       */
+      if (field.id === 'q1_salary') {
+        const digits =
+          field.value
+            .replace(/\D/g, '')
+            .slice(0, 6);
+
+        field.value =
+          digits.replace(
+            /\B(?=(\d{3})+(?!\d))/g,
+            ','
+          );
+      }
 
       confirmedUnusualValues.delete(field.id);
       clearFieldWarning(field);
@@ -1524,61 +1555,16 @@
       if (e.target.classList.contains('back')) toBack();
     });
 
-    /*
-     * Prevent the mobile keyboard's native "Next field"
-     * behaviour from escaping this tracker iframe.
-     *
-     * "go" avoids asking the browser to search globally
-     * for another focusable field. The tracker handles
-     * progression itself below.
-     */
-    document
-      .querySelectorAll(
-        '.step input[type="number"], .step input[type="text"], .step textarea'
-      )
-      .forEach(field => {
-        if (
-          field.id !==
-          'q15_extraTimePaidPct'
-        ) {
-          field.setAttribute(
-            'enterkeyhint',
-            'go'
-          );
+    // allow Enter to act as Next within step fields (except on selects)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const inActiveStep = e.target.closest('.step')?.classList.contains('active');
+        if (inActiveStep && e.target.tagName !== 'SELECT') {
+          e.preventDefault();
+          if (cur < steps.length - 1) toNext();
         }
-      });
-
-    document.addEventListener(
-      'keydown',
-      e => {
-        if (e.key !== 'Enter') {
-          return;
-        }
-
-        const activeStep =
-          e.target.closest('.step');
-
-        if (
-          !activeStep ||
-          !activeStep.classList.contains('active') ||
-          e.target.tagName === 'SELECT'
-        ) {
-          return;
-        }
-
-        /*
-         * Stop the browser before it can perform native
-         * focus traversal to another Google Sites embed.
-         */
-        e.preventDefault();
-        e.stopPropagation();
-
-        if (cur < steps.length - 1) {
-          toNext();
-        }
-      },
-      true
-    );
+      }
+    });
 
     // Auto-advance after choosing an option in an active dropdown
     document.addEventListener('change', event => {
