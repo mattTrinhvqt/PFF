@@ -341,15 +341,90 @@
       margin: 0;
     }
 
-    .chart-heading {
-      display: inline-flex;
+    /*
+     * Reusable PFF overflow-text scroller.
+     * If text is wider than the space available to it, subtle
+     * translucent scroll arrows appear automatically.
+     */
+    .overflow-text-shell {
+      position: relative;
       min-width: 0;
       flex: 1 1 auto;
+      overflow: hidden;
+    }
+
+    .overflow-text-viewport {
+      width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .overflow-text-viewport::-webkit-scrollbar {
+      display: none;
+    }
+
+    .overflow-text-scroll-button {
+      position: absolute;
+      top: 4px;
+      z-index: 4;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.92);
+      border: 0;
+      border-radius: 50%;
+      box-shadow: none;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.72;
+      transition:
+        opacity 160ms ease;
+    }
+
+    .overflow-text-scroll-button:hover {
+      opacity: 1;
+    }
+
+    .overflow-text-scroll-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 1px;
+    }
+
+    .overflow-text-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .overflow-text-scroll-left {
+      left: 0;
+    }
+
+    .overflow-text-scroll-right {
+      right: 0;
+    }
+
+    .chart-heading {
+      display: inline-flex;
+      width: max-content;
+      min-width: max-content;
+      flex: 0 0 auto;
       align-items: baseline;
       gap: 0.28em;
       margin: 0;
       padding: 4px 0 0;
-      overflow: hidden;
+      overflow: visible;
       color: var(--ink);
       font-size: 15px;
       font-weight: 700;
@@ -371,8 +446,8 @@
 
     .chart-heading-part {
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      overflow: visible;
+      text-overflow: clip;
     }
 
     .chart-heading-part,
@@ -968,10 +1043,29 @@
       <div id="status" role="status" aria-live="polite"></div>
 
       <div class="chart-heading-row">
-        <h2 class="chart-heading">
-          <span id="headingMetric" class="chart-heading-part">FTE clinician oversupply</span>
-          <span id="headingYearWrap" class="chart-heading-year-wrap">(<span id="headingYear" class="chart-heading-year">—</span>)</span>
-        </h2>
+        <div
+          id="headingScrollShell"
+          class="overflow-text-shell"
+        >
+          <button
+            class="overflow-text-scroll-button overflow-text-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll graph title left"
+          >&#8249;</button>
+
+          <div class="overflow-text-viewport">
+            <h2 class="chart-heading">
+              <span id="headingMetric" class="chart-heading-part">FTE clinician oversupply</span>
+              <span id="headingYearWrap" class="chart-heading-year-wrap">(<span id="headingYear" class="chart-heading-year">—</span>)</span>
+            </h2>
+          </div>
+
+          <button
+            class="overflow-text-scroll-button overflow-text-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll graph title right"
+          >&#8250;</button>
+        </div>
 
         <div class="heading-controls">
           <div id="benchmarkControl" class="benchmark-control">
@@ -1261,7 +1355,173 @@
 
     const chartCanvas =
       document.getElementById('phnChart');
+    // ============================================================
+    // REUSABLE OVERFLOW-TEXT SCROLLERS
+    // ============================================================
 
+    function setupOverflowTextScroller(shell) {
+      if (!shell) {
+        return null;
+      }
+
+      const viewport =
+        shell.querySelector(
+          '.overflow-text-viewport'
+        );
+
+      const content =
+        viewport?.firstElementChild;
+
+      const leftButton =
+        shell.querySelector(
+          '.overflow-text-scroll-left'
+        );
+
+      const rightButton =
+        shell.querySelector(
+          '.overflow-text-scroll-right'
+        );
+
+      if (
+        !viewport ||
+        !content ||
+        !leftButton ||
+        !rightButton
+      ) {
+        return null;
+      }
+
+      let updateFrame =
+        null;
+
+      function update() {
+        if (updateFrame !== null) {
+          cancelAnimationFrame(
+            updateFrame
+          );
+        }
+
+        updateFrame =
+          requestAnimationFrame(
+            () => {
+              updateFrame = null;
+
+              const maximumScroll =
+                Math.max(
+                  0,
+                  viewport.scrollWidth -
+                    viewport.clientWidth
+                );
+
+              const hasOverflow =
+                maximumScroll > 2;
+
+              leftButton.classList.toggle(
+                'is-hidden',
+                !hasOverflow ||
+                  viewport.scrollLeft <= 2
+              );
+
+              rightButton.classList.toggle(
+                'is-hidden',
+                !hasOverflow ||
+                  viewport.scrollLeft >=
+                    maximumScroll - 2
+              );
+            }
+          );
+      }
+
+      function scrollAmount() {
+        return Math.max(
+          80,
+          viewport.clientWidth * 0.72
+        );
+      }
+
+      leftButton.addEventListener(
+        'click',
+        event => {
+          event.stopPropagation();
+
+          viewport.scrollBy({
+            left: -scrollAmount(),
+            behavior: 'smooth'
+          });
+        }
+      );
+
+      rightButton.addEventListener(
+        'click',
+        event => {
+          event.stopPropagation();
+
+          viewport.scrollBy({
+            left: scrollAmount(),
+            behavior: 'smooth'
+          });
+        }
+      );
+
+      viewport.addEventListener(
+        'scroll',
+        update,
+        {
+          passive: true
+        }
+      );
+
+      /*
+       * Detect changes in the available width, including when
+       * benchmark controls appear/disappear or mobile width changes.
+       */
+      if ('ResizeObserver' in window) {
+        const resizeObserver =
+          new ResizeObserver(
+            update
+          );
+
+        resizeObserver.observe(shell);
+        resizeObserver.observe(viewport);
+        resizeObserver.observe(content);
+      }
+
+      /*
+       * Detect title/text changes as tabs switch.
+       */
+      if ('MutationObserver' in window) {
+        const mutationObserver =
+          new MutationObserver(
+            update
+          );
+
+        mutationObserver.observe(
+          content,
+          {
+            childList: true,
+            subtree: true,
+            characterData: true
+          }
+        );
+      }
+
+      requestAnimationFrame(
+        update
+      );
+
+      return update;
+    }
+
+    const overflowTextScrollUpdates =
+      Array.from(
+        document.querySelectorAll(
+          '.overflow-text-shell'
+        )
+      )
+        .map(
+          setupOverflowTextScroller
+        )
+        .filter(Boolean);
     // ============================================================
     // APP STATE
     // ============================================================
