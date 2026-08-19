@@ -365,6 +365,10 @@
       flex: 0 0 auto;
     }
 
+    .chart-heading-year-wrap {
+      will-change: transform;
+    }
+
     .chart-heading-part {
       min-width: 0;
       overflow: hidden;
@@ -467,9 +471,8 @@
       z-index: 70;
       display: none;
       min-width: 164px;
-      max-height: min(310px, calc(100vh - 84px));
       padding: 5px 0;
-      overflow-y: auto;
+      overflow: visible;
       color: var(--ink);
       background: #fff;
       border: 1px solid var(--track);
@@ -967,7 +970,7 @@
       <div class="chart-heading-row">
         <h2 class="chart-heading">
           <span id="headingMetric" class="chart-heading-part">FTE clinician oversupply</span>
-          <span class="chart-heading-year-wrap">(<span id="headingYear" class="chart-heading-year">—</span>)</span>
+          <span id="headingYearWrap" class="chart-heading-year-wrap">(<span id="headingYear" class="chart-heading-year">—</span>)</span>
         </h2>
 
         <div class="heading-controls">
@@ -1210,6 +1213,9 @@
 
     const headingYear =
       document.getElementById('headingYear');
+
+    const headingYearWrap =
+      document.getElementById('headingYearWrap');
 
     const projectionYear =
       document.getElementById('projectionYear');
@@ -1821,7 +1827,9 @@
             return null;
           }
 
-          return c - (p / benchmarkPopulation);
+          return Math.round(
+            c - (p / benchmarkPopulation)
+          );
         }
       );
     }
@@ -2285,6 +2293,101 @@
         })
         .catch(() => {
           element.textContent = text;
+        });
+    }
+
+    function animateHeadingMetricChange(
+      nextText,
+      animate = true
+    ) {
+      if (!headingMetric) return;
+
+      const text = String(nextText);
+
+      if (headingMetric.textContent === text) {
+        return;
+      }
+
+      if (
+        !animate ||
+        reducedMotion() ||
+        typeof headingMetric.animate !== 'function' ||
+        !headingYearWrap
+      ) {
+        headingMetric.textContent = text;
+        return;
+      }
+
+      const token =
+        (Number(headingMetric.dataset.headingAnimationToken) || 0) + 1;
+
+      headingMetric.dataset.headingAnimationToken = String(token);
+
+      headingMetric.getAnimations?.().forEach(animation => animation.cancel());
+      headingYearWrap.getAnimations?.().forEach(animation => animation.cancel());
+
+      const oldYearLeft =
+        headingYearWrap.getBoundingClientRect().left;
+
+      const fadeOut = headingMetric.animate(
+        [
+          { opacity: 1 },
+          { opacity: 0 }
+        ],
+        {
+          duration: 150,
+          easing: 'ease-out',
+          fill: 'forwards'
+        }
+      );
+
+      fadeOut.finished
+        .then(() => {
+          if (
+            Number(headingMetric.dataset.headingAnimationToken) !== token
+          ) {
+            return;
+          }
+
+          fadeOut.cancel();
+          headingMetric.textContent = text;
+
+          const newYearLeft =
+            headingYearWrap.getBoundingClientRect().left;
+
+          const deltaX =
+            oldYearLeft - newYearLeft;
+
+          if (Math.abs(deltaX) > 0.25) {
+            headingYearWrap.animate(
+              [
+                { transform: `translateX(${deltaX}px)` },
+                { transform: 'translateX(0)' }
+              ],
+              {
+                duration: 420,
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+              }
+            );
+          }
+
+          const fadeIn = headingMetric.animate(
+            [
+              { opacity: 0 },
+              { opacity: 1 }
+            ],
+            {
+              duration: 230,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+            }
+          );
+
+          fadeIn.finished
+            .then(() => fadeIn.cancel())
+            .catch(() => {});
+        })
+        .catch(() => {
+          headingMetric.textContent = text;
         });
     }
 
@@ -2823,50 +2926,50 @@
       }
     };
 
-    const minorTicksPlugin = {
-      id: 'minorTicksPlugin',
+    const fixedXAxisGridPlugin = {
+      id: 'fixedXAxisGridPlugin',
 
       beforeDatasetsDraw(chartInstance) {
-        const xScale = chartInstance.scales.x;
         const { ctx, chartArea } = chartInstance;
-        const scaleDef = state.scaleCache[state.mode];
+        const targetValues = axisTickTargets(state.mode);
+        const intervals = AXIS_MAJOR_INTERVALS;
 
-        if (
-          !xScale ||
-          !scaleDef ||
-          !Number.isFinite(scaleDef.minorStep) ||
-          scaleDef.minorStep <= 0
-        ) {
-          return;
-        }
-
-        const minorStep = scaleDef.minorStep;
-        const majorStep = scaleDef.step;
-        const epsilon = minorStep * 0.0001;
-        const first = Math.ceil(scaleDef.min / minorStep) * minorStep;
+        if (!chartArea || intervals <= 0) return;
 
         ctx.save();
+
+        // Minor vertical grid lines: one exactly halfway between each
+        // pair of major markers. Their pixel positions never change.
         ctx.strokeStyle = 'rgba(105, 113, 138, 0.035)';
         ctx.lineWidth = 0.7;
 
-        for (
-          let value = first;
-          value <= scaleDef.max + epsilon;
-          value += minorStep
-        ) {
-          const majorRatio = value / majorStep;
-          const isMajor = Math.abs(
-            majorRatio - Math.round(majorRatio)
-          ) < 0.00001;
+        for (let index = 0; index < intervals; index += 1) {
+          const ratio = (index + 0.5) / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
 
-          if (isMajor || Math.abs(value) < epsilon) continue;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.stroke();
+        }
 
-          const x = xScale.getPixelForValue(value);
+        // Major vertical grid lines: seven fixed pixel positions.
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.075)';
+        ctx.lineWidth = 1;
 
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          const targetValue = Number(targetValues[index]);
+
+          // The animated black zero line owns the zero position.
           if (
-            x < chartArea.left - 0.5 ||
-            x > chartArea.right + 0.5
-          ) continue;
+            state.mode === 'oversupply' &&
+            Number.isFinite(targetValue) &&
+            Math.abs(targetValue) < 0.000001
+          ) {
+            continue;
+          }
 
           ctx.beginPath();
           ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
@@ -2878,51 +2981,119 @@
       },
 
       afterDraw(chartInstance) {
-        const xScale = chartInstance.scales.x;
         const { ctx, chartArea } = chartInstance;
-        const scaleDef = state.scaleCache[state.mode];
+        const intervals = AXIS_MAJOR_INTERVALS;
 
-        if (
-          !xScale ||
-          !scaleDef ||
-          !Number.isFinite(scaleDef.minorStep) ||
-          scaleDef.minorStep <= 0
-        ) {
-          return;
-        }
-
-        const minorStep = scaleDef.minorStep;
-        const majorStep = scaleDef.step;
-        const epsilon = minorStep * 0.0001;
-        const first = Math.ceil(scaleDef.min / minorStep) * minorStep;
+        if (!chartArea || intervals <= 0) return;
 
         ctx.save();
-        ctx.strokeStyle = '#69718a';
-        ctx.globalAlpha = 0.60;
+
+        // Major and minor tick marks use exactly the same fixed positions
+        // as the grid lines above.
+        ctx.strokeStyle = '#151515';
         ctx.lineWidth = 1;
 
-        for (
-          let value = first;
-          value <= scaleDef.max + epsilon;
-          value += minorStep
-        ) {
-          const majorRatio = value / majorStep;
-          const isMajor = Math.abs(
-            majorRatio - Math.round(majorRatio)
-          ) < 0.00001;
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
 
-          if (isMajor) continue;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 5);
+          ctx.stroke();
+        }
 
-          const x = xScale.getPixelForValue(value);
+        ctx.strokeStyle = '#69718a';
+        ctx.globalAlpha = 0.60;
 
-          if (
-            x < chartArea.left - 0.5 ||
-            x > chartArea.right + 0.5
-          ) continue;
+        for (let index = 0; index < intervals; index += 1) {
+          const ratio = (index + 0.5) / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
 
           ctx.beginPath();
           ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
           ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 2);
+          ctx.stroke();
+        }
+
+        // Tick labels are drawn manually so they stay horizontal and their
+        // positions remain perfectly fixed while only their numbers count.
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#151515';
+        ctx.textBaseline = 'top';
+        ctx.font = `${window.innerWidth <= 430 ? 9 : 10}px Lato, sans-serif`;
+
+        const values =
+          axisTickAnimation.values.length === AXIS_MAJOR_TICK_COUNT
+            ? axisTickAnimation.values
+            : axisTickTargets(state.mode);
+
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          const value = Number(values[index]);
+          const text = formatAxisValue(value);
+
+          if (index === 0) {
+            ctx.textAlign = 'left';
+          } else if (index === intervals) {
+            ctx.textAlign = 'right';
+          } else {
+            ctx.textAlign = 'center';
+          }
+
+          ctx.fillText(text, x, chartArea.bottom + 8);
+        }
+
+        ctx.restore();
+      }
+    };
+
+    const stateGroupSeparatorsPlugin = {
+      id: 'stateGroupSeparatorsPlugin',
+
+      beforeDatasetsDraw(chartInstance) {
+        const meta = chartInstance.getDatasetMeta(0);
+        const stateCodes =
+          chartInstance.data.datasets[0]?._stateCodes || [];
+
+        if (
+          !meta?.data ||
+          meta.data.length < 2 ||
+          stateCodes.length < 2
+        ) {
+          return;
+        }
+
+        const { ctx, chartArea } = chartInstance;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.42)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+
+        for (let index = 0; index < meta.data.length - 1; index += 1) {
+          if (stateCodes[index] === stateCodes[index + 1]) {
+            continue;
+          }
+
+          const firstBar = meta.data[index];
+          const secondBar = meta.data[index + 1];
+
+          if (
+            !Number.isFinite(firstBar?.y) ||
+            !Number.isFinite(secondBar?.y)
+          ) {
+            continue;
+          }
+
+          const y = (firstBar.y + secondBar.y) / 2;
+
+          // Start at the very left of the canvas so the separator continues
+          // through the y-axis label area as well as across the plot.
+          ctx.beginPath();
+          ctx.moveTo(0, Math.round(y) + 0.5);
+          ctx.lineTo(chartArea.right, Math.round(y) + 0.5);
           ctx.stroke();
         }
 
@@ -2945,12 +3116,13 @@
         ctx.textBaseline = 'alphabetic';
         ctx.fillStyle = '#151515';
 
-        // Matches the larger axis-title treatment used elsewhere in PFF.
-        ctx.font = `700 ${mobile ? 12.5 : 13}px Lato, sans-serif`;
+        // Matches the 13 px bold axis-title treatment used in the other
+        // PFF graphs. It sits lower than the counting tick labels above.
+        ctx.font = '700 13px Lato, sans-serif';
         ctx.fillText(
           parts.main,
           centreX,
-          chartArea.bottom + 32
+          chartArea.bottom + 42
         );
 
         if (parts.secondary) {
@@ -2969,18 +3141,18 @@
             ctx.fillText(
               benchmarkMatch[1],
               centreX,
-              chartArea.bottom + 45
+              chartArea.bottom + 57
             );
             ctx.fillText(
               benchmarkMatch[3],
               centreX,
-              chartArea.bottom + 56
+              chartArea.bottom + 69
             );
           } else {
             ctx.fillText(
               parts.secondary,
               centreX,
-              chartArea.bottom + 46
+              chartArea.bottom + 58
             );
           }
         }
@@ -3094,9 +3266,10 @@
     };
 
     Chart.register(
+      fixedXAxisGridPlugin,
+      stateGroupSeparatorsPlugin,
       zeroLinePlugin,
       axisSpinesPlugin,
-      minorTicksPlugin,
       xAxisTitlePlugin,
       barValueLabelsPlugin
     );
@@ -3258,9 +3431,9 @@
             max: scaleDef.max,
 
             afterFit(scale) {
-              // Constant reserved axis height keeps the plot/spines stationary
-              // across tabs while the tick values count to their new scale.
-              scale.height = window.innerWidth <= 430 ? 72 : 62;
+              // One identical reserved height for every tab keeps chartArea
+              // and every x-axis marker at the same pixel coordinates.
+              scale.height = 80;
             },
 
             afterBuildTicks(scale) {
@@ -3278,22 +3451,8 @@
             },
 
             grid: {
-              drawOnChartArea: true,
-              drawTicks: true,
-              tickLength: 5,
-              tickWidth: 1,
-              tickColor: '#151515',
-              color(context) {
-                const value = Number(context.tick?.value);
-                if (
-                  state.mode === 'oversupply' &&
-                  Math.abs(value) < 0.000001
-                ) {
-                  return 'rgba(105, 113, 138, 0)';
-                }
-                return 'rgba(105, 113, 138, 0.075)';
-              },
-              lineWidth: 1
+              drawOnChartArea: false,
+              drawTicks: false
             },
 
             title: {
@@ -3301,24 +3460,10 @@
             },
 
             ticks: {
+              display: false,
               autoSkip: false,
-              color: '#151515',
-              padding: 3,
-              font: {
-                family: 'Lato',
-                size: window.innerWidth <= 430 ? 9.5 : 10.2,
-                weight: '400'
-              },
-              callback(value, index) {
-                const animated =
-                  axisTickAnimation.values[index];
-
-                return formatAxisValue(
-                  Number.isFinite(animated)
-                    ? animated
-                    : value
-                );
-              }
+              maxRotation: 0,
+              minRotation: 0
             }
           },
 
@@ -3363,10 +3508,11 @@
         260,
         chartCanvas.clientHeight || 520
       );
-      const rowSpacing = Math.max(1, (height - 48) / rows);
-      const cap = window.innerWidth <= 430 ? 10.5 : 11.2;
+      const rowSpacing = Math.max(1, (height - 80) / rows);
+      const cap = window.innerWidth <= 430 ? 10 : 11;
 
-      // Use the largest readable size that still fits within each PHN row.
+      // PFF graphs generally use 11 px axis ticks. This chart can only use
+      // that full size when the 31 PHN rows have enough vertical clearance.
       return Math.max(7.2, Math.min(cap, rowSpacing * 0.82));
     }
 
@@ -3418,14 +3564,6 @@
 
       x.min = scaleDef.min;
       x.max = scaleDef.max;
-      x.ticks.callback = (value, index) => {
-        const animated = axisTickAnimation.values[index];
-        return formatAxisValue(
-          Number.isFinite(animated)
-            ? animated
-            : value
-        );
-      };
 
       chart.options.scales.y.ticks.font.size = yAxisFontSize();
     }
@@ -3438,8 +3576,7 @@
 
       const modeChanged = state.lastRenderedMode !== state.mode;
 
-      fadeTextChange(
-        headingMetric,
+      animateHeadingMetricChange(
         metricTitle(state.mode),
         animateText && modeChanged
       );
@@ -3587,7 +3724,7 @@
 
       configureYearSlider(
         true,
-        true
+        false
       );
 
       positionTabIndicator(true);
@@ -3846,9 +3983,6 @@
         if (chart) {
           chart.options.scales.y.ticks.font.size =
             yAxisFontSize();
-
-          chart.options.scales.x.ticks.font.size =
-            window.innerWidth <= 430 ? 9.5 : 10.2;
 
           chart.resize();
 
