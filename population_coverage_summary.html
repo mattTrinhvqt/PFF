@@ -399,8 +399,8 @@
 
     .state-button {
       display: grid;
-      grid-template-columns: max-content minmax(24px, 1fr) 8px;
-      min-width: 78px;
+      grid-template-columns: max-content minmax(30px, 1fr) 8px;
+      min-width: 84px;
       min-height: 27px;
       align-items: center;
       gap: 4px;
@@ -436,9 +436,9 @@
 
     .state-button-value {
       display: inline-block;
-      min-width: 24px;
+      min-width: 30px;
       color: var(--purple);
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.02em;
       line-height: 1;
@@ -466,7 +466,7 @@
       right: 0;
       z-index: 70;
       display: none;
-      min-width: 154px;
+      min-width: 164px;
       max-height: min(310px, calc(100vh - 84px));
       padding: 5px 0;
       overflow-y: auto;
@@ -498,14 +498,14 @@
     .state-option {
       position: relative;
       display: flex;
-      min-height: 30px;
+      min-height: 32px;
       align-items: center;
       gap: 8px;
-      padding: 4px 10px;
+      padding: 5px 10px;
       color: var(--ink);
       background: #fff;
-      font-size: 11px;
-      font-weight: 700;
+      font-size: 12px;
+      font-weight: 400;
       line-height: 1.2;
       cursor: pointer;
       user-select: none;
@@ -560,6 +560,7 @@
 
     .state-option-all {
       border-bottom: 1px solid var(--track);
+      font-weight: 700;
     }
 
     .state-code {
@@ -898,7 +899,7 @@
       }
 
       .state-button {
-        min-width: 72px;
+        min-width: 80px;
         padding-right: 4px;
         padding-left: 4px;
         font-size: 9px;
@@ -957,7 +958,7 @@
 
         <div id="liveData" class="live-data" aria-label="Live data">
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span id="liveDataText">LIVE</span>
+          <span id="liveDataText">LIVE data</span>
         </div>
       </div>
 
@@ -970,6 +971,31 @@
         </h2>
 
         <div class="heading-controls">
+          <div id="benchmarkControl" class="benchmark-control">
+            <div
+              id="benchmarkModeToggle"
+              class="benchmark-mode-toggle is-ten-k-selected"
+              role="group"
+              aria-label="Oversupply benchmark"
+            >
+              <button
+                id="benchmark5k"
+                class="benchmark-mode-button"
+                type="button"
+                aria-pressed="false"
+                data-benchmark="5000"
+              >1 / 5k</button>
+
+              <button
+                id="benchmark10k"
+                class="benchmark-mode-button is-active"
+                type="button"
+                aria-pressed="true"
+                data-benchmark="10000"
+              >1 / 10k</button>
+            </div>
+          </div>
+
           <div id="stateControl" class="state-control">
             <button
               id="stateButton"
@@ -993,31 +1019,6 @@
               </label>
 
               <div id="stateOptions"></div>
-            </div>
-          </div>
-
-          <div id="benchmarkControl" class="benchmark-control">
-            <div
-              id="benchmarkModeToggle"
-              class="benchmark-mode-toggle is-ten-k-selected"
-              role="group"
-              aria-label="Oversupply benchmark"
-            >
-              <button
-                id="benchmark5k"
-                class="benchmark-mode-button"
-                type="button"
-                aria-pressed="false"
-                data-benchmark="5000"
-              >1 / 5k</button>
-
-              <button
-                id="benchmark10k"
-                class="benchmark-mode-button is-active"
-                type="button"
-                aria-pressed="true"
-                data-benchmark="10000"
-              >1 / 10k</button>
             </div>
           </div>
         </div>
@@ -1876,16 +1877,25 @@
       }
     }
 
-    function xAxisTitle(mode) {
+    function xAxisTitleParts(mode) {
       switch (mode) {
         case 'clinicians':
-          return ['FTE clinicians', '', ''];
+          return {
+            main: 'FTE clinicians',
+            secondary: ''
+          };
 
         case 'population':
-          return ['Population', '', ''];
+          return {
+            main: 'Population',
+            secondary: ''
+          };
 
         case 'coverage':
-          return ['People per FTE clinician', '', ''];
+          return {
+            main: 'People per FTE clinician',
+            secondary: ''
+          };
 
         case 'oversupply':
         default: {
@@ -1893,19 +1903,11 @@
             state.benchmarkTitleDisplay
           );
 
-          if (window.innerWidth <= 430) {
-            return [
-              'Excess FTE clinicians',
-              `(1 FTE per ${benchmark} people benchmark;`,
-              '+ve = oversupply, –ve = shortfall)'
-            ];
-          }
-
-          return [
-            'Excess FTE clinicians',
-            `(1 FTE per ${benchmark} people benchmark; +ve = oversupply, –ve = shortfall)`,
-            ''
-          ];
+          return {
+            main: 'Excess FTE clinicians',
+            secondary:
+              `(1 FTE per ${benchmark} people benchmark; +ve = oversupply, –ve = shortfall)`
+          };
         }
       }
     }
@@ -1960,6 +1962,21 @@
       return Math.max(1, niceFraction * magnitude);
     }
 
+    const AXIS_MAJOR_INTERVALS = 6;
+    const AXIS_MAJOR_TICK_COUNT = AXIS_MAJOR_INTERVALS + 1;
+
+    function nextNiceStep(step) {
+      const value = Math.max(1e-9, Number(step) || 1);
+      const exponent = Math.floor(Math.log10(value));
+      const magnitude = Math.pow(10, exponent);
+      const fraction = value / magnitude;
+
+      if (fraction < 1.5) return 2 * magnitude;
+      if (fraction < 3.5) return 5 * magnitude;
+      if (fraction < 7.5) return 10 * magnitude;
+      return 20 * magnitude;
+    }
+
     function deriveConstantScale(
       values,
       allowNegative
@@ -1970,9 +1987,9 @@
       if (!finite.length) {
         return {
           min: 0,
-          max: 1,
-          step: 0.2,
-          minorStep: 0.1
+          max: AXIS_MAJOR_INTERVALS,
+          step: 1,
+          minorStep: 0.5
         };
       }
 
@@ -1986,24 +2003,26 @@
         const paddedMax =
           Math.max(1, rawMax) * 1.14;
 
-        const step =
-          niceStep(paddedMax / 5.4);
-
-        const max =
-          Math.max(
-            step,
-            Math.ceil(paddedMax / step) * step
+        let step =
+          niceStep(
+            paddedMax / AXIS_MAJOR_INTERVALS
           );
+
+        while (
+          step * AXIS_MAJOR_INTERVALS < paddedMax
+        ) {
+          step = nextNiceStep(step);
+        }
 
         return {
           min: 0,
-          max,
+          max: step * AXIS_MAJOR_INTERVALS,
           step,
           minorStep: step / 2
         };
       }
 
-      const baseSpan =
+      const rawSpan =
         Math.max(
           rawMax - rawMin,
           Math.abs(rawMax),
@@ -2011,38 +2030,68 @@
           1
         );
 
-      const lower =
-        Math.min(0, rawMin) - baseSpan * 0.10;
+      const lowerNeed =
+        Math.max(0, -Math.min(0, rawMin) + rawSpan * 0.10);
 
-      const upper =
-        Math.max(0, rawMax) + baseSpan * 0.12;
+      const upperNeed =
+        Math.max(0, Math.max(0, rawMax) + rawSpan * 0.12);
 
-      const step =
+      let step =
         niceStep(
-          (upper - lower) / 6
+          (lowerNeed + upperNeed) / AXIS_MAJOR_INTERVALS
         );
 
-      let min =
-        Math.floor(lower / step) * step;
+      let negativeIntervals;
+      let positiveIntervals;
 
-      let max =
-        Math.ceil(upper / step) * step;
+      while (true) {
+        negativeIntervals =
+          lowerNeed > 0
+            ? Math.ceil(lowerNeed / step - 1e-10)
+            : 0;
 
-      if (rawMin >= 0) {
-        min = 0;
+        positiveIntervals =
+          upperNeed > 0
+            ? Math.ceil(upperNeed / step - 1e-10)
+            : 0;
+
+        if (
+          negativeIntervals + positiveIntervals <=
+          AXIS_MAJOR_INTERVALS
+        ) {
+          break;
+        }
+
+        step = nextNiceStep(step);
       }
 
-      if (rawMax <= 0) {
-        max = 0;
-      }
+      while (
+        negativeIntervals + positiveIntervals <
+        AXIS_MAJOR_INTERVALS
+      ) {
+        const lowerFill =
+          negativeIntervals > 0
+            ? lowerNeed / (negativeIntervals * step)
+            : 0;
 
-      if (min === max) {
-        max = min + step;
+        const upperFill =
+          positiveIntervals > 0
+            ? upperNeed / (positiveIntervals * step)
+            : 0;
+
+        if (
+          lowerNeed > 0 &&
+          (upperNeed <= 0 || lowerFill >= upperFill)
+        ) {
+          negativeIntervals += 1;
+        } else {
+          positiveIntervals += 1;
+        }
       }
 
       return {
-        min,
-        max,
+        min: -negativeIntervals * step,
+        max: positiveIntervals * step,
         step,
         minorStep: step / 2
       };
@@ -2123,6 +2172,13 @@
     function formatInteger(value) {
       return Math.round(value)
         .toLocaleString('en-AU');
+    }
+
+    function formatYear(value) {
+      const year = Math.round(Number(value));
+      return Number.isFinite(year)
+        ? String(year)
+        : '—';
     }
 
     function formatDisplayValue(
@@ -2296,6 +2352,70 @@
       requestAnimationFrame(frame);
     }
 
+    function animateYearText(
+      element,
+      targetYear,
+      duration = 220
+    ) {
+      if (!element) return;
+
+      const target = Math.round(Number(targetYear));
+
+      if (!Number.isFinite(target)) {
+        element.textContent = '—';
+        delete element.dataset.numericValue;
+        return;
+      }
+
+      const stored = Number(element.dataset.numericValue);
+      const parsed = Number(String(element.textContent).replace(/[^0-9.-]/g, ''));
+      const start = Number.isFinite(stored)
+        ? stored
+        : Number.isFinite(parsed)
+          ? parsed
+          : target;
+
+      const token =
+        (Number(element.dataset.animationToken) || 0) + 1;
+      element.dataset.animationToken = String(token);
+
+      if (
+        reducedMotion() ||
+        start === target ||
+        duration <= 0
+      ) {
+        element.textContent = formatYear(target);
+        element.dataset.numericValue = String(target);
+        return;
+      }
+
+      const startedAt = performance.now();
+
+      function frame(now) {
+        if (Number(element.dataset.animationToken) !== token) return;
+
+        const progress = Math.min(
+          (now - startedAt) / duration,
+          1
+        );
+
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const current = start + (target - start) * eased;
+
+        element.textContent = formatYear(current);
+        element.dataset.numericValue = String(current);
+
+        if (progress < 1) {
+          requestAnimationFrame(frame);
+        } else {
+          element.textContent = formatYear(target);
+          element.dataset.numericValue = String(target);
+        }
+      }
+
+      requestAnimationFrame(frame);
+    }
+
     function setYearText(yearText, animate) {
       const year = Number(yearText);
 
@@ -2306,11 +2426,11 @@
       }
 
       if (animate) {
-        animateIntegerText(headingYear, year, 220);
-        animateIntegerText(projectionYear, year, 220);
+        animateYearText(headingYear, year, 220);
+        animateYearText(projectionYear, year, 220);
       } else {
-        headingYear.textContent = formatInteger(year);
-        projectionYear.textContent = formatInteger(year);
+        headingYear.textContent = formatYear(year);
+        projectionYear.textContent = formatYear(year);
         headingYear.dataset.numericValue = String(year);
         projectionYear.dataset.numericValue = String(year);
       }
@@ -2334,7 +2454,6 @@
       ) {
         state.benchmarkTitleDisplay = target;
         if (chart) {
-          chart.options.scales.x.title.text = xAxisTitle('oversupply');
           chart.draw();
         }
         return;
@@ -2356,7 +2475,6 @@
         );
 
         if (chart && state.mode === 'oversupply') {
-          chart.options.scales.x.title.text = xAxisTitle('oversupply');
           chart.draw();
         }
 
@@ -2365,13 +2483,110 @@
         } else {
           state.benchmarkTitleDisplay = target;
           if (chart && state.mode === 'oversupply') {
-            chart.options.scales.x.title.text = xAxisTitle('oversupply');
             chart.draw();
           }
         }
       }
 
       requestAnimationFrame(frame);
+    }
+
+    // ============================================================
+    // FIXED X-TICK POSITIONS + COUNTING LABELS BETWEEN TABS
+    // ============================================================
+
+    const axisTickAnimation = {
+      values: [],
+      token: 0,
+      raf: null
+    };
+
+    function axisTickTargets(mode = state.mode) {
+      const scaleDef = state.scaleCache[mode];
+
+      if (!scaleDef) {
+        return Array.from(
+          { length: AXIS_MAJOR_TICK_COUNT },
+          (_, index) => index
+        );
+      }
+
+      return Array.from(
+        { length: AXIS_MAJOR_TICK_COUNT },
+        (_, index) =>
+          scaleDef.min + scaleDef.step * index
+      );
+    }
+
+    function setAxisTickValuesImmediately(mode = state.mode) {
+      axisTickAnimation.values = axisTickTargets(mode);
+    }
+
+    function animateAxisTickValues(
+      targets,
+      duration = 420
+    ) {
+      const targetValues =
+        Array.from(targets || []);
+
+      if (!targetValues.length) return;
+
+      if (axisTickAnimation.raf) {
+        cancelAnimationFrame(axisTickAnimation.raf);
+        axisTickAnimation.raf = null;
+      }
+
+      const token = ++axisTickAnimation.token;
+      const startValues =
+        axisTickAnimation.values.length === targetValues.length
+          ? [...axisTickAnimation.values]
+          : [...targetValues];
+
+      if (
+        reducedMotion() ||
+        duration <= 0
+      ) {
+        axisTickAnimation.values = [...targetValues];
+        chart?.draw();
+        return;
+      }
+
+      const startedAt = performance.now();
+
+      function frame(now) {
+        if (token !== axisTickAnimation.token) return;
+
+        const progress = Math.min(
+          (now - startedAt) / duration,
+          1
+        );
+
+        const eased = 1 - Math.pow(1 - progress, 3);
+
+        axisTickAnimation.values =
+          targetValues.map(
+            (target, index) => {
+              const start = Number(startValues[index]);
+              return Number.isFinite(start)
+                ? start + (target - start) * eased
+                : target;
+            }
+          );
+
+        chart?.draw();
+
+        if (progress < 1) {
+          axisTickAnimation.raf =
+            requestAnimationFrame(frame);
+        } else {
+          axisTickAnimation.raf = null;
+          axisTickAnimation.values = [...targetValues];
+          chart?.draw();
+        }
+      }
+
+      axisTickAnimation.raf =
+        requestAnimationFrame(frame);
     }
 
     // ============================================================
@@ -2715,6 +2930,65 @@
       }
     };
 
+    const xAxisTitlePlugin = {
+      id: 'xAxisTitlePlugin',
+
+      afterDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        const parts = xAxisTitleParts(state.mode);
+        const centreX =
+          chartArea.left + chartArea.width / 2;
+        const mobile = window.innerWidth <= 430;
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = '#151515';
+
+        // Matches the larger axis-title treatment used elsewhere in PFF.
+        ctx.font = `700 ${mobile ? 12.5 : 13}px Lato, sans-serif`;
+        ctx.fillText(
+          parts.main,
+          centreX,
+          chartArea.bottom + 32
+        );
+
+        if (parts.secondary) {
+          ctx.fillStyle = '#69718a';
+          ctx.font = `400 ${mobile ? 8.5 : 9}px Lato, sans-serif`;
+
+          const benchmarkMatch = parts.secondary.match(
+            /^(.+benchmark;)(\s*)(.+)$/
+          );
+
+          const needsTwoLines =
+            mobile ||
+            ctx.measureText(parts.secondary).width > chartArea.width - 4;
+
+          if (needsTwoLines && benchmarkMatch) {
+            ctx.fillText(
+              benchmarkMatch[1],
+              centreX,
+              chartArea.bottom + 45
+            );
+            ctx.fillText(
+              benchmarkMatch[3],
+              centreX,
+              chartArea.bottom + 56
+            );
+          } else {
+            ctx.fillText(
+              parts.secondary,
+              centreX,
+              chartArea.bottom + 46
+            );
+          }
+        }
+
+        ctx.restore();
+      }
+    };
+
     const barValueLabelsPlugin = {
       id: 'barValueLabelsPlugin',
 
@@ -2823,6 +3097,7 @@
       zeroLinePlugin,
       axisSpinesPlugin,
       minorTicksPlugin,
+      xAxisTitlePlugin,
       barValueLabelsPlugin
     );
 
@@ -2982,6 +3257,22 @@
             min: scaleDef.min,
             max: scaleDef.max,
 
+            afterFit(scale) {
+              // Constant reserved axis height keeps the plot/spines stationary
+              // across tabs while the tick values count to their new scale.
+              scale.height = window.innerWidth <= 430 ? 72 : 62;
+            },
+
+            afterBuildTicks(scale) {
+              const def = state.scaleCache[state.mode];
+              scale.ticks = Array.from(
+                { length: AXIS_MAJOR_TICK_COUNT },
+                (_, index) => ({
+                  value: def.min + def.step * index
+                })
+              );
+            },
+
             border: {
               display: false
             },
@@ -3006,31 +3297,27 @@
             },
 
             title: {
-              display: true,
-              text: xAxisTitle(state.mode),
-              color: '#151515',
-              padding: {
-                top: 5
-              },
-              font: {
-                family: 'Lato',
-                size: window.innerWidth <= 430 ? 8.2 : 9,
-                weight: '400'
-              }
+              display: false
             },
 
             ticks: {
               autoSkip: false,
-              stepSize: scaleDef.step,
               color: '#151515',
-              padding: 2,
+              padding: 3,
               font: {
                 family: 'Lato',
-                size: 9.5,
+                size: window.innerWidth <= 430 ? 9.5 : 10.2,
                 weight: '400'
               },
-              callback(value) {
-                return formatAxisValue(value);
+              callback(value, index) {
+                const animated =
+                  axisTickAnimation.values[index];
+
+                return formatAxisValue(
+                  Number.isFinite(animated)
+                    ? animated
+                    : value
+                );
               }
             }
           },
@@ -3039,7 +3326,7 @@
             position: 'left',
 
             afterFit(scale) {
-              scale.width = window.innerWidth <= 430 ? 160 : 176;
+              scale.width = window.innerWidth <= 430 ? 190 : 205;
             },
 
             border: {
@@ -3077,8 +3364,10 @@
         chartCanvas.clientHeight || 520
       );
       const rowSpacing = Math.max(1, (height - 48) / rows);
-      const cap = window.innerWidth <= 430 ? 9.2 : 10.2;
-      return Math.max(7.4, Math.min(cap, rowSpacing * 0.72));
+      const cap = window.innerWidth <= 430 ? 10.5 : 11.2;
+
+      // Use the largest readable size that still fits within each PHN row.
+      return Math.max(7.2, Math.min(cap, rowSpacing * 0.82));
     }
 
     function syncVisibleDataset() {
@@ -3129,10 +3418,14 @@
 
       x.min = scaleDef.min;
       x.max = scaleDef.max;
-      x.ticks.stepSize = scaleDef.step;
-      x.title.text = xAxisTitle(state.mode);
-      x.ticks.callback = value => formatAxisValue(value);
-      x.title.font.size = window.innerWidth <= 430 ? 8.2 : 9;
+      x.ticks.callback = (value, index) => {
+        const animated = axisTickAnimation.values[index];
+        return formatAxisValue(
+          Number.isFinite(animated)
+            ? animated
+            : value
+        );
+      };
 
       chart.options.scales.y.ticks.font.size = yAxisFontSize();
     }
@@ -3162,6 +3455,7 @@
       );
 
       if (!chart) {
+        setAxisTickValuesImmediately(state.mode);
         createChart();
         state.lastRenderedMode = state.mode;
 
@@ -3172,6 +3466,8 @@
         return;
       }
 
+      const nextAxisTargets = axisTickTargets(state.mode);
+
       syncVisibleDataset();
       syncChartScale();
 
@@ -3181,6 +3477,12 @@
       chart.options.animations.y.duration = reason === 'filter' ? 260 : 0;
 
       chart.update();
+
+      if (reason === 'tab') {
+        animateAxisTickValues(nextAxisTargets, 420);
+      } else {
+        axisTickAnimation.values = [...nextAxisTargets];
+      }
 
       requestAnimationFrame(
         () => syncZeroLine(reason === 'tab')
@@ -3249,6 +3551,11 @@
       }
 
       state.mode = mode;
+
+      if (mode === 'oversupply') {
+        benchmarkTitleAnimationToken += 1;
+        state.benchmarkTitleDisplay = state.benchmarkPopulation;
+      }
 
       tabs.forEach(
         tab => {
@@ -3322,13 +3629,23 @@
 
     function toggleBenchmark() {
       const oldValue = state.benchmarkPopulation;
-      const fromDisplay = state.benchmarkTitleDisplay;
-      const next = oldValue === 10000 ? 5000 : 10000;
+      const fromDisplay =
+        Number.isFinite(Number(state.benchmarkTitleDisplay))
+          ? Number(state.benchmarkTitleDisplay)
+          : oldValue;
+
+      const next =
+        oldValue === 10000
+          ? 5000
+          : 10000;
 
       state.benchmarkPopulation = next;
       syncBenchmarkToggle();
 
       if (state.mode === 'oversupply') {
+        // Bars switch to the newly selected benchmark immediately while the
+        // benchmark number in the x-axis annotation counts to the same target.
+        state.benchmarkTitleDisplay = fromDisplay;
         renderChart('benchmark', false);
         animateBenchmarkTitleNumber(fromDisplay, next, 420);
       } else {
@@ -3530,11 +3847,8 @@
           chart.options.scales.y.ticks.font.size =
             yAxisFontSize();
 
-          chart.options.scales.x.title.font.size =
-            window.innerWidth <= 430 ? 8.2 : 9;
-
-          chart.options.scales.x.title.text =
-            xAxisTitle(state.mode);
+          chart.options.scales.x.ticks.font.size =
+            window.innerWidth <= 430 ? 9.5 : 10.2;
 
           chart.resize();
 
@@ -3571,7 +3885,7 @@
       );
 
       liveDataText.textContent =
-        cached ? 'CACHED' : 'LIVE';
+        cached ? 'CACHED data' : 'LIVE data';
 
       liveData.setAttribute(
         'aria-label',
