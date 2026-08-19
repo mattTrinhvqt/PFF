@@ -247,6 +247,26 @@
     font-size: 18px;
   }
 
+  /*
+   * Invisible mobile focus target.
+   * Keeps the numpad "Next" action inside this iframe.
+   */
+  .mobile-next-sentinel {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 1px !important;
+    height: 1px !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    opacity: 0 !important;
+    border: 0 !important;
+    pointer-events: none !important;
+    clip-path: inset(50%) !important;
+  }
+
   .multi {
     display: inline-flex;
     flex-direction: column;
@@ -1554,16 +1574,241 @@
       if (e.target.classList.contains('back')) toBack();
     });
 
-    // allow Enter to act as Next within step fields (except on selects)
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const inActiveStep = e.target.closest('.step')?.classList.contains('active');
-        if (inActiveStep && e.target.tagName !== 'SELECT') {
-          e.preventDefault();
-          if (cur < steps.length - 1) toNext();
+    /*
+     * Keep the mobile numpad "Next" action inside this
+     * tracker iframe rather than allowing focus to move
+     * to another Google Sites embed.
+     */
+    function focusCurrentStepField() {
+      const field =
+        steps[cur]?.querySelector(
+          'input:not(.mobile-next-sentinel), select, textarea'
+        );
+
+      if (!field) {
+        return;
+      }
+
+      try {
+        field.focus({
+          preventScroll: true
+        });
+      } catch (error) {
+        field.focus();
+      }
+    }
+
+    if (
+      window.matchMedia(
+        '(max-width: 430px)'
+      ).matches
+    ) {
+      document
+        .querySelectorAll(
+          '.step input[enterkeyhint="next"]'
+        )
+        .forEach(field => {
+          const sentinel =
+            document.createElement(
+              'input'
+            );
+
+          sentinel.type =
+            'text';
+
+          sentinel.inputMode =
+            'none';
+
+          sentinel.className =
+            'mobile-next-sentinel';
+
+          sentinel.tabIndex =
+            0;
+
+          sentinel.setAttribute(
+            'aria-label',
+            'Next question'
+          );
+
+          /*
+           * Salary sits inside .rate-field, so put its
+           * sentinel immediately after that container.
+           * Other question inputs can have it directly
+           * after the input.
+           */
+          const rateField =
+            field.closest(
+              '.rate-field'
+            );
+
+          if (rateField) {
+            rateField.insertAdjacentElement(
+              'afterend',
+              sentinel
+            );
+          } else {
+            field.insertAdjacentElement(
+              'afterend',
+              sentinel
+            );
+          }
+
+          sentinel.addEventListener(
+            'focus',
+            () => {
+              const step =
+                field.closest(
+                  '.step'
+                );
+
+              if (
+                !step ||
+                !step.classList.contains(
+                  'active'
+                ) ||
+                isLockedOut ||
+                isTerminalState
+              ) {
+                return;
+              }
+
+              const previousStep =
+                cur;
+
+              toNext();
+
+              /*
+               * Validation may have stopped progression.
+               * If so, return focus to the same field.
+               */
+              if (
+                cur === previousStep
+              ) {
+                try {
+                  field.focus({
+                    preventScroll: true
+                  });
+                } catch (error) {
+                  field.focus();
+                }
+
+                return;
+              }
+
+              /*
+               * showStep() has now opened the next tracker
+               * question. Keep focus inside this iframe.
+               */
+              requestAnimationFrame(
+                () => {
+                  focusCurrentStepField();
+                }
+              );
+            }
+          );
+        });
+    }
+
+    /*
+     * Desktop keeps the existing Enter = Next behaviour.
+     *
+     * On mobile, leave the native "Next" action alone so
+     * it can move to our sentinel above. If a particular
+     * mobile browser does not perform that focus movement,
+     * use a short fallback to advance manually.
+     */
+    document.addEventListener(
+      'keydown',
+      e => {
+        if (e.key !== 'Enter') {
+          return;
+        }
+
+        const activeStep =
+          e.target.closest(
+            '.step'
+          );
+
+        if (
+          !activeStep ||
+          !activeStep.classList.contains(
+            'active'
+          ) ||
+          e.target.tagName ===
+            'SELECT'
+        ) {
+          return;
+        }
+
+        const isMobile =
+          window.matchMedia(
+            '(max-width: 430px)'
+          ).matches;
+
+        if (
+          isMobile &&
+          e.target.matches(
+            'input[enterkeyhint="next"]'
+          )
+        ) {
+          const originalField =
+            e.target;
+
+          setTimeout(
+            () => {
+              /*
+               * If native Next already moved focus to the
+               * sentinel, do nothing. Its focus handler has
+               * already advanced the tracker.
+               */
+              if (
+                document.activeElement !==
+                  originalField ||
+                !originalField
+                  .closest('.step')
+                  ?.classList.contains(
+                    'active'
+                  )
+              ) {
+                return;
+              }
+
+              /*
+               * Fallback for mobile browsers that send
+               * Enter but do not perform native focus
+               * traversal.
+               */
+              const previousStep =
+                cur;
+
+              toNext();
+
+              if (
+                cur !== previousStep
+              ) {
+                requestAnimationFrame(
+                  () => {
+                    focusCurrentStepField();
+                  }
+                );
+              }
+            },
+            50
+          );
+
+          return;
+        }
+
+        e.preventDefault();
+
+        if (
+          cur <
+          steps.length - 1
+        ) {
+          toNext();
         }
       }
-    });
+    );
 
     // Auto-advance after choosing an option in an active dropdown
     document.addEventListener('change', event => {
