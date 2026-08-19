@@ -3498,7 +3498,7 @@
             position: 'left',
 
             afterFit(scale) {
-              scale.width = window.innerWidth <= 430 ? 190 : 205;
+              scale.width = yAxisWidth();
             },
 
             border: {
@@ -3517,11 +3517,23 @@
               autoSkip: false,
               color: '#151515',
               padding: 3,
-              font: {
-                family: 'Lato',
-                size: yAxisFontSize(),
-                weight: '400',
-                lineHeight: 1
+
+              font(context) {
+                const baseSize =
+                  yAxisFontSize();
+
+                const label =
+                  yAxisTickLabel(context);
+
+                return {
+                  family: 'Lato',
+                  size: yAxisLabelFontSize(
+                    label,
+                    baseSize
+                  ),
+                  weight: '400',
+                  lineHeight: 1
+                };
               }
             }
           }
@@ -3529,18 +3541,161 @@
       };
     }
 
-    function yAxisFontSize() {
-      const rows = Math.max(1, visibleIndices().length);
-      const height = Math.max(
-        260,
-        chartCanvas.clientHeight || 520
-      );
-      const rowSpacing = Math.max(1, (height - 80) / rows);
-      const cap = window.innerWidth <= 430 ? 10 : 11;
+    function yAxisWidth() {
+      if (window.innerWidth > 430) {
+        return 205;
+      }
 
-      // PFF graphs generally use 11 px axis ticks. This chart can only use
-      // that full size when the 31 PHN rows have enough vertical clearance.
-      return Math.max(7.2, Math.min(cap, rowSpacing * 0.82));
+      /*
+       * On mobile, keep the PHN-label area to about one quarter
+       * of the viewport so most of the width remains for the graph.
+       */
+      return Math.round(
+        Math.max(
+          72,
+          Math.min(
+            108,
+            window.innerWidth * 0.25
+          )
+        )
+      );
+    }
+
+    function yAxisFontSize() {
+      const rows =
+        Math.max(
+          1,
+          visibleIndices().length
+        );
+
+      const height =
+        Math.max(
+          260,
+          chartCanvas.clientHeight || 520
+        );
+
+      const rowSpacing =
+        Math.max(
+          1,
+          (height - 80) / rows
+        );
+
+      const cap =
+        window.innerWidth <= 430
+          ? 10
+          : 11;
+
+      /*
+       * Keep the normal PHN font as large as vertical spacing allows.
+       * Horizontal fitting is handled separately for each label below.
+       */
+      return Math.max(
+        7.2,
+        Math.min(
+          cap,
+          rowSpacing * 0.82
+        )
+      );
+    }
+
+    function yAxisTickLabel(context) {
+      const tickLabel =
+        context?.tick?.label;
+
+      if (Array.isArray(tickLabel)) {
+        return tickLabel.join(' ');
+      }
+
+      if (
+        tickLabel !== undefined &&
+        tickLabel !== null &&
+        tickLabel !== ''
+      ) {
+        return String(tickLabel);
+      }
+
+      const index =
+        Number(
+          context?.tick?.value
+        );
+
+      if (!Number.isInteger(index)) {
+        return '';
+      }
+
+      return (
+        visibleLabels()[index] ||
+        ''
+      );
+    }
+
+    function yAxisLabelFontSize(
+      label,
+      baseSize
+    ) {
+      /*
+       * Desktop keeps the existing behaviour.
+       */
+      if (window.innerWidth > 430) {
+        return baseSize;
+      }
+
+      const text =
+        String(label || '');
+
+      if (!text) {
+        return baseSize;
+      }
+
+      /*
+       * Leave room inside the y-axis for:
+       * - 3 px tick
+       * - 3 px tick-label padding
+       * - a small safety margin
+       */
+      const availableWidth =
+        Math.max(
+          1,
+          yAxisWidth() - 10
+        );
+
+      const context =
+        chartCanvas.getContext('2d');
+
+      context.save();
+      context.font =
+        `400 ${baseSize}px Lato, sans-serif`;
+
+      const measuredWidth =
+        context.measureText(text).width;
+
+      context.restore();
+
+      if (
+        !Number.isFinite(measuredWidth) ||
+        measuredWidth <= availableWidth
+      ) {
+        return baseSize;
+      }
+
+      /*
+       * Only shrink labels that actually exceed the available
+       * mobile width. Other PHN labels retain the normal size.
+       */
+      const fittedSize =
+        baseSize *
+        (
+          availableWidth /
+          measuredWidth
+        );
+
+      return Math.max(
+        5.2,
+        Math.min(
+          baseSize,
+          fittedSize
+        )
+      );
     }
 
     function syncVisibleDataset() {
