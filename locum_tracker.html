@@ -374,6 +374,26 @@ button {
   font-size: 18px;
 }
 
+/*
+ * Invisible mobile focus target.
+ * Keeps the numpad "Next" action inside this iframe.
+ */
+.mobile-next-sentinel {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
+  border: 0 !important;
+  pointer-events: none !important;
+  clip-path: inset(50%) !important;
+}
+
 /* Navigation always occupies the same bottom row */
 .nav-row {
   grid-area: nav;
@@ -788,24 +808,54 @@ button {
   let cur = 0;
   const confirmedUnusualValues = new Map();
 
-  function showStep(index){
-    steps.forEach((s,i)=>s.classList.toggle('active', i===index));
+  function showStep(index, { autoFocus = true } = {}) {
+    steps.forEach((s, i) => {
+      s.classList.toggle('active', i === index);
+    });
 
-    // Progress line
     const p = steps[index].querySelector('.progress');
 
     if (p) {
       p.textContent = `Q ${index + 1} of ${steps.length}`;
     }
 
-    // focus first input/select (then rescale)
-    setTimeout(()=>{
-      const first = steps[index].querySelector('input, select, textarea, button');
-      if (first && first.id !== 'submit') first.focus();
-      applyScale();
-    },0);
+    /*
+     * Do not automatically focus fields on mobile.
+     * In a Google Sites iframe this can make the
+     * parent page jump down to the embedded app.
+     */
+    setTimeout(() => {
+      const isMobile =
+        window.matchMedia(
+          '(max-width: 430px)'
+        ).matches;
 
-    // On the first step, show last submitted info (if any)
+      if (
+        autoFocus &&
+        !isMobile
+      ) {
+        const first =
+          steps[index].querySelector(
+            'input, select, textarea'
+          );
+
+        if (
+          first &&
+          first.id !== 'submit'
+        ) {
+          try {
+            first.focus({
+              preventScroll: true
+            });
+          } catch (error) {
+            first.focus();
+          }
+        }
+      }
+
+      applyScale();
+    }, 0);
+
     if (index === 0) {
       showLastSubmissionNote();
       document.getElementById('out').textContent = '';
@@ -1052,16 +1102,207 @@ button {
     if (e.target.classList.contains('back')) toBack();
   });
 
-  // Enter = Next (except on selects)
-  document.addEventListener('keydown', (e)=>{
-    if (e.key === 'Enter'){
-      const inActive = e.target.closest('.step')?.classList.contains('active');
-      if (inActive && e.target.tagName !== 'SELECT'){
-        e.preventDefault();
-        if (cur < steps.length - 1) toNext();
+  /*
+   * Keep the mobile numpad "Next" action inside this
+   * tracker iframe rather than allowing focus to move
+   * to another Google Sites embed.
+   */
+  function focusCurrentStepField() {
+    const field =
+      steps[cur]?.querySelector(
+        'input:not(.mobile-next-sentinel), select, textarea'
+      );
+
+    if (!field) {
+      return;
+    }
+
+    try {
+      field.focus({
+        preventScroll: true
+      });
+    } catch (error) {
+      field.focus();
+    }
+  }
+
+  if (
+    window.matchMedia(
+      '(max-width: 430px)'
+    ).matches
+  ) {
+    document
+      .querySelectorAll(
+        '.step input[enterkeyhint="next"]'
+      )
+      .forEach(field => {
+        const sentinel =
+          document.createElement(
+            'input'
+          );
+
+        sentinel.type =
+          'text';
+
+        sentinel.inputMode =
+          'none';
+
+        sentinel.className =
+          'mobile-next-sentinel';
+
+        sentinel.tabIndex =
+          0;
+
+        sentinel.setAttribute(
+          'aria-label',
+          'Next question'
+        );
+
+        const rateField =
+          field.closest(
+            '.rate-field'
+          );
+
+        if (rateField) {
+          rateField.insertAdjacentElement(
+            'afterend',
+            sentinel
+          );
+        } else {
+          field.insertAdjacentElement(
+            'afterend',
+            sentinel
+          );
+        }
+
+        sentinel.addEventListener(
+          'focus',
+          () => {
+            const step =
+              field.closest(
+                '.step'
+              );
+
+            if (
+              !step ||
+              !step.classList.contains(
+                'active'
+              )
+            ) {
+              return;
+            }
+
+            const previousStep =
+              cur;
+
+            toNext();
+
+            if (
+              cur === previousStep
+            ) {
+              try {
+                field.focus({
+                  preventScroll: true
+                });
+              } catch (error) {
+                field.focus();
+              }
+
+              return;
+            }
+
+            requestAnimationFrame(
+              () => {
+                focusCurrentStepField();
+              }
+            );
+          }
+        );
+      });
+  }
+
+  document.addEventListener(
+    'keydown',
+    e => {
+      if (e.key !== 'Enter') {
+        return;
+      }
+
+      const activeStep =
+        e.target.closest(
+          '.step'
+        );
+
+      if (
+        !activeStep ||
+        !activeStep.classList.contains(
+          'active'
+        ) ||
+        e.target.tagName ===
+          'SELECT'
+      ) {
+        return;
+      }
+
+      const isMobile =
+        window.matchMedia(
+          '(max-width: 430px)'
+        ).matches;
+
+      if (
+        isMobile &&
+        e.target.matches(
+          'input[enterkeyhint="next"]'
+        )
+      ) {
+        const originalField =
+          e.target;
+
+        setTimeout(
+          () => {
+            if (
+              document.activeElement !==
+                originalField ||
+              !originalField
+                .closest('.step')
+                ?.classList.contains(
+                  'active'
+                )
+            ) {
+              return;
+            }
+
+            const previousStep =
+              cur;
+
+            toNext();
+
+            if (
+              cur !== previousStep
+            ) {
+              requestAnimationFrame(
+                () => {
+                  focusCurrentStepField();
+                }
+              );
+            }
+          },
+          50
+        );
+
+        return;
+      }
+
+      e.preventDefault();
+
+      if (
+        cur <
+        steps.length - 1
+      ) {
+        toNext();
       }
     }
-  });
+  );
 
   // Auto-advance on select change in active step
   document.addEventListener('change', event => {
@@ -1076,9 +1317,72 @@ button {
   });
 
   // init
-  showStep(cur);
+  showStep(
+    cur,
+    {
+      autoFocus: false
+    }
+  );
 
-  // (nice on mobile): rescale when visual viewport changes
+  /*
+   * On initial mobile load, position the first question
+   * before focusing it so the parent page does not jump.
+   */
+  if (
+    window.matchMedia(
+      '(max-width: 430px)'
+    ).matches
+  ) {
+    const app =
+      document.getElementById(
+        'app'
+      );
+
+    const firstStep =
+      steps[cur];
+
+    const firstQuestion =
+      firstStep?.querySelector(
+        '.question-title'
+      );
+
+    const firstInput =
+      firstStep?.querySelector(
+        'input, select, textarea'
+      );
+
+    if (firstQuestion) {
+      firstQuestion.scrollIntoView({
+        behavior: 'auto',
+        block: 'center',
+        inline: 'nearest'
+      });
+    } else if (app) {
+      app.scrollIntoView({
+        behavior: 'auto',
+        block: 'center',
+        inline: 'nearest'
+      });
+    }
+
+    requestAnimationFrame(
+      () => {
+        if (!firstInput) {
+          return;
+        }
+
+        try {
+          firstInput.focus({
+            preventScroll: true
+          });
+        } catch (error) {
+          firstInput.focus();
+        }
+      }
+    );
+  }
+
+  // Rescale when the mobile visual viewport changes
   window.visualViewport?.addEventListener('resize', applyScale);
 
   /* ---------- element handles ---------- */
