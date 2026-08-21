@@ -322,20 +322,6 @@
       border-top: 1px solid var(--ink);
     }
 
-    .data-table .table-empty-separator td {
-      height: 0;
-      padding: 0;
-      line-height: 0;
-      background: transparent;
-      border-top: 1px solid var(--track);
-    }
-
-    .data-table sup {
-      font-size: 0.7em;
-      line-height: 0;
-      vertical-align: super;
-    }
-
     .live-data-inline {
       display: inline-flex;
       align-items: center;
@@ -392,19 +378,6 @@
 
     .data-table td.category-other {
       background: #eaebec;
-    }
-
-    .loading-text {
-      margin: 8px 0 0;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 400;
-      line-height: 1.35;
-      text-align: center;
-    }
-
-    .loading-text.is-hidden {
-      display: none;
     }
 
     .error {
@@ -467,7 +440,12 @@
   <div id="fit">
 
     <main id="app" class="is-loading">
-      <div id="loading-state" class="app-loading" role="status" aria-label="Loading">
+      <div
+        id="loading-state"
+        class="app-loading"
+        role="status"
+        aria-label="Loading"
+      >
         <div class="cone-loader">
           <div class="cone blue" aria-hidden="true"></div>
           <div class="cone green" aria-hidden="true"></div>
@@ -493,17 +471,72 @@
   </div>
 
   <script>
-    const SPREADSHEET_ID = '1RY9y70CKttyimFiqIFgPvJhVVkidOtIzDhJZ5pHtENw';
-    const SHEET_NAME = 'Clinical optom jobs summary stats';
-    const TABLE_RANGE = 'J1:L5';
-    const EXPECTED_ROWS = 5;
-    const EXPECTED_COLS = 3;
+    const SPREADSHEET_ID =
+      '1ZcZrPHvux_ckk2cJqRYu1oz9uT4brcRmcJ80bP-v--4';
 
-    const FETCH_TIMEOUT_MS = 15000;
-    const FETCH_MAX_ATTEMPTS = 2;
-    const FETCH_RETRY_DELAY_MS = 1000;
-    const TABLE_STORAGE_KEY = 'pff-clinical-optom-summary-table-v1';
+    const SHEET_NAME =
+      'Mirror table';
 
+    /*
+     * Imported table starts in B.
+     *
+     * B = Repeat first instance
+     * C = Repeat
+     * D = Result
+     * E = Date
+     * F = Job Title
+     * G = Employer
+     * H = Employer Type
+     *
+     * Header names are used below, rather than fixed
+     * numeric column positions.
+     */
+    const RAW_RANGE =
+      'B2:H';
+
+    /*
+     * Repeat = No means the row is counted.
+     */
+    const NON_DUPLICATE_VALUE =
+      'No';
+
+    const SUMMARY_CATEGORIES = [
+      'Corporate',
+      'Independent',
+      'Ophthal',
+      'Other'
+    ];
+
+    const EXPECTED_ROWS =
+      1 +
+      SUMMARY_CATEGORIES.length;
+
+    const EXPECTED_COLS =
+      3;
+
+    const FETCH_TIMEOUT_MS =
+      15000;
+
+    const FETCH_MAX_ATTEMPTS =
+      2;
+
+    const FETCH_RETRY_DELAY_MS =
+      1000;
+
+    /*
+     * v3 deliberately avoids reusing an older cached
+     * table that may have contained dashes for zero.
+     */
+    const TABLE_STORAGE_KEY =
+      'pff-clinical-optom-summary-table-raw-week-v3';
+
+    /*
+     * Apps Script fallback cache.
+     *
+     * Live raw Google Sheets data is always attempted first.
+     * If that fails, the page requests the most recently
+     * calculated summary snapshot from this web app.
+     */
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
 
@@ -514,19 +547,37 @@
       10000;
 
     /*
-     * Set true to skip the live Google Sheets feed
-     * and test the Apps Script cache.
+     * Set true temporarily to skip the live raw sheet
+     * and test the Apps Script cache path.
      */
     const FORCE_CACHED_DATA =
       false;
 
-    const app = document.getElementById('app');
-    const dataTable = document.getElementById('data-table');
-    const loadingState = document.getElementById('loading-state');
+    const MILLISECONDS_PER_DAY =
+      24 *
+      60 *
+      60 *
+      1000;
+
+    const app =
+      document.getElementById(
+        'app'
+      );
+
+    const dataTable =
+      document.getElementById(
+        'data-table'
+      );
+
+    const loadingState =
+      document.getElementById(
+        'loading-state'
+      );
 
     function appendLiveDataCell(
       cell,
-      source = 'live'
+      source = 'live',
+      lastUpdatedDate = '—'
     ) {
       const liveData =
         document.createElement(
@@ -596,7 +647,7 @@
 
         liveData.setAttribute(
           'aria-label',
-          'Live data'
+          `Live data, last updated ${lastUpdatedDate}`
         );
       }
 
@@ -608,219 +659,1037 @@
         text
       );
 
+      if (
+        source === 'live'
+      ) {
+        const lastUpdated =
+          document.createElement(
+            'span'
+          );
+
+        lastUpdated.textContent =
+          ` (last updated ${lastUpdatedDate})`;
+
+        liveData.appendChild(
+          lastUpdated
+        );
+      }
+
       cell.appendChild(
         liveData
       );
     }
 
-    function appendHeaderText(cell, value) {
-      const text = String(value || '—');
-      const suffixMatch = text.match(/^(.*?)(th)$/i);
-
-      if (!suffixMatch) {
-        cell.textContent = text;
-        return;
-      }
-
-      cell.appendChild(document.createTextNode(suffixMatch[1]));
-
-      const superscript = document.createElement('sup');
-      superscript.textContent = suffixMatch[2];
-      cell.appendChild(superscript);
+    function appendHeaderText(
+      cell,
+      value
+    ) {
+      cell.textContent =
+        String(
+          value ??
+          '—'
+        );
     }
 
-    function normaliseText(value) {
-      return String(value || '')
-        .replace(/\u00A0/g, ' ')
+    function normaliseText(
+      value
+    ) {
+      return String(
+        value ??
+        ''
+      )
+        .replace(
+          /\u00A0/g,
+          ' '
+        )
         .trim()
-        .replace(/\s+/g, ' ')
+        .replace(
+          /\s+/g,
+          ' '
+        )
         .toLowerCase();
     }
 
-    function formatCellText(value) {
-      const text = String(value || '')
-        .replace(/\u00A0/g, ' ')
-        .trim()
-        .replace(/\s+/g, ' ')
-        .replace(/\b4-wks\b/gi, '4-weeks');
-
-      const normalised = normaliseText(value);
-
-      if (normalised === 'ophthal practice' || normalised === 'opthal practice') {
-        return 'Ophthal';
+    /*
+     * IMPORTANT:
+     * Numeric zero must remain "0".
+     *
+     * Do not use:
+     *   value || ''
+     *
+     * because JavaScript treats 0 as false.
+     */
+    function formatCellText(
+      value
+    ) {
+      if (
+        value === 0 ||
+        value === '0'
+      ) {
+        return '0';
       }
 
-      if (normalised === 'other (e.g., uni)' || normalised === 'other') {
-        return 'Other';
-      }
+      const text =
+        String(
+          value ??
+          ''
+        )
+          .replace(
+            /\u00A0/g,
+            ' '
+          )
+          .trim()
+          .replace(
+            /\s+/g,
+            ' '
+          );
 
       return text || '—';
     }
 
-    function getFirstColumnCategoryClass(value) {
-      const text = normaliseText(value);
+    function getFirstColumnCategoryClass(
+      value
+    ) {
+      const text =
+        normaliseText(
+          value
+        );
 
-      if (text === 'corporate') return 'category-corporate';
-      if (text === 'independent') return 'category-independent';
-      if (text === 'ophthal' || text === 'ophthal practice' || text === 'opthal practice') return 'category-ophthal';
-      if (text === 'other' || text === 'other (e.g., uni)') return 'category-other';
+      if (
+        text === 'corporate'
+      ) {
+        return 'category-corporate';
+      }
+
+      if (
+        text === 'independent'
+      ) {
+        return 'category-independent';
+      }
+
+      if (
+        text === 'ophthal'
+      ) {
+        return 'category-ophthal';
+      }
+
+      if (
+        text === 'other'
+      ) {
+        return 'category-other';
+      }
 
       return '';
     }
 
     function hideLoadingState() {
-      app.classList.remove('is-loading');
-      loadingState.setAttribute('aria-hidden', 'true');
+      app.classList.remove(
+        'is-loading'
+      );
+
+      loadingState.setAttribute(
+        'aria-hidden',
+        'true'
+      );
     }
 
     function renderTable(
       values,
-      source = 'live'
+      source = 'live',
+      lastUpdatedDate = '—'
     ) {
       hideLoadingState();
-      dataTable.classList.remove('error');
 
-      const thead = dataTable.querySelector('thead');
-      const tbody = dataTable.querySelector('tbody');
+      dataTable.classList.remove(
+        'error'
+      );
 
-      thead.textContent = '';
-      tbody.textContent = '';
+      const thead =
+        dataTable.querySelector(
+          'thead'
+        );
 
-      const headers = values?.[0] || [];
-      const dataRows = values?.slice(1) || [];
+      const tbody =
+        dataTable.querySelector(
+          'tbody'
+        );
 
-      const headerRow = document.createElement('tr');
+      thead.textContent =
+        '';
 
-      headers.forEach((value, index) => {
-        const th = document.createElement('th');
-        th.scope = 'col';
+      tbody.textContent =
+        '';
 
-        if (index === 0) {
-          appendLiveDataCell(
-            th,
-            source
-          );
-        } else {
-          appendHeaderText(th, value);
-        }
+      const headers =
+        values?.[0] ??
+        [];
 
-        headerRow.appendChild(th);
-      });
+      const dataRows =
+        values?.slice(1) ??
+        [];
 
-      thead.appendChild(headerRow);
+      const headerRow =
+        document.createElement(
+          'tr'
+        );
 
-      const separatorRow = document.createElement('tr');
-      separatorRow.className = 'table-major-separator';
+      headers.forEach(
+        (
+          value,
+          index
+        ) => {
+          const th =
+            document.createElement(
+              'th'
+            );
 
-      const separatorCell = document.createElement('td');
-      separatorCell.colSpan = Math.max(headers.length, 1);
+          th.scope =
+            'col';
 
-      separatorRow.appendChild(separatorCell);
-      thead.appendChild(separatorRow);
-
-      dataRows.forEach(row => {
-        const isBlankRow = headers.every((_, index) => {
-          return String(row?.[index] ?? '').trim() === '';
-        });
-
-        if (isBlankRow) {
-          const separatorRow = document.createElement('tr');
-          separatorRow.className = 'table-empty-separator';
-
-          const separatorCell = document.createElement('td');
-          separatorCell.colSpan = Math.max(headers.length, 1);
-
-          separatorRow.appendChild(separatorCell);
-          tbody.appendChild(separatorRow);
-          return;
-        }
-
-        const tr = document.createElement('tr');
-
-        headers.forEach((_, index) => {
-          const td = document.createElement('td');
-          const rawValue = row?.[index] || '';
-
-          td.textContent = formatCellText(rawValue);
-
-          if (index === 0) {
-            const categoryClass = getFirstColumnCategoryClass(rawValue);
-
-            if (categoryClass) {
-              td.classList.add(categoryClass);
-            }
+          if (
+            index === 0
+          ) {
+            appendLiveDataCell(
+              th,
+              source,
+              lastUpdatedDate
+            );
+          } else {
+            appendHeaderText(
+              th,
+              value
+            );
           }
 
-          tr.appendChild(td);
-        });
+          headerRow.appendChild(
+            th
+          );
+        }
+      );
 
-        tbody.appendChild(tr);
-      });
+      thead.appendChild(
+        headerRow
+      );
+
+      const separatorRow =
+        document.createElement(
+          'tr'
+        );
+
+      separatorRow.className =
+        'table-major-separator';
+
+      const separatorCell =
+        document.createElement(
+          'td'
+        );
+
+      separatorCell.colSpan =
+        Math.max(
+          headers.length,
+          1
+        );
+
+      separatorRow.appendChild(
+        separatorCell
+      );
+
+      thead.appendChild(
+        separatorRow
+      );
+
+      dataRows.forEach(
+        row => {
+          const tr =
+            document.createElement(
+              'tr'
+            );
+
+          headers.forEach(
+            (
+              _,
+              index
+            ) => {
+              const td =
+                document.createElement(
+                  'td'
+                );
+
+              /*
+               * ?? preserves numeric 0.
+               */
+              const rawValue =
+                row?.[index] ??
+                '';
+
+              td.textContent =
+                formatCellText(
+                  rawValue
+                );
+
+              if (
+                index === 0
+              ) {
+                const categoryClass =
+                  getFirstColumnCategoryClass(
+                    rawValue
+                  );
+
+                if (
+                  categoryClass
+                ) {
+                  td.classList.add(
+                    categoryClass
+                  );
+                }
+              }
+
+              tr.appendChild(
+                td
+              );
+            }
+          );
+
+          tbody.appendChild(
+            tr
+          );
+        }
+      );
     }
 
-    function showError(error) {
-      console.error(error);
+    function showError(
+      error
+    ) {
+      console.error(
+        error
+      );
 
       hideLoadingState();
 
       renderTable(
         [
-          ['ERROR', '—', '—'],
-          [error?.message || 'Could not load data', '—', '—'],
-          ['—', '—', '—'],
-          ['—', '—', '—'],
-          ['—', '—', '—']
+          [
+            'ERROR',
+            '—',
+            '—'
+          ],
+          [
+            error?.message ??
+              'Could not load data',
+            '—',
+            '—'
+          ],
+          [
+            '—',
+            '—',
+            '—'
+          ],
+          [
+            '—',
+            '—',
+            '—'
+          ],
+          [
+            '—',
+            '—',
+            '—'
+          ]
         ],
         'unavailable'
       );
 
-      dataTable.classList.add('error');
+      dataTable.classList.add(
+        'error'
+      );
     }
 
-    function getCellDisplayValue(cell) {
-      if (!cell) return '';
-      return String(cell.f ?? cell.v ?? '').trim();
+    function getCellDisplayValue(
+      cell
+    ) {
+      if (
+        !cell
+      ) {
+        return '';
+      }
+
+      return String(
+        cell.f ??
+        cell.v ??
+        ''
+      ).trim();
     }
 
-    function normaliseGvizTable(response) {
-      if (response?.status === 'error') {
-        throw new Error(response?.errors?.[0]?.detailed_message || 'Could not load Google Sheet data');
+    function normaliseGvizRawData(
+      response
+    ) {
+      if (
+        response?.status ===
+        'error'
+      ) {
+        throw new Error(
+          response?.errors?.[0]
+            ?.detailed_message ??
+          'Could not load Google Sheet data'
+        );
       }
 
-      const cols = response?.table?.cols || [];
-      const rows = response?.table?.rows || [];
-      const values = [];
+      const cols =
+        response?.table?.cols ??
+        [];
 
-      // Header row from J1:L1
-      const headerRow = [];
+      const rows =
+        response?.table?.rows ??
+        [];
 
-      for (let c = 0; c < EXPECTED_COLS; c++) {
-        headerRow.push(String(cols?.[c]?.label ?? '').trim());
+      const headers =
+        cols.map(
+          column =>
+            String(
+              column?.label ??
+              ''
+            ).trim()
+        );
+
+      const values =
+        rows.map(
+          row =>
+            cols.map(
+              (
+                _,
+                index
+              ) =>
+                getCellDisplayValue(
+                  row?.c?.[index]
+                )
+            )
+        );
+
+      return {
+        headers,
+        rows: values
+      };
+    }
+
+    function findHeaderIndex(
+      headers,
+      wantedHeader
+    ) {
+      const wanted =
+        normaliseText(
+          wantedHeader
+        );
+
+      return headers.findIndex(
+        header =>
+          normaliseText(
+            header
+          ) === wanted
+      );
+    }
+
+    function parseSheetDate(
+      value
+    ) {
+      const text =
+        String(
+          value ??
+          ''
+        ).trim();
+
+      if (
+        !text
+      ) {
+        return null;
       }
 
-      values.push(headerRow);
+      let match =
+        text.match(
+          /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/
+        );
 
-      // Data rows from J2:L5
-      for (let r = 0; r < EXPECTED_ROWS - 1; r++) {
-        const row = [];
+      if (
+        match
+      ) {
+        const day =
+          Number(
+            match[1]
+          );
 
-        for (let c = 0; c < EXPECTED_COLS; c++) {
-          row.push(getCellDisplayValue(rows?.[r]?.c?.[c]));
+        const month =
+          Number(
+            match[2]
+          );
+
+        const year =
+          Number(
+            match[3]
+          );
+
+        return Date.UTC(
+          year,
+          month - 1,
+          day
+        );
+      }
+
+      match =
+        text.match(
+          /^(?:Date|new Date)\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\)$/
+        );
+
+      if (
+        match
+      ) {
+        return Date.UTC(
+          Number(
+            match[1]
+          ),
+          Number(
+            match[2]
+          ),
+          Number(
+            match[3]
+          )
+        );
+      }
+
+      return null;
+    }
+
+    /*
+     * Find the Monday belonging to a particular date.
+     */
+    function getMondayForDate(
+      dateUtc
+    ) {
+      const date =
+        new Date(
+          dateUtc
+        );
+
+      const dayOfWeek =
+        date.getUTCDay();
+
+      const daysSinceMonday =
+        (
+          dayOfWeek +
+          6
+        ) %
+        7;
+
+      return dateUtc -
+        (
+          daysSinceMonday *
+          MILLISECONDS_PER_DAY
+        );
+    }
+
+    function addDays(
+      dateUtc,
+      days
+    ) {
+      return dateUtc +
+        (
+          days *
+          MILLISECONDS_PER_DAY
+        );
+    }
+
+function formatFullDate(
+  dateUtc
+) {
+  if (
+    dateUtc === null ||
+    dateUtc === undefined
+  ) {
+    return '—';
+  }
+
+  const date =
+    new Date(
+      dateUtc
+    );
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return '—';
+  }
+
+  const day =
+    String(
+      date.getUTCDate()
+    ).padStart(
+      2,
+      '0'
+    );
+
+  const month =
+    String(
+      date.getUTCMonth() +
+      1
+    ).padStart(
+      2,
+      '0'
+    );
+
+  return `${day}/${month}`;
+}
+    /*
+     * Same logic as the main Clinical Optometry Job Tracker:
+     *
+     * 1. Read every valid Date value.
+     * 2. Sort newest to oldest.
+     * 3. Use the second-most-recent entry.
+     *
+     * This intentionally does NOT remove duplicate dates,
+     * matching the existing Job Tracker logic.
+     */
+    function getSecondMostRecentRawDate(
+      rawData
+    ) {
+      const headers =
+        rawData?.headers ??
+        [];
+
+      const rows =
+        rawData?.rows ??
+        [];
+
+      const dateIndex =
+        findHeaderIndex(
+          headers,
+          'Date'
+        );
+
+      if (
+        dateIndex < 0
+      ) {
+        return '—';
+      }
+
+      const dates =
+        rows
+          .map(
+            row =>
+              parseSheetDate(
+                row?.[
+                  dateIndex
+                ]
+              )
+          )
+          .filter(
+            value =>
+              value !== null
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              b - a
+          );
+
+      return dates.length >= 2
+        ? formatFullDate(
+            dates[1]
+          )
+        : '—';
+    }
+
+    /*
+     * Employer Type rules:
+     *
+     * Corporate       -> Corporate
+     * Independent     -> Independent
+     * Ophthalmologist -> Ophthal
+     *
+     * blank -> excluded
+     * xxx   -> excluded
+     * x     -> excluded
+     *
+     * ANY OTHER NON-BLANK VALUE -> Other
+     *
+     * Therefore values such as:
+     * Government
+     * Hospital
+     * University
+     * Not-for-profit
+     * Other
+     * etc.
+     * are all counted as Other.
+     */
+    function mapEmployerCategory(
+      value
+    ) {
+      const type =
+        normaliseText(
+          value
+        );
+
+      if (
+        !type ||
+        type === 'xxx' ||
+        type === 'x'
+      ) {
+        return null;
+      }
+
+      if (
+        type === 'corporate'
+      ) {
+        return 'Corporate';
+      }
+
+      if (
+        type === 'independent'
+      ) {
+        return 'Independent';
+      }
+
+      if (
+        type === 'ophthalmologist' ||
+        type === 'ophthalmology' ||
+        type === 'ophthal' ||
+        type === 'ophthal practice' ||
+        type === 'opthal practice'
+      ) {
+        return 'Ophthal';
+      }
+
+      return 'Other';
+    }
+
+    /*
+     * Find newest genuine job row.
+     *
+     * Result must contain data, so a date-only helper row
+     * cannot cause the displayed week to advance.
+     */
+    function findLatestRealJobDate(
+      rows,
+      resultIndex,
+      dateIndex
+    ) {
+      let latestDate =
+        null;
+
+      rows.forEach(
+        row => {
+          const resultValue =
+            String(
+              row?.[
+                resultIndex
+              ] ??
+              ''
+            ).trim();
+
+          if (
+            !resultValue
+          ) {
+            return;
+          }
+
+          const jobDate =
+            parseSheetDate(
+              row?.[
+                dateIndex
+              ]
+            );
+
+          if (
+            jobDate === null
+          ) {
+            return;
+          }
+
+          if (
+            latestDate === null ||
+            jobDate > latestDate
+          ) {
+            latestDate =
+              jobDate;
+          }
         }
+      );
 
-        values.push(row);
-      }
-
-      return values;
+      return latestDate;
     }
 
-    function saveStoredTable(values) {
+    function buildSummaryTable(
+      rawData
+    ) {
+      const headers =
+        rawData?.headers ??
+        [];
+
+      const rows =
+        rawData?.rows ??
+        [];
+
+      const repeatIndex =
+        findHeaderIndex(
+          headers,
+          'Repeat'
+        );
+
+      const resultIndex =
+        findHeaderIndex(
+          headers,
+          'Result'
+        );
+
+      const dateIndex =
+        findHeaderIndex(
+          headers,
+          'Date'
+        );
+
+      const employerTypeIndex =
+        findHeaderIndex(
+          headers,
+          'Employer Type'
+        );
+
+      if (
+        repeatIndex < 0 ||
+        resultIndex < 0 ||
+        dateIndex < 0 ||
+        employerTypeIndex < 0
+      ) {
+        throw new Error(
+          'Required raw-data columns were not found.'
+        );
+      }
+
+      /*
+       * The displayed period is based on the latest
+       * genuine job in the raw data, rather than today's date.
+       *
+       * This means the table remains on the previous week
+       * until your next data update actually contains a job
+       * from the new Monday-based week.
+       */
+      const latestRealJobDate =
+        findLatestRealJobDate(
+          rows,
+          resultIndex,
+          dateIndex
+        );
+
+      if (
+        latestRealJobDate === null
+      ) {
+        throw new Error(
+          'No valid job dates were found.'
+        );
+      }
+
+      /*
+       * One week:
+       * Monday through Sunday inclusive.
+       */
+      const weekStart =
+        getMondayForDate(
+          latestRealJobDate
+        );
+
+      const weekEnd =
+        addDays(
+          weekStart,
+          6
+        );
+
+      /*
+       * Four weeks:
+       * current Monday-based week plus
+       * the previous three full weeks.
+       */
+      const fourWeekStart =
+        addDays(
+          weekStart,
+          -21
+        );
+
+      const fourWeekEnd =
+        weekEnd;
+
+      const weekHeader =
+        `Week (${formatFullDate(
+          weekStart
+        )}–)`;
+      
+      const fourWeekHeader =
+        `4-weeks (${formatFullDate(
+          fourWeekStart
+        )}–)`;
+
+      /*
+       * Explicitly initialise everything to numeric zero.
+       */
+      const counts = {
+        Corporate: {
+          week: 0,
+          fourWeeks: 0
+        },
+
+        Independent: {
+          week: 0,
+          fourWeeks: 0
+        },
+
+        Ophthal: {
+          week: 0,
+          fourWeeks: 0
+        },
+
+        Other: {
+          week: 0,
+          fourWeeks: 0
+        }
+      };
+
+      rows.forEach(
+        row => {
+          /*
+           * Count only rows where Repeat = No.
+           */
+          const repeatValue =
+            normaliseText(
+              row?.[
+                repeatIndex
+              ]
+            );
+
+          if (
+            repeatValue !==
+            normaliseText(
+              NON_DUPLICATE_VALUE
+            )
+          ) {
+            return;
+          }
+
+          /*
+           * Must be a genuine job row.
+           */
+          const resultValue =
+            String(
+              row?.[
+                resultIndex
+              ] ??
+              ''
+            ).trim();
+
+          if (
+            !resultValue
+          ) {
+            return;
+          }
+
+          const jobDate =
+            parseSheetDate(
+              row?.[
+                dateIndex
+              ]
+            );
+
+          if (
+            jobDate === null
+          ) {
+            return;
+          }
+
+          const category =
+            mapEmployerCategory(
+              row?.[
+                employerTypeIndex
+              ]
+            );
+
+          if (
+            category === null
+          ) {
+            return;
+          }
+
+          /*
+           * Current Monday-Sunday week.
+           */
+          if (
+            jobDate >= weekStart &&
+            jobDate <= weekEnd
+          ) {
+            counts[
+              category
+            ].week += 1;
+          }
+
+          /*
+           * Four Monday-Sunday weeks.
+           */
+          if (
+            jobDate >= fourWeekStart &&
+            jobDate <= fourWeekEnd
+          ) {
+            counts[
+              category
+            ].fourWeeks += 1;
+          }
+        }
+      );
+
+      /*
+       * Numeric zeros are retained as numeric zeros.
+       */
+      return [
+        [
+          '',
+          weekHeader,
+          fourWeekHeader
+        ],
+
+        [
+          'Corporate',
+          counts.Corporate.week,
+          counts.Corporate.fourWeeks
+        ],
+
+        [
+          'Independent',
+          counts.Independent.week,
+          counts.Independent.fourWeeks
+        ],
+
+        [
+          'Ophthal',
+          counts.Ophthal.week,
+          counts.Ophthal.fourWeeks
+        ],
+
+        [
+          'Other',
+          counts.Other.week,
+          counts.Other.fourWeeks
+        ]
+      ];
+    }
+
+    function saveStoredTable(
+      values
+    ) {
       try {
         localStorage.setItem(
           TABLE_STORAGE_KEY,
-          JSON.stringify(values)
+          JSON.stringify(
+            values
+          )
         );
-      } catch (error) {
+      } catch (
+        error
+      ) {
         console.warn(
           'The latest table could not be stored.',
           error
@@ -834,17 +1703,21 @@
           JSON.parse(
             localStorage.getItem(
               TABLE_STORAGE_KEY
-            ) ||
+            ) ??
             'null'
           );
 
         const isValid =
-          Array.isArray(values) &&
+          Array.isArray(
+            values
+          ) &&
           values.length ===
             EXPECTED_ROWS &&
           values.every(
             row =>
-              Array.isArray(row) &&
+              Array.isArray(
+                row
+              ) &&
               row.length ===
                 EXPECTED_COLS
           );
@@ -852,7 +1725,9 @@
         return isValid
           ? values
           : null;
-      } catch (error) {
+      } catch (
+        error
+      ) {
         console.warn(
           'The stored table could not be read.',
           error
@@ -877,14 +1752,18 @@
           EXPECTED_ROWS &&
         values.every(
           row =>
-            Array.isArray(row) &&
+            Array.isArray(
+              row
+            ) &&
             row.length >=
               EXPECTED_COLS
         );
 
-      if (!isValid) {
+      if (
+        !isValid
+      ) {
         throw new Error(
-          'Cached summary data is incomplete.'
+          'Cached summary data are incomplete.'
         );
       }
 
@@ -908,6 +1787,13 @@
       };
     }
 
+    /*
+     * Request the Apps Script snapshot using JSONP.
+     *
+     * JSONP is used because this page may be embedded on
+     * another site and the Apps Script web app can safely
+     * return a callback response.
+     */
     function loadCachedSummarySnapshot() {
       return new Promise(
         (
@@ -915,7 +1801,7 @@
           reject
         ) => {
           const callbackName =
-            `pffJobTracker1Cache_${
+            `pffClinicalOptomSummaryCache_${
               Date.now()
             }_${
               Math.floor(
@@ -953,10 +1839,13 @@
               delete window[
                 callbackName
               ];
-            } catch (error) {
+            } catch (
+              error
+            ) {
               window[
                 callbackName
-              ] = undefined;
+              ] =
+                undefined;
             }
 
             if (
@@ -973,7 +1862,9 @@
             error,
             snapshot
           ) {
-            if (settled) {
+            if (
+              settled
+            ) {
               return;
             }
 
@@ -982,27 +1873,34 @@
 
             cleanup();
 
-            error
-              ? reject(
-                  error
-                )
-              : resolve(
-                  snapshot
-                );
+            if (
+              error
+            ) {
+              reject(
+                error
+              );
+            } else {
+              resolve(
+                snapshot
+              );
+            }
           }
 
-          window[callbackName] =
+          window[
+            callbackName
+          ] =
             snapshot => {
               if (
                 !snapshot ||
-                snapshot.ok !== true ||
+                snapshot.ok !==
+                  true ||
                 snapshot.appKey !==
                   CACHE_APP_KEY
               ) {
                 finish(
                   new Error(
                     snapshot?.error ||
-                    'Cached summary data is unavailable.'
+                    'Cached summary data are unavailable.'
                   )
                 );
 
@@ -1057,7 +1955,7 @@
             `${
               CACHE_WEB_APP_URL
             }?${
-              params
+              params.toString()
             }`;
 
           document.body.appendChild(
@@ -1067,6 +1965,68 @@
       );
     }
 
+    /*
+     * Fallback order after the live raw-sheet request fails:
+     *
+     * 1. Apps Script cached snapshot
+     * 2. Browser localStorage
+     * 3. Error state
+     */
+    function loadCachedTableOrStoredTable(
+      liveError
+    ) {
+      loadCachedSummarySnapshot()
+        .then(
+          snapshot => {
+            const values =
+              snapshot
+                .data
+                .tableValues;
+
+            saveStoredTable(
+              values
+            );
+
+            renderTable(
+              values,
+              'cached'
+            );
+          }
+        )
+        .catch(
+          cacheError => {
+            console.error(
+              'Apps Script cached summary load failed',
+              cacheError
+            );
+
+            const storedValues =
+              loadStoredTable();
+
+            if (
+              storedValues
+            ) {
+              renderTable(
+                storedValues,
+                'cached'
+              );
+
+              return;
+            }
+
+            showError(
+              liveError
+            );
+          }
+        );
+    }
+
+    /*
+     * Test mode:
+     *
+     * Skip the live raw-sheet request and try the Apps Script
+     * cache first. localStorage remains the final fallback.
+     */
     function loadForcedCachedData() {
       loadCachedSummarySnapshot()
         .then(
@@ -1089,14 +2049,16 @@
         .catch(
           cacheError => {
             console.error(
-              'Cached summary load failed',
+              'Forced Apps Script cache test failed',
               cacheError
             );
 
             const storedValues =
               loadStoredTable();
 
-            if (storedValues) {
+            if (
+              storedValues
+            ) {
               renderTable(
                 storedValues,
                 'cached'
@@ -1112,9 +2074,18 @@
         );
     }
 
-    function loadTableData(attempt = 1) {
+    function loadTableData(
+      attempt = 1
+    ) {
       const callbackName =
-        `pffJobTracker1Callback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+        `pffJobTrackerRawCallback_${
+          Date.now()
+        }_${
+          Math.floor(
+            Math.random() *
+            100000
+          )
+        }`;
 
       const script =
         document.createElement(
@@ -1145,10 +2116,13 @@
           delete window[
             callbackName
           ];
-        } catch (error) {
+        } catch (
+          error
+        ) {
           window[
             callbackName
-          ] = undefined;
+          ] =
+            undefined;
         }
 
         if (
@@ -1166,7 +2140,7 @@
       ) {
         if (
           attempt <
-            FETCH_MAX_ATTEMPTS
+          FETCH_MAX_ATTEMPTS
         ) {
           window.setTimeout(
             () => {
@@ -1180,55 +2154,18 @@
           return;
         }
 
-        loadCachedSummarySnapshot()
-          .then(
-            snapshot => {
-              const values =
-                snapshot
-                  .data
-                  .tableValues;
-
-              saveStoredTable(
-                values
-              );
-
-              renderTable(
-                values,
-                'cached'
-              );
-            }
-          )
-          .catch(
-            cacheError => {
-              console.error(
-                'Cached summary load failed',
-                cacheError
-              );
-
-              const storedValues =
-                loadStoredTable();
-
-              if (storedValues) {
-                renderTable(
-                  storedValues,
-                  'cached'
-                );
-
-                return;
-              }
-
-              showError(
-                error
-              );
-            }
-          );
+        loadCachedTableOrStoredTable(
+          error
+        );
       }
 
       function finish(
         error,
         response
       ) {
-        if (settled) {
+        if (
+          settled
+        ) {
           return;
         }
 
@@ -1237,7 +2174,9 @@
 
         cleanup();
 
-        if (error) {
+        if (
+          error
+        ) {
           retryOrUseCachedTable(
             error
           );
@@ -1246,27 +2185,45 @@
         }
 
         try {
-          const values =
-            normaliseGvizTable(
+          const rawData =
+            normaliseGvizRawData(
               response
             );
 
+          const values =
+            buildSummaryTable(
+              rawData
+            );
+
+          const lastUpdatedDate =
+            getSecondMostRecentRawDate(
+              rawData
+            );
+
+          /*
+           * Store only the calculated 5 x 3 table.
+           */
           saveStoredTable(
             values
           );
 
           renderTable(
             values,
-            'live'
+            'live',
+            lastUpdatedDate
           );
-        } catch (normaliseError) {
+        } catch (
+          processingError
+        ) {
           retryOrUseCachedTable(
-            normaliseError
+            processingError
           );
         }
       }
 
-      window[callbackName] =
+      window[
+        callbackName
+      ] =
         response => {
           finish(
             null,
@@ -1289,7 +2246,7 @@
             SHEET_NAME,
 
           range:
-            TABLE_RANGE,
+            RAW_RANGE,
 
           headers:
             '1',
