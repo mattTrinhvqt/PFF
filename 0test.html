@@ -576,7 +576,8 @@
 
     function appendLiveDataCell(
       cell,
-      source = 'live'
+      source = 'live',
+      lastUpdatedDate = '—'
     ) {
       const liveData =
         document.createElement(
@@ -646,7 +647,7 @@
 
         liveData.setAttribute(
           'aria-label',
-          'Live data'
+          `Live data, last updated ${lastUpdatedDate}`
         );
       }
 
@@ -657,6 +658,22 @@
       liveData.appendChild(
         text
       );
+
+      if (
+        source === 'live'
+      ) {
+        const lastUpdated =
+          document.createElement(
+            'span'
+          );
+
+        lastUpdated.textContent =
+          ` (last updated ${lastUpdatedDate})`;
+
+        liveData.appendChild(
+          lastUpdated
+        );
+      }
 
       cell.appendChild(
         liveData
@@ -778,7 +795,8 @@
 
     function renderTable(
       values,
-      source = 'live'
+      source = 'live',
+      lastUpdatedDate = '—'
     ) {
       hideLoadingState();
 
@@ -833,7 +851,8 @@
           ) {
             appendLiveDataCell(
               th,
-              source
+              source,
+              lastUpdatedDate
             );
           } else {
             appendHeaderText(
@@ -1176,32 +1195,108 @@
         );
     }
 
-    function formatShortDate(
+function formatFullDate(
+  dateUtc
+) {
+  if (
+    dateUtc === null ||
+    dateUtc === undefined
+  ) {
+    return '—';
+  }
+
+  const date =
+    new Date(
       dateUtc
+    );
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return '—';
+  }
+
+  const day =
+    String(
+      date.getUTCDate()
+    ).padStart(
+      2,
+      '0'
+    );
+
+  const month =
+    String(
+      date.getUTCMonth() +
+      1
+    ).padStart(
+      2,
+      '0'
+    );
+
+  return `${day}/${month}`;
+}
+    /*
+     * Same logic as the main Clinical Optometry Job Tracker:
+     *
+     * 1. Read every valid Date value.
+     * 2. Sort newest to oldest.
+     * 3. Use the second-most-recent entry.
+     *
+     * This intentionally does NOT remove duplicate dates,
+     * matching the existing Job Tracker logic.
+     */
+    function getSecondMostRecentRawDate(
+      rawData
     ) {
-      const date =
-        new Date(
-          dateUtc
+      const headers =
+        rawData?.headers ??
+        [];
+
+      const rows =
+        rawData?.rows ??
+        [];
+
+      const dateIndex =
+        findHeaderIndex(
+          headers,
+          'Date'
         );
 
-      const day =
-        String(
-          date.getUTCDate()
-        ).padStart(
-          2,
-          '0'
-        );
+      if (
+        dateIndex < 0
+      ) {
+        return '—';
+      }
 
-      const month =
-        String(
-          date.getUTCMonth() +
-          1
-        ).padStart(
-          2,
-          '0'
-        );
+      const dates =
+        rows
+          .map(
+            row =>
+              parseSheetDate(
+                row?.[
+                  dateIndex
+                ]
+              )
+          )
+          .filter(
+            value =>
+              value !== null
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              b - a
+          );
 
-      return `${day}/${month}`;
+      return dates.length >= 2
+        ? formatFullDate(
+            dates[1]
+          )
+        : '—';
     }
 
     /*
@@ -1422,18 +1517,14 @@
         weekEnd;
 
       const weekHeader =
-        `Week (${formatShortDate(
+        `${formatShortDate(
           weekStart
-        )}–${formatShortDate(
-          weekEnd
-        )})`;
-
+        )}–`;
+      
       const fourWeekHeader =
-        `4-weeks (${formatShortDate(
+        `${formatShortDate(
           fourWeekStart
-        )}–${formatShortDate(
-          fourWeekEnd
-        )})`;
+        )}–`;
 
       /*
        * Explicitly initialise everything to numeric zero.
@@ -2104,6 +2195,11 @@
               rawData
             );
 
+          const lastUpdatedDate =
+            getSecondMostRecentRawDate(
+              rawData
+            );
+
           /*
            * Store only the calculated 5 x 3 table.
            */
@@ -2113,7 +2209,8 @@
 
           renderTable(
             values,
-            'live'
+            'live',
+            lastUpdatedDate
           );
         } catch (
           processingError
