@@ -530,6 +530,26 @@
     const TABLE_STORAGE_KEY =
       'pff-clinical-optom-summary-table-raw-week-v3';
 
+    /*
+     * Apps Script fallback cache.
+     *
+     * Live raw Google Sheets data is always attempted first.
+     * If that fails, the page requests the most recently
+     * calculated summary snapshot from this web app.
+     */
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
+
+    const CACHE_APP_KEY =
+      'pff-clinical-optom-summary';
+
+    const CACHE_FETCH_TIMEOUT_MS =
+      10000;
+
+    /*
+     * Set true temporarily to skip the live raw sheet
+     * and test the Apps Script cache path.
+     */
     const FORCE_CACHED_DATA =
       false;
 
@@ -1626,48 +1646,341 @@
       }
     }
 
-    function useStoredTableOrError(
-      error
+    function validateCachedSummaryData(
+      data
     ) {
-      const storedValues =
-        loadStoredTable();
+      const values =
+        Array.isArray(
+          data?.tableValues
+        )
+          ? data.tableValues
+          : [];
 
-      if (
-        storedValues
-      ) {
-        renderTable(
-          storedValues,
-          'cached'
+      const isValid =
+        values.length ===
+          EXPECTED_ROWS &&
+        values.every(
+          row =>
+            Array.isArray(
+              row
+            ) &&
+            row.length >=
+              EXPECTED_COLS
         );
 
-        return;
+      if (
+        !isValid
+      ) {
+        throw new Error(
+          'Cached summary data are incomplete.'
+        );
       }
 
-      showError(
-        error
+      return {
+        tableValues:
+          values.map(
+            row =>
+              row
+                .slice(
+                  0,
+                  EXPECTED_COLS
+                )
+                .map(
+                  value =>
+                    String(
+                      value ??
+                      ''
+                    ).trim()
+                )
+          )
+      };
+    }
+
+    /*
+     * Request the Apps Script snapshot using JSONP.
+     *
+     * JSONP is used because this page may be embedded on
+     * another site and the Apps Script web app can safely
+     * return a callback response.
+     */
+    function loadCachedSummarySnapshot() {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          const callbackName =
+            `pffClinicalOptomSummaryCache_${
+              Date.now()
+            }_${
+              Math.floor(
+                Math.random() *
+                100000
+              )
+            }`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled =
+            false;
+
+          const timeout =
+            window.setTimeout(
+              () => {
+                finish(
+                  new Error(
+                    'Cached summary data timed out.'
+                  )
+                );
+              },
+              CACHE_FETCH_TIMEOUT_MS
+            );
+
+          function cleanup() {
+            window.clearTimeout(
+              timeout
+            );
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (
+              error
+            ) {
+              window[
+                callbackName
+              ] =
+                undefined;
+            }
+
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(
+                  script
+                );
+            }
+          }
+
+          function finish(
+            error,
+            snapshot
+          ) {
+            if (
+              settled
+            ) {
+              return;
+            }
+
+            settled =
+              true;
+
+            cleanup();
+
+            if (
+              error
+            ) {
+              reject(
+                error
+              );
+            } else {
+              resolve(
+                snapshot
+              );
+            }
+          }
+
+          window[
+            callbackName
+          ] =
+            snapshot => {
+              if (
+                !snapshot ||
+                snapshot.ok !==
+                  true ||
+                snapshot.appKey !==
+                  CACHE_APP_KEY
+              ) {
+                finish(
+                  new Error(
+                    snapshot?.error ||
+                    'Cached summary data are unavailable.'
+                  )
+                );
+
+                return;
+              }
+
+              try {
+                snapshot.data =
+                  validateCachedSummaryData(
+                    snapshot.data
+                  );
+              } catch (
+                error
+              ) {
+                finish(
+                  error
+                );
+
+                return;
+              }
+
+              finish(
+                null,
+                snapshot
+              );
+            };
+
+          script.onerror =
+            () => {
+              finish(
+                new Error(
+                  'Cached summary data could not be loaded.'
+                )
+              );
+            };
+
+          const params =
+            new URLSearchParams({
+              appKey:
+                CACHE_APP_KEY,
+
+              callback:
+                callbackName,
+
+              _:
+                String(
+                  Date.now()
+                )
+            });
+
+          script.src =
+            `${
+              CACHE_WEB_APP_URL
+            }?${
+              params.toString()
+            }`;
+
+          document.body.appendChild(
+            script
+          );
+        }
       );
     }
 
-    function loadForcedCachedData() {
-      const storedValues =
-        loadStoredTable();
+    /*
+     * Fallback order after the live raw-sheet request fails:
+     *
+     * 1. Apps Script cached snapshot
+     * 2. Browser localStorage
+     * 3. Error state
+     */
+    function loadCachedTableOrStoredTable(
+      liveError
+    ) {
+      loadCachedSummarySnapshot()
+        .then(
+          snapshot => {
+            const values =
+              snapshot
+                .data
+                .tableValues;
 
-      if (
-        storedValues
-      ) {
-        renderTable(
-          storedValues,
-          'cached'
-        );
+            saveStoredTable(
+              values
+            );
 
-        return;
-      }
-
-      showError(
-        new Error(
-          'No cached data are available.'
+            renderTable(
+              values,
+              'cached'
+            );
+          }
         )
-      );
+        .catch(
+          cacheError => {
+            console.error(
+              'Apps Script cached summary load failed',
+              cacheError
+            );
+
+            const storedValues =
+              loadStoredTable();
+
+            if (
+              storedValues
+            ) {
+              renderTable(
+                storedValues,
+                'cached'
+              );
+
+              return;
+            }
+
+            showError(
+              liveError
+            );
+          }
+        );
+    }
+
+    /*
+     * Test mode:
+     *
+     * Skip the live raw-sheet request and try the Apps Script
+     * cache first. localStorage remains the final fallback.
+     */
+    function loadForcedCachedData() {
+      loadCachedSummarySnapshot()
+        .then(
+          snapshot => {
+            const values =
+              snapshot
+                .data
+                .tableValues;
+
+            saveStoredTable(
+              values
+            );
+
+            renderTable(
+              values,
+              'cached'
+            );
+          }
+        )
+        .catch(
+          cacheError => {
+            console.error(
+              'Forced Apps Script cache test failed',
+              cacheError
+            );
+
+            const storedValues =
+              loadStoredTable();
+
+            if (
+              storedValues
+            ) {
+              renderTable(
+                storedValues,
+                'cached'
+              );
+
+              return;
+            }
+
+            showError(
+              cacheError
+            );
+          }
+        );
     }
 
     function loadTableData(
@@ -1750,7 +2063,7 @@
           return;
         }
 
-        useStoredTableOrError(
+        loadCachedTableOrStoredTable(
           error
         );
       }
