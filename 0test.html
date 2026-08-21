@@ -322,14 +322,6 @@
       border-top: 1px solid var(--ink);
     }
 
-    .data-table .table-empty-separator td {
-      height: 0;
-      padding: 0;
-      line-height: 0;
-      background: transparent;
-      border-top: 1px solid var(--track);
-    }
-
     .live-data-inline {
       display: inline-flex;
       align-items: center;
@@ -448,7 +440,12 @@
   <div id="fit">
 
     <main id="app" class="is-loading">
-      <div id="loading-state" class="app-loading" role="status" aria-label="Loading">
+      <div
+        id="loading-state"
+        class="app-loading"
+        role="status"
+        aria-label="Loading"
+      >
         <div class="cone-loader">
           <div class="cone blue" aria-hidden="true"></div>
           <div class="cone green" aria-hidden="true"></div>
@@ -481,22 +478,24 @@
       'Mirror table';
 
     /*
-     * B2:H contains:
+     * Imported table starts in B.
      *
-     * Repeat first instance
-     * Repeat
-     * Result
-     * Date
-     * Job Title
-     * Employer
-     * Employer Type
+     * B = Repeat first instance
+     * C = Repeat
+     * D = Result
+     * E = Date
+     * F = Job Title
+     * G = Employer
+     * H = Employer Type
+     *
+     * Header names are used below, rather than fixed
+     * numeric column positions.
      */
     const RAW_RANGE =
       'B2:H';
 
     /*
-     * Repeat = No means this is not a repeat advertisement
-     * and should be included in the job totals.
+     * Repeat = No means the row is counted.
      */
     const NON_DUPLICATE_VALUE =
       'No';
@@ -524,13 +523,13 @@
     const FETCH_RETRY_DELAY_MS =
       1000;
 
-    const TABLE_STORAGE_KEY =
-      'pff-clinical-optom-summary-table-raw-week-v2';
-
     /*
-     * Set to true only if you want to test
-     * the locally cached summary.
+     * v3 deliberately avoids reusing an older cached
+     * table that may have contained dashes for zero.
      */
+    const TABLE_STORAGE_KEY =
+      'pff-clinical-optom-summary-table-raw-week-v3';
+
     const FORCE_CACHED_DATA =
       false;
 
@@ -650,7 +649,7 @@
     ) {
       cell.textContent =
         String(
-          value ||
+          value ??
           '—'
         );
     }
@@ -659,7 +658,7 @@
       value
     ) {
       return String(
-        value ||
+        value ??
         ''
       )
         .replace(
@@ -674,12 +673,28 @@
         .toLowerCase();
     }
 
+    /*
+     * IMPORTANT:
+     * Numeric zero must remain "0".
+     *
+     * Do not use:
+     *   value || ''
+     *
+     * because JavaScript treats 0 as false.
+     */
     function formatCellText(
       value
     ) {
+      if (
+        value === 0 ||
+        value === '0'
+      ) {
+        return '0';
+      }
+
       const text =
         String(
-          value ||
+          value ??
           ''
         )
           .replace(
@@ -768,11 +783,11 @@
         '';
 
       const headers =
-        values?.[0] ||
+        values?.[0] ??
         [];
 
       const dataRows =
-        values?.slice(1) ||
+        values?.slice(1) ??
         [];
 
       const headerRow =
@@ -861,6 +876,9 @@
                   'td'
                 );
 
+              /*
+               * ?? preserves numeric 0.
+               */
               const rawValue =
                 row?.[index] ??
                 '';
@@ -917,7 +935,7 @@
             '—'
           ],
           [
-            error?.message ||
+            error?.message ??
               'Could not load data',
             '—',
             '—'
@@ -971,17 +989,17 @@
       ) {
         throw new Error(
           response?.errors?.[0]
-            ?.detailed_message ||
+            ?.detailed_message ??
           'Could not load Google Sheet data'
         );
       }
 
       const cols =
-        response?.table?.cols ||
+        response?.table?.cols ??
         [];
 
       const rows =
-        response?.table?.rows ||
+        response?.table?.rows ??
         [];
 
       const headers =
@@ -1030,16 +1048,12 @@
       );
     }
 
-    /*
-     * Convert DD/MM/YYYY from the Google Sheet
-     * into a UTC day value.
-     */
     function parseSheetDate(
       value
     ) {
       const text =
         String(
-          value ||
+          value ??
           ''
         ).trim();
 
@@ -1079,10 +1093,6 @@
         );
       }
 
-      /*
-       * Fallback in case GViz supplies a raw Date(...)
-       * value instead of the formatted date.
-       */
       match =
         text.match(
           /^(?:Date|new Date)\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\)$/
@@ -1108,10 +1118,7 @@
     }
 
     /*
-     * Return the Monday containing a supplied date.
-     *
-     * Sunday = 0 in JavaScript,
-     * so (day + 6) % 7 converts Monday to 0.
+     * Find the Monday belonging to a particular date.
      */
     function getMondayForDate(
       dateUtc
@@ -1149,9 +1156,6 @@
         );
     }
 
-    /*
-     * Format a UTC date as DD/MM.
-     */
     function formatShortDate(
       dateUtc
     ) {
@@ -1180,6 +1184,28 @@
       return `${day}/${month}`;
     }
 
+    /*
+     * Employer Type rules:
+     *
+     * Corporate       -> Corporate
+     * Independent     -> Independent
+     * Ophthalmologist -> Ophthal
+     *
+     * blank -> excluded
+     * xxx   -> excluded
+     * x     -> excluded
+     *
+     * ANY OTHER NON-BLANK VALUE -> Other
+     *
+     * Therefore values such as:
+     * Government
+     * Hospital
+     * University
+     * Not-for-profit
+     * Other
+     * etc.
+     * are all counted as Other.
+     */
     function mapEmployerCategory(
       value
     ) {
@@ -1188,12 +1214,10 @@
           value
         );
 
-      /*
-       * Do not treat unknown employer types as Other.
-       */
       if (
         !type ||
-        type === 'xxx'
+        type === 'xxx' ||
+        type === 'x'
       ) {
         return null;
       }
@@ -1220,26 +1244,14 @@
         return 'Ophthal';
       }
 
-      /*
-       * Government, Hospital, University,
-       * Not-for-profit and other recognised types.
-       */
       return 'Other';
     }
 
     /*
-     * Find the latest genuine job date in the imported data.
+     * Find newest genuine job row.
      *
-     * IMPORTANT:
-     * We require Result to contain a value.
-     *
-     * This prevents date-only helper/formula rows such as
-     * 22/08/2026 with no actual job from advancing the week.
-     *
-     * Repeat is NOT considered here.
-     * Even if every job added in a new week happened to be a
-     * repeat, the tracker has still been updated and the week
-     * should advance.
+     * Result must contain data, so a date-only helper row
+     * cannot cause the displayed week to advance.
      */
     function findLatestRealJobDate(
       rows,
@@ -1295,11 +1307,11 @@
       rawData
     ) {
       const headers =
-        rawData?.headers ||
+        rawData?.headers ??
         [];
 
       const rows =
-        rawData?.rows ||
+        rawData?.rows ??
         [];
 
       const repeatIndex =
@@ -1338,11 +1350,12 @@
       }
 
       /*
-       * Anchor the table to the latest genuine job row,
-       * NOT today's date.
+       * The displayed period is based on the latest
+       * genuine job in the raw data, rather than today's date.
        *
-       * Therefore the table will not move into a new week
-       * simply because Monday has arrived.
+       * This means the table remains on the previous week
+       * until your next data update actually contains a job
+       * from the new Monday-based week.
        */
       const latestRealJobDate =
         findLatestRealJobDate(
@@ -1360,8 +1373,8 @@
       }
 
       /*
-       * Current displayed week:
-       * Monday through Sunday.
+       * One week:
+       * Monday through Sunday inclusive.
        */
       const weekStart =
         getMondayForDate(
@@ -1375,14 +1388,9 @@
         );
 
       /*
-       * Four-week period:
+       * Four weeks:
        * current Monday-based week plus
-       * the preceding three full weeks.
-       *
-       * Example:
-       * latest job = 20/08/2026
-       * week       = 17/08–23/08
-       * 4-weeks    = 27/07–23/08
+       * the previous three full weeks.
        */
       const fourWeekStart =
         addDays(
@@ -1407,24 +1415,35 @@
           fourWeekEnd
         )})`;
 
-      const counts =
-        {};
+      /*
+       * Explicitly initialise everything to numeric zero.
+       */
+      const counts = {
+        Corporate: {
+          week: 0,
+          fourWeeks: 0
+        },
 
-      SUMMARY_CATEGORIES.forEach(
-        category => {
-          counts[
-            category
-          ] = {
-            week: 0,
-            fourWeeks: 0
-          };
+        Independent: {
+          week: 0,
+          fourWeeks: 0
+        },
+
+        Ophthal: {
+          week: 0,
+          fourWeeks: 0
+        },
+
+        Other: {
+          week: 0,
+          fourWeeks: 0
         }
-      );
+      };
 
       rows.forEach(
         row => {
           /*
-           * Count only non-repeat advertisements.
+           * Count only rows where Repeat = No.
            */
           const repeatValue =
             normaliseText(
@@ -1443,7 +1462,7 @@
           }
 
           /*
-           * Require this to be a genuine job row.
+           * Must be a genuine job row.
            */
           const resultValue =
             String(
@@ -1480,14 +1499,13 @@
             );
 
           if (
-            !category
+            category === null
           ) {
             return;
           }
 
           /*
-           * Week:
-           * Monday through Sunday, inclusive.
+           * Current Monday-Sunday week.
            */
           if (
             jobDate >= weekStart &&
@@ -1499,7 +1517,7 @@
           }
 
           /*
-           * Four Monday-based weeks, inclusive.
+           * Four Monday-Sunday weeks.
            */
           if (
             jobDate >= fourWeekStart &&
@@ -1512,6 +1530,9 @@
         }
       );
 
+      /*
+       * Numeric zeros are retained as numeric zeros.
+       */
       return [
         [
           '',
@@ -1519,17 +1540,29 @@
           fourWeekHeader
         ],
 
-        ...SUMMARY_CATEGORIES.map(
-          category => [
-            category,
-            counts[
-              category
-            ].week,
-            counts[
-              category
-            ].fourWeeks
-          ]
-        )
+        [
+          'Corporate',
+          counts.Corporate.week,
+          counts.Corporate.fourWeeks
+        ],
+
+        [
+          'Independent',
+          counts.Independent.week,
+          counts.Independent.fourWeeks
+        ],
+
+        [
+          'Ophthal',
+          counts.Ophthal.week,
+          counts.Ophthal.fourWeeks
+        ],
+
+        [
+          'Other',
+          counts.Other.week,
+          counts.Other.fourWeeks
+        ]
       ];
     }
 
@@ -1559,7 +1592,7 @@
           JSON.parse(
             localStorage.getItem(
               TABLE_STORAGE_KEY
-            ) ||
+            ) ??
             'null'
           );
 
@@ -1759,8 +1792,7 @@
             );
 
           /*
-           * Cache only the small calculated summary,
-           * not the full raw dataset.
+           * Store only the calculated 5 x 3 table.
            */
           saveStoredTable(
             values
