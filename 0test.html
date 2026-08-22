@@ -1921,7 +1921,7 @@
             type="button"
             aria-label="Reset summary filter"
           >
-            <span>Reset filters</span>
+            <span>Reset</span>
             <span class="summary-reset-icon" aria-hidden="true">↻</span>
           </button>
         </div>
@@ -2811,6 +2811,43 @@
       return 'other';
     }
 
+    function getSummaryEmployerTypeKey(value) {
+      const text =
+        normaliseText(value);
+
+      if (
+        !text ||
+        text === 'xxx' ||
+        text === 'x'
+      ) {
+        return '';
+      }
+
+      if (
+        text === 'corporate'
+      ) {
+        return 'corporate';
+      }
+
+      if (
+        text === 'independent'
+      ) {
+        return 'independent';
+      }
+
+      if (
+        text === 'ophthalmologist' ||
+        text === 'ophthalmology' ||
+        text === 'ophthal' ||
+        text === 'ophthal practice' ||
+        text === 'opthal practice'
+      ) {
+        return 'ophthal';
+      }
+
+      return 'other';
+    }
+
     function getEmployerTypeClass(value) {
       const employerType =
         getEmployerTypeKey(value);
@@ -3526,6 +3563,22 @@
       const sourceRows =
         response?.table?.rows || [];
 
+      const retainedDateCutoff =
+        state.summaryLatestDate instanceof Date &&
+        !Number.isNaN(
+          state.summaryLatestDate.getTime()
+        )
+          ? new Date(
+              Math.min(
+                state.dateCutoff.getTime(),
+                subtractCalendarMonths(
+                  state.summaryLatestDate,
+                  3
+                ).getTime()
+              )
+            )
+          : state.dateCutoff;
+
       const headers =
         visibleColumns.map(
           columnNumber => ({
@@ -3583,7 +3636,7 @@
           if (
             !dateValue ||
             dateValue <
-              state.dateCutoff
+              retainedDateCutoff
           ) {
             return;
           }
@@ -3711,6 +3764,11 @@
 
             employerTypeKey:
               getEmployerTypeKey(
+                employerTypeValue
+              ),
+
+            summaryEmployerTypeKey:
+              getSummaryEmployerTypeKey(
                 employerTypeValue
               ),
 
@@ -4430,7 +4488,7 @@
                 repeatValue
               ) === 'no',
             employerTypeKey:
-              getEmployerTypeKey(
+              getSummaryEmployerTypeKey(
                 employerTypeValue
               ),
             stateCode:
@@ -4574,7 +4632,25 @@
           if (
             !SUMMARY_EMPLOYER_TYPES.includes(
               row.employerTypeKey
-            ) ||
+            )
+          ) {
+            return;
+          }
+
+          /*
+           * Totals include every qualifying job in a recognised
+           * employer category, even if State is blank or unknown.
+           */
+          counts[
+            row.employerTypeKey
+          ].Total += 1;
+
+          grandTotal += 1;
+
+          /*
+           * State columns can only count recognised states.
+           */
+          if (
             !SUMMARY_STATE_CODES.includes(
               row.stateCode
             )
@@ -4588,15 +4664,9 @@
             row.stateCode
           ] += 1;
 
-          counts[
-            row.employerTypeKey
-          ].Total += 1;
-
           stateTotals[
             row.stateCode
           ] += 1;
-
-          grandTotal += 1;
         }
       );
 
@@ -4889,7 +4959,7 @@
 
       if (
         selection.employerType &&
-        row.employerTypeKey !==
+        row.summaryEmployerTypeKey !==
           selection.employerType
       ) {
         return false;
@@ -6773,6 +6843,10 @@
               rowModel
                 .employerTypeKey,
 
+            summaryEmployerTypeKey:
+              rowModel
+                .summaryEmployerTypeKey,
+
             isDelisted:
               rowModel.isDelisted,
 
@@ -6957,6 +7031,17 @@
               );
 
             const hidden =
+              (
+                !summaryActive &&
+                (
+                  !(row.dateValue instanceof Date) ||
+                  Number.isNaN(
+                    row.dateValue.getTime()
+                  ) ||
+                  row.dateValue <
+                    state.dateCutoff
+                )
+              ) ||
               (
                 !state.filters
                   .showRepeats &&
