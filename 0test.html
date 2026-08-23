@@ -272,9 +272,9 @@
     /* ---------- Compact salary distribution ---------- */
 
     .salary-distribution {
-      width: calc(100% - 12px);
-      margin: 10px auto 3px;
-      padding: 0 2px;
+      width: 100%;
+      margin: 10px 0 0;
+      padding: 0;
     }
 
     .salary-distribution-topline {
@@ -329,7 +329,7 @@
     .salary-distribution-canvas-wrap {
       position: relative;
       width: 100%;
-      height: 78px;
+      height: 55px;
       overflow: hidden;
       border-top: 1px solid rgba(105, 113, 138, 0.10);
     }
@@ -337,7 +337,7 @@
     #salary-distribution-canvas {
       display: block;
       width: 100%;
-      height: 78px;
+      height: 55px;
     }
 
     .salary-distribution-status {
@@ -1673,16 +1673,52 @@
 
       setDistributionStatus();
 
-
-      const rawMedian =
-        percentile(
+      const distributionPercentiles = [
+        {
+          key: 'p05',
+          probability: 0.05,
+          label: '5th %ile',
+          strokeStyle: 'rgba(105, 113, 138, 0.55)',
+          dash: [3, 3]
+        },
+        {
+          key: 'p20',
+          probability: 0.20,
+          label: '20th %ile',
+          strokeStyle: 'rgba(105, 113, 138, 0.55)',
+          dash: [3, 3]
+        },
+        {
+          key: 'median',
+          probability: 0.50,
+          label: 'Median',
+          strokeStyle: '#f1c232',
+          dash: [3, 3]
+        },
+        {
+          key: 'p80',
+          probability: 0.80,
+          label: '80th %ile',
+          strokeStyle: 'rgba(105, 113, 138, 0.55)',
+          dash: [3, 3]
+        },
+        {
+          key: 'p95',
+          probability: 0.95,
+          label: '95th %ile',
+          strokeStyle: 'rgba(105, 113, 138, 0.55)',
+          dash: [3, 3]
+        }
+      ].map(item => ({
+        ...item,
+        value: percentile(
           salaries,
-          0.5
-        );
+          item.probability
+        )
+      }));
 
       const minimumX = 60000;
       const maximumX = 180000;
-
 
       const density =
         calculateKernelDensity(
@@ -1770,18 +1806,10 @@
 
       const padding = {
         top: 4,
-        right: 4,
-        bottom: 27,
-        left: 4
+        right: 5,
+        bottom: 0.5,
+        left: 5
       };
-
-      const plotWidth =
-        Math.max(
-          1,
-          cssWidth -
-          padding.left -
-          padding.right
-        );
 
       const plotHeight =
         Math.max(
@@ -1795,6 +1823,184 @@
         padding.top +
         plotHeight;
 
+      /*
+       * Align the distribution with the percentile columns below it.
+       * The live table controls the target positions, so this continues
+       * to line up when the embed/table width changes.
+       *
+       * The salary axis is piecewise-linear between percentile anchors:
+       *   5th -> 5th column centre
+       *   20th -> 20th column centre
+       *   median -> Median column centre
+       *   80th -> 80th column centre
+       *   95th -> 95th column centre
+       * Values between those percentiles retain proportional spacing.
+       */
+      const canvasRect =
+        salaryDistributionCanvas.getBoundingClientRect();
+
+      const headerCells =
+        [
+          ...salaryTable.querySelectorAll(
+            'thead tr:first-child th'
+          )
+        ];
+
+      const fallbackFirstColumnFraction = 0.24;
+      const fallbackValueColumnFraction =
+        (1 - fallbackFirstColumnFraction) / 5;
+
+      const fallbackTargetForIndex = index =>
+        cssWidth *
+        (
+          fallbackFirstColumnFraction +
+          fallbackValueColumnFraction *
+          (index + 0.5)
+        );
+
+      const targetForColumn = index => {
+        const cell =
+          headerCells[index + 1];
+
+        if (!cell) {
+          return fallbackTargetForIndex(index);
+        }
+
+        const rect =
+          cell.getBoundingClientRect();
+
+        return Math.max(
+          padding.left,
+          Math.min(
+            cssWidth - padding.right,
+            rect.left +
+            rect.width / 2 -
+            canvasRect.left
+          )
+        );
+      };
+
+      const percentileAnchors =
+        distributionPercentiles.map(
+          (item, index) => ({
+            ...item,
+            targetX:
+              targetForColumn(index)
+          })
+        );
+
+      const firstValueCell =
+        headerCells[1];
+
+      const lastValueCell =
+        headerCells[5];
+
+      const firstValueRect =
+        firstValueCell?.getBoundingClientRect();
+
+      const lastValueRect =
+        lastValueCell?.getBoundingClientRect();
+
+      const numericPlotLeft =
+        firstValueRect
+          ? Math.max(
+              padding.left,
+              firstValueRect.left -
+              canvasRect.left +
+              2
+            )
+          : Math.max(
+              padding.left,
+              cssWidth *
+              fallbackFirstColumnFraction +
+              2
+            );
+
+      const numericPlotRight =
+        lastValueRect
+          ? Math.min(
+              cssWidth - padding.right,
+              lastValueRect.right -
+              canvasRect.left -
+              3
+            )
+          : cssWidth - padding.right;
+
+      const xAnchors = [
+        {
+          value: minimumX,
+          pixel: numericPlotLeft
+        },
+        ...percentileAnchors.map(
+          item => ({
+            value: item.value,
+            pixel: item.targetX
+          })
+        ),
+        {
+          value: maximumX,
+          pixel: numericPlotRight
+        }
+      ]
+        .filter(
+          anchor =>
+            Number.isFinite(anchor.value) &&
+            Number.isFinite(anchor.pixel)
+        )
+        .sort(
+          (first, second) =>
+            first.value - second.value
+        );
+
+      /*
+       * Duplicate percentile values can occur in small/clustered samples.
+       * Collapse them into a single anchor to keep the mapping monotonic.
+       */
+      const uniqueXAnchors = [];
+
+      xAnchors.forEach(anchor => {
+        const previous =
+          uniqueXAnchors[
+            uniqueXAnchors.length - 1
+          ];
+
+        if (
+          previous &&
+          Math.abs(
+            previous.value -
+            anchor.value
+          ) < 1e-8
+        ) {
+          previous.pixel =
+            Math.max(
+              previous.pixel,
+              anchor.pixel
+            );
+          return;
+        }
+
+        uniqueXAnchors.push({
+          ...anchor
+        });
+      });
+
+      /*
+       * Enforce increasing pixel positions. This is mainly defensive for
+       * unusual percentile ties or extremely narrow embeds.
+       */
+      for (
+        let index = 1;
+        index < uniqueXAnchors.length;
+        index += 1
+      ) {
+        uniqueXAnchors[index].pixel =
+          Math.max(
+            uniqueXAnchors[index].pixel,
+            uniqueXAnchors[index - 1].pixel +
+            0.25
+          );
+      }
+
       const xToPixel = value => {
         const clampedValue =
           Math.min(
@@ -1805,15 +2011,45 @@
             )
           );
 
-        return padding.left +
-          (
-            (clampedValue - minimumX) /
-            Math.max(
-              1,
-              maximumX - minimumX
-            )
-          ) *
-          plotWidth;
+        for (
+          let index = 1;
+          index < uniqueXAnchors.length;
+          index += 1
+        ) {
+          const previous =
+            uniqueXAnchors[index - 1];
+
+          const current =
+            uniqueXAnchors[index];
+
+          if (
+            clampedValue <= current.value
+          ) {
+            const span =
+              current.value -
+              previous.value;
+
+            const proportion =
+              span === 0
+                ? 0
+                : (
+                    clampedValue -
+                    previous.value
+                  ) /
+                  span;
+
+            return previous.pixel +
+              (
+                current.pixel -
+                previous.pixel
+              ) *
+              proportion;
+          }
+        }
+
+        return uniqueXAnchors[
+          uniqueXAnchors.length - 1
+        ].pixel;
       };
 
       const densityToPixel = value =>
@@ -1826,6 +2062,49 @@
           plotHeight - 5
         );
 
+      const findDensityPoint = value => {
+        for (
+          let index = 1;
+          index < density.length;
+          index += 1
+        ) {
+          const previous = density[index - 1];
+          const current = density[index];
+
+          if (
+            value >= previous.x &&
+            value <= current.x
+          ) {
+            const span =
+              current.x - previous.x;
+
+            const proportion =
+              span === 0
+                ? 0
+                : (value - previous.x) /
+                  span;
+
+            return {
+              x: value,
+              y:
+                previous.y +
+                (current.y - previous.y) *
+                proportion
+            };
+          }
+        }
+
+        return density.reduce(
+          (nearest, point) =>
+            Math.abs(point.x - value) <
+            Math.abs(nearest.x - value)
+              ? point
+              : nearest,
+          density[0]
+        );
+      };
+
+      /* Density area */
       context.save();
       context.beginPath();
 
@@ -1873,6 +2152,32 @@
       context.fill();
       context.restore();
 
+      /* Raw salaries */
+      context.save();
+      context.fillStyle =
+        'rgba(102, 0, 255, 0.28)';
+
+      salaries.forEach(
+        (salary, index) => {
+          const yOffset =
+            2 +
+            (index % 3) *
+            2.1;
+
+          context.beginPath();
+          context.arc(
+            xToPixel(salary),
+            baselineY - yOffset,
+            1.35,
+            0,
+            Math.PI * 2
+          );
+          context.fill();
+        }
+      );
+      context.restore();
+
+      /* Density curve */
       context.save();
       context.beginPath();
       context.strokeStyle =
@@ -1904,196 +2209,55 @@
       context.stroke();
       context.restore();
 
-      const medianDensityPoint = (() => {
-        for (
-          let index = 1;
-          index < density.length;
-          index += 1
-        ) {
-          const previous = density[index - 1];
-          const current = density[index];
+      const labels =
+        percentileAnchors.map(item => {
+          const curvePoint =
+            findDensityPoint(
+              item.value
+            );
 
-          if (
-            rawMedian >= previous.x &&
-            rawMedian <= current.x
-          ) {
-            const span =
-              current.x - previous.x;
+          return {
+            ...item,
+            x:
+              xToPixel(
+                item.value
+              ),
+            curveY:
+              densityToPixel(
+                curvePoint.y
+              ),
+            valueText:
+              formatDistributionSalary(
+                item.value
+              )
+          };
+        });
 
-            const proportion =
-              span === 0
-                ? 0
-                : (rawMedian - previous.x) /
-                  span;
-
-            return {
-              x: rawMedian,
-              y:
-                previous.y +
-                (current.y - previous.y) *
-                proportion
-            };
-          }
-        }
-
-        return density.reduce(
-          (nearest, point) =>
-            Math.abs(point.x - rawMedian) <
-            Math.abs(nearest.x - rawMedian)
-              ? point
-              : nearest,
-          density[0]
-        );
-      })();
-
-      const medianX =
-        xToPixel(rawMedian);
-
-      const medianCurveY =
-        densityToPixel(
-          medianDensityPoint.y
-        );
-
-      context.save();
-      context.beginPath();
-      context.setLineDash([3, 3]);
-      context.strokeStyle =
-        '#f1c232';
-      context.lineWidth = 1.1;
-      context.moveTo(
-        medianX,
-        medianCurveY
-      );
-      context.lineTo(
-        medianX,
-        baselineY
-      );
-      context.stroke();
-      context.restore();
-
-      context.save();
-      context.fillStyle =
-        '#c59b13';
-      context.font =
-        `700 ${window.matchMedia('(max-width: 430px)').matches ? 7.4 : 8.2}px Lato, sans-serif`;
-      context.textAlign = 'center';
-      context.textBaseline = 'top';
-      context.fillText(
-        'Median',
-        medianX,
-        baselineY + 3
-      );
-      context.restore();
-
-      const majorTicks = [];
-      const minorTicks = [];
-
-      for (
-        let value = minimumX;
-        value <= maximumX;
-        value += 10000
-      ) {
-        if (value % 20000 === 0) {
-          majorTicks.push(value);
-        } else {
-          minorTicks.push(value);
-        }
-      }
-
-      context.save();
-      context.strokeStyle =
-        'rgba(105, 113, 138, 0.18)';
-      context.lineWidth = 0.8;
-      context.beginPath();
-      context.moveTo(
-        padding.left,
-        baselineY + 0.5
-      );
-      context.lineTo(
-        cssWidth - padding.right,
-        baselineY + 0.5
-      );
-      context.stroke();
-      context.restore();
-
-      context.save();
-      context.strokeStyle =
-        'rgba(105, 113, 138, 0.22)';
-      context.lineWidth = 0.7;
-
-      minorTicks.forEach(value => {
-        const x = xToPixel(value);
+      /* Percentile guide lines */
+      labels.forEach(label => {
+        context.save();
         context.beginPath();
+        context.setLineDash(
+          label.dash
+        );
+        context.strokeStyle =
+          label.strokeStyle;
+        context.lineWidth =
+          label.key === 'median'
+            ? 1.1
+            : 1;
         context.moveTo(
-          x,
-          baselineY
+          label.x,
+          label.curveY
         );
         context.lineTo(
-          x,
-          baselineY + 3
-        );
-        context.stroke();
-      });
-
-      context.restore();
-
-      context.save();
-      context.strokeStyle =
-        'rgba(21, 21, 21, 0.50)';
-      context.fillStyle =
-        'rgba(21, 21, 21, 0.78)';
-      context.lineWidth = 0.9;
-      context.font =
-        `${window.matchMedia('(max-width: 430px)').matches ? 7.4 : 8.2}px Lato, sans-serif`;
-      context.textAlign = 'center';
-      context.textBaseline = 'top';
-
-      majorTicks.forEach(value => {
-        const x = xToPixel(value);
-
-        context.beginPath();
-        context.moveTo(
-          x,
+          label.x,
           baselineY
         );
-        context.lineTo(
-          x,
-          baselineY + 5
-        );
         context.stroke();
-
-        context.fillText(
-          formatDistributionSalary(value),
-          x,
-          baselineY + 16
-        );
+        context.restore();
       });
 
-      context.restore();
-
-      context.save();
-      context.fillStyle =
-        'rgba(102, 0, 255, 0.28)';
-
-      salaries.forEach(
-        (salary, index) => {
-          const yOffset =
-            2 +
-            (index % 3) *
-            2.1;
-
-          context.beginPath();
-          context.arc(
-            xToPixel(salary),
-            baselineY - yOffset,
-            1.35,
-            0,
-            Math.PI * 2
-          );
-          context.fill();
-        }
-      );
-      context.restore();
     }
 
     function normaliseRawRows(response) {
