@@ -1,3077 +1,4624 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  <title>Permanent Salary Summary</title>
-
-  <link
-    href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap"
-    rel="stylesheet"
-  >
-
-  <style>
-    :root {
-      --purple: #6600ff;
-      --ink: #151515;
-      --muted: #69718a;
-      --track: #e8eaf0;
-      --live-red: #e53935;
-      --cached-amber: #c27c00;
-      --trend-yellow: #f1c232;
-
-      --blue-cone: rgba(74, 86, 255, 0.82);
-      --green-cone: rgba(36, 210, 116, 0.78);
-      --red-cone: rgba(255, 92, 48, 0.76);
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    html,
-    body {
-      width: 100%;
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-    }
-
-    body {
-      font-family: 'Lato', sans-serif;
-      color: var(--ink);
-      background: #fff;
-      overflow: hidden;
-      -webkit-tap-highlight-color: transparent;
-    }
-
-    button,
-    input {
-      font: inherit;
-    }
-
-    #fit {
-      width: 100%;
-      overflow: hidden;
-    }
-
-    #app {
-      width: 100%;
-      margin: 0;
-      padding: 14px 2px 14px;
-      text-align: center;
-    }
-
-    #app.is-loading .response-summary,
-    #app.is-loading .salary-section {
-      display: none;
-    }
-
-    #app:not(.is-loading) .app-loading {
-      display: none;
-    }
-
-    .app-loading {
-      width: 100%;
-      min-height: 190px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .cone-loader {
-      position: relative;
-      width: 176px;
-      height: 78px;
-      margin: 0 auto;
-      overflow: visible;
-      isolation: isolate;
-    }
-
-    .cone {
-      position: absolute;
-      bottom: 8px;
-      width: 58px;
-      height: 68px;
-      opacity: 0;
-      clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-      -webkit-clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-      filter: none;
-      mix-blend-mode: normal;
-      backface-visibility: hidden;
-      -webkit-backface-visibility: hidden;
-      transform: translateZ(0);
-      will-change: opacity;
-    }
-
-    .cone.blue {
-      left: 33px;
-      background: var(--blue-cone);
-      animation: blueConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
-    }
-
-    .cone.green {
-      left: 69px;
-      background: var(--green-cone);
-      animation: greenConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
-    }
-
-    .cone.red {
-      left: 85px;
-      background: var(--red-cone);
-      animation: redConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
-    }
-
-    .loader-text {
-      margin: 2px 0 0;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 400;
-      line-height: 1.35;
-      text-align: center;
-      animation: loadingTextPulse 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
-    }
-
-    @keyframes blueConeCycle {
-      0% { opacity: 0; }
-      12% { opacity: 1; }
-      76% { opacity: 1; }
-      87% { opacity: 0; }
-      100% { opacity: 0; }
-    }
-
-    @keyframes greenConeCycle {
-      0% { opacity: 0; }
-      20% { opacity: 0; }
-      32% { opacity: 1; }
-      76% { opacity: 1; }
-      87% { opacity: 0; }
-      100% { opacity: 0; }
-    }
-
-    @keyframes redConeCycle {
-      0% { opacity: 0; }
-      40% { opacity: 0; }
-      52% { opacity: 1; }
-      76% { opacity: 1; }
-      87% { opacity: 0; }
-      100% { opacity: 0; }
-    }
-
-    @keyframes loadingTextPulse {
-      0% { opacity: 0.45; }
-      52% { opacity: 0.78; }
-      76% { opacity: 0.78; }
-      87% { opacity: 0.45; }
-      100% { opacity: 0.45; }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      *,
-      *::before,
-      *::after {
-        transition-duration: 0.01ms !important;
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-      }
-
-      .cone.blue,
-      .cone.green,
-      .cone.red {
-        animation: none;
-        opacity: 1;
-      }
-
-      .loader-text {
-        animation: none;
-        opacity: 0.72;
-      }
-    }
-
-    /* ---------- Response count ---------- */
-
-    .response-summary {
-      width: 100%;
-      padding: 0;
-    }
-
-    .response-summary::after {
-      content: "";
-      display: block;
-      width: 100%;
-      height: 1px;
-      margin-top: 5px;
-      background: linear-gradient(
-        90deg,
-        #fff 0%,
-        rgba(102, 0, 255, 0.16) 24%,
-        var(--purple) 50%,
-        rgba(102, 0, 255, 0.16) 76%,
-        #fff 100%
-      );
-    }
-
-    .response-label {
-      color: var(--muted);
-      font-size: clamp(13px, 3.8vw, 16px);
-      font-weight: 400;
-      line-height: 1.15;
-      white-space: nowrap;
-    }
-
-    .response-value-row {
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      min-height: 31px;
-      margin-top: 2px;
-    }
-
-    .response-value {
-      margin-top: 2px;
-      color: var(--ink);
-      font-size: clamp(22px, 6vw, 28px);
-      font-weight: 400;
-      line-height: 1.1;
-      white-space: nowrap;
-    }
-
-    .live-data {
-      position: absolute;
-      right: 1px;
-      bottom: 4px;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      margin: 0;
-      padding: 0;
-      color: var(--muted);
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      line-height: 1;
-      white-space: nowrap;
-    }
-
-    .live-data-dot {
-      width: 6px;
-      height: 6px;
-      flex: 0 0 6px;
-      border-radius: 50%;
-      background: var(--live-red);
-    }
-
-    .live-data.is-cached .live-data-dot {
-      background: var(--cached-amber);
-    }
-
-    /* ---------- Compact salary distribution ---------- */
-
-    .salary-distribution {
-      width: 100%;
-      margin: 10px 0 0;
-      padding: 0;
-    }
-
-    .salary-distribution-topline {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      min-height: 14px;
-      margin: 0 1px 2px;
-    }
-
-    .salary-distribution-title {
-      color: var(--muted);
-      font-size: 9px;
-      font-weight: 700;
-      line-height: 1;
-      text-align: left;
-      white-space: nowrap;
-    }
-
-    .salary-distribution-legend {
-      display: inline-flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 7px;
-      color: var(--muted);
-      font-size: 8px;
-      line-height: 1;
-      white-space: nowrap;
-    }
-
-    .salary-distribution-legend-item {
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-    }
-
-    .salary-distribution-dot {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: rgba(102, 0, 255, 0.42);
-    }
-
-    .salary-distribution-line {
-      width: 15px;
-      height: 2px;
-      border-radius: 999px;
-      background: var(--trend-yellow);
-    }
-
-    .salary-distribution-canvas-wrap {
-      position: relative;
-      width: 100%;
-      height: 55px;
-      overflow: hidden;
-      border-top: 1px solid rgba(105, 113, 138, 0.10);
-    }
-
-    #salary-distribution-canvas {
-      display: block;
-      width: 100%;
-      height: 55px;
-    }
-
-    .salary-distribution-status {
-      position: absolute;
-      inset: 0;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 4px;
-      color: var(--muted);
-      background: rgba(255, 255, 255, 0.88);
-      font-size: 9px;
-      line-height: 1.25;
-      text-align: center;
-    }
-
-    .salary-distribution-status.is-visible {
-      display: flex;
-    }
-
-
-    /* ---------- Salary table ---------- */
-
-    .salary-section {
-      width: 100%;
-      margin-top: 6px;
-    }
-
-
-    .salary-table-wrap {
-      position: relative;
-      width: 100%;
-    }
-
-    .salary-table-wrap::after {
-      content: "";
-      position: absolute;
-      z-index: 2;
-      top: 0;
-      bottom: 0;
-      left: 24%;
-      width: 1px;
-      pointer-events: none;
-      background: linear-gradient(
-        to bottom,
-        #fff 0%,
-        rgba(21, 21, 21, 0.16) 10%,
-        var(--ink) 18%,
-        rgba(21, 21, 21, 0.16) 78%,
-        #fff 100%
-      );
-    }
-
-    .salary-table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-    }
-
-    .salary-table th,
-    .salary-table td {
-      position: relative;
-      padding: 8px 6px;
-      line-height: 1.2;
-      text-align: center;
-      vertical-align: middle;
-    }
-
-    .salary-table th {
-      color: var(--muted);
-      font-size: clamp(10px, 3.1vw, 14px);
-      font-weight: 700;
-      white-space: nowrap;
-    }
-
-    .salary-table td {
-      color: var(--ink);
-      font-size: clamp(12px, 3.6vw, 15px);
-      font-weight: 400;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .salary-table th + th,
-    .salary-table td + td {
-      border-left: 1px solid var(--track);
-    }
-
-    .salary-table th:nth-child(2),
-    .salary-table td:nth-child(2) {
-      border-left: 0;
-    }
-
-    .salary-table .table-major-separator td {
-      height: 0;
-      padding: 0;
-      line-height: 0;
-      background: transparent;
-      border-top: 1px solid var(--ink);
-    }
-
-    .salary-table .table-empty-separator td {
-      height: 0;
-      padding: 0;
-      line-height: 0;
-      background: transparent;
-      border-top: 1px solid var(--track);
-    }
-
-    .salary-table sup {
-      position: relative;
-      top: -0.08em;
-      font-size: 0.7em;
-      line-height: 0;
-      vertical-align: super;
-    }
-
-    .salary-table th:first-child,
-    .salary-table td:first-child {
-      width: 24%;
-    }
-
-    .salary-table td:first-child {
-      font-weight: 700;
-      white-space: nowrap;
-    }
-
-
-    .cell-value {
-      display: block;
-      white-space: nowrap;
-    }
-
-
-    .salary-footnote {
-      margin: 10px 2px 0;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 400;
-      line-height: 1.35;
-      text-align: left;
-    }
-
-    .error {
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    @media (max-width: 430px) {
-      #app {
-        padding: 12px 1px 12px;
-      }
-
-      .salary-table th,
-      .salary-table td {
-        padding: 7px 2px;
-      }
-
-      .salary-table th {
-        font-size: clamp(8px, 2.8vw, 11px);
-      }
-
-      .salary-table td {
-        font-size: clamp(10px, 3.1vw, 12px);
-      }
-
-      .salary-table th:first-child,
-      .salary-table td:first-child {
-        width: 24%;
-      }
-
-      .salary-table td:first-child {
-        font-size: clamp(9px, 3vw, 12px);
-      }
-
-      .salary-footnote {
-        font-size: 10px;
-      }
-
-      .app-loading {
-        min-height: 175px;
-      }
-
-      .cone-loader {
-        width: 160px;
-        height: 70px;
-      }
-
-      .cone {
-        width: 52px;
-        height: 61px;
-      }
-
-      .cone.blue {
-        left: 30px;
-      }
-
-      .cone.green {
-        left: 64px;
-      }
-
-      .cone.red {
-        left: 78px;
-      }
-
-      .loader-text {
-        font-size: 10px;
-      }
-    }
-
-    @media (max-width: 350px) {
-      .salary-table th {
-        font-size: 8px;
-      }
-
-      .salary-table td {
-        font-size: 10px;
-      }
-
-      .salary-table td:first-child {
-        font-size: 9px;
-      }
-    }
-  </style>
-</head>
-
-<body>
-  <div id="fit">
-    <main id="app" class="is-loading">
-      <div id="loading-state" class="app-loading" role="status" aria-label="Loading">
-        <div class="cone-loader">
-          <div class="cone blue" aria-hidden="true"></div>
-          <div class="cone green" aria-hidden="true"></div>
-          <div class="cone red" aria-hidden="true"></div>
-        </div>
-
-        <div class="loader-text">Loading...</div>
-      </div>
-
-      <section class="response-summary" aria-live="polite">
-        <div class="response-label">No. of responses</div>
-
-        <div class="response-value-row">
-          <div id="response-count" class="response-value"></div>
-          <div id="dataSourceIndicator" class="live-data" aria-label="Live data">
-            <span class="live-data-dot" aria-hidden="true"></span>
-            <span id="dataSourceText">LIVE data</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="salary-section" aria-label="Permanent salary summary">
-        <div class="salary-distribution" aria-label="FTE salary distribution with individual salaries and smoothed density curve">
-          <div class="salary-distribution-topline">
-            <span class="salary-distribution-title">FTE salary distribution</span>
-
-            <span class="salary-distribution-legend" aria-hidden="true">
-              <span class="salary-distribution-legend-item">
-                <span class="salary-distribution-dot"></span>
-                <span>Salaries</span>
-              </span>
-
-              <span class="salary-distribution-legend-item">
-                <span class="salary-distribution-line"></span>
-                <span>Density</span>
-              </span>
-            </span>
-          </div>
-
-          <div class="salary-distribution-canvas-wrap">
-            <canvas id="salary-distribution-canvas" aria-label="Distribution of FTE salaries"></canvas>
-            <div id="salary-distribution-status" class="salary-distribution-status"></div>
-          </div>
-
-        </div>
-
-
-        <div class="salary-table-wrap">
-          <table id="salary-table" class="salary-table">
-            <thead></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-
-        <div id="salary-footnote" class="salary-footnote">
-          Salary (FTE) excl. super, incl. location and weekend/night loadings<br>
-          * adjusted to 'unloaded' FTE (removes weekend and 6pm+ loadings)
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <script>
-    const SPREADSHEET_ID =
-      '1D4EoCMnH_RbwbuzFtw92NOwnvR_r9zQV7dAaXtfnnd0';
-
-    const SHEET_GID = '0';
-    const SHEET_NAME = 'Data';
-
-    const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
-
-    const CACHE_APP_KEY =
-      'permanent-salary-summary';
-
-    const CACHE_FETCH_TIMEOUT_MS =
-      10000;
-
-    /*
-     * Testing switch only.
-     * Leave false in normal use.
-     * Set true temporarily to verify the existing cached-summary fallback.
-     * The current cached summary does not contain the raw roster fields needed
-     * for the new late-night adjustment calculation or the salary distribution chart.
-     */
-    const FORCE_CACHED_DATA =
-      false;
-
-    /*
-     * Live calculations use the raw/derived fields in Data:
-     * A  = submission timestamp
-     * M  = mode full-time weekly hours (M2; normally 38)
-     * AM = hours worked per week
-     * AN = rostered Saturdays / 4 weeks
-     * AO = rostered Sundays / 4 weeks
-     * AP = rostered late nights / 4 weeks
-     * AY = FTE salary
-     * BE = FTE bonuses
-     *
-     * AZ/BF are deliberately not used: the frontend now recalculates the
-     * adjusted values itself so late-night loading can also be removed.
-     */
-    const RAW_DATA_RANGE = 'A:BE';
-
-    const RAW_COLUMNS = Object.freeze({
-      date: 0,
-      modeFteHours: 12,
-      hoursPerWeek: 38,
-      saturdays: 39,
-      sundays: 40,
-      lateNights: 41,
-      salary: 50,
-      bonuses: 56
-    });
-
-    const EXPECTED_SALARY_COLS = 6;
-    const EXPECTED_SALARY_DATA_ROWS = 12;
-
-    const DAY_MS = 86400000;
-
-    /*
-     * These reproduce the existing spreadsheet weekend adjustment assumptions
-     * and extend them to late nights.
-     */
-    const LOADING_REFERENCE_WEEKLY_HOURS = 40;
-    const SATURDAY_SHIFT_HOURS = 8;
-    const SUNDAY_SHIFT_HOURS = 6;
-    const LATE_NIGHT_SHIFT_HOURS = 8;
-    const SATURDAY_LOADING = 0.50;
-    const SUNDAY_LOADING = 0.50;
-    const LATE_NIGHT_LOADING = 0.15;
-
-    const PERCENTILES = [
-      {
-        label: '5th',
-        probability: 0.05
-      },
-      {
-        label: '20th',
-        probability: 0.20
-      },
-      {
-        label: 'Median',
-        probability: 0.50
-      },
-      {
-        label: '80th',
-        probability: 0.80
-      },
-      {
-        label: '95th',
-        probability: 0.95
-      }
-    ];
-
-    const app =
-      document.getElementById('app');
-
-    const responseCount =
-      document.getElementById('response-count');
-
-    const salaryTable =
-      document.getElementById('salary-table');
-
-    const loadingState =
-      document.getElementById('loading-state');
-
-    const dataSourceIndicator =
-      document.getElementById('dataSourceIndicator');
-
-    const dataSourceText =
-      document.getElementById('dataSourceText');
-
-
-    const salaryDistributionCanvas =
-      document.getElementById('salary-distribution-canvas');
-
-    const salaryDistributionStatus =
-      document.getElementById('salary-distribution-status');
-
-
-    const salaryFootnote =
-      document.getElementById('salary-footnote');
-
-    let rawRows = [];
-    let fteWeeklyHours = 38;
-    let usingLiveRawData = false;
-
-    function hideLoadingState() {
-      app.classList.remove('is-loading');
-      loadingState.setAttribute('aria-hidden', 'true');
-
-      if (usingLiveRawData && rawRows.length) {
-        requestAnimationFrame(() => {
-          renderSalaryDistribution(rawRows);
-        });
-      }
-    }
-
-    function setDataSource(source) {
-      const isCached =
-        source === 'cached';
-
-      dataSourceIndicator?.classList.toggle(
-        'is-cached',
-        isCached
+/* ============================================================
+ * OPTOMETRY-RELATED JOB TRACKER — STANDALONE CACHE BACKEND
+ *
+ * This Apps Script project is intentionally separate from the
+ * central PFF cache project so it has its own Script Properties
+ * storage quota.
+ *
+ * Web app behaviour:
+ *   - Cache refresh functions read Google Sheets and store
+ *     snapshots in this script project's Script Properties.
+ *   - doGet() normally serves stored cached snapshots.
+ *   - For the PFF contribution count only, doGet() can also
+ *     calculate the current total directly from the source sheets.
+ *   - The homepage tries the live contribution calculation first,
+ *     then falls back to the stored cached contribution count.
+ * ============================================================
+ */
+
+const JOB_TRACKER_CACHE_CONFIG = Object.freeze({
+  SPREADSHEET_ID:
+    '1VYglJHVa7NblxLWH-7Gl79_9crXoJ7jqOK64mrOE5Bw',
+
+  SHEET_GID:
+    1792765422,
+
+  HEADER_ROW:
+    2,
+
+  FIRST_DATA_ROW:
+    3,
+
+  SOURCE_COLUMN_COUNT:
+    14,
+
+  DATE_COLUMN:
+    4,
+
+  SUMMARY_MONTHS:
+    3,
+
+  /*
+   * Keep 4 months from today as the normal safety margin.
+   * If the latest genuine job is stale, the cutoff extends
+   * farther back automatically so the summary can still show
+   * its full 3-month-from-latest-job window.
+   */
+  CACHE_MONTHS:
+    4,
+
+  APP_CACHE_KEY:
+    'pff-optometry-related-job-tracker',
+
+  CACHE_PROPERTY_PREFIX:
+    'job-tracker-cache:',
+
+  CACHE_REFRESH_HOUR:
+    18,
+
+  CACHE_VERSION:
+    3,
+
+  /*
+   * Apps Script has a per-property value-size limit, so the
+   * snapshot is split into small versioned chunks.
+   */
+  CACHE_CHUNK_CHARACTERS:
+    2500,
+
+  TIME_ZONE:
+    'Australia/Sydney'
+});
+
+/* ============================================================
+ * CACHE KEYS
+ * ============================================================
+ */
+
+function getJobTrackerCacheBaseKey_() {
+  return (
+    JOB_TRACKER_CACHE_CONFIG.CACHE_PROPERTY_PREFIX +
+    JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY
+  );
+}
+
+function getJobTrackerCacheManifestKey_() {
+  return (
+    getJobTrackerCacheBaseKey_() +
+    ':manifest'
+  );
+}
+
+function getJobTrackerCacheChunkKey_(
+  generation,
+  index
+) {
+  return (
+    getJobTrackerCacheBaseKey_() +
+    ':generation:' +
+    generation +
+    ':chunk:' +
+    String(index).padStart(4, '0')
+  );
+}
+
+/* ============================================================
+ * SOURCE SPREADSHEET
+ * ============================================================
+ */
+
+function getSheetByGid_(
+  spreadsheet,
+  gid
+) {
+  const requiredSheetId =
+    Number(gid);
+
+  const sheet =
+    spreadsheet
+      .getSheets()
+      .find(
+        candidate =>
+          candidate.getSheetId() ===
+          requiredSheetId
       );
 
-      if (source === 'live') {
-        dataSourceIndicator?.setAttribute(
-          'aria-label',
-          'Live data'
-        );
+  if (!sheet) {
+    throw new Error(
+      `Could not find sheet GID ${gid}`
+    );
+  }
 
-        if (dataSourceText) {
-          dataSourceText.textContent =
-            'LIVE data';
-        }
+  return sheet;
+}
 
-        return;
-      }
+function parseTrackerDate_(
+  rawValue,
+  displayValue
+) {
+  if (
+    Object.prototype.toString.call(rawValue) ===
+      '[object Date]' &&
+    Number.isFinite(
+      rawValue.getTime()
+    )
+  ) {
+    return rawValue;
+  }
 
-      if (isCached) {
-        dataSourceIndicator?.setAttribute(
-          'aria-label',
-          'Cached data'
-        );
+  const text =
+    String(
+      displayValue ??
+      rawValue ??
+      ''
+    ).trim();
 
-        if (dataSourceText) {
-          dataSourceText.textContent =
-            'CACHED data';
-        }
+  if (!text) {
+    return null;
+  }
 
-        return;
-      }
+  let match =
+    text.match(
+      /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/
+    );
 
-      dataSourceIndicator?.setAttribute(
-        'aria-label',
-        'Data unavailable'
-      );
+  if (match) {
+    let year =
+      Number(match[3]);
 
-      if (dataSourceText) {
-        dataSourceText.textContent =
-          'DATA unavailable';
-      }
+    if (year < 100) {
+      year += 2000;
     }
 
-    function cleanText(value) {
-      return String(value ?? '')
-        .replace(/\u00a0/g, ' ')
-        .trim()
-        .replace(/\s+/g, ' ');
-    }
-
-    function toNumber(value) {
-      const cleaned = cleanText(value)
-        .replace(/[^\d.-]/g, '');
-
-      if (
-        !cleaned ||
-        !/\d/.test(cleaned)
-      ) {
-        return NaN;
-      }
-
-      const number = Number(cleaned);
-
-      return Number.isFinite(number)
-        ? number
-        : NaN;
-    }
-
-    function getCellValue(cell) {
-      return cell?.v ?? cell?.f ?? '';
-    }
-
-    function parseDate(value) {
-      if (
-        value instanceof Date &&
-        !Number.isNaN(value.getTime())
-      ) {
-        return Date.UTC(
-          value.getFullYear(),
-          value.getMonth(),
-          value.getDate()
-        );
-      }
-
-      if (
-        typeof value === 'number' &&
-        value > 20000 &&
-        value < 80000
-      ) {
-        return (
-          Date.UTC(1899, 11, 30) +
-          value * DAY_MS
-        );
-      }
-
-      const text =
-        cleanText(value);
-
-      if (!text) {
-        return null;
-      }
-
-      const googleDate = text.match(
-        /^Date\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})/
+    const date =
+      new Date(
+        year,
+        Number(match[2]) - 1,
+        Number(match[1])
       );
 
-      if (googleDate) {
-        return Date.UTC(
-          Number(googleDate[1]),
-          Number(googleDate[2]),
-          Number(googleDate[3])
-        );
-      }
+    return Number.isFinite(
+      date.getTime()
+    )
+      ? date
+      : null;
+  }
 
-      const auDate = text.match(
-        /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})/
+  match =
+    text.match(
+      /^(\d{4})-(\d{1,2})-(\d{1,2})$/
+    );
+
+  if (match) {
+    const date =
+      new Date(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3])
       );
 
-      if (auDate) {
-        let year =
-          Number(auDate[3]);
-
-        if (year < 100) {
-          year += 2000;
-        }
-
-        return Date.UTC(
-          year,
-          Number(auDate[2]) - 1,
-          Number(auDate[1])
-        );
-      }
-
-      const isoDate = text.match(
-        /^(\d{4})-(\d{1,2})-(\d{1,2})/
-      );
-
-      if (isoDate) {
-        return Date.UTC(
-          Number(isoDate[1]),
-          Number(isoDate[2]) - 1,
-          Number(isoDate[3])
-        );
-      }
-
-      const parsed =
-        new Date(text);
-
-      return Number.isNaN(parsed.getTime())
-        ? null
-        : Date.UTC(
-            parsed.getFullYear(),
-            parsed.getMonth(),
-            parsed.getDate()
-          );
-    }
-
-    function percentile(sortedValues, probability) {
-      if (!sortedValues.length) {
-        return NaN;
-      }
-
-      const index =
-        (sortedValues.length - 1) *
-        probability;
-
-      const lowerIndex =
-        Math.floor(index);
-
-      const upperIndex =
-        Math.ceil(index);
-
-      if (lowerIndex === upperIndex) {
-        return sortedValues[lowerIndex];
-      }
-
-      return (
-        sortedValues[lowerIndex] +
-        (
-          sortedValues[upperIndex] -
-          sortedValues[lowerIndex]
-        ) *
-        (index - lowerIndex)
-      );
-    }
-
-    function calculatePercentiles(values) {
-      const sorted = values
-        .filter(Number.isFinite)
-        .slice()
-        .sort(
-          (first, second) =>
-            first - second
-        );
-
-      return PERCENTILES.map(
-        item =>
-          percentile(
-            sorted,
-            item.probability
-          )
-      );
-    }
-
-    function formatSalaryCurrency(value) {
-      const number =
-        Number(value);
-
-      if (!Number.isFinite(number)) {
-        return '—';
-      }
-
-      if (number === 0) {
-        return '$0';
-      }
-
-      if (Math.abs(number) >= 1000) {
-        return `$${new Intl.NumberFormat('en-AU', {
-          maximumFractionDigits: 0
-        }).format(Math.round(number / 1000))}k`;
-      }
-
-      return `$${new Intl.NumberFormat('en-AU', {
-        maximumFractionDigits: 0
-      }).format(Math.round(number))}`;
-    }
-
-    function formatBonusCurrency(value) {
-      const number =
-        Number(value);
-
-      if (!Number.isFinite(number)) {
-        return '—';
-      }
-
-      if (number === 0) {
-        return '$0';
-      }
-
-      if (Math.abs(number) >= 1000) {
-        const scaled =
-          number / 1000;
-
-        return `$${new Intl.NumberFormat('en-AU', {
-          maximumFractionDigits:
-            Math.abs(scaled - Math.round(scaled)) < 0.05
-              ? 0
-              : 1
-        }).format(scaled)}k`;
-      }
-
-      return `$${new Intl.NumberFormat('en-AU', {
-        maximumFractionDigits: 0
-      }).format(Math.round(number))}`;
-    }
-
-    function formatHourly(value) {
-      const number =
-        Number(value);
-
-      return Number.isFinite(number)
-        ? `$${new Intl.NumberFormat('en-AU', {
-            maximumFractionDigits: 0
-          }).format(number)}`
-        : '—';
-    }
-
-    function formatPlainNumber(value) {
-      const number =
-        Number(value);
-
-      if (!Number.isFinite(number)) {
-        return '—';
-      }
-
-      return new Intl.NumberFormat(
-        'en-AU',
-        {
-          maximumFractionDigits:
-            Math.abs(number - Math.round(number)) < 0.05
-              ? 0
-              : 1
-        }
-      ).format(number);
-    }
-
-    function formatMetricValue(metricKey, value) {
-      if (
-        metricKey === 'salary' ||
-        metricKey === 'unloadedSalary'
-      ) {
-        return formatSalaryCurrency(value);
-      }
-
-      if (
-        metricKey === 'bonuses' ||
-        metricKey === 'unloadedBonuses'
-      ) {
-        return formatBonusCurrency(value);
-      }
-
-      if (
-        metricKey === 'hourly' ||
-        metricKey === 'unloadedHourly'
-      ) {
-        return formatHourly(value);
-      }
-
-      return formatPlainNumber(value);
-    }
-
-    function appendHeaderText(cell, value) {
-      const text =
-        String(value || '—');
-
-      const suffixMatch =
-        text.match(/^(.*?)(th)$/i);
-
-      if (!suffixMatch) {
-        cell.textContent = text;
-        return;
-      }
-
-      cell.appendChild(
-        document.createTextNode(
-          suffixMatch[1]
-        )
-      );
-
-      const superscript =
-        document.createElement('sup');
-
-      superscript.textContent =
-        suffixMatch[2];
-
-      cell.appendChild(
-        superscript
-      );
-    }
-
-    function renderCalculatedSalaryTable(summary) {
-      const thead =
-        salaryTable.querySelector('thead');
-
-      const tbody =
-        salaryTable.querySelector('tbody');
-
-      thead.textContent = '';
-      tbody.textContent = '';
-
-      const headerRow =
-        document.createElement('tr');
-
-      const firstHeader =
-        document.createElement('th');
-
-      firstHeader.scope = 'col';
-      firstHeader.textContent = '%iles →';
-      headerRow.appendChild(firstHeader);
-
-      PERCENTILES.forEach(
-        item => {
-          const th =
-            document.createElement('th');
-
-          th.scope = 'col';
-          appendHeaderText(
-            th,
-            item.label
-          );
-
-          headerRow.appendChild(th);
-        }
-      );
-
-      thead.appendChild(headerRow);
-
-      const majorSeparatorRow =
-        document.createElement('tr');
-
-      majorSeparatorRow.className =
-        'table-major-separator';
-
-      const majorSeparatorCell =
-        document.createElement('td');
-
-      majorSeparatorCell.colSpan =
-        EXPECTED_SALARY_COLS;
-
-      majorSeparatorRow.appendChild(
-        majorSeparatorCell
-      );
-
-      thead.appendChild(
-        majorSeparatorRow
-      );
-
-      const rows = [
-        { key: 'salary', label: 'Salary' },
-        { key: 'hourly', label: '≙ Hrly rate' },
-        { key: 'bonuses', label: 'Bonuses' },
-        { separator: true },
-        { key: 'unloadedSalary', label: 'Salary*' },
-        { key: 'unloadedHourly', label: '≙ Hrly rate*' },
-        { key: 'unloadedBonuses', label: 'Bonuses*' },
-        { separator: true },
-        { key: 'hoursPerWeek', label: 'Hrs /wk' },
-        { key: 'saturdays', label: 'Sat /4wks' },
-        { key: 'sundays', label: 'Sun /4wks' },
-        { key: 'lateNights', label: '6pm+ /4wks' }
-      ];
-
-      rows.forEach(
-        row => {
-          if (row.separator) {
-            const separatorRow =
-              document.createElement('tr');
-
-            separatorRow.className =
-              'table-empty-separator';
-
-            const separatorCell =
-              document.createElement('td');
-
-            separatorCell.colSpan =
-              EXPECTED_SALARY_COLS;
-
-            separatorRow.appendChild(
-              separatorCell
-            );
-
-            tbody.appendChild(
-              separatorRow
-            );
-
-            return;
-          }
-
-          const tr =
-            document.createElement('tr');
-
-          const labelCell =
-            document.createElement('td');
-
-          labelCell.textContent =
-            row.label;
-
-          tr.appendChild(labelCell);
-
-          const values =
-            summary.metrics[row.key] || [];
-
-          values.forEach(
-            (value, index) => {
-              const td =
-                document.createElement('td');
-
-              const valueElement =
-                document.createElement('span');
-
-              valueElement.className =
-                'cell-value';
-
-              valueElement.textContent =
-                formatMetricValue(
-                  row.key,
-                  value
-                );
-
-              td.appendChild(
-                valueElement
-              );
-
-
-              tr.appendChild(td);
-            }
-          );
-
-          tbody.appendChild(tr);
-        }
-      );
-    }
-
-    function inferCachedMetricKey(label) {
-      const text =
-        cleanText(label)
-          .toLowerCase();
-
-      if (text === 'salary') {
-        return 'salary';
-      }
-
-      if (
-        text.includes('hrly') &&
-        text.includes('*')
-      ) {
-        return 'unloadedHourly';
-      }
-
-      if (text.includes('hrly')) {
-        return 'hourly';
-      }
-
-      if (
-        text === 'bonuses*'
-      ) {
-        return 'unloadedBonuses';
-      }
-
-      if (text === 'bonuses') {
-        return 'bonuses';
-      }
-
-      if (text === 'salary*') {
-        return 'unloadedSalary';
-      }
-
-      return 'plain';
-    }
-
-    function renderCachedSalaryTable(values) {
-      const thead =
-        salaryTable.querySelector('thead');
-
-      const tbody =
-        salaryTable.querySelector('tbody');
-
-      thead.textContent = '';
-      tbody.textContent = '';
-
-      const headers =
-        values?.[0] || [];
-
-      const dataRows =
-        values?.slice(1) || [];
-
-      const headerRow =
-        document.createElement('tr');
-
-      headers.forEach(
-        (value, index) => {
-          const th =
-            document.createElement('th');
-
-          th.scope = 'col';
-
-          appendHeaderText(
-            th,
-            value
-          );
-
-          headerRow.appendChild(th);
-        }
-      );
-
-      thead.appendChild(headerRow);
-
-      const separatorRow =
-        document.createElement('tr');
-
-      separatorRow.className =
-        'table-major-separator';
-
-      const separatorCell =
-        document.createElement('td');
-
-      separatorCell.colSpan =
-        Math.max(
-          headers.length,
-          1
-        );
-
-      separatorRow.appendChild(
-        separatorCell
-      );
-
-      thead.appendChild(
-        separatorRow
-      );
-
-      dataRows.forEach(
-        row => {
-          const isBlankRow =
-            headers.every(
-              (_, index) =>
-                cleanText(
-                  row?.[index]
-                ) === ''
-            );
-
-          if (isBlankRow) {
-            const blankRow =
-              document.createElement('tr');
-
-            blankRow.className =
-              'table-empty-separator';
-
-            const blankCell =
-              document.createElement('td');
-
-            blankCell.colSpan =
-              Math.max(
-                headers.length,
-                1
-              );
-
-            blankRow.appendChild(
-              blankCell
-            );
-
-            tbody.appendChild(
-              blankRow
-            );
-
-            return;
-          }
-
-          const tr =
-            document.createElement('tr');
-
-          const metricKey =
-            inferCachedMetricKey(
-              row?.[0]
-            );
-
-          headers.forEach(
-            (_, index) => {
-              const td =
-                document.createElement('td');
-
-              if (index === 0) {
-                td.textContent =
-                  row?.[index] || '—';
-              } else {
-                const numeric =
-                  toNumber(
-                    row?.[index]
-                  );
-
-                td.textContent =
-                  metricKey === 'plain'
-                    ? (
-                        Number.isFinite(numeric)
-                          ? formatPlainNumber(numeric)
-                          : row?.[index] || '—'
-                      )
-                    : formatMetricValue(
-                        metricKey,
-                        numeric
-                      );
-              }
-
-              tr.appendChild(td);
-            }
-          );
-
-          tbody.appendChild(tr);
-        }
-      );
-    }
-
-    function setDistributionStatus(message = '') {
-      if (!salaryDistributionStatus) {
-        return;
-      }
-
-      salaryDistributionStatus.textContent =
-        message;
-
-      salaryDistributionStatus.classList.toggle(
-        'is-visible',
-        Boolean(message)
-      );
-    }
-
-    function calculateKernelDensity(
-      values,
-      minimumX,
-      maximumX,
-      sampleCount = 120
-    ) {
-      const sorted = values
-        .filter(Number.isFinite)
-        .slice()
-        .sort(
-          (first, second) =>
-            first - second
-        );
-
-      if (sorted.length < 2) {
-        return [];
-      }
-
-      const count =
-        sorted.length;
-
-      const mean =
-        sorted.reduce(
-          (total, value) =>
-            total + value,
-          0
-        ) /
-        count;
-
-      const variance =
-        sorted.reduce(
-          (total, value) =>
-            total +
-            Math.pow(
-              value - mean,
-              2
-            ),
-          0
-        ) /
-        Math.max(
-          1,
-          count - 1
-        );
-
-      const standardDeviation =
-        Math.sqrt(
-          Math.max(
-            0,
-            variance
-          )
-        );
-
-      const q1 =
-        percentile(
-          sorted,
-          0.25
-        );
-
-      const q3 =
-        percentile(
-          sorted,
-          0.75
-        );
-
-      const robustSigma =
-        Number.isFinite(q1) &&
-        Number.isFinite(q3) &&
-        q3 > q1
-          ? (q3 - q1) / 1.34
-          : NaN;
-
-      const scaleCandidates = [
-        standardDeviation,
-        robustSigma
-      ].filter(
-        value =>
-          Number.isFinite(value) &&
-          value > 0
-      );
-
-      const fallbackScale =
-        Math.max(
-          1,
-          (maximumX - minimumX) /
-          6
-        );
-
-      const scale =
-        scaleCandidates.length
-          ? Math.min(
-              ...scaleCandidates
-            )
-          : fallbackScale;
-
-      const silvermanBandwidth =
-        0.9 *
-        scale *
-        Math.pow(
-          count,
-          -0.2
-        );
-
-      const range =
-        Math.max(
-          1,
-          maximumX - minimumX
-        );
-
-      const bandwidth =
-        Math.max(
-          3000,
-          Math.min(
-            range * 0.22,
-            Number.isFinite(
-              silvermanBandwidth
-            ) &&
-            silvermanBandwidth > 0
-              ? silvermanBandwidth
-              : range / 10
-          )
-        );
-
-      const normalisingConstant =
-        1 /
-        (
-          bandwidth *
-          Math.sqrt(
-            2 * Math.PI
-          )
-        );
-
-      const result = [];
-
-      for (
-        let index = 0;
-        index < sampleCount;
-        index += 1
-      ) {
-        const proportion =
-          sampleCount === 1
-            ? 0
-            : index /
-              (sampleCount - 1);
-
-        const x =
-          minimumX +
-          proportion *
-          range;
-
-        let density = 0;
-
-        sorted.forEach(value => {
-          const z =
-            (x - value) /
-            bandwidth;
-
-          density +=
-            Math.exp(
-              -0.5 *
-              z *
-              z
-            );
-        });
-
-        density =
-          density *
-          normalisingConstant /
-          count;
-
-        if (
-          Number.isFinite(density)
-        ) {
-          result.push({
-            x,
-            y: density
-          });
-        }
-      }
-
-      return result;
-    }
-
-    function formatDistributionSalary(value) {
-      const number =
-        Number(value);
-
-      if (!Number.isFinite(number)) {
-        return '—';
-      }
-
-      return `$${new Intl.NumberFormat('en-AU', {
-        maximumFractionDigits: 0
-      }).format(
-        Math.round(
-          number / 1000
-        )
-      )}k`;
-    }
-
-    function renderSalaryDistribution(rows) {
-      if (!salaryDistributionCanvas) {
-        return;
-      }
-
-      const salaries =
-        rows
-          .map(
-            row => row.salary
-          )
-          .filter(
-            validSalary
-          )
-          .sort(
-            (first, second) =>
-              first - second
-          );
-
-      if (salaries.length < 2) {
-        setDistributionStatus(
-          'Salary distribution unavailable'
-        );
-
-        return;
-      }
-
-      setDistributionStatus();
-
-      const distributionPercentiles = [
-        {
-          key: 'p05',
-          probability: 0.05,
-          label: '5th %ile',
-          strokeStyle: 'rgba(105, 113, 138, 0.55)',
-          dash: [3, 3]
-        },
-        {
-          key: 'p20',
-          probability: 0.20,
-          label: '20th %ile',
-          strokeStyle: 'rgba(105, 113, 138, 0.55)',
-          dash: [3, 3]
-        },
-        {
-          key: 'median',
-          probability: 0.50,
-          label: 'Median',
-          strokeStyle: '#f1c232',
-          dash: [3, 3]
-        },
-        {
-          key: 'p80',
-          probability: 0.80,
-          label: '80th %ile',
-          strokeStyle: 'rgba(105, 113, 138, 0.55)',
-          dash: [3, 3]
-        },
-        {
-          key: 'p95',
-          probability: 0.95,
-          label: '95th %ile',
-          strokeStyle: 'rgba(105, 113, 138, 0.55)',
-          dash: [3, 3]
-        }
-      ].map(item => ({
-        ...item,
-        value: percentile(
-          salaries,
-          item.probability
-        )
-      }));
-
-      const minimumX = 60000;
-      const maximumX = 180000;
-
-      const density =
-        calculateKernelDensity(
-          salaries,
-          minimumX,
-          maximumX
-        );
-
-      if (density.length < 2) {
-        setDistributionStatus(
-          'Salary distribution unavailable'
-        );
-        return;
-      }
-
-      const maximumDensity =
-        Math.max(
-          ...density.map(
-            point => point.y
-          )
-        );
-
-      if (
-        !Number.isFinite(
-          maximumDensity
-        ) ||
-        maximumDensity <= 0
-      ) {
-        setDistributionStatus(
-          'Salary distribution unavailable'
-        );
-        return;
-      }
-
-      const cssWidth =
-        Math.max(
-          1,
-          salaryDistributionCanvas.clientWidth
-        );
-
-      const cssHeight =
-        Math.max(
-          1,
-          salaryDistributionCanvas.clientHeight
-        );
-
-      const pixelRatio =
-        Math.min(
-          window.devicePixelRatio || 1,
-          3
-        );
-
-      salaryDistributionCanvas.width =
-        Math.round(
-          cssWidth *
-          pixelRatio
-        );
-
-      salaryDistributionCanvas.height =
-        Math.round(
-          cssHeight *
-          pixelRatio
-        );
-
-      const context =
-        salaryDistributionCanvas.getContext(
-          '2d'
-        );
-
-      context.setTransform(
-        pixelRatio,
-        0,
-        0,
-        pixelRatio,
-        0,
-        0
-      );
-
-      context.clearRect(
-        0,
-        0,
-        cssWidth,
-        cssHeight
-      );
-
-      const padding = {
-        top: 4,
-        right: 5,
-        bottom: 0.5,
-        left: 5
-      };
-
-      const plotHeight =
-        Math.max(
-          1,
-          cssHeight -
-          padding.top -
-          padding.bottom
-        );
-
-      const baselineY =
-        padding.top +
-        plotHeight;
-
-      /*
-       * Align the distribution with the percentile columns below it.
-       * The live table controls the target positions, so this continues
-       * to line up when the embed/table width changes.
-       *
-       * The salary axis is piecewise-linear between percentile anchors:
-       *   5th -> 5th column centre
-       *   20th -> 20th column centre
-       *   median -> Median column centre
-       *   80th -> 80th column centre
-       *   95th -> 95th column centre
-       * Values between those percentiles retain proportional spacing.
-       */
-      const canvasRect =
-        salaryDistributionCanvas.getBoundingClientRect();
-
-      const headerCells =
-        [
-          ...salaryTable.querySelectorAll(
-            'thead tr:first-child th'
-          )
-        ];
-
-      const fallbackFirstColumnFraction = 0.24;
-      const fallbackValueColumnFraction =
-        (1 - fallbackFirstColumnFraction) / 5;
-
-      const fallbackTargetForIndex = index =>
-        cssWidth *
-        (
-          fallbackFirstColumnFraction +
-          fallbackValueColumnFraction *
-          (index + 0.5)
-        );
-
-      const targetForColumn = index => {
-        const cell =
-          headerCells[index + 1];
-
-        if (!cell) {
-          return fallbackTargetForIndex(index);
-        }
-
-        const rect =
-          cell.getBoundingClientRect();
-
-        return Math.max(
-          padding.left,
-          Math.min(
-            cssWidth - padding.right,
-            rect.left +
-            rect.width / 2 -
-            canvasRect.left
-          )
-        );
-      };
-
-      const percentileAnchors =
-        distributionPercentiles.map(
-          (item, index) => ({
-            ...item,
-            targetX:
-              targetForColumn(index)
-          })
-        );
-
-      const firstValueCell =
-        headerCells[1];
-
-      const lastValueCell =
-        headerCells[5];
-
-      const firstValueRect =
-        firstValueCell?.getBoundingClientRect();
-
-      const lastValueRect =
-        lastValueCell?.getBoundingClientRect();
-
-      const numericPlotLeft =
-        firstValueRect
-          ? Math.max(
-              padding.left,
-              firstValueRect.left -
-              canvasRect.left +
-              2
-            )
-          : Math.max(
-              padding.left,
-              cssWidth *
-              fallbackFirstColumnFraction +
-              2
-            );
-
-      const numericPlotRight =
-        lastValueRect
-          ? Math.min(
-              cssWidth - padding.right,
-              lastValueRect.right -
-              canvasRect.left -
-              3
-            )
-          : cssWidth - padding.right;
-
-      const xAnchors = [
-        {
-          value: minimumX,
-          pixel: numericPlotLeft
-        },
-        ...percentileAnchors.map(
-          item => ({
-            value: item.value,
-            pixel: item.targetX
-          })
-        ),
-        {
-          value: maximumX,
-          pixel: numericPlotRight
-        }
-      ]
-        .filter(
-          anchor =>
-            Number.isFinite(anchor.value) &&
-            Number.isFinite(anchor.pixel)
-        )
-        .sort(
-          (first, second) =>
-            first.value - second.value
-        );
-
-      /*
-       * Duplicate percentile values can occur in small/clustered samples.
-       * Collapse them into a single anchor to keep the mapping monotonic.
-       */
-      const uniqueXAnchors = [];
-
-      xAnchors.forEach(anchor => {
-        const previous =
-          uniqueXAnchors[
-            uniqueXAnchors.length - 1
-          ];
-
-        if (
-          previous &&
-          Math.abs(
-            previous.value -
-            anchor.value
-          ) < 1e-8
-        ) {
-          previous.pixel =
-            Math.max(
-              previous.pixel,
-              anchor.pixel
-            );
-          return;
-        }
-
-        uniqueXAnchors.push({
-          ...anchor
-        });
-      });
-
-      /*
-       * Enforce increasing pixel positions. This is mainly defensive for
-       * unusual percentile ties or extremely narrow embeds.
-       */
-      for (
-        let index = 1;
-        index < uniqueXAnchors.length;
-        index += 1
-      ) {
-        uniqueXAnchors[index].pixel =
-          Math.max(
-            uniqueXAnchors[index].pixel,
-            uniqueXAnchors[index - 1].pixel +
-            0.25
-          );
-      }
-
-      const xToPixel = value => {
-        const clampedValue =
-          Math.min(
-            maximumX,
-            Math.max(
-              minimumX,
-              value
-            )
-          );
-
-        for (
-          let index = 1;
-          index < uniqueXAnchors.length;
-          index += 1
-        ) {
-          const previous =
-            uniqueXAnchors[index - 1];
-
-          const current =
-            uniqueXAnchors[index];
-
-          if (
-            clampedValue <= current.value
-          ) {
-            const span =
-              current.value -
-              previous.value;
-
-            const proportion =
-              span === 0
-                ? 0
-                : (
-                    clampedValue -
-                    previous.value
-                  ) /
-                  span;
-
-            return previous.pixel +
-              (
-                current.pixel -
-                previous.pixel
-              ) *
-              proportion;
-          }
-        }
-
-        return uniqueXAnchors[
-          uniqueXAnchors.length - 1
-        ].pixel;
-      };
-
-      const densityToPixel = value =>
-        baselineY -
-        (
-          value /
-          maximumDensity
-        ) *
-        (
-          plotHeight - 5
-        );
-
-      const findDensityPoint = value => {
-        for (
-          let index = 1;
-          index < density.length;
-          index += 1
-        ) {
-          const previous = density[index - 1];
-          const current = density[index];
-
-          if (
-            value >= previous.x &&
-            value <= current.x
-          ) {
-            const span =
-              current.x - previous.x;
-
-            const proportion =
-              span === 0
-                ? 0
-                : (value - previous.x) /
-                  span;
-
-            return {
-              x: value,
-              y:
-                previous.y +
-                (current.y - previous.y) *
-                proportion
-            };
-          }
-        }
-
-        return density.reduce(
-          (nearest, point) =>
-            Math.abs(point.x - value) <
-            Math.abs(nearest.x - value)
-              ? point
-              : nearest,
-          density[0]
-        );
-      };
-
-      /* Density area */
-      context.save();
-      context.beginPath();
-
-      density.forEach(
-        (point, index) => {
-          const x =
-            xToPixel(
-              point.x
-            );
-
-          const y =
-            densityToPixel(
-              point.y
-            );
-
-          if (index === 0) {
-            context.moveTo(
-              x,
-              baselineY
-            );
-            context.lineTo(
-              x,
-              y
-            );
-          } else {
-            context.lineTo(
-              x,
-              y
-            );
-          }
-        }
-      );
-
-      context.lineTo(
-        xToPixel(
-          density[
-            density.length - 1
-          ].x
-        ),
-        baselineY
-      );
-      context.closePath();
-      context.fillStyle =
-        'rgba(241, 194, 50, 0.10)';
-      context.fill();
-      context.restore();
-
-      /* Raw salaries */
-      context.save();
-      context.fillStyle =
-        'rgba(102, 0, 255, 0.28)';
-
-      salaries.forEach(
-        (salary, index) => {
-          const yOffset =
-            2 +
-            (index % 3) *
-            2.1;
-
-          context.beginPath();
-          context.arc(
-            xToPixel(salary),
-            baselineY - yOffset,
-            1.35,
-            0,
-            Math.PI * 2
-          );
-          context.fill();
-        }
-      );
-      context.restore();
-
-      /* Density curve */
-      context.save();
-      context.beginPath();
-      context.strokeStyle =
-        '#f1c232';
-      context.lineWidth = 2;
-      context.lineCap = 'round';
-      context.lineJoin = 'round';
-
-      density.forEach(
-        (point, index) => {
-          const x =
-            xToPixel(
-              point.x
-            );
-
-          const y =
-            densityToPixel(
-              point.y
-            );
-
-          if (index === 0) {
-            context.moveTo(x, y);
-          } else {
-            context.lineTo(x, y);
-          }
-        }
-      );
-
-      context.stroke();
-      context.restore();
-
-      const labels =
-        percentileAnchors.map(item => {
-          const curvePoint =
-            findDensityPoint(
-              item.value
-            );
-
-          return {
-            ...item,
-            x:
-              xToPixel(
-                item.value
-              ),
-            curveY:
-              densityToPixel(
-                curvePoint.y
-              ),
-            valueText:
-              formatDistributionSalary(
-                item.value
-              )
-          };
-        });
-
-      /* Percentile guide lines */
-      labels.forEach(label => {
-        context.save();
-        context.beginPath();
-        context.setLineDash(
-          label.dash
-        );
-        context.strokeStyle =
-          label.strokeStyle;
-        context.lineWidth =
-          label.key === 'median'
-            ? 1.1
-            : 1;
-        context.moveTo(
-          label.x,
-          label.curveY
-        );
-        context.lineTo(
-          label.x,
-          baselineY
-        );
-        context.stroke();
-        context.restore();
-      });
-
-    }
-
-    function normaliseRawRows(response) {
-      const sourceRows =
-        response?.table?.rows || [];
-
-      const result = [];
-      const fteHourCandidates = [];
-
-      sourceRows.forEach(
-        sourceRow => {
-          const cells =
-            sourceRow?.c || [];
-
-          const date =
-            parseDate(
-              getCellValue(
-                cells[
-                  RAW_COLUMNS.date
-                ]
-              )
-            );
-
-          const modeHours =
-            toNumber(
-              getCellValue(
-                cells[
-                  RAW_COLUMNS.modeFteHours
-                ]
-              )
-            );
-
-          if (
-            Number.isFinite(modeHours) &&
-            modeHours > 0
-          ) {
-            fteHourCandidates.push(
-              modeHours
-            );
-          }
-
-          if (!Number.isFinite(date)) {
-            return;
-          }
-
-          const row = {
-            date,
-            salary:
-              toNumber(
-                getCellValue(
-                  cells[
-                    RAW_COLUMNS.salary
-                  ]
-                )
-              ),
-            bonuses:
-              toNumber(
-                getCellValue(
-                  cells[
-                    RAW_COLUMNS.bonuses
-                  ]
-                )
-              ),
-            hoursPerWeek:
-              toNumber(
-                getCellValue(
-                  cells[
-                    RAW_COLUMNS.hoursPerWeek
-                  ]
-                )
-              ),
-            saturdays:
-              toNumber(
-                getCellValue(
-                  cells[
-                    RAW_COLUMNS.saturdays
-                  ]
-                )
-              ),
-            sundays:
-              toNumber(
-                getCellValue(
-                  cells[
-                    RAW_COLUMNS.sundays
-                  ]
-                )
-              ),
-            lateNights:
-              toNumber(
-                getCellValue(
-                  cells[
-                    RAW_COLUMNS.lateNights
-                  ]
-                )
-              )
-          };
-
-          const unloadFactor =
-            calculateUnloadFactor(
-              row
-            );
-
-          row.unloadedSalary =
-            validSalary(row.salary)
-              ? row.salary * unloadFactor
-              : NaN;
-
-          row.unloadedBonuses =
-            validBonus(row.bonuses)
-              ? row.bonuses * unloadFactor
-              : NaN;
-
-          result.push(row);
-        }
-      );
-
-      if (fteHourCandidates.length) {
-        fteWeeklyHours =
-          fteHourCandidates[0];
-      }
-
-      return result;
-    }
-
-    function validSalary(value) {
-      return (
-        Number.isFinite(value) &&
-        value >= 30000 &&
-        value <= 500000
-      );
-    }
-
-    function validBonus(value) {
-      return (
-        Number.isFinite(value) &&
-        value >= 0
-      );
-    }
-
-    function validHours(value) {
-      return (
-        Number.isFinite(value) &&
-        value > 0 &&
-        value <= 100
-      );
-    }
-
-    function validShiftCount(value) {
-      return (
-        Number.isFinite(value) &&
-        value >= 0 &&
-        value <= 31
-      );
-    }
-
-    function calculateUnloadFactor(row) {
-      const saturdays =
-        validShiftCount(row?.saturdays)
-          ? row.saturdays
-          : 0;
-
-      const sundays =
-        validShiftCount(row?.sundays)
-          ? row.sundays
-          : 0;
-
-      const lateNights =
-        validShiftCount(row?.lateNights)
-          ? row.lateNights
-          : 0;
-
-      const loadingHoursPerFourWeeks =
-        saturdays *
-          SATURDAY_SHIFT_HOURS *
-          SATURDAY_LOADING +
-        sundays *
-          SUNDAY_SHIFT_HOURS *
-          SUNDAY_LOADING +
-        lateNights *
-          LATE_NIGHT_SHIFT_HOURS *
-          LATE_NIGHT_LOADING;
-
-      const referenceHoursPerFourWeeks =
-        LOADING_REFERENCE_WEEKLY_HOURS *
-        4;
-
-      return Math.max(
-        0,
-        1 -
-        loadingHoursPerFourWeeks /
-        referenceHoursPerFourWeeks
-      );
-    }
-
-    function valuesForMetric(rows, key) {
-      if (key === 'salary') {
-        return rows
-          .map(row => row.salary)
-          .filter(validSalary);
-      }
-
-      if (key === 'hourly') {
-        return rows
-          .map(
-            row =>
-              validSalary(row.salary)
-                ? row.salary /
-                  52 /
-                  fteWeeklyHours
-                : NaN
-          )
-          .filter(Number.isFinite);
-      }
-
-      if (key === 'bonuses') {
-        return rows
-          .map(row => row.bonuses)
-          .filter(validBonus);
-      }
-
-      if (key === 'unloadedSalary') {
-        return rows
-          .map(row => row.unloadedSalary)
-          .filter(validSalary);
-      }
-
-      if (key === 'unloadedHourly') {
-        return rows
-          .map(
-            row =>
-              validSalary(row.unloadedSalary)
-                ? row.unloadedSalary /
-                  52 /
-                  fteWeeklyHours
-                : NaN
-          )
-          .filter(Number.isFinite);
-      }
-
-      if (key === 'unloadedBonuses') {
-        return rows
-          .map(row => row.unloadedBonuses)
-          .filter(validBonus);
-      }
-
-      if (key === 'hoursPerWeek') {
-        return rows
-          .map(row => row.hoursPerWeek)
-          .filter(validHours);
-      }
-
-      if (key === 'saturdays') {
-        return rows
-          .map(row => row.saturdays)
-          .filter(validShiftCount);
-      }
-
-      if (key === 'sundays') {
-        return rows
-          .map(row => row.sundays)
-          .filter(validShiftCount);
-      }
-
-      if (key === 'lateNights') {
-        return rows
-          .map(row => row.lateNights)
-          .filter(validShiftCount);
-      }
-
-      return [];
-    }
-
-    function calculateSummary(rows) {
-      const metricKeys = [
-        'salary',
-        'hourly',
-        'bonuses',
-        'unloadedSalary',
-        'unloadedHourly',
-        'unloadedBonuses',
-        'hoursPerWeek',
-        'saturdays',
-        'sundays',
-        'lateNights'
-      ];
-
-      const metrics = {};
-
-      metricKeys.forEach(
-        key => {
-          metrics[key] =
-            calculatePercentiles(
-              valuesForMetric(
-                rows,
-                key
-              )
-            );
-        }
-      );
-
-      return {
-        metrics
-      };
-    }
-
-    function renderLiveSummary() {
-      const summary =
-        calculateSummary(
-          rawRows
-        );
-
-      responseCount.textContent =
+    return Number.isFinite(
+      date.getTime()
+    )
+      ? date
+      : null;
+  }
+
+  return null;
+}
+
+function getJobTrackerCacheCutoff_(
+  rawValues,
+  displayValues
+) {
+  const now =
+    new Date();
+
+  const localDateText =
+    Utilities.formatDate(
+      now,
+      JOB_TRACKER_CACHE_CONFIG.TIME_ZONE,
+      'yyyy-MM-dd'
+    );
+
+  const parts =
+    localDateText
+      .split('-')
+      .map(Number);
+
+  const todaySafetyCutoff =
+    new Date(
+      parts[0],
+      parts[1] - 1,
+      parts[2]
+    );
+
+  todaySafetyCutoff.setMonth(
+    todaySafetyCutoff.getMonth() -
+      JOB_TRACKER_CACHE_CONFIG.CACHE_MONTHS
+  );
+
+  todaySafetyCutoff.setHours(
+    0,
+    0,
+    0,
+    0
+  );
+
+  const dateIndex =
+    JOB_TRACKER_CACHE_CONFIG.DATE_COLUMN - 1;
+
+  let latestJobDate =
+    null;
+
+  displayValues.forEach(
+    (
+      displayRow,
+      rowIndex
+    ) => {
+      const sourceAText =
         String(
-          rawRows.length
-        );
-
-      responseCount.classList.remove(
-        'error'
-      );
-
-      renderCalculatedSalaryTable(
-        summary
-      );
-
-    }
-
-    function showError(error) {
-      console.error(error);
-
-      responseCount.textContent = '—';
-      responseCount.classList.add('error');
-
-      salaryTable.querySelector('thead').textContent = '';
-      salaryTable.querySelector('tbody').textContent = '';
-
-      setDistributionStatus(
-        'Salary distribution unavailable'
-      );
-
-      hideLoadingState();
-    }
-
-    function getCellDisplayValue(cell) {
-      if (!cell) return '';
-      return String(
-        cell.f ?? cell.v ?? ''
-      ).trim();
-    }
-
-    function loadGvizRange(
-      range,
-      headers = 0,
-      sheetName = ''
-    ) {
-      return new Promise(
-        (resolve, reject) => {
-          const callbackName =
-            `permSalarySummaryCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-
-          const script =
-            document.createElement('script');
-
-          const timeout =
-            window.setTimeout(
-              () => {
-                cleanup();
-                reject(
-                  new Error(
-                    'Could not load data'
-                  )
-                );
-              },
-              15000
-            );
-
-          function cleanup() {
-            window.clearTimeout(
-              timeout
-            );
-
-            try {
-              delete window[
-                callbackName
-              ];
-            } catch (error) {
-              window[
-                callbackName
-              ] = undefined;
-            }
-
-            if (script.parentNode) {
-              script.parentNode.removeChild(
-                script
-              );
-            }
-          }
-
-          window[callbackName] =
-            response => {
-              cleanup();
-
-              if (
-                response?.status ===
-                'error'
-              ) {
-                reject(
-                  new Error(
-                    response?.errors?.[0]?.detailed_message ||
-                    'Could not load Google Sheet data'
-                  )
-                );
-
-                return;
-              }
-
-              resolve(response);
-            };
-
-          script.onerror =
-            () => {
-              cleanup();
-              reject(
-                new Error(
-                  'Could not load data'
-                )
-              );
-            };
-
-          const params =
-            new URLSearchParams({
-              gid: SHEET_GID,
-              range,
-              headers:
-                String(headers),
-              tqx:
-                `responseHandler:${callbackName}`
-            });
-
-          if (sheetName) {
-            params.set(
-              'sheet',
-              sheetName
-            );
-          }
-
-          script.src =
-            `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
-
-          document.body.appendChild(
-            script
-          );
-        }
-      );
-    }
-
-    function validateCachedDashboardData(data) {
-      const cachedResponseCount =
-        String(
-          data?.responseCount ??
+          displayRow?.[0] ??
           ''
         ).trim();
 
-      const salaryTableValues =
-        Array.isArray(
-          data?.salaryTableValues
-        )
-          ? data.salaryTableValues
-          : [];
+      if (!sourceAText) {
+        return;
+      }
+
+      const date =
+        parseTrackerDate_(
+          rawValues?.[rowIndex]?.[dateIndex],
+          displayRow?.[dateIndex]
+        );
+
+      if (!date) {
+        return;
+      }
 
       if (
-        !cachedResponseCount ||
-        cachedResponseCount === '—' ||
-        salaryTableValues.length !==
-          EXPECTED_SALARY_DATA_ROWS + 1 ||
-        salaryTableValues.some(
-          row =>
-            !Array.isArray(row) ||
-            row.length <
-              EXPECTED_SALARY_COLS
-        )
+        !latestJobDate ||
+        date.getTime() >
+          latestJobDate.getTime()
       ) {
-        throw new Error(
-          'The cached permanent salary summary is incomplete'
-        );
+        latestJobDate =
+          date;
       }
-
-      return {
-        responseCount:
-          cachedResponseCount,
-        salaryTableValues:
-          salaryTableValues.map(
-            row =>
-              row
-                .slice(
-                  0,
-                  EXPECTED_SALARY_COLS
-                )
-                .map(
-                  value =>
-                    String(
-                      value ?? ''
-                    ).trim()
-                )
-          )
-      };
     }
+  );
 
-    function loadCachedDashboardData() {
-      return new Promise(
-        (resolve, reject) => {
-          const callbackName =
-            `permSalarySummaryCache_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+  if (!latestJobDate) {
+    return todaySafetyCutoff;
+  }
 
-          const script =
-            document.createElement('script');
+  const summaryCutoff =
+    new Date(
+      latestJobDate.getTime()
+    );
 
-          let settled = false;
+  summaryCutoff.setMonth(
+    summaryCutoff.getMonth() -
+      JOB_TRACKER_CACHE_CONFIG.SUMMARY_MONTHS
+  );
 
-          const timeout =
-            window.setTimeout(
-              () => {
-                finish(
-                  new Error(
-                    'The cached-data request timed out'
-                  )
-                );
-              },
-              CACHE_FETCH_TIMEOUT_MS
-            );
+  summaryCutoff.setHours(
+    0,
+    0,
+    0,
+    0
+  );
 
-          function cleanup() {
-            window.clearTimeout(
-              timeout
-            );
+  return summaryCutoff <
+    todaySafetyCutoff
+      ? summaryCutoff
+      : todaySafetyCutoff;
+}
 
-            try {
-              delete window[
-                callbackName
-              ];
-            } catch (_) {
-              window[
-                callbackName
-              ] = undefined;
-            }
+function readJobTrackerData_() {
+  const spreadsheet =
+    SpreadsheetApp.openById(
+      JOB_TRACKER_CACHE_CONFIG.SPREADSHEET_ID
+    );
 
-            if (script.parentNode) {
-              script.parentNode.removeChild(
-                script
-              );
-            }
+  const sheet =
+    getSheetByGid_(
+      spreadsheet,
+      JOB_TRACKER_CACHE_CONFIG.SHEET_GID
+    );
+
+  const headerLabels =
+    sheet
+      .getRange(
+        JOB_TRACKER_CACHE_CONFIG.HEADER_ROW,
+        1,
+        1,
+        JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+      )
+      .getDisplayValues()?.[0]
+      ?.map(
+        value =>
+          String(
+            value ??
+            ''
+          ).trim()
+      ) ||
+    [];
+
+  const firstRow =
+    JOB_TRACKER_CACHE_CONFIG.FIRST_DATA_ROW;
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (lastRow < firstRow) {
+    throw new Error(
+      'Optometry-related Job Tracker has no data rows'
+    );
+  }
+
+  const range =
+    sheet.getRange(
+      firstRow,
+      1,
+      lastRow - firstRow + 1,
+      JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+    );
+
+  const rawValues =
+    range.getValues();
+
+  const displayValues =
+    range.getDisplayValues();
+
+  const cutoff =
+    getJobTrackerCacheCutoff_(
+      rawValues,
+      displayValues
+    );
+
+  const dateIndex =
+    JOB_TRACKER_CACHE_CONFIG.DATE_COLUMN - 1;
+
+  const rows =
+    displayValues
+      .map(
+        (
+          displayRow,
+          rowIndex
+        ) => ({
+          displayRow,
+          rawRow:
+            rawValues?.[rowIndex] ||
+            []
+        })
+      )
+      .filter(
+        item => {
+          const sourceAText =
+            String(
+              item.displayRow?.[0] ??
+              ''
+            ).trim();
+
+          if (!sourceAText) {
+            return false;
           }
 
-          function finish(
-            error,
-            data
-          ) {
-            if (settled) {
-              return;
-            }
+          const date =
+            parseTrackerDate_(
+              item.rawRow?.[dateIndex],
+              item.displayRow?.[dateIndex]
+            );
 
-            settled = true;
-            cleanup();
-
-            if (error) {
-              reject(error);
-              return;
-            }
-
-            resolve(data);
-          }
-
-          window[callbackName] =
-            response => {
-              if (
-                !response ||
-                response.ok !== true
-              ) {
-                finish(
-                  new Error(
-                    response?.error ||
-                    'The cached-data service did not return a snapshot'
-                  )
-                );
-
-                return;
-              }
-
-              if (
-                response.appKey !==
-                CACHE_APP_KEY
-              ) {
-                finish(
-                  new Error(
-                    'The cached-data response belongs to a different app'
-                  )
-                );
-
-                return;
-              }
-
-              if (
-                !response.cachedAt ||
-                Number.isNaN(
-                  Date.parse(
-                    response.cachedAt
-                  )
-                )
-              ) {
-                finish(
-                  new Error(
-                    'The cached-data response has no valid timestamp'
-                  )
-                );
-
-                return;
-              }
-
-              try {
-                finish(
-                  null,
-                  validateCachedDashboardData(
-                    response.data
-                  )
-                );
-              } catch (error) {
-                finish(error);
-              }
-            };
-
-          script.onerror =
-            () => {
-              finish(
-                new Error(
-                  'Could not load the cached-data service'
-                )
-              );
-            };
-
-          const params =
-            new URLSearchParams({
-              appKey:
-                CACHE_APP_KEY,
-              callback:
-                callbackName,
-              _:
-                String(
-                  Date.now()
-                )
-            });
-
-          const separator =
-            CACHE_WEB_APP_URL.includes('?')
-              ? '&'
-              : '?';
-
-          script.src =
-            `${CACHE_WEB_APP_URL}${separator}${params.toString()}`;
-
-          document.body.appendChild(
-            script
+          return (
+            date &&
+            date >= cutoff
           );
         }
-      );
-    }
-
-    function renderCachedDashboardData(data) {
-      usingLiveRawData = false;
-
-      responseCount.textContent =
-        data.responseCount;
-
-      responseCount.classList.remove(
-        'error'
-      );
-
-      renderCachedSalaryTable(
-        data.salaryTableValues
-      );
-
-      setDistributionStatus(
-        'Distribution unavailable in cached snapshot'
-      );
-
-
-      if (salaryFootnote) {
-        salaryFootnote.innerHTML =
-          'Salary (FTE) excl. super, incl. location and weekend/night loadings<br>' +
-          "* adjusted to 'unloaded' FTE; cached fallback uses the previous weekend-only adjustment";
-      }
-
-      hideLoadingState();
-    }
-
-    async function loadLiveDashboardData() {
-      const response =
-        await loadGvizRange(
-          RAW_DATA_RANGE,
-          1,
-          SHEET_NAME
-        );
-
-      const rows =
-        normaliseRawRows(
-          response
-        );
-
-      if (!rows.length) {
-        throw new Error(
-          'Live permanent salary raw data are incomplete'
-        );
-      }
-
-      rawRows = rows;
-      usingLiveRawData = true;
-
-      if (salaryFootnote) {
-        salaryFootnote.innerHTML =
-          'Salary (FTE) excl. super, incl. location and weekend/night loadings<br>' +
-          "* adjusted to 'unloaded' FTE (removes weekend and 6pm+ loadings)";
-      }
-
-      renderLiveSummary();
-    }
-
-    async function loadDashboardData() {
-      let liveError = null;
-
-      if (!FORCE_CACHED_DATA) {
-        try {
-          await loadLiveDashboardData();
-
-          setDataSource('live');
-          hideLoadingState();
-          return;
-        } catch (error) {
-          liveError = error;
-
-          console.warn(
-            'Live Google Sheets data could not be used',
-            error
-          );
-        }
-      } else {
-        liveError =
-          new Error(
-            'Live data bypassed for cached-data test'
-          );
-      }
-
-      try {
-        const cachedData =
-          await loadCachedDashboardData();
-
-        setDataSource('cached');
-
-        console.warn(
-          'Using cached permanent salary summary data',
-          liveError?.message
-        );
-
-        renderCachedDashboardData(
-          cachedData
-        );
-      } catch (cachedError) {
-        setDataSource('none');
-
-        console.error(
-          'Live Google Sheets data error',
-          liveError
-        );
-
-        console.error(
-          'Cached Apps Script data error',
-          cachedError
-        );
-
-        showError(
-          new Error(
-            'Live and cached data are currently unavailable'
+      )
+      .map(
+        item =>
+          Array.from(
+            {
+              length:
+                JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+            },
+            (
+              _,
+              columnIndex
+            ) =>
+              String(
+                item.displayRow?.[columnIndex] ??
+                ''
+              ).trim()
           )
-        );
-      }
-    }
+      );
 
-    let salaryDistributionResizeFrame = null;
+  if (!rows.length) {
+    throw new Error(
+      'Optometry-related Job Tracker has no usable recent rows'
+    );
+  }
 
-    window.addEventListener(
-      'resize',
-      () => {
+  return {
+    headerLabels,
+    rows
+  };
+}
+
+/* ============================================================
+ * VALIDATION
+ * ============================================================
+ */
+
+function validateJobTrackerData_(
+  data
+) {
+  const headerLabels =
+    Array.isArray(
+      data?.headerLabels
+    )
+      ? data.headerLabels
+      : [];
+
+  const rows =
+    Array.isArray(
+      data?.rows
+    )
+      ? data.rows
+      : [];
+
+  if (
+    headerLabels.length <
+      JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+  ) {
+    throw new Error(
+      'Job Tracker cache has incomplete headers'
+    );
+  }
+
+  if (!rows.length) {
+    throw new Error(
+      'Job Tracker cache has no rows'
+    );
+  }
+
+  const normalisedRows =
+    rows.map(
+      (
+        row,
+        rowIndex
+      ) => {
         if (
-          !usingLiveRawData ||
-          !rawRows.length
+          !Array.isArray(row) ||
+          row.length <
+            JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
         ) {
-          return;
-        }
-
-        if (salaryDistributionResizeFrame !== null) {
-          cancelAnimationFrame(
-            salaryDistributionResizeFrame
+          throw new Error(
+            `Job Tracker cache row ${rowIndex + 1} is malformed`
           );
         }
 
-        salaryDistributionResizeFrame =
-          requestAnimationFrame(() => {
-            salaryDistributionResizeFrame = null;
-            renderSalaryDistribution(rawRows);
-          });
-      },
-      {
-        passive: true
+        return row
+          .slice(
+            0,
+            JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+          )
+          .map(
+            value =>
+              String(
+                value ??
+                ''
+              )
+          );
       }
     );
 
-    loadDashboardData();
-  </script>
-</body>
-</html>
+  return {
+    headerLabels:
+      headerLabels
+        .slice(
+          0,
+          JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+        )
+        .map(
+          value =>
+            String(
+              value ??
+              ''
+            )
+        ),
+
+    rows:
+      normalisedRows
+  };
+}
+
+function validateJobTrackerSnapshot_(
+  snapshot
+) {
+  if (
+    !snapshot ||
+    snapshot.ok !== true
+  ) {
+    throw new Error(
+      'The Job Tracker snapshot is not valid'
+    );
+  }
+
+  if (
+    snapshot.appKey !==
+      JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY
+  ) {
+    throw new Error(
+      'The Job Tracker snapshot has the wrong app key'
+    );
+  }
+
+  if (
+    !snapshot.cachedAt ||
+    Number.isNaN(
+      Date.parse(
+        snapshot.cachedAt
+      )
+    )
+  ) {
+    throw new Error(
+      'The Job Tracker snapshot has no valid timestamp'
+    );
+  }
+
+  snapshot.data =
+    validateJobTrackerData_(
+      snapshot.data
+    );
+
+  return snapshot;
+}
+
+/* ============================================================
+ * CHUNKED SCRIPT-PROPERTY STORAGE
+ * ============================================================
+ */
+
+function splitJobTrackerSnapshotIntoChunks_(
+  text
+) {
+  const chunks =
+    [];
+
+  const size =
+    JOB_TRACKER_CACHE_CONFIG.CACHE_CHUNK_CHARACTERS;
+
+  for (
+    let start = 0;
+    start < text.length;
+    start += size
+  ) {
+    chunks.push(
+      text.slice(
+        start,
+        start + size
+      )
+    );
+  }
+
+  return chunks;
+}
+
+function deleteJobTrackerGenerationChunks_(
+  generation,
+  chunkCount
+) {
+  if (
+    !generation ||
+    !Number.isFinite(
+      Number(
+        chunkCount
+      )
+    )
+  ) {
+    return;
+  }
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  for (
+    let index = 0;
+    index <
+      Number(
+        chunkCount
+      );
+    index++
+  ) {
+    properties.deleteProperty(
+      getJobTrackerCacheChunkKey_(
+        generation,
+        index
+      )
+    );
+  }
+}
+
+function storeJobTrackerSnapshot_(
+  snapshot
+) {
+  const validatedSnapshot =
+    validateJobTrackerSnapshot_(
+      snapshot
+    );
+
+  const serialised =
+    JSON.stringify(
+      validatedSnapshot
+    );
+
+  const chunks =
+    splitJobTrackerSnapshotIntoChunks_(
+      serialised
+    );
+
+  if (!chunks.length) {
+    throw new Error(
+      'Job Tracker snapshot serialised to an empty value'
+    );
+  }
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const manifestKey =
+    getJobTrackerCacheManifestKey_();
+
+  const oldManifestRaw =
+    properties.getProperty(
+      manifestKey
+    );
+
+  let oldManifest =
+    null;
+
+  if (oldManifestRaw) {
+    try {
+      oldManifest =
+        JSON.parse(
+          oldManifestRaw
+        );
+    } catch (
+      error
+    ) {
+      oldManifest =
+        null;
+    }
+  }
+
+  const generation =
+    Utilities
+      .getUuid()
+      .replace(
+        /-/g,
+        ''
+      );
+
+  const newProperties =
+    {};
+
+  chunks.forEach(
+    (
+      chunk,
+      index
+    ) => {
+      newProperties[
+        getJobTrackerCacheChunkKey_(
+          generation,
+          index
+        )
+      ] =
+        chunk;
+    }
+  );
+
+  try {
+    properties.setProperties(
+      newProperties,
+      false
+    );
+
+    let verificationText =
+      '';
+
+    for (
+      let index = 0;
+      index < chunks.length;
+      index++
+    ) {
+      const chunk =
+        properties.getProperty(
+          getJobTrackerCacheChunkKey_(
+            generation,
+            index
+          )
+        );
+
+      if (chunk === null) {
+        throw new Error(
+          `Job Tracker cache chunk ${index} was not stored`
+        );
+      }
+
+      verificationText +=
+        chunk;
+    }
+
+    validateJobTrackerSnapshot_(
+      JSON.parse(
+        verificationText
+      )
+    );
+
+    const manifest = {
+      ok:
+        true,
+
+      version:
+        JOB_TRACKER_CACHE_CONFIG.CACHE_VERSION,
+
+      appKey:
+        JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY,
+
+      cachedAt:
+        validatedSnapshot.cachedAt,
+
+      generation,
+
+      chunkCount:
+        chunks.length,
+
+      characterCount:
+        serialised.length
+    };
+
+    properties.setProperty(
+      manifestKey,
+      JSON.stringify(
+        manifest
+      )
+    );
+
+    if (
+      oldManifest?.generation &&
+      oldManifest.generation !==
+        generation
+    ) {
+      deleteJobTrackerGenerationChunks_(
+        oldManifest.generation,
+        oldManifest.chunkCount
+      );
+    }
+
+    return validatedSnapshot;
+  } catch (
+    error
+  ) {
+    deleteJobTrackerGenerationChunks_(
+      generation,
+      chunks.length
+    );
+
+    throw error;
+  }
+}
+
+/* ============================================================
+ * REFRESH / READ / LOG
+ * ============================================================
+ */
+
+function refreshJobTrackerCachedData() {
+  const lock =
+    LockService.getScriptLock();
+
+  lock.waitLock(
+    30000
+  );
+
+  try {
+    const data =
+      validateJobTrackerData_(
+        readJobTrackerData_()
+      );
+
+    const snapshot = {
+      ok:
+        true,
+
+      version:
+        JOB_TRACKER_CACHE_CONFIG.CACHE_VERSION,
+
+      appKey:
+        JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY,
+
+      cachedAt:
+        new Date().toISOString(),
+
+      data
+    };
+
+    storeJobTrackerSnapshot_(
+      snapshot
+    );
+
+    console.log(
+      `Job Tracker snapshot updated at ${snapshot.cachedAt}; rows=${data.rows.length}`
+    );
+
+    return snapshot;
+  } catch (
+    error
+  ) {
+    console.error(
+      'Job Tracker snapshot refresh failed',
+      error
+    );
+
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getStoredJobTrackerSnapshot_() {
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const manifestRaw =
+    properties.getProperty(
+      getJobTrackerCacheManifestKey_()
+    );
+
+  if (!manifestRaw) {
+    return null;
+  }
+
+  let manifest;
+
+  try {
+    manifest =
+      JSON.parse(
+        manifestRaw
+      );
+  } catch (
+    error
+  ) {
+    throw new Error(
+      'The Job Tracker cache manifest could not be parsed'
+    );
+  }
+
+  if (
+    manifest.appKey !==
+      JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY ||
+    !manifest.generation ||
+    !Number.isFinite(
+      Number(
+        manifest.chunkCount
+      )
+    ) ||
+    Number(
+      manifest.chunkCount
+    ) < 1
+  ) {
+    throw new Error(
+      'The Job Tracker cache manifest is invalid'
+    );
+  }
+
+  let serialised =
+    '';
+
+  for (
+    let index = 0;
+    index <
+      Number(
+        manifest.chunkCount
+      );
+    index++
+  ) {
+    const chunk =
+      properties.getProperty(
+        getJobTrackerCacheChunkKey_(
+          manifest.generation,
+          index
+        )
+      );
+
+    if (chunk === null) {
+      throw new Error(
+        `Job Tracker cache chunk ${index} is missing`
+      );
+    }
+
+    serialised +=
+      chunk;
+  }
+
+  let snapshot;
+
+  try {
+    snapshot =
+      JSON.parse(
+        serialised
+      );
+  } catch (
+    error
+  ) {
+    throw new Error(
+      'The Job Tracker cached snapshot could not be parsed'
+    );
+  }
+
+  return validateJobTrackerSnapshot_(
+    snapshot
+  );
+}
+
+function logJobTrackerCachedSnapshot() {
+  const snapshot =
+    getStoredJobTrackerSnapshot_();
+
+  console.log(
+    snapshot
+      ? JSON.stringify(
+          snapshot,
+          null,
+          2
+        )
+      : 'No Job Tracker cached snapshot exists'
+  );
+
+  return snapshot;
+}
+
+function logJobTrackerCacheStorage() {
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const baseKey =
+    getJobTrackerCacheBaseKey_();
+
+  const matching =
+    properties
+      .getKeys()
+      .filter(
+        key =>
+          key === baseKey ||
+          key.startsWith(
+            baseKey + ':'
+          )
+      );
+
+  const totalCharacters =
+    matching.reduce(
+      (
+        total,
+        key
+      ) =>
+        total +
+        String(
+          properties.getProperty(
+            key
+          ) ||
+          ''
+        ).length,
+      0
+    );
+
+  console.log(
+    JSON.stringify(
+      {
+        propertyCount:
+          matching.length,
+        totalCharacters
+      },
+      null,
+      2
+    )
+  );
+
+  return {
+    propertyCount:
+      matching.length,
+    totalCharacters
+  };
+}
+
+function clearJobTrackerCache() {
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const baseKey =
+    getJobTrackerCacheBaseKey_();
+
+  properties
+    .getKeys()
+    .filter(
+      key =>
+        key === baseKey ||
+        key.startsWith(
+          baseKey + ':'
+        )
+    )
+    .forEach(
+      key =>
+        properties.deleteProperty(
+          key
+        )
+    );
+
+  console.log(
+    'Job Tracker cache properties cleared.'
+  );
+}
+
+/* ============================================================
+ * CLINICAL OPTOMETRY JOB TRACKER — CACHE
+ * ============================================================
+ */
+
+const CLINICAL_JOB_TRACKER_CACHE_CONFIG = Object.freeze({
+  SPREADSHEET_ID:
+    '1gdLoeP2VKwv6ctpLsmXKZiMWybCgc987ucFgTIU4jEc',
+
+  SHEET_GID:
+    0,
+
+  HEADER_ROW:
+    2,
+
+  FIRST_DATA_ROW:
+    3,
+
+  SOURCE_COLUMN_COUNT:
+    25,
+
+  DATE_COLUMN:
+    4,
+
+  SUMMARY_MONTHS:
+    3,
+
+  /*
+   * Keep 4 months from today as the normal safety margin.
+   * If the latest genuine job is stale, the cutoff extends
+   * farther back automatically so the summary can still show
+   * its full 3-month-from-latest-job window.
+   */
+  CACHE_MONTHS:
+    4,
+
+  APP_CACHE_KEY:
+    'pff-clinical-optometry-job-tracker',
+
+  CACHE_PROPERTY_PREFIX:
+    'job-tracker-cache:',
+
+  CACHE_REFRESH_HOUR:
+    18,
+
+  CACHE_VERSION:
+    2,
+
+  CACHE_CHUNK_CHARACTERS:
+    2500,
+
+  TIME_ZONE:
+    'Australia/Sydney'
+});
+
+function getClinicalJobTrackerCacheBaseKey_() {
+  return (
+    CLINICAL_JOB_TRACKER_CACHE_CONFIG.CACHE_PROPERTY_PREFIX +
+    CLINICAL_JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY
+  );
+}
+
+function getClinicalJobTrackerCacheManifestKey_() {
+  return (
+    getClinicalJobTrackerCacheBaseKey_() +
+    ':manifest'
+  );
+}
+
+function getClinicalJobTrackerCacheChunkKey_(
+  generation,
+  index
+) {
+  return (
+    getClinicalJobTrackerCacheBaseKey_() +
+    ':generation:' +
+    generation +
+    ':chunk:' +
+    String(index).padStart(4, '0')
+  );
+}
+
+function getClinicalJobTrackerCacheCutoff_(
+  rawValues,
+  displayValues
+) {
+  const now =
+    new Date();
+
+  const localDateText =
+    Utilities.formatDate(
+      now,
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.TIME_ZONE,
+      'yyyy-MM-dd'
+    );
+
+  const parts =
+    localDateText
+      .split('-')
+      .map(Number);
+
+  const todaySafetyCutoff =
+    new Date(
+      parts[0],
+      parts[1] - 1,
+      parts[2]
+    );
+
+  todaySafetyCutoff.setMonth(
+    todaySafetyCutoff.getMonth() -
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.CACHE_MONTHS
+  );
+
+  todaySafetyCutoff.setHours(
+    0,
+    0,
+    0,
+    0
+  );
+
+  const dateIndex =
+    CLINICAL_JOB_TRACKER_CACHE_CONFIG.DATE_COLUMN - 1;
+
+  let latestJobDate =
+    null;
+
+  displayValues.forEach(
+    (
+      displayRow,
+      rowIndex
+    ) => {
+      const sourceAText =
+        String(
+          displayRow?.[0] ??
+          ''
+        ).trim();
+
+      if (!sourceAText) {
+        return;
+      }
+
+      const date =
+        parseTrackerDate_(
+          rawValues?.[rowIndex]?.[dateIndex],
+          displayRow?.[dateIndex]
+        );
+
+      if (!date) {
+        return;
+      }
+
+      if (
+        !latestJobDate ||
+        date.getTime() >
+          latestJobDate.getTime()
+      ) {
+        latestJobDate =
+          date;
+      }
+    }
+  );
+
+  if (!latestJobDate) {
+    return todaySafetyCutoff;
+  }
+
+  const summaryCutoff =
+    new Date(
+      latestJobDate.getTime()
+    );
+
+  summaryCutoff.setMonth(
+    summaryCutoff.getMonth() -
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.SUMMARY_MONTHS
+  );
+
+  summaryCutoff.setHours(
+    0,
+    0,
+    0,
+    0
+  );
+
+  return summaryCutoff <
+    todaySafetyCutoff
+      ? summaryCutoff
+      : todaySafetyCutoff;
+}
+
+function readClinicalJobTrackerData_() {
+  const spreadsheet =
+    SpreadsheetApp.openById(
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.SPREADSHEET_ID
+    );
+
+  const sheet =
+    getSheetByGid_(
+      spreadsheet,
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.SHEET_GID
+    );
+
+  const headerLabels =
+    sheet
+      .getRange(
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.HEADER_ROW,
+        1,
+        1,
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+      )
+      .getDisplayValues()?.[0]
+      ?.map(
+        value =>
+          String(
+            value ??
+            ''
+          ).trim()
+      ) ||
+    [];
+
+  const firstRow =
+    CLINICAL_JOB_TRACKER_CACHE_CONFIG.FIRST_DATA_ROW;
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (lastRow < firstRow) {
+    throw new Error(
+      'Clinical Optometry Job Tracker has no data rows'
+    );
+  }
+
+  const range =
+    sheet.getRange(
+      firstRow,
+      1,
+      lastRow - firstRow + 1,
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+    );
+
+  const rawValues =
+    range.getValues();
+
+  const displayValues =
+    range.getDisplayValues();
+
+  const cutoff =
+    getClinicalJobTrackerCacheCutoff_(
+      rawValues,
+      displayValues
+    );
+
+  const dateIndex =
+    CLINICAL_JOB_TRACKER_CACHE_CONFIG.DATE_COLUMN - 1;
+
+  const rows =
+    displayValues
+      .map(
+        (
+          displayRow,
+          rowIndex
+        ) => ({
+          displayRow,
+          rawRow:
+            rawValues?.[rowIndex] ||
+            []
+        })
+      )
+      .filter(
+        item => {
+          const sourceAText =
+            String(
+              item.displayRow?.[0] ??
+              ''
+            ).trim();
+
+          if (!sourceAText) {
+            return false;
+          }
+
+          const date =
+            parseTrackerDate_(
+              item.rawRow?.[dateIndex],
+              item.displayRow?.[dateIndex]
+            );
+
+          return (
+            date &&
+            date >= cutoff
+          );
+        }
+      )
+      .map(
+        item =>
+          Array.from(
+            {
+              length:
+                CLINICAL_JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+            },
+            (
+              _,
+              columnIndex
+            ) =>
+              String(
+                item.displayRow?.[columnIndex] ??
+                ''
+              ).trim()
+          )
+      );
+
+  if (!rows.length) {
+    throw new Error(
+      'Clinical Optometry Job Tracker has no usable recent rows'
+    );
+  }
+
+  return {
+    headerLabels,
+    rows
+  };
+}
+
+function validateClinicalJobTrackerData_(
+  data
+) {
+  const headerLabels =
+    Array.isArray(
+      data?.headerLabels
+    )
+      ? data.headerLabels
+      : [];
+
+  const rows =
+    Array.isArray(
+      data?.rows
+    )
+      ? data.rows
+      : [];
+
+  if (
+    headerLabels.length <
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+  ) {
+    throw new Error(
+      'Clinical Job Tracker cache has incomplete headers'
+    );
+  }
+
+  if (!rows.length) {
+    throw new Error(
+      'Clinical Job Tracker cache has no rows'
+    );
+  }
+
+  const normalisedRows =
+    rows.map(
+      (
+        row,
+        rowIndex
+      ) => {
+        if (
+          !Array.isArray(row) ||
+          row.length <
+            CLINICAL_JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+        ) {
+          throw new Error(
+            `Clinical Job Tracker cache row ${rowIndex + 1} is malformed`
+          );
+        }
+
+        return row
+          .slice(
+            0,
+            CLINICAL_JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+          )
+          .map(
+            value =>
+              String(
+                value ??
+                ''
+              )
+          );
+      }
+    );
+
+  return {
+    headerLabels:
+      headerLabels
+        .slice(
+          0,
+          CLINICAL_JOB_TRACKER_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+        )
+        .map(
+          value =>
+            String(
+              value ??
+              ''
+            )
+        ),
+
+    rows:
+      normalisedRows
+  };
+}
+
+function validateClinicalJobTrackerSnapshot_(
+  snapshot
+) {
+  if (
+    !snapshot ||
+    snapshot.ok !== true
+  ) {
+    throw new Error(
+      'The Clinical Job Tracker snapshot is not valid'
+    );
+  }
+
+  if (
+    snapshot.appKey !==
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY
+  ) {
+    throw new Error(
+      'The Clinical Job Tracker snapshot has the wrong app key'
+    );
+  }
+
+  if (
+    !snapshot.cachedAt ||
+    Number.isNaN(
+      Date.parse(
+        snapshot.cachedAt
+      )
+    )
+  ) {
+    throw new Error(
+      'The Clinical Job Tracker snapshot has no valid timestamp'
+    );
+  }
+
+  snapshot.data =
+    validateClinicalJobTrackerData_(
+      snapshot.data
+    );
+
+  return snapshot;
+}
+
+function splitClinicalJobTrackerSnapshotIntoChunks_(
+  text
+) {
+  const chunks =
+    [];
+
+  const size =
+    CLINICAL_JOB_TRACKER_CACHE_CONFIG.CACHE_CHUNK_CHARACTERS;
+
+  for (
+    let start = 0;
+    start < text.length;
+    start += size
+  ) {
+    chunks.push(
+      text.slice(
+        start,
+        start + size
+      )
+    );
+  }
+
+  return chunks;
+}
+
+function deleteClinicalJobTrackerGenerationChunks_(
+  generation,
+  chunkCount
+) {
+  if (
+    !generation ||
+    !Number.isFinite(
+      Number(
+        chunkCount
+      )
+    )
+  ) {
+    return;
+  }
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  for (
+    let index = 0;
+    index <
+      Number(
+        chunkCount
+      );
+    index++
+  ) {
+    properties.deleteProperty(
+      getClinicalJobTrackerCacheChunkKey_(
+        generation,
+        index
+      )
+    );
+  }
+}
+
+function storeClinicalJobTrackerSnapshot_(
+  snapshot
+) {
+  const validatedSnapshot =
+    validateClinicalJobTrackerSnapshot_(
+      snapshot
+    );
+
+  const serialised =
+    JSON.stringify(
+      validatedSnapshot
+    );
+
+  const chunks =
+    splitClinicalJobTrackerSnapshotIntoChunks_(
+      serialised
+    );
+
+  if (!chunks.length) {
+    throw new Error(
+      'Clinical Job Tracker snapshot serialised to an empty value'
+    );
+  }
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const manifestKey =
+    getClinicalJobTrackerCacheManifestKey_();
+
+  const oldManifestRaw =
+    properties.getProperty(
+      manifestKey
+    );
+
+  let oldManifest =
+    null;
+
+  if (oldManifestRaw) {
+    try {
+      oldManifest =
+        JSON.parse(
+          oldManifestRaw
+        );
+    } catch (
+      error
+    ) {
+      oldManifest =
+        null;
+    }
+  }
+
+  const generation =
+    Utilities
+      .getUuid()
+      .replace(
+        /-/g,
+        ''
+      );
+
+  const newProperties =
+    {};
+
+  chunks.forEach(
+    (
+      chunk,
+      index
+    ) => {
+      newProperties[
+        getClinicalJobTrackerCacheChunkKey_(
+          generation,
+          index
+        )
+      ] =
+        chunk;
+    }
+  );
+
+  try {
+    properties.setProperties(
+      newProperties,
+      false
+    );
+
+    let verificationText =
+      '';
+
+    for (
+      let index = 0;
+      index < chunks.length;
+      index++
+    ) {
+      const chunk =
+        properties.getProperty(
+          getClinicalJobTrackerCacheChunkKey_(
+            generation,
+            index
+          )
+        );
+
+      if (chunk === null) {
+        throw new Error(
+          `Clinical Job Tracker cache chunk ${index} was not stored`
+        );
+      }
+
+      verificationText +=
+        chunk;
+    }
+
+    validateClinicalJobTrackerSnapshot_(
+      JSON.parse(
+        verificationText
+      )
+    );
+
+    const manifest = {
+      ok:
+        true,
+
+      version:
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.CACHE_VERSION,
+
+      appKey:
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY,
+
+      cachedAt:
+        validatedSnapshot.cachedAt,
+
+      generation,
+
+      chunkCount:
+        chunks.length,
+
+      characterCount:
+        serialised.length
+    };
+
+    properties.setProperty(
+      manifestKey,
+      JSON.stringify(
+        manifest
+      )
+    );
+
+    if (
+      oldManifest?.generation &&
+      oldManifest.generation !==
+        generation
+    ) {
+      deleteClinicalJobTrackerGenerationChunks_(
+        oldManifest.generation,
+        oldManifest.chunkCount
+      );
+    }
+
+    return validatedSnapshot;
+  } catch (
+    error
+  ) {
+    deleteClinicalJobTrackerGenerationChunks_(
+      generation,
+      chunks.length
+    );
+
+    throw error;
+  }
+}
+
+function refreshClinicalJobTrackerCachedData() {
+  const lock =
+    LockService.getScriptLock();
+
+  lock.waitLock(
+    30000
+  );
+
+  try {
+    const data =
+      validateClinicalJobTrackerData_(
+        readClinicalJobTrackerData_()
+      );
+
+    const snapshot = {
+      ok:
+        true,
+
+      version:
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.CACHE_VERSION,
+
+      appKey:
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY,
+
+      cachedAt:
+        new Date().toISOString(),
+
+      data
+    };
+
+    storeClinicalJobTrackerSnapshot_(
+      snapshot
+    );
+
+    console.log(
+      `Clinical Job Tracker snapshot updated at ${snapshot.cachedAt}; rows=${data.rows.length}`
+    );
+
+    return snapshot;
+  } catch (
+    error
+  ) {
+    console.error(
+      'Clinical Job Tracker snapshot refresh failed',
+      error
+    );
+
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getStoredClinicalJobTrackerSnapshot_() {
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const manifestRaw =
+    properties.getProperty(
+      getClinicalJobTrackerCacheManifestKey_()
+    );
+
+  if (!manifestRaw) {
+    return null;
+  }
+
+  let manifest;
+
+  try {
+    manifest =
+      JSON.parse(
+        manifestRaw
+      );
+  } catch (
+    error
+  ) {
+    throw new Error(
+      'The Clinical Job Tracker cache manifest could not be parsed'
+    );
+  }
+
+  if (
+    manifest.appKey !==
+      CLINICAL_JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY ||
+    !manifest.generation ||
+    !Number.isFinite(
+      Number(
+        manifest.chunkCount
+      )
+    ) ||
+    Number(
+      manifest.chunkCount
+    ) < 1
+  ) {
+    throw new Error(
+      'The Clinical Job Tracker cache manifest is invalid'
+    );
+  }
+
+  let serialised =
+    '';
+
+  for (
+    let index = 0;
+    index <
+      Number(
+        manifest.chunkCount
+      );
+    index++
+  ) {
+    const chunk =
+      properties.getProperty(
+        getClinicalJobTrackerCacheChunkKey_(
+          manifest.generation,
+          index
+        )
+      );
+
+    if (chunk === null) {
+      throw new Error(
+        `Clinical Job Tracker cache chunk ${index} is missing`
+      );
+    }
+
+    serialised +=
+      chunk;
+  }
+
+  let snapshot;
+
+  try {
+    snapshot =
+      JSON.parse(
+        serialised
+      );
+  } catch (
+    error
+  ) {
+    throw new Error(
+      'The Clinical Job Tracker cached snapshot could not be parsed'
+    );
+  }
+
+  return validateClinicalJobTrackerSnapshot_(
+    snapshot
+  );
+}
+
+function logClinicalJobTrackerCachedSnapshot() {
+  const snapshot =
+    getStoredClinicalJobTrackerSnapshot_();
+
+  console.log(
+    snapshot
+      ? JSON.stringify(
+          snapshot,
+          null,
+          2
+        )
+      : 'No Clinical Job Tracker cached snapshot exists'
+  );
+
+  return snapshot;
+}
+
+function clearClinicalJobTrackerCache() {
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const baseKey =
+    getClinicalJobTrackerCacheBaseKey_();
+
+  properties
+    .getKeys()
+    .filter(
+      key =>
+        key === baseKey ||
+        key.startsWith(
+          baseKey + ':'
+        )
+    )
+    .forEach(
+      key =>
+        properties.deleteProperty(
+          key
+        )
+    );
+
+  console.log(
+    'Clinical Job Tracker cache properties cleared.'
+  );
+}
+
+/* ============================================================
+ * CLINICAL OPTOM JOBS SUMMARY — CACHE
+ * ============================================================
+ */
+
+const CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG = Object.freeze({
+  SPREADSHEET_ID: '1ZcZrPHvux_ckk2cJqRYu1oz9uT4brcRmcJ80bP-v--4',
+  SHEET_NAME: 'Mirror table',
+  HEADER_ROW: 2,
+  FIRST_DATA_ROW: 3,
+  FIRST_COLUMN: 2, // B
+  SOURCE_COLUMN_COUNT: 7, // B:H
+  EXPECTED_ROWS: 5,
+  EXPECTED_COLS: 3,
+  APP_CACHE_KEY: 'pff-clinical-optom-summary',
+  CACHE_PROPERTY_PREFIX: 'job-tracker-cache:',
+  CACHE_REFRESH_HOUR: 18,
+  CACHE_VERSION: 2,
+  TIME_ZONE: 'Australia/Sydney'
+});
+
+function getClinicalOptomSummaryCachePropertyKey_() {
+  return (
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.CACHE_PROPERTY_PREFIX +
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.APP_CACHE_KEY
+  );
+}
+
+function normaliseClinicalOptomSummaryText_(value) {
+  return String(value ?? '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function findClinicalOptomSummaryHeaderIndex_(headers, wantedHeader) {
+  const wanted = normaliseClinicalOptomSummaryText_(wantedHeader);
+
+  return headers.findIndex(
+    header => normaliseClinicalOptomSummaryText_(header) === wanted
+  );
+}
+
+function parseClinicalOptomSummaryDateUtc_(rawValue, displayValue) {
+  let text = '';
+
+  if (
+    Object.prototype.toString.call(rawValue) === '[object Date]' &&
+    Number.isFinite(rawValue.getTime())
+  ) {
+    text = Utilities.formatDate(
+      rawValue,
+      CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.TIME_ZONE,
+      'dd/MM/yyyy'
+    );
+  } else {
+    text = String(displayValue ?? rawValue ?? '').trim();
+  }
+
+  if (!text) {
+    return null;
+  }
+
+  let match = text.match(
+    /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/
+  );
+
+  if (match) {
+    let year = Number(match[3]);
+
+    if (year < 100) {
+      year += 2000;
+    }
+
+    return Date.UTC(
+      year,
+      Number(match[2]) - 1,
+      Number(match[1])
+    );
+  }
+
+  match = text.match(
+    /^(\d{4})-(\d{1,2})-(\d{1,2})$/
+  );
+
+  if (match) {
+    return Date.UTC(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3])
+    );
+  }
+
+  return null;
+}
+
+function getClinicalOptomSummaryMondayUtc_(dateUtc) {
+  const dayOfWeek = new Date(dateUtc).getUTCDay();
+  const daysSinceMonday = (dayOfWeek + 6) % 7;
+
+  return dateUtc - (daysSinceMonday * 24 * 60 * 60 * 1000);
+}
+
+function addClinicalOptomSummaryDaysUtc_(dateUtc, days) {
+  return dateUtc + (days * 24 * 60 * 60 * 1000);
+}
+
+function formatClinicalOptomSummaryShortDate_(dateUtc) {
+  const date = new Date(dateUtc);
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+
+  return `${day}/${month}`;
+}
+
+function mapClinicalOptomSummaryEmployerType_(value) {
+  const type = normaliseClinicalOptomSummaryText_(value);
+
+  if (!type || type === 'xxx' || type === 'x') {
+    return null;
+  }
+
+  if (type === 'corporate') {
+    return 'Corporate';
+  }
+
+  if (type === 'independent') {
+    return 'Independent';
+  }
+
+  if (
+    type === 'ophthalmologist' ||
+    type === 'ophthalmology' ||
+    type === 'ophthal' ||
+    type === 'ophthal practice' ||
+    type === 'opthal practice'
+  ) {
+    return 'Ophthal';
+  }
+
+  return 'Other';
+}
+
+function readClinicalOptomSummaryData_() {
+  const spreadsheet = SpreadsheetApp.openById(
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.SPREADSHEET_ID
+  );
+
+  const sheet = spreadsheet.getSheetByName(
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.SHEET_NAME
+  );
+
+  if (!sheet) {
+    throw new Error(
+      `Could not find sheet ${CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.SHEET_NAME}`
+    );
+  }
+
+  const headers = sheet
+    .getRange(
+      CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.HEADER_ROW,
+      CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.FIRST_COLUMN,
+      1,
+      CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+    )
+    .getDisplayValues()[0]
+    .map(value => String(value ?? '').trim());
+
+  const repeatIndex = findClinicalOptomSummaryHeaderIndex_(
+    headers,
+    'Repeat'
+  );
+
+  const resultIndex = findClinicalOptomSummaryHeaderIndex_(
+    headers,
+    'Result'
+  );
+
+  const dateIndex = findClinicalOptomSummaryHeaderIndex_(
+    headers,
+    'Date'
+  );
+
+  const employerTypeIndex = findClinicalOptomSummaryHeaderIndex_(
+    headers,
+    'Employer Type'
+  );
+
+  if (
+    repeatIndex < 0 ||
+    resultIndex < 0 ||
+    dateIndex < 0 ||
+    employerTypeIndex < 0
+  ) {
+    throw new Error(
+      'Required Mirror table columns were not found'
+    );
+  }
+
+  const lastRow = sheet.getLastRow();
+
+  if (
+    lastRow <
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.FIRST_DATA_ROW
+  ) {
+    throw new Error(
+      'Mirror table has no data rows'
+    );
+  }
+
+  const rowCount =
+    lastRow -
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.FIRST_DATA_ROW +
+    1;
+
+  const range = sheet.getRange(
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.FIRST_DATA_ROW,
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.FIRST_COLUMN,
+    rowCount,
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+  );
+
+  const rawValues = range.getValues();
+  const displayValues = range.getDisplayValues();
+
+  let latestRealJobDateUtc = null;
+
+  displayValues.forEach((displayRow, rowIndex) => {
+    const resultValue = String(
+      displayRow?.[resultIndex] ?? ''
+    ).trim();
+
+    if (!resultValue) {
+      return;
+    }
+
+    const jobDateUtc = parseClinicalOptomSummaryDateUtc_(
+      rawValues?.[rowIndex]?.[dateIndex],
+      displayRow?.[dateIndex]
+    );
+
+    if (jobDateUtc === null) {
+      return;
+    }
+
+    if (
+      latestRealJobDateUtc === null ||
+      jobDateUtc > latestRealJobDateUtc
+    ) {
+      latestRealJobDateUtc = jobDateUtc;
+    }
+  });
+
+  if (latestRealJobDateUtc === null) {
+    throw new Error(
+      'Mirror table has no valid genuine job dates'
+    );
+  }
+
+  const weekStartUtc = getClinicalOptomSummaryMondayUtc_(
+    latestRealJobDateUtc
+  );
+
+  const weekEndUtc = addClinicalOptomSummaryDaysUtc_(
+    weekStartUtc,
+    6
+  );
+
+  const fourWeekStartUtc = addClinicalOptomSummaryDaysUtc_(
+    weekStartUtc,
+    -21
+  );
+
+  const fourWeekEndUtc = weekEndUtc;
+
+  const counts = {
+    Corporate: { week: 0, fourWeeks: 0 },
+    Independent: { week: 0, fourWeeks: 0 },
+    Ophthal: { week: 0, fourWeeks: 0 },
+    Other: { week: 0, fourWeeks: 0 }
+  };
+
+  displayValues.forEach((displayRow, rowIndex) => {
+    const repeatValue =
+      normaliseClinicalOptomSummaryText_(
+        displayRow?.[repeatIndex]
+      );
+
+    if (repeatValue !== 'no') {
+      return;
+    }
+
+    const resultValue = String(
+      displayRow?.[resultIndex] ?? ''
+    ).trim();
+
+    if (!resultValue) {
+      return;
+    }
+
+    const jobDateUtc = parseClinicalOptomSummaryDateUtc_(
+      rawValues?.[rowIndex]?.[dateIndex],
+      displayRow?.[dateIndex]
+    );
+
+    if (jobDateUtc === null) {
+      return;
+    }
+
+    const category =
+      mapClinicalOptomSummaryEmployerType_(
+        displayRow?.[employerTypeIndex]
+      );
+
+    if (category === null) {
+      return;
+    }
+
+    if (
+      jobDateUtc >= weekStartUtc &&
+      jobDateUtc <= weekEndUtc
+    ) {
+      counts[category].week += 1;
+    }
+
+    if (
+      jobDateUtc >= fourWeekStartUtc &&
+      jobDateUtc <= fourWeekEndUtc
+    ) {
+      counts[category].fourWeeks += 1;
+    }
+  });
+
+  const weekHeader =
+    `Week (${formatClinicalOptomSummaryShortDate_(weekStartUtc)}` +
+    `–${formatClinicalOptomSummaryShortDate_(weekEndUtc)})`;
+
+  const fourWeekHeader =
+    `4-weeks (${formatClinicalOptomSummaryShortDate_(fourWeekStartUtc)}` +
+    `–${formatClinicalOptomSummaryShortDate_(fourWeekEndUtc)})`;
+
+  return {
+    tableValues: [
+      ['', weekHeader, fourWeekHeader],
+      [
+        'Corporate',
+        counts.Corporate.week,
+        counts.Corporate.fourWeeks
+      ],
+      [
+        'Independent',
+        counts.Independent.week,
+        counts.Independent.fourWeeks
+      ],
+      [
+        'Ophthal',
+        counts.Ophthal.week,
+        counts.Ophthal.fourWeeks
+      ],
+      [
+        'Other',
+        counts.Other.week,
+        counts.Other.fourWeeks
+      ]
+    ]
+  };
+}
+
+function validateClinicalOptomSummaryData_(data) {
+  const values = Array.isArray(data?.tableValues)
+    ? data.tableValues
+    : [];
+
+  if (
+    values.length !==
+      CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.EXPECTED_ROWS ||
+    values.some(
+      row =>
+        !Array.isArray(row) ||
+        row.length <
+          CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.EXPECTED_COLS
+    )
+  ) {
+    throw new Error(
+      'Clinical optom summary cache has incomplete table data'
+    );
+  }
+
+  return {
+    tableValues: values.map(
+      row =>
+        row
+          .slice(
+            0,
+            CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.EXPECTED_COLS
+          )
+          .map(
+            value => String(value ?? '').trim()
+          )
+    )
+  };
+}
+
+function validateClinicalOptomSummarySnapshot_(snapshot) {
+  if (
+    !snapshot ||
+    snapshot.ok !== true
+  ) {
+    throw new Error(
+      'The Clinical optom summary snapshot is not valid'
+    );
+  }
+
+  if (
+    snapshot.appKey !==
+    CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.APP_CACHE_KEY
+  ) {
+    throw new Error(
+      'The Clinical optom summary snapshot has the wrong app key'
+    );
+  }
+
+  if (
+    !snapshot.cachedAt ||
+    Number.isNaN(
+      Date.parse(snapshot.cachedAt)
+    )
+  ) {
+    throw new Error(
+      'The Clinical optom summary snapshot has no valid timestamp'
+    );
+  }
+
+  snapshot.data =
+    validateClinicalOptomSummaryData_(
+      snapshot.data
+    );
+
+  return snapshot;
+}
+
+function refreshClinicalOptomSummaryCachedData() {
+  const lock = LockService.getScriptLock();
+
+  lock.waitLock(30000);
+
+  try {
+    const data =
+      validateClinicalOptomSummaryData_(
+        readClinicalOptomSummaryData_()
+      );
+
+    const snapshot = {
+      ok: true,
+      version:
+        CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.CACHE_VERSION,
+      appKey:
+        CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.APP_CACHE_KEY,
+      cachedAt: new Date().toISOString(),
+      data
+    };
+
+    const validatedSnapshot =
+      validateClinicalOptomSummarySnapshot_(
+        snapshot
+      );
+
+    PropertiesService
+      .getScriptProperties()
+      .setProperty(
+        getClinicalOptomSummaryCachePropertyKey_(),
+        JSON.stringify(validatedSnapshot)
+      );
+
+    console.log(
+      `Clinical optom summary snapshot updated at ${snapshot.cachedAt}`
+    );
+
+    return validatedSnapshot;
+  } catch (error) {
+    console.error(
+      'Clinical optom summary snapshot refresh failed',
+      error
+    );
+
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getStoredClinicalOptomSummarySnapshot_() {
+  const raw = PropertiesService
+    .getScriptProperties()
+    .getProperty(
+      getClinicalOptomSummaryCachePropertyKey_()
+    );
+
+  if (!raw) {
+    return null;
+  }
+
+  let snapshot;
+
+  try {
+    snapshot = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      'The Clinical optom summary cached snapshot could not be parsed'
+    );
+  }
+
+  return validateClinicalOptomSummarySnapshot_(
+    snapshot
+  );
+}
+
+function logClinicalOptomSummaryCachedSnapshot() {
+  const snapshot =
+    getStoredClinicalOptomSummarySnapshot_();
+
+  console.log(
+    snapshot
+      ? JSON.stringify(snapshot, null, 2)
+      : 'No Clinical optom summary cached snapshot exists'
+  );
+
+  return snapshot;
+}
+
+function clearClinicalOptomSummaryCache() {
+  PropertiesService
+    .getScriptProperties()
+    .deleteProperty(
+      getClinicalOptomSummaryCachePropertyKey_()
+    );
+
+  console.log(
+    'Clinical optom summary cache property cleared.'
+  );
+}
+/* ============================================================
+ * CONTRIBUTION COUNT — CACHE
+ * ============================================================
+ */
+
+const CONTRIBUTION_COUNT_CACHE_CONFIG = Object.freeze({
+  WPS_SPREADSHEET_ID:
+    '1G3BV5lA_jaRPRR3ZmFWL-j8nRVWk5k01D-gOeO5nVgQ',
+
+  WPS_SHEET_NAME:
+    'Data',
+
+  WPS_FIRST_DATA_ROW:
+    2,
+
+  WPS_TIMESTAMP_COLUMN:
+    1,
+
+  PERMANENT_SPREADSHEET_ID:
+    '1D4EoCMnH_RbwbuzFtw92NOwnvR_r9zQV7dAaXtfnnd0',
+
+  PERMANENT_SHEET_NAME:
+    'Data',
+
+  PERMANENT_COUNT_CELL:
+    'H2',
+
+  CASUAL_SPREADSHEET_ID:
+    '1UZizMV2CNlyNbKytN4QCSc4HcsKCx-PxOrboJyMCN1E',
+
+  CASUAL_SHEET_NAME:
+    'Data',
+
+  CASUAL_COUNT_CELL:
+    'H2',
+
+  LOCUM_SPREADSHEET_ID:
+    '1wmrmNS4cz-_aPKnyBVg7-SShbhs6czMNh07UjyLo04s',
+
+  LOCUM_SHEET_NAME:
+    'Data',
+
+  LOCUM_COUNT_CELL:
+    'H2',
+
+  REPORT_SPREADSHEET_ID:
+    '1hMjeY-Cg3ZJWYWrfx0Brxb1QvhDYpiDq6OR4F4g8zCE',
+
+  REPORT_SHEET_NAME:
+    'Data',
+
+  REPORT_COUNT_RANGE:
+    'B1:C1',
+
+  APP_CACHE_KEY:
+    'pff-contribution-count',
+
+  CACHE_PROPERTY_PREFIX:
+    'job-tracker-cache:',
+
+  CACHE_REFRESH_HOUR:
+    18,
+
+  CACHE_VERSION:
+    3,
+
+  TIME_ZONE:
+    'Australia/Sydney'
+});
+function getContributionCountCachePropertyKey_() {
+  return (
+    CONTRIBUTION_COUNT_CACHE_CONFIG.CACHE_PROPERTY_PREFIX +
+    CONTRIBUTION_COUNT_CACHE_CONFIG.APP_CACHE_KEY
+  );
+}
+
+function parseContributionCount_(
+  value,
+  label
+) {
+  const cleaned =
+    String(
+      value ??
+      ''
+    )
+      .replace(/,/g, '')
+      .trim();
+
+  const count =
+    Number(
+      cleaned
+    );
+
+  if (
+    !Number.isFinite(
+      count
+    ) ||
+    count < 0
+  ) {
+    throw new Error(
+      `${label} does not contain a valid contribution count`
+    );
+  }
+
+  return count;
+}
+
+function getContributionSheet_(
+  spreadsheetId,
+  sheetName
+) {
+  const spreadsheet =
+    SpreadsheetApp.openById(
+      spreadsheetId
+    );
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      sheetName
+    );
+
+  if (!sheet) {
+    throw new Error(
+      `Could not find contribution sheet ${sheetName}`
+    );
+  }
+
+  return sheet;
+}
+
+function readContributionCountData_() {
+  const wpsSheet =
+    getContributionSheet_(
+      CONTRIBUTION_COUNT_CACHE_CONFIG.WPS_SPREADSHEET_ID,
+      CONTRIBUTION_COUNT_CACHE_CONFIG.WPS_SHEET_NAME
+    );
+
+  const wpsLastRow =
+    wpsSheet.getLastRow();
+
+  let wpsCount =
+    0;
+
+  if (
+    wpsLastRow >=
+      CONTRIBUTION_COUNT_CACHE_CONFIG.WPS_FIRST_DATA_ROW
+  ) {
+    const timestampValues =
+      wpsSheet
+        .getRange(
+          CONTRIBUTION_COUNT_CACHE_CONFIG.WPS_FIRST_DATA_ROW,
+          CONTRIBUTION_COUNT_CACHE_CONFIG.WPS_TIMESTAMP_COLUMN,
+          wpsLastRow -
+            CONTRIBUTION_COUNT_CACHE_CONFIG.WPS_FIRST_DATA_ROW +
+            1,
+          1
+        )
+        .getValues();
+
+    wpsCount =
+      timestampValues.reduce(
+        (
+          count,
+          row
+        ) => {
+          const value =
+            row?.[0];
+
+          return (
+            value !== '' &&
+            value !== null &&
+            value !== undefined
+          )
+            ? count + 1
+            : count;
+        },
+        0
+      );
+  }
+
+  const permanentSheet =
+    getContributionSheet_(
+      CONTRIBUTION_COUNT_CACHE_CONFIG.PERMANENT_SPREADSHEET_ID,
+      CONTRIBUTION_COUNT_CACHE_CONFIG.PERMANENT_SHEET_NAME
+    );
+
+  const permanentCount =
+    parseContributionCount_(
+      permanentSheet
+        .getRange(
+          CONTRIBUTION_COUNT_CACHE_CONFIG.PERMANENT_COUNT_CELL
+        )
+        .getDisplayValue(),
+      'Permanent Data!H2'
+    );
+
+  const casualSheet =
+    getContributionSheet_(
+      CONTRIBUTION_COUNT_CACHE_CONFIG.CASUAL_SPREADSHEET_ID,
+      CONTRIBUTION_COUNT_CACHE_CONFIG.CASUAL_SHEET_NAME
+    );
+
+  const casualCount =
+    parseContributionCount_(
+      casualSheet
+        .getRange(
+          CONTRIBUTION_COUNT_CACHE_CONFIG.CASUAL_COUNT_CELL
+        )
+        .getDisplayValue(),
+      'Casual Data!H2'
+    );
+
+  const locumSheet =
+    getContributionSheet_(
+      CONTRIBUTION_COUNT_CACHE_CONFIG.LOCUM_SPREADSHEET_ID,
+      CONTRIBUTION_COUNT_CACHE_CONFIG.LOCUM_SHEET_NAME
+    );
+
+  const locumCount =
+    parseContributionCount_(
+      locumSheet
+        .getRange(
+          CONTRIBUTION_COUNT_CACHE_CONFIG.LOCUM_COUNT_CELL
+        )
+        .getDisplayValue(),
+      'Locum Data!H2'
+    );
+
+  const reportSheet =
+    getContributionSheet_(
+      CONTRIBUTION_COUNT_CACHE_CONFIG.REPORT_SPREADSHEET_ID,
+      CONTRIBUTION_COUNT_CACHE_CONFIG.REPORT_SHEET_NAME
+    );
+
+  const reportValues =
+    reportSheet
+      .getRange(
+        CONTRIBUTION_COUNT_CACHE_CONFIG.REPORT_COUNT_RANGE
+      )
+      .getDisplayValues()?.[0] ||
+    [];
+
+  const reportCountB =
+    parseContributionCount_(
+      reportValues?.[0],
+      'Report Data!B1'
+    );
+
+  const reportCountC =
+    parseContributionCount_(
+      reportValues?.[1],
+      'Report Data!C1'
+    );
+
+  const contributionCount =
+    wpsCount +
+    permanentCount +
+    casualCount +
+    locumCount +
+    reportCountB +
+    reportCountC;
+
+  console.log(
+    JSON.stringify(
+      {
+        wpsCount,
+        permanentCount,
+        casualCount,
+        locumCount,
+        reportCountB,
+        reportCountC,
+        contributionCount
+      },
+      null,
+      2
+    )
+  );
+
+  return {
+    contributionCount:
+      String(
+        contributionCount
+      )
+  };
+}
+function validateContributionCountData_(
+  data
+) {
+  const contributionCount =
+    String(
+      data?.contributionCount ??
+      ''
+    ).trim();
+
+  if (!contributionCount) {
+    throw new Error(
+      'Contribution count cache has no value'
+    );
+  }
+
+  return {
+    contributionCount
+  };
+}
+
+function validateContributionCountSnapshot_(
+  snapshot
+) {
+  if (
+    !snapshot ||
+    snapshot.ok !== true
+  ) {
+    throw new Error(
+      'The contribution count snapshot is not valid'
+    );
+  }
+
+  if (
+    snapshot.appKey !==
+      CONTRIBUTION_COUNT_CACHE_CONFIG.APP_CACHE_KEY
+  ) {
+    throw new Error(
+      'The contribution count snapshot has the wrong app key'
+    );
+  }
+
+  if (
+    !snapshot.cachedAt ||
+    Number.isNaN(
+      Date.parse(
+        snapshot.cachedAt
+      )
+    )
+  ) {
+    throw new Error(
+      'The contribution count snapshot has no valid timestamp'
+    );
+  }
+
+  snapshot.data =
+    validateContributionCountData_(
+      snapshot.data
+    );
+
+  return snapshot;
+}
+
+function refreshContributionCountCachedData() {
+  const lock =
+    LockService.getScriptLock();
+
+  lock.waitLock(
+    30000
+  );
+
+  try {
+    const data =
+      validateContributionCountData_(
+        readContributionCountData_()
+      );
+
+    const snapshot = {
+      ok:
+        true,
+
+      version:
+        CONTRIBUTION_COUNT_CACHE_CONFIG.CACHE_VERSION,
+
+      appKey:
+        CONTRIBUTION_COUNT_CACHE_CONFIG.APP_CACHE_KEY,
+
+      cachedAt:
+        new Date().toISOString(),
+
+      data
+    };
+
+    const validatedSnapshot =
+      validateContributionCountSnapshot_(
+        snapshot
+      );
+
+    PropertiesService
+      .getScriptProperties()
+      .setProperty(
+        getContributionCountCachePropertyKey_(),
+        JSON.stringify(
+          validatedSnapshot
+        )
+      );
+
+    console.log(
+      `Contribution count snapshot updated at ${snapshot.cachedAt}; value=${data.contributionCount}`
+    );
+
+    return validatedSnapshot;
+  } catch (
+    error
+  ) {
+    console.error(
+      'Contribution count snapshot refresh failed',
+      error
+    );
+
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getStoredContributionCountSnapshot_() {
+  const raw =
+    PropertiesService
+      .getScriptProperties()
+      .getProperty(
+        getContributionCountCachePropertyKey_()
+      );
+
+  if (!raw) {
+    return null;
+  }
+
+  let snapshot;
+
+  try {
+    snapshot =
+      JSON.parse(
+        raw
+      );
+  } catch (
+    error
+  ) {
+    throw new Error(
+      'The contribution count cached snapshot could not be parsed'
+    );
+  }
+
+  return validateContributionCountSnapshot_(
+    snapshot
+  );
+}
+
+function logContributionCountCachedSnapshot() {
+  const snapshot =
+    getStoredContributionCountSnapshot_();
+
+  console.log(
+    snapshot
+      ? JSON.stringify(
+          snapshot,
+          null,
+          2
+        )
+      : 'No contribution count cached snapshot exists'
+  );
+
+  return snapshot;
+}
+
+function clearContributionCountCache() {
+  PropertiesService
+    .getScriptProperties()
+    .deleteProperty(
+      getContributionCountCachePropertyKey_()
+    );
+
+  console.log(
+    'Contribution count cache property cleared.'
+  );
+}
+
+/* ============================================================
+ * CASUAL RATE SUMMARY — CACHE
+ * ============================================================
+ */
+
+const CASUAL_RATE_SUMMARY_CACHE_CONFIG = Object.freeze({
+  SPREADSHEET_ID:
+    '1UZizMV2CNlyNbKytN4QCSc4HcsKCx-PxOrboJyMCN1E',
+
+  SHEET_GID:
+    0,
+
+  RESPONSE_CELL:
+    'H2',
+
+  PERCENTILE_HEADER_RANGE:
+    'AK1:AP1',
+
+  PERCENTILE_VALUE_RANGE:
+    'AK2:AP2',
+
+  EXPECTED_PERCENTILE_COLS:
+    6,
+
+  APP_CACHE_KEY:
+    'pff-casual-rate-summary',
+
+  CACHE_PROPERTY_PREFIX:
+    'job-tracker-cache:',
+
+  CACHE_REFRESH_HOUR:
+    18,
+
+  CACHE_VERSION:
+    1,
+
+  TIME_ZONE:
+    'Australia/Sydney'
+});
+
+function getCasualRateSummaryCachePropertyKey_() {
+  return (
+    CASUAL_RATE_SUMMARY_CACHE_CONFIG.CACHE_PROPERTY_PREFIX +
+    CASUAL_RATE_SUMMARY_CACHE_CONFIG.APP_CACHE_KEY
+  );
+}
+
+function readCasualRateSummaryData_() {
+  const spreadsheet =
+    SpreadsheetApp.openById(
+      CASUAL_RATE_SUMMARY_CACHE_CONFIG.SPREADSHEET_ID
+    );
+
+  const sheet =
+    getSheetByGid_(
+      spreadsheet,
+      CASUAL_RATE_SUMMARY_CACHE_CONFIG.SHEET_GID
+    );
+
+  const responseCount =
+    String(
+      sheet
+        .getRange(
+          CASUAL_RATE_SUMMARY_CACHE_CONFIG.RESPONSE_CELL
+        )
+        .getDisplayValue() ??
+      ''
+    ).trim();
+
+  const percentileHeaders =
+    sheet
+      .getRange(
+        CASUAL_RATE_SUMMARY_CACHE_CONFIG.PERCENTILE_HEADER_RANGE
+      )
+      .getDisplayValues()[0]
+      .map(
+        value =>
+          String(
+            value ??
+            ''
+          ).trim() ||
+          '—'
+      );
+
+  const percentileValues =
+    sheet
+      .getRange(
+        CASUAL_RATE_SUMMARY_CACHE_CONFIG.PERCENTILE_VALUE_RANGE
+      )
+      .getDisplayValues()[0]
+      .map(
+        value =>
+          String(
+            value ??
+            ''
+          ).trim() ||
+          '—'
+      );
+
+  return {
+    responseCount,
+
+    percentileTable: [
+      percentileHeaders,
+      percentileValues
+    ]
+  };
+}
+
+function validateCasualRateSummaryData_(
+  data
+) {
+  const responseCount =
+    String(
+      data?.responseCount ??
+      ''
+    ).trim();
+
+  const percentileTable =
+    Array.isArray(
+      data?.percentileTable
+    )
+      ? data.percentileTable
+      : [];
+
+  const percentileHeaders =
+    Array.isArray(
+      percentileTable[0]
+    )
+      ? percentileTable[0]
+      : [];
+
+  const percentileValues =
+    Array.isArray(
+      percentileTable[1]
+    )
+      ? percentileTable[1]
+      : [];
+
+  if (!responseCount) {
+    throw new Error(
+      'Casual rate summary response count is empty'
+    );
+  }
+
+  if (
+    percentileHeaders.length !==
+      CASUAL_RATE_SUMMARY_CACHE_CONFIG.EXPECTED_PERCENTILE_COLS ||
+    percentileValues.length !==
+      CASUAL_RATE_SUMMARY_CACHE_CONFIG.EXPECTED_PERCENTILE_COLS
+  ) {
+    throw new Error(
+      'Casual rate summary percentile table has the wrong number of columns'
+    );
+  }
+
+  return {
+    responseCount,
+
+    percentileTable: [
+      percentileHeaders.map(
+        value =>
+          String(
+            value ??
+            ''
+          ).trim() ||
+          '—'
+      ),
+
+      percentileValues.map(
+        value =>
+          String(
+            value ??
+            ''
+          ).trim() ||
+          '—'
+      )
+    ]
+  };
+}
+
+function validateCasualRateSummarySnapshot_(
+  snapshot
+) {
+  if (
+    !snapshot ||
+    snapshot.ok !== true
+  ) {
+    throw new Error(
+      'The Casual Rate Summary snapshot is not valid'
+    );
+  }
+
+  if (
+    snapshot.appKey !==
+      CASUAL_RATE_SUMMARY_CACHE_CONFIG.APP_CACHE_KEY
+  ) {
+    throw new Error(
+      'The Casual Rate Summary snapshot has the wrong app key'
+    );
+  }
+
+  if (
+    !snapshot.cachedAt ||
+    Number.isNaN(
+      Date.parse(
+        snapshot.cachedAt
+      )
+    )
+  ) {
+    throw new Error(
+      'The Casual Rate Summary snapshot has no valid timestamp'
+    );
+  }
+
+  snapshot.data =
+    validateCasualRateSummaryData_(
+      snapshot.data
+    );
+
+  return snapshot;
+}
+
+function refreshCasualRateSummaryCachedData() {
+  const lock =
+    LockService.getScriptLock();
+
+  lock.waitLock(
+    30000
+  );
+
+  try {
+    const data =
+      validateCasualRateSummaryData_(
+        readCasualRateSummaryData_()
+      );
+
+    const snapshot = {
+      ok:
+        true,
+
+      version:
+        CASUAL_RATE_SUMMARY_CACHE_CONFIG.CACHE_VERSION,
+
+      appKey:
+        CASUAL_RATE_SUMMARY_CACHE_CONFIG.APP_CACHE_KEY,
+
+      cachedAt:
+        new Date().toISOString(),
+
+      data
+    };
+
+    const validatedSnapshot =
+      validateCasualRateSummarySnapshot_(
+        snapshot
+      );
+
+    PropertiesService
+      .getScriptProperties()
+      .setProperty(
+        getCasualRateSummaryCachePropertyKey_(),
+        JSON.stringify(
+          validatedSnapshot
+        )
+      );
+
+    console.log(
+      `Casual Rate Summary snapshot updated at ${snapshot.cachedAt}; responses=${data.responseCount}`
+    );
+
+    return validatedSnapshot;
+  } catch (
+    error
+  ) {
+    console.error(
+      'Casual Rate Summary snapshot refresh failed',
+      error
+    );
+
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getStoredCasualRateSummarySnapshot_() {
+  const raw =
+    PropertiesService
+      .getScriptProperties()
+      .getProperty(
+        getCasualRateSummaryCachePropertyKey_()
+      );
+
+  if (!raw) {
+    return null;
+  }
+
+  let snapshot;
+
+  try {
+    snapshot =
+      JSON.parse(
+        raw
+      );
+  } catch (
+    error
+  ) {
+    throw new Error(
+      'The Casual Rate Summary cached snapshot could not be parsed'
+    );
+  }
+
+  return validateCasualRateSummarySnapshot_(
+    snapshot
+  );
+}
+
+function logCasualRateSummaryCachedSnapshot() {
+  const snapshot =
+    getStoredCasualRateSummarySnapshot_();
+
+  console.log(
+    snapshot
+      ? JSON.stringify(
+          snapshot,
+          null,
+          2
+        )
+      : 'No Casual Rate Summary cached snapshot exists'
+  );
+
+  return snapshot;
+}
+
+function clearCasualRateSummaryCache() {
+  PropertiesService
+    .getScriptProperties()
+    .deleteProperty(
+      getCasualRateSummaryCachePropertyKey_()
+    );
+
+  console.log(
+    'Casual Rate Summary cache property cleared.'
+  );
+}
+/* ============================================================
+ * CASUAL RATES DATA — CACHE
+ * ============================================================
+ */
+
+const CASUAL_RATES_DATA_CACHE_CONFIG = Object.freeze({
+  SPREADSHEET_ID:
+    '1UZizMV2CNlyNbKytN4QCSc4HcsKCx-PxOrboJyMCN1E',
+
+  SHEET_NAME:
+    'Data',
+
+  FIRST_DATA_ROW:
+    2,
+
+  SOURCE_COLUMN_COUNT:
+    10,
+
+  APP_CACHE_KEY:
+    'pff-casual-rates-data',
+
+  CACHE_PROPERTY_PREFIX:
+    'job-tracker-cache:',
+
+  CACHE_REFRESH_HOUR:
+    18,
+
+  CACHE_VERSION:
+    1,
+
+  CACHE_CHUNK_CHARACTERS:
+    2500,
+
+  TIME_ZONE:
+    'Australia/Sydney'
+});
+
+function getCasualRatesDataCacheBaseKey_() {
+  return (
+    CASUAL_RATES_DATA_CACHE_CONFIG.CACHE_PROPERTY_PREFIX +
+    CASUAL_RATES_DATA_CACHE_CONFIG.APP_CACHE_KEY
+  );
+}
+
+function getCasualRatesDataCacheManifestKey_() {
+  return (
+    getCasualRatesDataCacheBaseKey_() +
+    ':manifest'
+  );
+}
+
+function getCasualRatesDataCacheChunkKey_(
+  generation,
+  index
+) {
+  return (
+    getCasualRatesDataCacheBaseKey_() +
+    ':generation:' +
+    generation +
+    ':chunk:' +
+    String(index).padStart(
+      4,
+      '0'
+    )
+  );
+}
+
+function readCasualRatesData_() {
+  const spreadsheet =
+    SpreadsheetApp.openById(
+      CASUAL_RATES_DATA_CACHE_CONFIG.SPREADSHEET_ID
+    );
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      CASUAL_RATES_DATA_CACHE_CONFIG.SHEET_NAME
+    );
+
+  if (!sheet) {
+    throw new Error(
+      `Could not find sheet ${CASUAL_RATES_DATA_CACHE_CONFIG.SHEET_NAME}`
+    );
+  }
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (
+    lastRow <
+      CASUAL_RATES_DATA_CACHE_CONFIG.FIRST_DATA_ROW
+  ) {
+    throw new Error(
+      'Casual Rates Data has no data rows'
+    );
+  }
+
+  const displayValues =
+    sheet
+      .getRange(
+        CASUAL_RATES_DATA_CACHE_CONFIG.FIRST_DATA_ROW,
+        1,
+        lastRow -
+          CASUAL_RATES_DATA_CACHE_CONFIG.FIRST_DATA_ROW +
+          1,
+        CASUAL_RATES_DATA_CACHE_CONFIG.SOURCE_COLUMN_COUNT
+      )
+      .getDisplayValues();
+
+  const rows =
+    displayValues
+      .filter(
+        row =>
+          row.some(
+            value =>
+              String(
+                value ??
+                ''
+              ).trim()
+          )
+      )
+      .map(
+        row => [
+          row[0],
+          row[1],
+          row[2],
+          row[4],
+          row[8],
+          row[9]
+        ].map(
+          value =>
+            String(
+              value ??
+              ''
+            ).trim()
+        )
+      );
+
+  if (!rows.length) {
+    throw new Error(
+      'Casual Rates Data has no usable rows'
+    );
+  }
+
+  return {
+    rows
+  };
+}
+
+function validateCasualRatesData_(
+  data
+) {
+  const rows =
+    Array.isArray(
+      data?.rows
+    )
+      ? data.rows
+      : [];
+
+  if (!rows.length) {
+    throw new Error(
+      'Casual Rates Data cache has no rows'
+    );
+  }
+
+  const normalisedRows =
+    rows.map(
+      (
+        row,
+        rowIndex
+      ) => {
+        if (
+          !Array.isArray(row) ||
+          row.length < 6
+        ) {
+          throw new Error(
+            `Casual Rates Data cache row ${rowIndex + 1} is malformed`
+          );
+        }
+
+        return row
+          .slice(
+            0,
+            6
+          )
+          .map(
+            value =>
+              String(
+                value ??
+                ''
+              ).trim()
+          );
+      }
+    );
+
+  return {
+    rows:
+      normalisedRows
+  };
+}
+
+function validateCasualRatesDataSnapshot_(
+  snapshot
+) {
+  if (
+    !snapshot ||
+    snapshot.ok !== true
+  ) {
+    throw new Error(
+      'The Casual Rates Data snapshot is not valid'
+    );
+  }
+
+  if (
+    snapshot.appKey !==
+      CASUAL_RATES_DATA_CACHE_CONFIG.APP_CACHE_KEY
+  ) {
+    throw new Error(
+      'The Casual Rates Data snapshot has the wrong app key'
+    );
+  }
+
+  if (
+    !snapshot.cachedAt ||
+    Number.isNaN(
+      Date.parse(
+        snapshot.cachedAt
+      )
+    )
+  ) {
+    throw new Error(
+      'The Casual Rates Data snapshot has no valid timestamp'
+    );
+  }
+
+  snapshot.data =
+    validateCasualRatesData_(
+      snapshot.data
+    );
+
+  return snapshot;
+}
+
+function splitCasualRatesDataSnapshotIntoChunks_(
+  text
+) {
+  const chunks =
+    [];
+
+  const size =
+    CASUAL_RATES_DATA_CACHE_CONFIG.CACHE_CHUNK_CHARACTERS;
+
+  for (
+    let start = 0;
+    start < text.length;
+    start += size
+  ) {
+    chunks.push(
+      text.slice(
+        start,
+        start + size
+      )
+    );
+  }
+
+  return chunks;
+}
+
+function deleteCasualRatesDataGenerationChunks_(
+  generation,
+  chunkCount
+) {
+  if (
+    !generation ||
+    !Number.isFinite(
+      Number(
+        chunkCount
+      )
+    )
+  ) {
+    return;
+  }
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  for (
+    let index = 0;
+    index <
+      Number(
+        chunkCount
+      );
+    index++
+  ) {
+    properties.deleteProperty(
+      getCasualRatesDataCacheChunkKey_(
+        generation,
+        index
+      )
+    );
+  }
+}
+
+function storeCasualRatesDataSnapshot_(
+  snapshot
+) {
+  const validatedSnapshot =
+    validateCasualRatesDataSnapshot_(
+      snapshot
+    );
+
+  const serialised =
+    JSON.stringify(
+      validatedSnapshot
+    );
+
+  const chunks =
+    splitCasualRatesDataSnapshotIntoChunks_(
+      serialised
+    );
+
+  if (!chunks.length) {
+    throw new Error(
+      'Casual Rates Data snapshot serialised to an empty value'
+    );
+  }
+
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const manifestKey =
+    getCasualRatesDataCacheManifestKey_();
+
+  const oldManifestRaw =
+    properties.getProperty(
+      manifestKey
+    );
+
+  let oldManifest =
+    null;
+
+  if (oldManifestRaw) {
+    try {
+      oldManifest =
+        JSON.parse(
+          oldManifestRaw
+        );
+    } catch (
+      error
+    ) {
+      oldManifest =
+        null;
+    }
+  }
+
+  const generation =
+    Utilities
+      .getUuid()
+      .replace(
+        /-/g,
+        ''
+      );
+
+  const newProperties =
+    {};
+
+  chunks.forEach(
+    (
+      chunk,
+      index
+    ) => {
+      newProperties[
+        getCasualRatesDataCacheChunkKey_(
+          generation,
+          index
+        )
+      ] =
+        chunk;
+    }
+  );
+
+  try {
+    properties.setProperties(
+      newProperties,
+      false
+    );
+
+    let verificationText =
+      '';
+
+    for (
+      let index = 0;
+      index < chunks.length;
+      index++
+    ) {
+      const chunk =
+        properties.getProperty(
+          getCasualRatesDataCacheChunkKey_(
+            generation,
+            index
+          )
+        );
+
+      if (chunk === null) {
+        throw new Error(
+          `Casual Rates Data cache chunk ${index} was not stored`
+        );
+      }
+
+      verificationText +=
+        chunk;
+    }
+
+    validateCasualRatesDataSnapshot_(
+      JSON.parse(
+        verificationText
+      )
+    );
+
+    const manifest = {
+      ok:
+        true,
+
+      version:
+        CASUAL_RATES_DATA_CACHE_CONFIG.CACHE_VERSION,
+
+      appKey:
+        CASUAL_RATES_DATA_CACHE_CONFIG.APP_CACHE_KEY,
+
+      cachedAt:
+        validatedSnapshot.cachedAt,
+
+      generation,
+
+      chunkCount:
+        chunks.length,
+
+      characterCount:
+        serialised.length
+    };
+
+    properties.setProperty(
+      manifestKey,
+      JSON.stringify(
+        manifest
+      )
+    );
+
+    if (
+      oldManifest?.generation &&
+      oldManifest.generation !==
+        generation
+    ) {
+      deleteCasualRatesDataGenerationChunks_(
+        oldManifest.generation,
+        oldManifest.chunkCount
+      );
+    }
+
+    return validatedSnapshot;
+  } catch (
+    error
+  ) {
+    deleteCasualRatesDataGenerationChunks_(
+      generation,
+      chunks.length
+    );
+
+    throw error;
+  }
+}
+
+function refreshCasualRatesDataCachedData() {
+  const lock =
+    LockService.getScriptLock();
+
+  lock.waitLock(
+    30000
+  );
+
+  try {
+    const data =
+      validateCasualRatesData_(
+        readCasualRatesData_()
+      );
+
+    const snapshot = {
+      ok:
+        true,
+
+      version:
+        CASUAL_RATES_DATA_CACHE_CONFIG.CACHE_VERSION,
+
+      appKey:
+        CASUAL_RATES_DATA_CACHE_CONFIG.APP_CACHE_KEY,
+
+      cachedAt:
+        new Date().toISOString(),
+
+      data
+    };
+
+    storeCasualRatesDataSnapshot_(
+      snapshot
+    );
+
+    console.log(
+      `Casual Rates Data snapshot updated at ${snapshot.cachedAt}; rows=${data.rows.length}`
+    );
+
+    return snapshot;
+  } catch (
+    error
+  ) {
+    console.error(
+      'Casual Rates Data snapshot refresh failed',
+      error
+    );
+
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getStoredCasualRatesDataSnapshot_() {
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const manifestRaw =
+    properties.getProperty(
+      getCasualRatesDataCacheManifestKey_()
+    );
+
+  if (!manifestRaw) {
+    return null;
+  }
+
+  let manifest;
+
+  try {
+    manifest =
+      JSON.parse(
+        manifestRaw
+      );
+  } catch (
+    error
+  ) {
+    throw new Error(
+      'The Casual Rates Data cache manifest could not be parsed'
+    );
+  }
+
+  if (
+    manifest.appKey !==
+      CASUAL_RATES_DATA_CACHE_CONFIG.APP_CACHE_KEY ||
+    !manifest.generation ||
+    !Number.isFinite(
+      Number(
+        manifest.chunkCount
+      )
+    ) ||
+    Number(
+      manifest.chunkCount
+    ) < 1
+  ) {
+    throw new Error(
+      'The Casual Rates Data cache manifest is invalid'
+    );
+  }
+
+  let serialised =
+    '';
+
+  for (
+    let index = 0;
+    index <
+      Number(
+        manifest.chunkCount
+      );
+    index++
+  ) {
+    const chunk =
+      properties.getProperty(
+        getCasualRatesDataCacheChunkKey_(
+          manifest.generation,
+          index
+        )
+      );
+
+    if (chunk === null) {
+      throw new Error(
+        `Casual Rates Data cache chunk ${index} is missing`
+      );
+    }
+
+    serialised +=
+      chunk;
+  }
+
+  let snapshot;
+
+  try {
+    snapshot =
+      JSON.parse(
+        serialised
+      );
+  } catch (
+    error
+  ) {
+    throw new Error(
+      'The Casual Rates Data cached snapshot could not be parsed'
+    );
+  }
+
+  return validateCasualRatesDataSnapshot_(
+    snapshot
+  );
+}
+
+function logCasualRatesDataCachedSnapshot() {
+  const snapshot =
+    getStoredCasualRatesDataSnapshot_();
+
+  console.log(
+    snapshot
+      ? JSON.stringify(
+          snapshot,
+          null,
+          2
+        )
+      : 'No Casual Rates Data cached snapshot exists'
+  );
+
+  return snapshot;
+}
+
+function clearCasualRatesDataCache() {
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const baseKey =
+    getCasualRatesDataCacheBaseKey_();
+
+  properties
+    .getKeys()
+    .filter(
+      key =>
+        key === baseKey ||
+        key.startsWith(
+          baseKey + ':'
+        )
+    )
+    .forEach(
+      key =>
+        properties.deleteProperty(
+          key
+        )
+    );
+
+  console.log(
+    'Casual Rates Data cache properties cleared.'
+  );
+}
+/* ============================================================
+ * WEB APP — READS CACHE ONLY
+ * ============================================================
+ */
+function isSafeCallbackName_(
+  callbackName
+) {
+  return /^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(
+    String(
+      callbackName ||
+      ''
+    )
+  );
+}
+
+function createWebResponse_(
+  payload,
+  callback
+) {
+  const json =
+    JSON.stringify(
+      payload
+    );
+
+  if (
+    callback &&
+    isSafeCallbackName_(
+      callback
+    )
+  ) {
+    return ContentService
+      .createTextOutput(
+        `${callback}(${json});`
+      )
+      .setMimeType(
+        ContentService.MimeType.JAVASCRIPT
+      );
+  }
+
+  return ContentService
+    .createTextOutput(
+      json
+    )
+    .setMimeType(
+      ContentService.MimeType.JSON
+    );
+}
+
+function doGet(
+  event
+) {
+  const parameters =
+    event?.parameter ||
+    {};
+
+  const callback =
+    parameters.callback ||
+    '';
+
+  const requestedAppKey =
+    String(
+      parameters.appKey ||
+      ''
+    ).trim();
+
+  const requestedAction =
+    String(
+      parameters.action ||
+      ''
+    ).trim();
+
+  try {
+    let snapshot =
+      null;
+
+    if (
+      requestedAction ===
+        'liveContributionCount'
+    ) {
+      const data =
+        validateContributionCountData_(
+          readContributionCountData_()
+        );
+
+      snapshot = {
+        ok:
+          true,
+
+        version:
+          CONTRIBUTION_COUNT_CACHE_CONFIG.CACHE_VERSION,
+
+        appKey:
+          CONTRIBUTION_COUNT_CACHE_CONFIG.APP_CACHE_KEY,
+
+        cachedAt:
+          new Date().toISOString(),
+
+        data
+      };
+    } else if (
+      requestedAppKey ===
+        JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY
+    ) {
+      snapshot =
+        getStoredJobTrackerSnapshot_();
+
+      if (!snapshot) {
+        throw new Error(
+          'No Job Tracker cached snapshot is available. Run refreshJobTrackerCachedData() first.'
+        );
+      }
+    } else if (
+      requestedAppKey ===
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.APP_CACHE_KEY
+    ) {
+      snapshot =
+        getStoredClinicalJobTrackerSnapshot_();
+
+      if (!snapshot) {
+        throw new Error(
+          'No Clinical Job Tracker cached snapshot is available. Run refreshClinicalJobTrackerCachedData() first.'
+        );
+      }
+    } else if (
+      requestedAppKey ===
+        CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.APP_CACHE_KEY
+    ) {
+      snapshot =
+        getStoredClinicalOptomSummarySnapshot_();
+
+      if (!snapshot) {
+        throw new Error(
+          'No Clinical optom summary cached snapshot is available. Run refreshClinicalOptomSummaryCachedData() first.'
+        );
+      }
+    } else if (
+      requestedAppKey ===
+        CONTRIBUTION_COUNT_CACHE_CONFIG.APP_CACHE_KEY
+    ) {
+      snapshot =
+        getStoredContributionCountSnapshot_();
+
+      if (!snapshot) {
+        throw new Error(
+          'No contribution count cached snapshot is available. Run refreshContributionCountCachedData() first.'
+        );
+      }
+    } else if (
+      requestedAppKey ===
+        CASUAL_RATE_SUMMARY_CACHE_CONFIG.APP_CACHE_KEY
+    ) {
+      snapshot =
+        getStoredCasualRateSummarySnapshot_();
+
+      if (!snapshot) {
+        throw new Error(
+          'No Casual Rate Summary cached snapshot is available. Run refreshCasualRateSummaryCachedData() first.'
+        );
+      }
+    } else if (
+      requestedAppKey ===
+        CASUAL_RATES_DATA_CACHE_CONFIG.APP_CACHE_KEY
+    ) {
+      snapshot =
+        getStoredCasualRatesDataSnapshot_();
+
+      if (!snapshot) {
+        throw new Error(
+          'No Casual Rates Data cached snapshot is available. Run refreshCasualRatesDataCachedData() first.'
+        );
+      }
+    } else {
+      throw new Error(
+        'Unknown or missing appKey'
+      );
+    }
+    return createWebResponse_(
+      snapshot,
+      callback
+    );
+  } catch (
+    error
+  ) {
+    return createWebResponse_(
+      {
+        ok:
+          false,
+
+        appKey:
+          requestedAppKey,
+
+        error:
+          String(
+            error?.message ||
+            error
+          )
+      },
+      callback
+    );
+  }
+}
+
+/* ============================================================
+ * DAILY REFRESH TRIGGER
+ * ============================================================
+ */
+
+function createJobTrackerCacheRefreshTrigger() {
+  ScriptApp
+    .getProjectTriggers()
+    .filter(
+      trigger =>
+        trigger.getHandlerFunction() ===
+          'refreshJobTrackerCachedData'
+    )
+    .forEach(
+      trigger =>
+        ScriptApp.deleteTrigger(
+          trigger
+        )
+    );
+
+  const trigger =
+    ScriptApp
+      .newTrigger(
+        'refreshJobTrackerCachedData'
+      )
+      .timeBased()
+      .atHour(
+        JOB_TRACKER_CACHE_CONFIG.CACHE_REFRESH_HOUR
+      )
+      .everyDays(
+        1
+      )
+      .inTimezone(
+        JOB_TRACKER_CACHE_CONFIG.TIME_ZONE
+      )
+      .create();
+
+  console.log(
+    'Created daily Job Tracker cache refresh trigger.'
+  );
+
+  return trigger;
+}
+
+function createClinicalJobTrackerCacheRefreshTrigger() {
+  ScriptApp
+    .getProjectTriggers()
+    .filter(
+      trigger =>
+        trigger.getHandlerFunction() ===
+          'refreshClinicalJobTrackerCachedData'
+    )
+    .forEach(
+      trigger =>
+        ScriptApp.deleteTrigger(
+          trigger
+        )
+    );
+
+  const trigger =
+    ScriptApp
+      .newTrigger(
+        'refreshClinicalJobTrackerCachedData'
+      )
+      .timeBased()
+      .atHour(
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.CACHE_REFRESH_HOUR
+      )
+      .everyDays(
+        1
+      )
+      .inTimezone(
+        CLINICAL_JOB_TRACKER_CACHE_CONFIG.TIME_ZONE
+      )
+      .create();
+
+  console.log(
+    'Created daily Clinical Job Tracker cache refresh trigger.'
+  );
+
+  return trigger;
+}
+
+function createClinicalOptomSummaryCacheRefreshTrigger() {
+  ScriptApp
+    .getProjectTriggers()
+    .filter(
+      trigger =>
+        trigger.getHandlerFunction() ===
+          'refreshClinicalOptomSummaryCachedData'
+    )
+    .forEach(
+      trigger =>
+        ScriptApp.deleteTrigger(
+          trigger
+        )
+    );
+
+  const trigger =
+    ScriptApp
+      .newTrigger(
+        'refreshClinicalOptomSummaryCachedData'
+      )
+      .timeBased()
+      .atHour(
+        CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.CACHE_REFRESH_HOUR
+      )
+      .everyDays(
+        1
+      )
+      .inTimezone(
+        CLINICAL_OPTOM_SUMMARY_CACHE_CONFIG.TIME_ZONE
+      )
+      .create();
+
+  console.log(
+    'Created daily Clinical optom summary cache refresh trigger.'
+  );
+
+  return trigger;
+}
+
+function createContributionCountCacheRefreshTrigger() {
+  ScriptApp
+    .getProjectTriggers()
+    .filter(
+      trigger =>
+        trigger.getHandlerFunction() ===
+          'refreshContributionCountCachedData'
+    )
+    .forEach(
+      trigger =>
+        ScriptApp.deleteTrigger(
+          trigger
+        )
+    );
+
+  const trigger =
+    ScriptApp
+      .newTrigger(
+        'refreshContributionCountCachedData'
+      )
+      .timeBased()
+      .atHour(
+        CONTRIBUTION_COUNT_CACHE_CONFIG.CACHE_REFRESH_HOUR
+      )
+      .everyDays(
+        1
+      )
+      .inTimezone(
+        CONTRIBUTION_COUNT_CACHE_CONFIG.TIME_ZONE
+      )
+      .create();
+
+  console.log(
+    'Created daily contribution count cache refresh trigger.'
+  );
+
+  return trigger;
+}
+
+function createCasualRateSummaryCacheRefreshTrigger() {
+  ScriptApp
+    .getProjectTriggers()
+    .filter(
+      trigger =>
+        trigger.getHandlerFunction() ===
+          'refreshCasualRateSummaryCachedData'
+    )
+    .forEach(
+      trigger =>
+        ScriptApp.deleteTrigger(
+          trigger
+        )
+    );
+
+  const trigger =
+    ScriptApp
+      .newTrigger(
+        'refreshCasualRateSummaryCachedData'
+      )
+      .timeBased()
+      .atHour(
+        CASUAL_RATE_SUMMARY_CACHE_CONFIG.CACHE_REFRESH_HOUR
+      )
+      .everyDays(
+        1
+      )
+      .inTimezone(
+        CASUAL_RATE_SUMMARY_CACHE_CONFIG.TIME_ZONE
+      )
+      .create();
+
+  console.log(
+    'Created daily Casual Rate Summary cache refresh trigger.'
+  );
+
+  return trigger;
+}
+function createCasualRatesDataCacheRefreshTrigger() {
+  ScriptApp
+    .getProjectTriggers()
+    .filter(
+      trigger =>
+        trigger.getHandlerFunction() ===
+          'refreshCasualRatesDataCachedData'
+    )
+    .forEach(
+      trigger =>
+        ScriptApp.deleteTrigger(
+          trigger
+        )
+    );
+
+  const trigger =
+    ScriptApp
+      .newTrigger(
+        'refreshCasualRatesDataCachedData'
+      )
+      .timeBased()
+      .atHour(
+        CASUAL_RATES_DATA_CACHE_CONFIG.CACHE_REFRESH_HOUR
+      )
+      .everyDays(
+        1
+      )
+      .inTimezone(
+        CASUAL_RATES_DATA_CACHE_CONFIG.TIME_ZONE
+      )
+      .create();
+
+  console.log(
+    'Created daily Casual Rates Data cache refresh trigger.'
+  );
+
+  return trigger;
+}
+function logAllCacheStorage() {
+  const properties =
+    PropertiesService
+      .getScriptProperties();
+
+  const keys =
+    properties.getKeys();
+
+  const cachePrefix =
+    'job-tracker-cache:';
+
+  const getUtf8Bytes =
+    value =>
+      Utilities
+        .newBlob(
+          String(
+            value ??
+            ''
+          )
+        )
+        .getBytes()
+        .length;
+
+  let cachePropertyCount =
+    0;
+
+  let cacheCharacters =
+    0;
+
+  let cacheBytes =
+    0;
+
+  let totalPropertyCharacters =
+    0;
+
+  let totalPropertyBytes =
+    0;
+
+  keys.forEach(
+    key => {
+      const value =
+        properties.getProperty(
+          key
+        ) || '';
+
+      const keyCharacters =
+        String(
+          key
+        ).length;
+
+      const valueCharacters =
+        String(
+          value
+        ).length;
+
+      const keyBytes =
+        getUtf8Bytes(
+          key
+        );
+
+      const valueBytes =
+        getUtf8Bytes(
+          value
+        );
+
+      totalPropertyCharacters +=
+        keyCharacters +
+        valueCharacters;
+
+      totalPropertyBytes +=
+        keyBytes +
+        valueBytes;
+
+      if (
+        key.startsWith(
+          cachePrefix
+        )
+      ) {
+        cachePropertyCount++;
+
+        cacheCharacters +=
+          keyCharacters +
+          valueCharacters;
+
+        cacheBytes +=
+          keyBytes +
+          valueBytes;
+      }
+    }
+  );
+
+  const result = {
+    cachePropertyCount,
+
+    cacheCharacters,
+
+    cacheBytes,
+
+    cacheKilobytes:
+      Number(
+        (
+          cacheBytes /
+          1024
+        ).toFixed(
+          2
+        )
+      ),
+
+    cacheMegabytes:
+      Number(
+        (
+          cacheBytes /
+          1024 /
+          1024
+        ).toFixed(
+          3
+        )
+      ),
+
+    totalScriptPropertyCount:
+      keys.length,
+
+    totalScriptPropertyCharacters:
+      totalPropertyCharacters,
+
+    totalScriptPropertyBytes:
+      totalPropertyBytes,
+
+    totalScriptPropertyKilobytes:
+      Number(
+        (
+          totalPropertyBytes /
+          1024
+        ).toFixed(
+          2
+        )
+      ),
+
+    totalScriptPropertyMegabytes:
+      Number(
+        (
+          totalPropertyBytes /
+          1024 /
+          1024
+        ).toFixed(
+          3
+        )
+      )
+  };
+
+  console.log(
+    'ALL CACHE STORAGE'
+  );
+
+  console.log(
+    JSON.stringify(
+      result,
+      null,
+      2
+    )
+  );
+
+  return result;
+}
+/* ============================================================
+ * ALL CACHES — MASTER CONTROLS
+ * ============================================================
+ */
+
+function refreshAllCachesNow() {
+  refreshJobTrackerCachedData();
+
+  refreshClinicalJobTrackerCachedData();
+
+  refreshClinicalOptomSummaryCachedData();
+
+  refreshContributionCountCachedData();
+
+  refreshCasualRateSummaryCachedData();
+
+  refreshCasualRatesDataCachedData();
+
+  console.log(
+    'All caches refreshed successfully.'
+  );
+}
+
+function setupAllCaches() {
+  refreshJobTrackerCachedData();
+
+  refreshClinicalJobTrackerCachedData();
+
+  refreshClinicalOptomSummaryCachedData();
+
+  refreshContributionCountCachedData();
+
+  refreshCasualRateSummaryCachedData();
+
+  refreshCasualRatesDataCachedData();
+
+  createJobTrackerCacheRefreshTrigger();
+
+  createClinicalJobTrackerCacheRefreshTrigger();
+
+  createClinicalOptomSummaryCacheRefreshTrigger();
+
+  createContributionCountCacheRefreshTrigger();
+
+  createCasualRateSummaryCacheRefreshTrigger();
+
+  createCasualRatesDataCacheRefreshTrigger();
+
+  const storage =
+    logAllCacheStorage();
+
+  console.log(
+    `All caches refreshed and all daily cache refresh triggers created. Cache storage: ${storage.cacheKilobytes} KB across ${storage.cachePropertyCount} properties.`
+  );
+}
