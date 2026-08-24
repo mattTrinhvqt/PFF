@@ -15,6 +15,7 @@
       --track: #e8eaf0;
       --live-red: #e53935;
       --cached-amber: #c27c00;
+      --trend-yellow: #f1c232;
 
       --blue-cone: rgba(74, 86, 255, 0.82);
       --green-cone: rgba(36, 210, 116, 0.78);
@@ -312,12 +313,75 @@
       background: var(--cached-amber);
     }
 
+    /* ---------- Compact rate distribution ---------- */
+
+    .rate-distribution {
+      width: 100%;
+      margin: 2px 0 0;
+      padding: 0;
+    }
+
+    .rate-distribution-canvas-wrap {
+      position: relative;
+      width: 100%;
+      height: 55px;
+      overflow: hidden;
+    }
+
+    #rate-distribution-canvas {
+      display: block;
+      width: 100%;
+      height: 55px;
+    }
+
+    .rate-distribution-status {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.88);
+      font-size: 9px;
+      line-height: 1.25;
+      text-align: center;
+    }
+
+    .rate-distribution-status.is-visible {
+      display: flex;
+    }
+
     /* ---------- Percentile table ---------- */
 
     .percentile-section {
       width: 100%;
-      margin-top: 30px;
+      margin-top: 6px;
       padding-top: 0;
+    }
+
+    .percentile-table-wrap {
+      position: relative;
+      width: 100%;
+    }
+
+    .percentile-table-wrap::after {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      top: 0;
+      bottom: 0;
+      left: 24%;
+      width: 1px;
+      pointer-events: none;
+      background: linear-gradient(
+        to bottom,
+        #fff 0%,
+        rgba(21, 21, 21, 0.16) 10%,
+        var(--ink) 18%,
+        rgba(21, 21, 21, 0.16) 78%,
+        #fff 100%
+      );
     }
 
     .percentile-table {
@@ -344,6 +408,7 @@
       color: var(--ink);
       font-size: clamp(12px, 3.6vw, 15px);
       font-weight: 400;
+      font-variant-numeric: tabular-nums;
     }
 
     /* Internal dividers only: no outside table border */
@@ -370,37 +435,6 @@
     .percentile-table th:nth-child(2),
     .percentile-table td:nth-child(2) {
       border-left: 0;
-    }
-
-    .percentile-table thead tr:first-child th:nth-child(2)::before,
-    .percentile-table tbody td:nth-child(2)::before {
-      content: "";
-      position: absolute;
-      left: -1px;
-      width: 1px;
-      pointer-events: none;
-    }
-
-    .percentile-table thead tr:first-child th:nth-child(2)::before {
-      top: 0;
-      bottom: 0;
-      background: linear-gradient(
-        to bottom,
-        #fff 0%,
-        rgba(21, 21, 21, 0.16) 55%,
-        var(--ink) 100%
-      );
-    }
-
-    .percentile-table tbody td:nth-child(2)::before {
-      top: 0;
-      bottom: 0;
-      background: linear-gradient(
-        to bottom,
-        var(--ink) 0%,
-        rgba(21, 21, 21, 0.16) 45%,
-        #fff 100%
-      );
     }
 
     .percentile-table sup {
@@ -432,7 +466,7 @@
 
       .percentile-table th,
       .percentile-table td {
-        padding: 7px 3px;
+        padding: 7px 1px;
       }
 
       .percentile-table th {
@@ -441,6 +475,19 @@
 
       .percentile-table td {
         font-size: 12px;
+      }
+
+      .percentile-table th:first-child,
+      .percentile-table td:first-child {
+        width: 27%;
+      }
+
+      .percentile-table td:first-child {
+        font-size: 11px;
+      }
+
+      .percentile-table-wrap::after {
+        left: 27%;
       }
       .app-loading {
         min-height: 175px;
@@ -472,6 +519,20 @@
         font-size: 10px;
       }      
     }
+
+    @media (max-width: 350px) {
+      .percentile-table th {
+        font-size: 10px;
+      }
+
+      .percentile-table td {
+        font-size: 11px;
+      }
+
+      .percentile-table td:first-child {
+        font-size: 10px;
+      }
+    }
   </style>
 </head>
 
@@ -501,10 +562,19 @@
       </section>
 
       <section class="percentile-section" aria-label="Hourly rate percentiles">
-        <table id="percentile-table" class="percentile-table">
-          <thead></thead>
-          <tbody></tbody>
-        </table>
+        <div class="rate-distribution" aria-label="Locum hourly rate distribution">
+          <div class="rate-distribution-canvas-wrap">
+            <canvas id="rate-distribution-canvas" aria-label="Distribution of locum hourly rates"></canvas>
+            <div id="rate-distribution-status" class="rate-distribution-status"></div>
+          </div>
+        </div>
+
+        <div class="percentile-table-wrap">
+          <table id="percentile-table" class="percentile-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
     </main>
   </div>
@@ -517,11 +587,16 @@
     const PERCENTILE_VALUE_RANGE = 'AC2:AH2';
     const EXPECTED_PERCENTILE_COLS = 6;
 
+    const RAW_DATA_RANGE = 'A:J';
+
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
 
     const CACHE_APP_KEY =
       'locum-rate-summary';
+
+    const RAW_CACHE_APP_KEY =
+      'locum-rates-data';
 
     const CACHE_FETCH_TIMEOUT_MS =
       10000;
@@ -535,6 +610,14 @@
     const loadingState = document.getElementById('loading-state');
     const dataSourceIndicator = document.getElementById('data-source-indicator');
     const dataSourceText = document.getElementById('data-source-text');
+
+    const rateDistributionCanvas =
+      document.getElementById('rate-distribution-canvas');
+
+    const rateDistributionStatus =
+      document.getElementById('rate-distribution-status');
+
+    let distributionRates = [];
 
     function setDataSource(source) {
       const isCached = source === 'cached';
@@ -640,6 +723,1092 @@
     function getCellDisplayValue(cell) {
       if (!cell) return '';
       return String(cell.f ?? cell.v ?? '').trim();
+    }
+
+    function toNumber(value) {
+      const cleaned = String(value ?? '')
+        .replace(/[^\d.-]/g, '')
+        .trim();
+
+      if (
+        !cleaned ||
+        !/\d/.test(cleaned)
+      ) {
+        return NaN;
+      }
+
+      const number = Number(cleaned);
+
+      return Number.isFinite(number)
+        ? number
+        : NaN;
+    }
+
+    function percentile(sortedValues, probability) {
+      if (!sortedValues.length) {
+        return NaN;
+      }
+
+      const index =
+        (sortedValues.length - 1) *
+        probability;
+
+      const lowerIndex =
+        Math.floor(index);
+
+      const upperIndex =
+        Math.ceil(index);
+
+      if (lowerIndex === upperIndex) {
+        return sortedValues[lowerIndex];
+      }
+
+      return (
+        sortedValues[lowerIndex] +
+        (
+          sortedValues[upperIndex] -
+          sortedValues[lowerIndex]
+        ) *
+        (index - lowerIndex)
+      );
+    }
+
+    function setDistributionStatus(message = '') {
+      if (!rateDistributionStatus) {
+        return;
+      }
+
+      rateDistributionStatus.textContent =
+        message;
+
+      rateDistributionStatus.classList.toggle(
+        'is-visible',
+        Boolean(message)
+      );
+    }
+
+    function calculateKernelDensity(
+      values,
+      minimumX,
+      maximumX,
+      sampleCount = 120
+    ) {
+      const sorted = values
+        .filter(Number.isFinite)
+        .slice()
+        .sort(
+          (first, second) =>
+            first - second
+        );
+
+      if (sorted.length < 2) {
+        return [];
+      }
+
+      const count =
+        sorted.length;
+
+      const mean =
+        sorted.reduce(
+          (total, value) =>
+            total + value,
+          0
+        ) /
+        count;
+
+      const variance =
+        sorted.reduce(
+          (total, value) =>
+            total +
+            Math.pow(
+              value - mean,
+              2
+            ),
+          0
+        ) /
+        Math.max(
+          1,
+          count - 1
+        );
+
+      const standardDeviation =
+        Math.sqrt(
+          Math.max(
+            0,
+            variance
+          )
+        );
+
+      const q1 =
+        percentile(
+          sorted,
+          0.25
+        );
+
+      const q3 =
+        percentile(
+          sorted,
+          0.75
+        );
+
+      const robustSigma =
+        Number.isFinite(q1) &&
+        Number.isFinite(q3) &&
+        q3 > q1
+          ? (q3 - q1) / 1.34
+          : NaN;
+
+      const scaleCandidates = [
+        standardDeviation,
+        robustSigma
+      ].filter(
+        value =>
+          Number.isFinite(value) &&
+          value > 0
+      );
+
+      const fallbackScale =
+        Math.max(
+          1,
+          (maximumX - minimumX) /
+          6
+        );
+
+      const scale =
+        scaleCandidates.length
+          ? Math.min(
+              ...scaleCandidates
+            )
+          : fallbackScale;
+
+      const silvermanBandwidth =
+        0.9 *
+        scale *
+        Math.pow(
+          count,
+          -0.2
+        );
+
+      const range =
+        Math.max(
+          1,
+          maximumX - minimumX
+        );
+
+      const bandwidth =
+        Math.max(
+          2,
+          Math.min(
+            range * 0.22,
+            Number.isFinite(
+              silvermanBandwidth
+            ) &&
+            silvermanBandwidth > 0
+              ? silvermanBandwidth
+              : range / 10
+          )
+        );
+
+      const normalisingConstant =
+        1 /
+        (
+          bandwidth *
+          Math.sqrt(
+            2 * Math.PI
+          )
+        );
+
+      const result = [];
+
+      for (
+        let index = 0;
+        index < sampleCount;
+        index += 1
+      ) {
+        const proportion =
+          sampleCount === 1
+            ? 0
+            : index /
+              (sampleCount - 1);
+
+        const x =
+          minimumX +
+          proportion *
+          range;
+
+        let density = 0;
+
+        sorted.forEach(value => {
+          const z =
+            (x - value) /
+            bandwidth;
+
+          density +=
+            Math.exp(
+              -0.5 *
+              z *
+              z
+            );
+        });
+
+        density =
+          density *
+          normalisingConstant /
+          count;
+
+        if (
+          Number.isFinite(density)
+        ) {
+          result.push({
+            x,
+            y: density
+          });
+        }
+      }
+
+      return result;
+    }
+
+    function renderRateDistribution(rates) {
+      if (!rateDistributionCanvas) {
+        return;
+      }
+
+      const validRates = rates
+        .filter(
+          rate =>
+            Number.isFinite(rate) &&
+            rate > 0 &&
+            rate <= 500
+        )
+        .slice()
+        .sort(
+          (first, second) =>
+            first - second
+        );
+
+      if (validRates.length < 2) {
+        setDistributionStatus(
+          'Rate distribution unavailable'
+        );
+
+        return;
+      }
+
+      setDistributionStatus();
+
+      const distributionPercentiles = [
+        {
+          key: 'p05',
+          probability: 0.05,
+          strokeStyle: 'rgba(105, 113, 138, 0.55)',
+          dash: [3, 3]
+        },
+        {
+          key: 'p20',
+          probability: 0.20,
+          strokeStyle: 'rgba(105, 113, 138, 0.55)',
+          dash: [3, 3]
+        },
+        {
+          key: 'median',
+          probability: 0.50,
+          strokeStyle: '#f1c232',
+          dash: [3, 3]
+        },
+        {
+          key: 'p80',
+          probability: 0.80,
+          strokeStyle: 'rgba(105, 113, 138, 0.55)',
+          dash: [3, 3]
+        },
+        {
+          key: 'p95',
+          probability: 0.95,
+          strokeStyle: 'rgba(105, 113, 138, 0.55)',
+          dash: [3, 3]
+        }
+      ].map(item => ({
+        ...item,
+        value: percentile(
+          validRates,
+          item.probability
+        )
+      }));
+
+      const p05 =
+        distributionPercentiles[0].value;
+
+      const p95 =
+        distributionPercentiles[4].value;
+
+      const minimumX =
+        Math.min(
+          40,
+          Math.floor(
+            (p05 - 5) / 5
+          ) * 5
+        );
+
+      const maximumX =
+        Math.max(
+          100,
+          Math.ceil(
+            (p95 + 5) / 5
+          ) * 5
+        );
+
+      const density =
+        calculateKernelDensity(
+          validRates,
+          minimumX,
+          maximumX
+        );
+
+      if (density.length < 2) {
+        setDistributionStatus(
+          'Rate distribution unavailable'
+        );
+        return;
+      }
+
+      const maximumDensity =
+        Math.max(
+          ...density.map(
+            point => point.y
+          )
+        );
+
+      if (
+        !Number.isFinite(
+          maximumDensity
+        ) ||
+        maximumDensity <= 0
+      ) {
+        setDistributionStatus(
+          'Rate distribution unavailable'
+        );
+        return;
+      }
+
+      const cssWidth =
+        Math.max(
+          1,
+          rateDistributionCanvas.clientWidth
+        );
+
+      const cssHeight =
+        Math.max(
+          1,
+          rateDistributionCanvas.clientHeight
+        );
+
+      const pixelRatio =
+        Math.min(
+          window.devicePixelRatio || 1,
+          3
+        );
+
+      rateDistributionCanvas.width =
+        Math.round(
+          cssWidth *
+          pixelRatio
+        );
+
+      rateDistributionCanvas.height =
+        Math.round(
+          cssHeight *
+          pixelRatio
+        );
+
+      const context =
+        rateDistributionCanvas.getContext(
+          '2d'
+        );
+
+      context.setTransform(
+        pixelRatio,
+        0,
+        0,
+        pixelRatio,
+        0,
+        0
+      );
+
+      context.clearRect(
+        0,
+        0,
+        cssWidth,
+        cssHeight
+      );
+
+      const padding = {
+        top: 4,
+        right: 5,
+        bottom: 0.5,
+        left: 5
+      };
+
+      const plotHeight =
+        Math.max(
+          1,
+          cssHeight -
+          padding.top -
+          padding.bottom
+        );
+
+      const baselineY =
+        padding.top +
+        plotHeight;
+
+      const canvasRect =
+        rateDistributionCanvas.getBoundingClientRect();
+
+      const headerCells = [
+        ...percentileTable.querySelectorAll(
+          'thead tr:first-child th'
+        )
+      ];
+
+      const fallbackFirstColumnFraction =
+        window.matchMedia(
+          '(max-width: 430px)'
+        ).matches
+          ? 0.27
+          : 0.24;
+
+      const fallbackValueColumnFraction =
+        (1 - fallbackFirstColumnFraction) / 5;
+
+      const fallbackTargetForIndex = index =>
+        cssWidth *
+        (
+          fallbackFirstColumnFraction +
+          fallbackValueColumnFraction *
+          (index + 0.5)
+        );
+
+      const targetForColumn = index => {
+        const cell =
+          headerCells[index + 1];
+
+        if (!cell) {
+          return fallbackTargetForIndex(index);
+        }
+
+        const rect =
+          cell.getBoundingClientRect();
+
+        return Math.max(
+          padding.left,
+          Math.min(
+            cssWidth - padding.right,
+            rect.left +
+            rect.width / 2 -
+            canvasRect.left
+          )
+        );
+      };
+
+      const percentileAnchors =
+        distributionPercentiles.map(
+          (item, index) => ({
+            ...item,
+            targetX:
+              targetForColumn(index)
+          })
+        );
+
+      const firstValueRect =
+        headerCells[1]?.getBoundingClientRect();
+
+      const lastValueRect =
+        headerCells[5]?.getBoundingClientRect();
+
+      const numericPlotLeft =
+        firstValueRect
+          ? Math.max(
+              padding.left,
+              firstValueRect.left -
+              canvasRect.left +
+              2
+            )
+          : Math.max(
+              padding.left,
+              cssWidth *
+              fallbackFirstColumnFraction +
+              2
+            );
+
+      const numericPlotRight =
+        lastValueRect
+          ? Math.min(
+              cssWidth - padding.right,
+              lastValueRect.right -
+              canvasRect.left -
+              3
+            )
+          : cssWidth - padding.right;
+
+      const xAnchors = [
+        {
+          value: minimumX,
+          pixel: numericPlotLeft
+        },
+        ...percentileAnchors.map(
+          item => ({
+            value: item.value,
+            pixel: item.targetX
+          })
+        ),
+        {
+          value: maximumX,
+          pixel: numericPlotRight
+        }
+      ]
+        .filter(
+          anchor =>
+            Number.isFinite(anchor.value) &&
+            Number.isFinite(anchor.pixel)
+        )
+        .sort(
+          (first, second) =>
+            first.value - second.value
+        );
+
+      const uniqueXAnchors = [];
+
+      xAnchors.forEach(anchor => {
+        const previous =
+          uniqueXAnchors[
+            uniqueXAnchors.length - 1
+          ];
+
+        if (
+          previous &&
+          Math.abs(
+            previous.value -
+            anchor.value
+          ) < 1e-8
+        ) {
+          previous.pixel =
+            Math.max(
+              previous.pixel,
+              anchor.pixel
+            );
+          return;
+        }
+
+        uniqueXAnchors.push({
+          ...anchor
+        });
+      });
+
+      for (
+        let index = 1;
+        index < uniqueXAnchors.length;
+        index += 1
+      ) {
+        uniqueXAnchors[index].pixel =
+          Math.max(
+            uniqueXAnchors[index].pixel,
+            uniqueXAnchors[index - 1].pixel +
+            0.25
+          );
+      }
+
+      const xToPixel = value => {
+        const clampedValue =
+          Math.min(
+            maximumX,
+            Math.max(
+              minimumX,
+              value
+            )
+          );
+
+        for (
+          let index = 1;
+          index < uniqueXAnchors.length;
+          index += 1
+        ) {
+          const previous =
+            uniqueXAnchors[index - 1];
+
+          const current =
+            uniqueXAnchors[index];
+
+          if (
+            clampedValue <= current.value
+          ) {
+            const span =
+              current.value -
+              previous.value;
+
+            const proportion =
+              span === 0
+                ? 0
+                : (
+                    clampedValue -
+                    previous.value
+                  ) /
+                  span;
+
+            return previous.pixel +
+              (
+                current.pixel -
+                previous.pixel
+              ) *
+              proportion;
+          }
+        }
+
+        return uniqueXAnchors[
+          uniqueXAnchors.length - 1
+        ].pixel;
+      };
+
+      const densityToPixel = value =>
+        baselineY -
+        (
+          value /
+          maximumDensity
+        ) *
+        (
+          plotHeight - 5
+        );
+
+      const findDensityPoint = value => {
+        for (
+          let index = 1;
+          index < density.length;
+          index += 1
+        ) {
+          const previous = density[index - 1];
+          const current = density[index];
+
+          if (
+            value >= previous.x &&
+            value <= current.x
+          ) {
+            const span =
+              current.x - previous.x;
+
+            const proportion =
+              span === 0
+                ? 0
+                : (value - previous.x) /
+                  span;
+
+            return {
+              x: value,
+              y:
+                previous.y +
+                (current.y - previous.y) *
+                proportion
+            };
+          }
+        }
+
+        return density.reduce(
+          (nearest, point) =>
+            Math.abs(point.x - value) <
+            Math.abs(nearest.x - value)
+              ? point
+              : nearest,
+          density[0]
+        );
+      };
+
+      context.save();
+      context.beginPath();
+
+      density.forEach(
+        (point, index) => {
+          const x =
+            xToPixel(
+              point.x
+            );
+
+          const y =
+            densityToPixel(
+              point.y
+            );
+
+          if (index === 0) {
+            context.moveTo(
+              x,
+              baselineY
+            );
+            context.lineTo(
+              x,
+              y
+            );
+          } else {
+            context.lineTo(
+              x,
+              y
+            );
+          }
+        }
+      );
+
+      context.lineTo(
+        xToPixel(
+          density[
+            density.length - 1
+          ].x
+        ),
+        baselineY
+      );
+      context.closePath();
+      context.fillStyle =
+        'rgba(241, 194, 50, 0.10)';
+      context.fill();
+      context.restore();
+
+      context.save();
+      context.fillStyle =
+        'rgba(102, 0, 255, 0.28)';
+
+      validRates.forEach(
+        (rate, index) => {
+          const yOffset =
+            2 +
+            (index % 3) *
+            2.1;
+
+          context.beginPath();
+          context.arc(
+            xToPixel(rate),
+            baselineY - yOffset,
+            1.35,
+            0,
+            Math.PI * 2
+          );
+          context.fill();
+        }
+      );
+      context.restore();
+
+      context.save();
+      context.beginPath();
+      context.strokeStyle =
+        '#f1c232';
+      context.lineWidth = 2;
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+
+      density.forEach(
+        (point, index) => {
+          const x =
+            xToPixel(
+              point.x
+            );
+
+          const y =
+            densityToPixel(
+              point.y
+            );
+
+          if (index === 0) {
+            context.moveTo(x, y);
+          } else {
+            context.lineTo(x, y);
+          }
+        }
+      );
+
+      context.stroke();
+      context.restore();
+
+      const labels =
+        percentileAnchors.map(item => {
+          const curvePoint =
+            findDensityPoint(
+              item.value
+            );
+
+          return {
+            ...item,
+            x:
+              xToPixel(
+                item.value
+              ),
+            curveY:
+              densityToPixel(
+                curvePoint.y
+              )
+          };
+        });
+
+      labels.forEach(label => {
+        context.save();
+        context.beginPath();
+        context.setLineDash(
+          label.dash
+        );
+        context.strokeStyle =
+          label.strokeStyle;
+        context.lineWidth =
+          label.key === 'median'
+            ? 1.1
+            : 1;
+        context.moveTo(
+          label.x,
+          label.curveY
+        );
+        context.lineTo(
+          label.x,
+          baselineY
+        );
+        context.stroke();
+        context.restore();
+      });
+    }
+
+    function normaliseLiveRateRows(response) {
+      return (
+        response?.table?.rows || []
+      )
+        .map(
+          row =>
+            toNumber(
+              getCellDisplayValue(
+                row?.c?.[1]
+              )
+            )
+        )
+        .filter(
+          rate =>
+            Number.isFinite(rate) &&
+            rate > 0 &&
+            rate <= 500
+        );
+    }
+
+    function validateCachedRateData(data) {
+      const rows =
+        Array.isArray(
+          data?.rows
+        )
+          ? data.rows
+          : [];
+
+      if (!rows.length) {
+        throw new Error(
+          'Cached locum rate data has no rows'
+        );
+      }
+
+      const rates = rows
+        .map(
+          (
+            row,
+            rowIndex
+          ) => {
+            if (
+              !Array.isArray(row) ||
+              row.length < 6
+            ) {
+              throw new Error(
+                `Cached locum rate row ${rowIndex + 1} is malformed`
+              );
+            }
+
+            return toNumber(
+              row[1]
+            );
+          }
+        )
+        .filter(
+          rate =>
+            Number.isFinite(rate) &&
+            rate > 0 &&
+            rate <= 500
+        );
+
+      if (rates.length < 2) {
+        throw new Error(
+          'Cached locum rate data has insufficient rates'
+        );
+      }
+
+      return rates;
+    }
+
+    function loadCachedRateData() {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `locumRateDistributionCache_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+        const script =
+          document.createElement(
+            'script'
+          );
+
+        let settled = false;
+
+        const timeout =
+          window.setTimeout(
+            () => {
+              finish(
+                new Error(
+                  'Could not load cached locum rate data'
+                )
+              );
+            },
+            CACHE_FETCH_TIMEOUT_MS
+          );
+
+        function cleanup() {
+          window.clearTimeout(
+            timeout
+          );
+
+          try {
+            delete window[
+              callbackName
+            ];
+          } catch (error) {
+            window[
+              callbackName
+            ] = undefined;
+          }
+
+          if (script.parentNode) {
+            script.parentNode.removeChild(
+              script
+            );
+          }
+        }
+
+        function finish(
+          error,
+          data
+        ) {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          cleanup();
+
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve(data);
+        }
+
+        window[callbackName] =
+          snapshot => {
+            if (
+              !snapshot ||
+              snapshot.ok !== true ||
+              snapshot.appKey !== RAW_CACHE_APP_KEY
+            ) {
+              finish(
+                new Error(
+                  snapshot?.error ||
+                  'Cached locum rate data is invalid'
+                )
+              );
+
+              return;
+            }
+
+            try {
+              finish(
+                null,
+                validateCachedRateData(
+                  snapshot.data
+                )
+              );
+            } catch (error) {
+              finish(error);
+            }
+          };
+
+        script.onerror =
+          () => {
+            finish(
+              new Error(
+                'Network error loading cached locum rate data'
+              )
+            );
+          };
+
+        const params =
+          new URLSearchParams({
+            appKey:
+              RAW_CACHE_APP_KEY,
+
+            callback:
+              callbackName,
+
+            _:
+              String(
+                Date.now()
+              )
+          });
+
+        script.src =
+          `${CACHE_WEB_APP_URL}?${params.toString()}`;
+
+        document.body.appendChild(
+          script
+        );
+      });
+    }
+
+    async function loadRateDistributionData() {
+      let liveError = null;
+
+      if (!FORCE_CACHED_DATA) {
+        try {
+          const response =
+            await loadGvizRange(
+              RAW_DATA_RANGE,
+              1
+            );
+
+          const rates =
+            normaliseLiveRateRows(
+              response
+            );
+
+          if (rates.length < 2) {
+            throw new Error(
+              'Live locum rate data has insufficient rates'
+            );
+          }
+
+          return rates;
+        } catch (error) {
+          liveError = error;
+        }
+      }
+
+      try {
+        return await loadCachedRateData();
+      } catch (cacheError) {
+        console.error(
+          'Live locum rate distribution load failed',
+          liveError
+        );
+
+        console.error(
+          'Cached locum rate distribution load failed',
+          cacheError
+        );
+
+        throw (
+          liveError ||
+          cacheError
+        );
+      }
     }
 
     function loadGvizRange(range, headers = 0) {
@@ -900,7 +2069,50 @@
       }
     }
 
-    loadDashboardData();
+    async function initialiseDashboard() {
+      await loadDashboardData();
+
+      try {
+        distributionRates =
+          await loadRateDistributionData();
+
+        window.requestAnimationFrame(
+          () => {
+            renderRateDistribution(
+              distributionRates
+            );
+          }
+        );
+      } catch (error) {
+        console.error(
+          'Locum rate distribution unavailable',
+          error
+        );
+
+        setDistributionStatus(
+          'Rate distribution unavailable'
+        );
+      }
+    }
+
+    window.addEventListener(
+      'resize',
+      () => {
+        if (!distributionRates.length) {
+          return;
+        }
+
+        window.requestAnimationFrame(
+          () => {
+            renderRateDistribution(
+              distributionRates
+            );
+          }
+        );
+      }
+    );
+
+    initialiseDashboard();
   </script>
 </body>
 </html>
