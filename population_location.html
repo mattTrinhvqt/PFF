@@ -1131,19 +1131,19 @@
 
     /*
       Auspopnbystate:
-        A31:J
+        A30:J
         A = Year
         B:I = NSW, VIC, QLD, SA, WA, TAS, NT, ACT
         J = Australia
 
       AuspopnbyMMM:
-        A31:I
+        A30:I
         A = Year
         B = Metro
         C:H = MM2-MM7
         I = Non-metro
 
-      Both use row 31 as the single GViz header row and row 32 onward
+      Both use row 30 as the single GViz header row and row 31 onward
       as raw annual data.
 
       State values are stored as persons in the source sheet, while
@@ -1517,114 +1517,102 @@
     // GOOGLE SHEETS JSONP
     // ============================================================
 
-    function loadGVizSheet(
+    async function loadGVizSheet(
       sheetName,
       range
     ) {
-      return new Promise(
-        (resolve, reject) => {
-          const callbackName =
-            `__pff_population_location_${Date.now()}_${Math.random()
-              .toString(36)
-              .slice(2)}`;
+      const controller =
+        new AbortController();
 
-          const script =
-            document.createElement('script');
+      const timer =
+        window.setTimeout(
+          () => controller.abort(),
+          FETCH_TIMEOUT_MS
+        );
 
-          let completed =
-            false;
+      try {
+        const params =
+          new URLSearchParams({
+            sheet: sheetName,
+            range,
+            headers: '1',
+            tqx: 'out:json'
+          });
 
-          const cleanup = () => {
-            if (script.parentNode) {
-              script.parentNode.removeChild(script);
+        const response =
+          await fetch(
+            `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${params.toString()}`,
+            {
+              method: 'GET',
+              signal: controller.signal,
+              cache: 'no-store'
             }
+          );
 
-            try {
-              delete window[callbackName];
-            } catch (_) {
-              window[callbackName] = undefined;
-            }
-          };
-
-          const timer =
-            window.setTimeout(
-              () => {
-                if (completed) {
-                  return;
-                }
-
-                completed = true;
-                cleanup();
-
-                reject(
-                  new Error(
-                    `Timed out loading ${sheetName}.`
-                  )
-                );
-              },
-              FETCH_TIMEOUT_MS
-            );
-
-          window[callbackName] =
-            response => {
-              if (completed) {
-                return;
-              }
-
-              completed = true;
-              window.clearTimeout(timer);
-              cleanup();
-
-              if (
-                !response ||
-                response.status === 'error'
-              ) {
-                const message =
-                  response?.errors?.[0]?.detailed_message ||
-                  response?.errors?.[0]?.message ||
-                  `Could not load ${sheetName}.`;
-
-                reject(
-                  new Error(message)
-                );
-
-                return;
-              }
-
-              resolve(response.table);
-            };
-
-          script.onerror = () => {
-            if (completed) {
-              return;
-            }
-
-            completed = true;
-            window.clearTimeout(timer);
-            cleanup();
-
-            reject(
-              new Error(
-                `Could not connect to ${sheetName}.`
-              )
-            );
-          };
-
-          const params =
-            new URLSearchParams({
-              sheet: sheetName,
-              range,
-              headers: '1',
-              tqx: `out:json;responseHandler:${callbackName}`
-            });
-
-          script.src =
-            `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${params.toString()}`;
-
-          script.async = true;
-          document.head.appendChild(script);
+        if (!response.ok) {
+          throw new Error(
+            `Google Sheets returned HTTP ${response.status} for ${sheetName}.`
+          );
         }
-      );
+
+        const raw =
+          await response.text();
+
+        /*
+          Google GViz may return either:
+          1) plain JSON, or
+          2) google.visualization.Query.setResponse({...});
+          depending on the endpoint/browser response path.
+        */
+        let parsed = null;
+
+        try {
+          parsed =
+            JSON.parse(raw);
+        } catch (_) {
+          const match =
+            raw.match(
+              /google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/
+            );
+
+          if (!match) {
+            throw new Error(
+              `Unexpected Google Sheets response for ${sheetName}.`
+            );
+          }
+
+          parsed =
+            JSON.parse(
+              match[1]
+            );
+        }
+
+        if (
+          !parsed ||
+          parsed.status === 'error'
+        ) {
+          const message =
+            parsed?.errors?.[0]?.detailed_message ||
+            parsed?.errors?.[0]?.message ||
+            `Could not load ${sheetName}.`;
+
+          throw new Error(message);
+        }
+
+        return parsed.table;
+      } catch (error) {
+        if (
+          error?.name === 'AbortError'
+        ) {
+          throw new Error(
+            `Timed out loading ${sheetName}.`
+          );
+        }
+
+        throw error;
+      } finally {
+        window.clearTimeout(timer);
+      }
     }
 
     function parseStateTable(table) {
