@@ -218,6 +218,7 @@
       position: relative;
       flex: 1 1 auto;
       min-width: 0;
+      overflow: hidden;
     }
 
     .tab-list {
@@ -228,12 +229,65 @@
       align-items: flex-end;
       overflow-x: auto;
       overflow-y: hidden;
+      overscroll-behavior-x: contain;
       scrollbar-width: none;
       scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
     }
 
     .tab-list::-webkit-scrollbar {
       display: none;
+    }
+
+    .tab-scroll-button {
+      position: absolute;
+      top: 3px;
+      z-index: 4;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      transition:
+        opacity 160ms ease,
+        background 160ms ease;
+    }
+
+    .tab-scroll-button:hover {
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.90);
+    }
+
+    .tab-scroll-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 1px;
+    }
+
+    .tab-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .tab-scroll-left {
+      left: 0;
+    }
+
+    .tab-scroll-right {
+      right: 0;
     }
 
     .tab-list::after {
@@ -379,21 +433,25 @@
       justify-content: center;
       padding: 0 0 2px;
       color: var(--muted);
-      background: rgba(255, 255, 255, 0.92);
-      border: 0;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
       border-radius: 50%;
-      box-shadow: none;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
       font-size: 18px;
       font-weight: 700;
       line-height: 1;
       cursor: pointer;
-      opacity: 0.72;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
       transition:
-        opacity 160ms ease;
+        opacity 160ms ease,
+        background 160ms ease;
     }
 
     .overflow-text-scroll-button:hover {
-      opacity: 1;
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.90);
     }
 
     .overflow-text-scroll-button:focus-visible {
@@ -957,14 +1015,13 @@
 
     @media (max-width: 430px) {
       #app {
-        width: min(calc(100% - 8px), 520px);
-        padding-right: 4px;
-        padding-left: 4px;
+        width: calc(100% - 6px);
+        padding: 6px 2px 2px;
       }
 
       .chart-tab {
-        padding-right: 8px;
-        padding-left: 8px;
+        padding-right: 7px;
+        padding-left: 7px;
         font-size: 12px;
       }
 
@@ -1008,6 +1065,18 @@
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
       }
+
+      .cone.blue,
+      .cone.green,
+      .cone.red {
+        animation: none;
+        opacity: 1;
+      }
+
+      .loader-text {
+        animation: none;
+        opacity: 0.72;
+      }
     }
   </style>
 </head>
@@ -1026,12 +1095,26 @@
 
       <div class="module-top">
         <div class="tab-scroll-shell">
+          <button
+            id="tabScrollLeft"
+            class="tab-scroll-button tab-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll tabs left"
+          >&#8249;</button>
+
           <div id="tabList" class="tab-list" role="tablist" aria-label="State MMM workforce charts">
             <button class="chart-tab is-active" type="button" role="tab" aria-selected="true" data-mode="oversupply">Oversupply</button>
             <button class="chart-tab" type="button" role="tab" aria-selected="false" data-mode="coverage">Coverage</button>
             <button class="chart-tab" type="button" role="tab" aria-selected="false" data-mode="population">Population</button>
             <button class="chart-tab" type="button" role="tab" aria-selected="false" data-mode="clinicians">Clinicians</button>
           </div>
+
+          <button
+            id="tabScrollRight"
+            class="tab-scroll-button tab-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll tabs right"
+          >&#8250;</button>
         </div>
 
         <div id="liveData" class="live-data" aria-label="Live data">
@@ -1349,6 +1432,12 @@
     const tabList =
       document.getElementById('tabList');
 
+    const tabScrollLeft =
+      document.getElementById('tabScrollLeft');
+
+    const tabScrollRight =
+      document.getElementById('tabScrollRight');
+
     const tabs =
       Array.from(
         document.querySelectorAll('.chart-tab')
@@ -1413,6 +1502,47 @@
 
     const chartCanvas =
       document.getElementById('phnChart');
+    // ============================================================
+    // TOP TAB SCROLLING
+    // ============================================================
+
+    function updateTabScrollControls() {
+      const maximumScroll =
+        Math.max(
+          0,
+          tabList.scrollWidth -
+            tabList.clientWidth
+        );
+
+      const hasOverflow =
+        maximumScroll > 2;
+
+      tabScrollLeft.classList.toggle(
+        'is-hidden',
+        !hasOverflow ||
+          tabList.scrollLeft <= 2
+      );
+
+      tabScrollRight.classList.toggle(
+        'is-hidden',
+        !hasOverflow ||
+          tabList.scrollLeft >=
+            maximumScroll - 2
+      );
+    }
+
+    function scrollTabs(direction) {
+      tabList.scrollBy({
+        left:
+          direction *
+          Math.max(
+            80,
+            tabList.clientWidth * 0.72
+          ),
+        behavior: 'smooth'
+      });
+    }
+
     // ============================================================
     // REUSABLE OVERFLOW-TEXT SCROLLERS
     // ============================================================
@@ -1580,6 +1710,21 @@
           setupOverflowTextScroller
         )
         .filter(Boolean);
+
+    if ('ResizeObserver' in window) {
+      const tabResizeObserver =
+        new ResizeObserver(
+          updateTabScrollControls
+        );
+
+      tabResizeObserver.observe(
+        tabList.parentElement
+      );
+    }
+
+    requestAnimationFrame(
+      updateTabScrollControls
+    );
     // ============================================================
     // APP STATE
     // ============================================================
@@ -3771,13 +3916,13 @@
         resizeDelay: 80,
 
         animation: {
-          duration: 900,
+          duration: 760,
           easing: 'easeOutQuart'
         },
 
         animations: {
           x: {
-            duration: 900,
+            duration: 760,
             easing: 'easeOutQuart'
           },
           y: {
@@ -4349,6 +4494,15 @@
         inline: 'nearest'
       });
 
+      requestAnimationFrame(
+        updateTabScrollControls
+      );
+
+      window.setTimeout(
+        updateTabScrollControls,
+        420
+      );
+
       configureYearSlider(
         true,
         false
@@ -4501,6 +4655,30 @@
       }
     );
 
+    tabScrollLeft.addEventListener(
+      'click',
+      event => {
+        event.stopPropagation();
+        scrollTabs(-1);
+      }
+    );
+
+    tabScrollRight.addEventListener(
+      'click',
+      event => {
+        event.stopPropagation();
+        scrollTabs(1);
+      }
+    );
+
+    tabList.addEventListener(
+      'scroll',
+      updateTabScrollControls,
+      {
+        passive: true
+      }
+    );
+
     yearSlider.addEventListener(
       'input',
       () => {
@@ -4605,6 +4783,7 @@
       'resize',
       () => {
         positionTabIndicator(false);
+        updateTabScrollControls();
         updateSliderProgress();
 
         if (chart) {
@@ -4678,6 +4857,7 @@
         requestAnimationFrame(
           () => {
             positionTabIndicator(false);
+            updateTabScrollControls();
             syncZeroLine(true);
           }
         );
