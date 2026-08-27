@@ -1,0 +1,6050 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Medicare Service Demand</title>
+
+  <link
+    href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap"
+    rel="stylesheet"
+  >
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --purple: #6600ff;
+      --ink: #151515;
+      --muted: #69718a;
+      --track: #e8eaf0;
+      --error: #b42318;
+      --live-red: #e53935;
+      --cached-amber: #c27c00;
+      --medicare-green: #00a651;
+
+      --blue-cone: rgba(74, 86, 255, 0.82);
+      --green-cone: rgba(36, 210, 116, 0.78);
+      --red-cone: rgba(255, 92, 48, 0.76);
+
+      --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #fff;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      color: var(--ink);
+      background: #fff;
+      font-family: 'Lato', sans-serif;
+      overflow: hidden;
+      -webkit-touch-callout: none;
+    }
+
+    button {
+      font: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #fit {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      align-items: flex-start;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #app {
+      position: relative;
+      display: flex;
+      width: min(calc(100% - 12px), 520px);
+      height: 100%;
+      max-width: 100%;
+      min-width: 0;
+      min-height: 0;
+      margin-inline: auto;
+      padding: 7px 6px 4px;
+      flex-direction: column;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    #app.is-loading > :not(.app-loading) {
+      visibility: hidden;
+    }
+
+    #app:not(.is-loading) .app-loading {
+      display: none;
+    }
+
+    .app-loading {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+    }
+
+    .cone-loader {
+      position: relative;
+      width: 176px;
+      height: 78px;
+      margin: 0 auto;
+      overflow: visible;
+      isolation: isolate;
+    }
+
+    .cone {
+      position: absolute;
+      bottom: 8px;
+      width: 58px;
+      height: 68px;
+      opacity: 0;
+      clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      -webkit-clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      mix-blend-mode: normal;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      transform: translateZ(0);
+      will-change: opacity;
+    }
+
+    .cone.blue {
+      left: 33px;
+      background: var(--blue-cone);
+      animation: blueConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .cone.green {
+      left: 69px;
+      background: var(--green-cone);
+      animation: greenConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .cone.red {
+      left: 85px;
+      background: var(--red-cone);
+      animation: redConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .loader-text {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: center;
+      animation: loadingTextPulse 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    @keyframes blueConeCycle {
+      0% { opacity: 0; }
+      12% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes greenConeCycle {
+      0% { opacity: 0; }
+      20% { opacity: 0; }
+      32% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes redConeCycle {
+      0% { opacity: 0; }
+      40% { opacity: 0; }
+      52% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes loadingTextPulse {
+      0% { opacity: 0.45; }
+      52% { opacity: 0.78; }
+      76% { opacity: 0.78; }
+      87% { opacity: 0.45; }
+      100% { opacity: 0.45; }
+    }
+
+    /* ============================================================
+     * TOP TABS + LIVE STATUS
+     * ============================================================ */
+
+    .module-top {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      flex: 0 0 auto;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 4px;
+      border-bottom: 1px solid var(--track);
+    }
+
+    .tab-scroll-shell {
+      position: relative;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .tab-list {
+      position: relative;
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      align-items: flex-end;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      scroll-behavior: smooth;
+    }
+
+    .tab-list::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab-list::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      z-index: 2;
+      width: var(--tab-indicator-width, 0px);
+      height: 2px;
+      background: var(--purple);
+      pointer-events: none;
+      transform: translate3d(var(--tab-indicator-x, 0px), 0, 0);
+      transition:
+        transform 420ms var(--motion-ease),
+        width 420ms var(--motion-ease);
+      will-change: transform, width;
+    }
+
+    .tab-list.is-positioning::after {
+      transition: none;
+    }
+
+    .chart-tab {
+      flex: 0 0 auto;
+      min-height: 29px;
+      margin: 0;
+      padding: 0 9px 6px;
+      color: var(--muted);
+      background: #fff;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      transition: color 180ms ease;
+    }
+
+    .chart-tab:hover:not(.is-active) {
+      color: var(--ink);
+    }
+
+    .chart-tab.is-active {
+      color: var(--purple);
+      cursor: default;
+    }
+
+    .chart-tab:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: -2px;
+    }
+
+    .live-data {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 4px;
+      margin: 0 1px 8px 0;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .live-data-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      border-radius: 50%;
+      background: var(--live-red);
+      transition: background-color 220ms ease;
+    }
+
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
+    #status {
+      flex: 0 0 auto;
+      width: 100%;
+      margin: 3px 0 0;
+      color: var(--error);
+      font-size: 12px;
+      line-height: 1.35;
+      text-align: left;
+    }
+
+    #status:empty {
+      display: none;
+    }
+
+    /* ============================================================
+     * GRAPH HEADING + INLINE CONTROLS
+     * ============================================================ */
+
+    .chart-heading-row {
+      position: relative;
+      z-index: 40;
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 31px;
+      flex: 0 0 auto;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 6px;
+      margin: 0;
+    }
+
+    .heading-scroll-shell {
+      position: relative;
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+
+    .heading-scroll-viewport {
+      width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .heading-scroll-viewport::-webkit-scrollbar {
+      display: none;
+    }
+
+    .chart-heading {
+      display: inline-block;
+      width: max-content;
+      min-width: max-content;
+      margin: 0;
+      padding: 4px 0 0;
+      color: var(--ink);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 22px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .chart-heading-fixed {
+      display: inline;
+    }
+
+    .chart-heading-mode-wrap {
+      position: relative;
+      display: inline-block;
+      width: 4.7em;
+      height: 22px;
+      overflow: hidden;
+      vertical-align: top;
+    }
+
+    .chart-heading-mode {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: inline-block;
+      white-space: nowrap;
+      will-change: opacity, transform;
+    }
+
+    .heading-controls {
+      position: relative;
+      z-index: 55;
+      display: flex;
+      min-width: 0;
+      flex: 0 0 auto;
+      align-items: flex-start;
+      gap: 4px;
+    }
+
+    /* ---------- multi-item selector ---------- */
+
+    .item-control {
+      position: relative;
+      z-index: 70;
+      flex: 0 0 auto;
+      margin-top: 2px;
+    }
+
+    .item-button {
+      display: grid;
+      width: 96px;
+      height: 27px;
+      grid-template-columns: max-content minmax(0, 1fr) 8px;
+      align-items: center;
+      gap: 4px;
+      padding: 0 5px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--track);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      text-align: left;
+      cursor: pointer;
+      transition:
+        border-color 140ms ease,
+        box-shadow 140ms ease;
+    }
+
+    .item-button:hover,
+    .item-button[aria-expanded="true"] {
+      box-shadow: inset 0 0 0 1px rgba(21, 21, 21, 0.12);
+    }
+
+    .item-button[aria-expanded="true"] {
+      border-color: var(--purple);
+    }
+
+    .item-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
+    }
+
+    .item-button-value {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--purple);
+      text-align: right;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .menu-arrow {
+      width: 0;
+      height: 0;
+      border-top: 4px solid var(--muted);
+      border-right: 4px solid transparent;
+      border-left: 4px solid transparent;
+      transition: transform 140ms ease;
+    }
+
+    .item-button[aria-expanded="true"] .menu-arrow {
+      transform: rotate(180deg);
+    }
+
+    .item-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      z-index: 100;
+      display: none;
+      width: 136px;
+      max-height: min(330px, calc(100vh - 120px));
+      overflow: hidden;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--track);
+      border-radius: 3px;
+      box-shadow: 0 6px 18px rgba(21, 21, 21, 0.12);
+    }
+
+    .item-menu.is-open {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .item-menu-title {
+      flex: 0 0 auto;
+      margin: 0;
+      padding: 7px 10px;
+      color: var(--muted);
+      background: #fff;
+      border-bottom: 1px solid var(--track);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+
+    .item-menu-scroll {
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+    }
+
+    .item-option {
+      display: grid;
+      width: 100%;
+      min-height: 31px;
+      grid-template-columns: 15px minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+      padding: 5px 9px;
+      color: var(--ink);
+      background: #fff;
+      border: 0;
+      border-bottom: 1px solid rgba(232, 234, 240, 0.58);
+      font-family: inherit;
+      font-size: 11px;
+      line-height: 1.2;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .item-option:last-child {
+      border-bottom: 0;
+    }
+
+    .item-option:hover {
+      background: rgba(232, 234, 240, 0.30);
+    }
+
+    .item-option:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: -2px;
+    }
+
+    .item-check {
+      position: relative;
+      width: 15px;
+      height: 15px;
+      border: 1px solid var(--muted);
+      border-radius: 2px;
+      background: #fff;
+    }
+
+    .item-option.is-selected .item-check {
+      border-color: var(--purple);
+      background: var(--purple);
+    }
+
+    .item-option.is-selected .item-check::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      width: 4px;
+      height: 7px;
+      border-right: 2px solid #fff;
+      border-bottom: 2px solid #fff;
+      transform: rotate(45deg);
+    }
+
+    .item-option.is-indeterminate .item-check {
+      border-color: var(--purple);
+      background: var(--purple);
+    }
+
+    .item-option.is-indeterminate .item-check::after {
+      content: '';
+      position: absolute;
+      top: 6px;
+      left: 3px;
+      width: 7px;
+      height: 2px;
+      background: #fff;
+      border: 0;
+      transform: none;
+    }
+
+    .item-option-master {
+      font-weight: 700;
+      border-bottom-color: var(--track);
+    }
+
+    .item-option-total {
+      font-weight: 700;
+      border-bottom-color: var(--track);
+    }
+
+    .item-option-master.is-selected .item-option-label,
+    .item-option-master.is-indeterminate .item-option-label,
+    .item-option-total.is-selected .item-option-label {
+      color: var(--purple);
+      font-weight: 700;
+    }
+
+
+    .item-option-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .item-option.is-selected .item-option-label {
+      color: var(--purple);
+      font-weight: 700;
+    }
+
+
+    /* ---------- Count / % segmented toggle ---------- */
+
+    .value-mode-toggle {
+      position: relative;
+      display: grid;
+      width: 74px;
+      height: 27px;
+      flex: 0 0 74px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: center;
+      margin-top: 2px;
+      padding: 1px;
+      overflow: hidden;
+      background: rgba(232, 234, 240, 0.55);
+      border-radius: 4px;
+      isolation: isolate;
+    }
+
+    .value-mode-toggle::before {
+      content: '';
+      position: absolute;
+      top: 1px;
+      bottom: 1px;
+      left: 1px;
+      z-index: 0;
+      width: calc((100% - 2px) / 2);
+      background: #fff;
+      border-radius: 3px;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.08);
+      transform: translateX(0);
+      transition: transform 300ms var(--motion-ease);
+    }
+
+    .value-mode-toggle.is-percent-selected::before {
+      transform: translateX(100%);
+    }
+
+    .value-mode-button {
+      position: relative;
+      z-index: 1;
+      min-width: 0;
+      min-height: 25px;
+      padding: 0 3px;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      border-radius: 3px;
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      transition: color 220ms ease;
+    }
+
+    .value-mode-button.is-active {
+      color: var(--purple);
+    }
+
+    .value-mode-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: -1px;
+    }
+
+    /* ---------- Trend toggle: matches the PFF supply module ---------- */
+
+    .yoy-trend-toggle {
+      display: grid;
+      width: 74px;
+      height: 27px;
+      flex: 0 0 74px;
+      grid-template-columns: 15px max-content 1fr;
+      align-items: center;
+      gap: 4px;
+      margin-top: 2px;
+      padding: 0 5px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--track);
+      border-radius: 4px;
+      box-shadow: none;
+      font-family: inherit;
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition:
+        border-color 140ms ease,
+        background 140ms ease,
+        box-shadow 140ms ease;
+    }
+
+    .yoy-trend-toggle > * {
+      pointer-events: none;
+    }
+
+    .yoy-trend-toggle:hover {
+      box-shadow: inset 0 0 0 1px rgba(21, 21, 21, 0.12);
+    }
+
+    .yoy-trend-toggle.is-on {
+      border-color: var(--purple);
+    }
+
+    .yoy-trend-toggle:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
+    }
+
+    .yoy-binary-indicator {
+      position: relative;
+      width: 15px;
+      height: 15px;
+      min-width: 15px;
+      max-width: 15px;
+      border: 1px solid var(--muted);
+      border-radius: 2px;
+      background: #fff;
+    }
+
+    .yoy-trend-toggle.is-on .yoy-binary-indicator {
+      border-color: var(--purple);
+      background: var(--purple);
+    }
+
+    .yoy-trend-toggle.is-on .yoy-binary-indicator::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      width: 4px;
+      height: 7px;
+      border-right: 2px solid #fff;
+      border-bottom: 2px solid #fff;
+      transform: rotate(45deg);
+    }
+
+    .yoy-toggle-label,
+    .yoy-toggle-value {
+      font-size: 8.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .yoy-toggle-label {
+      color: var(--ink);
+    }
+
+    .yoy-toggle-value {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      color: var(--muted);
+      letter-spacing: 0.025em;
+      text-align: center;
+    }
+
+    .yoy-trend-toggle.is-on .yoy-toggle-value {
+      color: var(--purple);
+    }
+
+    /* ============================================================
+     * LEGEND
+     * ============================================================ */
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .legend-nav {
+      position: relative;
+      flex: 1 1 auto;
+      min-width: 54px;
+      height: 28px;
+      overflow: hidden;
+    }
+
+    .legend-viewport {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .chart-legend {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      align-items: center;
+      gap: 10px;
+      padding: 1px 0 4px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      white-space: nowrap;
+    }
+
+    .chart-legend::-webkit-scrollbar {
+      display: none;
+    }
+
+    .legend-scroll-button {
+      position: absolute;
+      top: 3px;
+      z-index: 3;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      transition:
+        opacity 160ms ease,
+        background 160ms ease;
+    }
+
+    .legend-scroll-button:hover {
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.90);
+    }
+
+    .legend-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .legend-scroll-left {
+      left: 0;
+    }
+
+    .legend-scroll-right {
+      right: 0;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 5px;
+      padding: 0;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      opacity: 1;
+    }
+
+    .legend-line {
+      width: 17px;
+      height: 3px;
+      flex: 0 0 17px;
+      border-radius: 2px;
+      background: var(--ink);
+    }
+
+    /* ============================================================
+     * CHART
+     * ============================================================ */
+
+    .chart-shell {
+      position: relative;
+      flex: 1 1 0;
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      margin: -2px 0 0;
+      overflow: hidden;
+      contain: layout paint;
+      isolation: isolate;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    #demandChart {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      outline: none;
+    }
+
+    @media (max-width: 430px) {
+      #app {
+        width: calc(100% - 6px);
+        padding: 6px 2px 2px;
+      }
+
+      .chart-tab {
+        padding-right: 7px;
+        padding-left: 7px;
+        font-size: 12px;
+      }
+
+      .live-data {
+        margin-right: 3px;
+        font-size: 8px;
+      }
+
+      .chart-heading-row {
+        gap: 4px;
+      }
+
+      .chart-heading {
+        font-size: 14px;
+      }
+
+      .heading-controls {
+        gap: 3px;
+      }
+
+      .item-button {
+        width: 88px;
+        padding-right: 4px;
+        padding-left: 4px;
+        font-size: 8px;
+      }
+
+      .item-menu {
+        width: 138px;
+      }
+
+      .value-mode-toggle {
+        width: 68px;
+        flex-basis: 68px;
+      }
+
+      .value-mode-button {
+        padding-right: 2px;
+        padding-left: 2px;
+        font-size: 8px;
+      }
+
+      .yoy-trend-toggle {
+        width: 68px;
+        flex-basis: 68px;
+        grid-template-columns: 15px max-content 1fr;
+        gap: 3px;
+        padding-right: 3px;
+        padding-left: 3px;
+      }
+
+      .yoy-toggle-label,
+      .yoy-toggle-value {
+        font-size: 8px;
+      }
+
+      .legend-item {
+        font-size: 9px;
+      }
+    }
+
+    @media (max-width: 365px) {
+      .item-button {
+        width: 82px;
+      }
+
+      .value-mode-toggle {
+        width: 64px;
+        flex-basis: 64px;
+      }
+
+      .yoy-trend-toggle {
+        width: 64px;
+        flex-basis: 64px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+
+      .cone.blue,
+      .cone.green,
+      .cone.red {
+        animation: none;
+        opacity: 1;
+      }
+
+      .loader-text {
+        animation: none;
+        opacity: 0.72;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div id="loadingState" class="app-loading" role="status" aria-label="Loading Medicare service data">
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p class="loader-text">Loading Medicare service data…</p>
+      </div>
+
+      <div class="module-top">
+        <div class="tab-scroll-shell">
+          <div id="tabList" class="tab-list" role="tablist" aria-label="Medicare service demand charts">
+            <button class="chart-tab is-active" type="button" role="tab" aria-selected="true" data-view="services">Services</button>
+            <button class="chart-tab" type="button" role="tab" aria-selected="false" data-view="hours">Hours</button>
+          </div>
+        </div>
+
+        <div id="dataSourceIndicator" class="live-data" aria-label="Live data">
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="dataSourceText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div class="heading-scroll-shell">
+          <div id="headingScrollViewport" class="heading-scroll-viewport">
+            <h2 class="chart-heading">
+              <span class="chart-heading-fixed">Medicare service </span><span class="chart-heading-mode-wrap"><span id="chartHeadingMode" class="chart-heading-mode">billings</span></span>
+            </h2>
+          </div>
+        </div>
+
+        <div class="heading-controls">
+          <div id="valueModeToggle" class="value-mode-toggle" role="group" aria-label="Chart value mode">
+            <button class="value-mode-button is-active" type="button" data-mode="count" aria-pressed="true">Count</button>
+            <button class="value-mode-button" type="button" data-mode="percent" aria-pressed="false">%</button>
+          </div>
+
+          <div id="itemControl" class="item-control">
+            <button id="itemButton" class="item-button" type="button" aria-haspopup="true" aria-expanded="false">
+              <span>Items</span>
+              <span id="itemButtonValue" class="item-button-value">Total</span>
+              <span class="menu-arrow" aria-hidden="true"></span>
+            </button>
+
+            <div id="itemMenu" class="item-menu" role="menu" aria-label="Select Medicare items">
+              <p class="item-menu-title">Medicare items</p>
+              <div id="itemMenuScroll" class="item-menu-scroll"></div>
+            </div>
+          </div>
+
+          <button id="yoyTrendToggle" class="yoy-trend-toggle is-on" type="button" aria-pressed="true" aria-label="Trend labels on">
+            <span class="yoy-binary-indicator" aria-hidden="true"></span>
+            <span class="yoy-toggle-label">Trend</span>
+            <span id="yoyToggleValue" class="yoy-toggle-value">ON</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <button id="legendScrollLeft" class="legend-scroll-button legend-scroll-left is-hidden" type="button" aria-label="Scroll legend left">‹</button>
+          <div class="legend-viewport">
+            <div id="chartLegend" class="chart-legend" aria-label="Chart legend"></div>
+          </div>
+          <button id="legendScrollRight" class="legend-scroll-button legend-scroll-right is-hidden" type="button" aria-label="Scroll legend right">›</button>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas id="demandChart" aria-label="Australian Medicare optometry service demand trend chart" role="img"></canvas>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    Chart.defaults.font.family = "'Lato', sans-serif";
+    Chart.defaults.color = '#151515';
+
+    // ============================================================
+    // DATA SOURCE — RAW MEDICAREITEMS ONLY
+    // ============================================================
+
+    const SHEET_ID =
+      '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
+
+    const MEDICARE_SHEET =
+      'Medicareitems';
+
+    /*
+     * Exact Medicareitems source layout:
+     *   row 28 = consultation time in hours
+     *   row 29 = Medicare billing item number
+     *   row 30 = raw data header row
+     *   row 31 onward = annual raw billings
+     *   column C = Calendar year
+     *
+     * D:KE contains 32 item blocks × 9 columns:
+     * NSW, VIC, QLD, SA, WA, TAS, ACT, NT, Total.
+     */
+    const MEDICARE_DATA_RANGE =
+      'C30:KE';
+
+    const MEDICARE_ITEM_RANGE =
+      'D29:KE29';
+
+    const MEDICARE_HOURS_RANGE =
+      'D28:KE28';
+
+    const FETCH_TIMEOUT_MS =
+      15000;
+
+    const LOCAL_CACHE_KEY =
+      'pff-medicare-service-demand-v5';
+
+
+    const ALL_SERIES_KEY =
+      '__all__';
+
+    const SELECT_ALL_KEY =
+      '__select_all__';
+
+    const ALL_SERIES_COLOUR =
+      '#00a651';
+
+    const EMBEDDED_FALLBACK =
+      {"items":[{"item":"10900","hours":0.475,"colour":"#4E5BD5"},{"item":"10905","hours":0.475,"colour":"#D95F02"},{"item":"10907","hours":0.475,"colour":"#00838F"},{"item":"10910","hours":0.475,"colour":"#8E44AD"},{"item":"10911","hours":0.475,"colour":"#C49A00"},{"item":"10912","hours":0.475,"colour":"#2C7FB8"},{"item":"10913","hours":0.475,"colour":"#C44569"},{"item":"10914","hours":0.475,"colour":"#6B8E23"},{"item":"10915","hours":0.475,"colour":"#7B61FF"},{"item":"10916","hours":0.25,"colour":"#C25E00"},{"item":"10918","hours":0.25,"colour":"#00796B"},{"item":"10921","hours":1.0,"colour":"#B84A9C"},{"item":"10922","hours":1.0,"colour":"#708238"},{"item":"10923","hours":1.0,"colour":"#3C78D8"},{"item":"10924","hours":1.0,"colour":"#B23A48"},{"item":"10925","hours":1.0,"colour":"#5B7F55"},{"item":"10926","hours":1.0,"colour":"#6A5ACD"},{"item":"10927","hours":1.0,"colour":"#E07A2D"},{"item":"10928","hours":1.0,"colour":"#0F6B78"},{"item":"10929","hours":1.0,"colour":"#A64AC9"},{"item":"10930","hours":1.0,"colour":"#A37B00"},{"item":"10938","hours":0.475,"colour":"#1F5A94"},{"item":"10939","hours":0.475,"colour":"#A73E65"},{"item":"10940","hours":0.475,"colour":"#436B43"},{"item":"10941","hours":0.475,"colour":"#5946B2"},{"item":"10942","hours":0.475,"colour":"#B85B1E"},{"item":"10943","hours":0.475,"colour":"#197D8C"},{"item":"10944","hours":0.25,"colour":"#8A3C8F"},{"item":"10945","hours":0.1666666667,"colour":"#827717"},{"item":"10946","hours":0.475,"colour":"#2B67B1"},{"item":"10947","hours":0.1666666667,"colour":"#9F3B43"},{"item":"10948","hours":0.475,"colour":"#355E3B"}],"rows":[{"year":2012,"totals":[3321421.0,4703.0,269533.0,null,null,75876.0,217028.0,403392.0,162653.0,639657.0,1820522.0,28811.0,5071.0,3761.0,2475.0,848.0,17.0,124.0,53.0,267.0,4591.0,null,null,289554.0,11329.0,4298.0,53961.0,null,null,null,null,null]},{"year":2013,"totals":[3360915.0,7002.0,261464.0,null,null,80456.0,241120.0,466907.0,178847.0,701849.0,1918193.0,28190.0,5036.0,3804.0,2657.0,841.0,12.0,130.0,107.0,549.0,4931.0,null,null,306131.0,11416.0,4927.0,61911.0,null,null,null,null,null]},{"year":2014,"totals":[3482886.0,8133.0,245400.0,null,null,91430.0,269277.0,550201.0,200916.0,740107.0,2014759.0,29027.0,4910.0,3689.0,2814.0,917.0,14.0,125.0,42.0,2673.0,15820.0,null,null,330171.0,12100.0,4991.0,71115.0,null,null,null,null,null]},{"year":2015,"totals":[25764.0,9316.0,318642.0,1732126.0,1066020.0,160541.0,404852.0,622006.0,217786.0,927262.0,2269885.0,32181.0,5411.0,3839.0,2635.0,964.0,27.0,147.0,48.0,1081.0,10160.0,null,null,351161.0,12943.0,5654.0,84202.0,3061.0,54.0,114.0,7.0,2.0]},{"year":2016,"totals":[276.0,9922.0,310902.0,1913167.0,1139953.0,181585.0,453191.0,705694.0,225059.0,901279.0,2241754.0,33071.0,5554.0,4156.0,2619.0,1070.0,18.0,156.0,59.0,505.0,4913.0,null,null,387002.0,14326.0,6798.0,95375.0,11078.0,214.0,450.0,12.0,16.0]},{"year":2017,"totals":[63.0,10080.0,296894.0,2190966.0,1213464.0,210668.0,506063.0,792695.0,237995.0,887323.0,2172232.0,33617.0,5600.0,4248.0,2604.0,1071.0,5.0,111.0,64.0,511.0,5001.0,null,null,437948.0,16252.0,7296.0,111191.0,13459.0,262.0,371.0,15.0,13.0]},{"year":2018,"totals":[17.0,11463.0,296589.0,2194923.0,1258474.0,240324.0,587084.0,913184.0,254635.0,928753.0,2181848.0,34202.0,5532.0,4179.0,2523.0,1061.0,11.0,148.0,62.0,580.0,4941.0,null,null,520809.0,19782.0,6933.0,119330.0,15372.0,239.0,378.0,17.0,18.0]},{"year":2019,"totals":[5.0,12302.0,329276.0,2084712.0,1295965.0,265889.0,676988.0,1063928.0,273342.0,990024.0,2270802.0,34616.0,5700.0,4116.0,2551.0,1106.0,10.0,134.0,69.0,714.0,4738.0,null,null,609282.0,22929.0,6971.0,129695.0,16951.0,200.0,353.0,5.0,22.0]},{"year":2020,"totals":[3.0,11785.0,304230.0,1873964.0,1219706.0,261112.0,642662.0,1071111.0,252699.0,914740.0,2000311.0,29518.0,4600.0,3604.0,2238.0,922.0,23.0,117.0,132.0,693.0,3763.0,null,null,524237.0,17927.0,5040.0,115460.0,18924.0,480.0,530.0,27.0,18.0]},{"year":2021,"totals":[null,12055.0,326637.0,1963180.0,1309573.0,276186.0,697075.0,1225438.0,265412.0,947583.0,2147115.0,33607.0,5145.0,4013.0,2407.0,978.0,32.0,112.0,60.0,872.0,5639.0,null,null,576401.0,19860.0,5478.0,122237.0,20711.0,978.0,548.0,41.0,22.0]},{"year":2022,"totals":[null,12780.0,338067.0,2062335.0,1403800.0,286304.0,747833.0,1410423.0,275788.0,1008694.0,2234486.0,37551.0,5501.0,4301.0,2541.0,1067.0,29.0,114.0,58.0,1058.0,4541.0,null,null,590500.0,19234.0,4931.0,127677.0,21530.0,769.0,580.0,8.0,1.0]},{"year":2023,"totals":[null,11175.0,346389.0,1991657.0,1444297.0,299084.0,844819.0,1616731.0,289137.0,1075291.0,2375868.0,37424.0,5856.0,4427.0,2692.0,1090.0,31.0,125.0,63.0,1220.0,3476.0,null,null,620731.0,19876.0,5243.0,132577.0,23251.0,897.0,623.0,null,null]},{"year":2024,"totals":[null,10685.0,339205.0,1959084.0,1470317.0,326188.0,940883.0,1776819.0,295241.0,1065166.0,2399131.0,37407.0,6073.0,4577.0,2607.0,1073.0,37.0,121.0,58.0,1483.0,3638.0,null,null,639879.0,20606.0,6539.0,134859.0,24414.0,890.0,497.0,null,null]}]};
+
+    // ============================================================
+    // DOM + STATE
+    // ============================================================
+
+    const app =
+      document.getElementById('app');
+
+    const loadingState =
+      document.getElementById('loadingState');
+
+    const statusElement =
+      document.getElementById('status');
+
+    const tabList =
+      document.getElementById('tabList');
+
+    const chartTabs =
+      Array.from(
+        document.querySelectorAll(
+          '.chart-tab'
+        )
+      );
+
+    const dataSourceIndicator =
+      document.getElementById(
+        'dataSourceIndicator'
+      );
+
+    const dataSourceText =
+      document.getElementById(
+        'dataSourceText'
+      );
+
+    const chartHeadingMode =
+      document.getElementById(
+        'chartHeadingMode'
+      );
+
+    const itemControl =
+      document.getElementById(
+        'itemControl'
+      );
+
+    const itemButton =
+      document.getElementById(
+        'itemButton'
+      );
+
+    const itemButtonValue =
+      document.getElementById(
+        'itemButtonValue'
+      );
+
+    const itemMenu =
+      document.getElementById(
+        'itemMenu'
+      );
+
+    const itemMenuScroll =
+      document.getElementById(
+        'itemMenuScroll'
+      );
+
+    const valueModeToggle =
+      document.getElementById(
+        'valueModeToggle'
+      );
+
+    const valueModeButtons =
+      Array.from(
+        document.querySelectorAll(
+          '.value-mode-button'
+        )
+      );
+
+    const yoyTrendToggle =
+      document.getElementById(
+        'yoyTrendToggle'
+      );
+
+    const yoyToggleValue =
+      document.getElementById(
+        'yoyToggleValue'
+      );
+
+    const chartLegend =
+      document.getElementById(
+        'chartLegend'
+      );
+
+    const legendScrollLeft =
+      document.getElementById(
+        'legendScrollLeft'
+      );
+
+    const legendScrollRight =
+      document.getElementById(
+        'legendScrollRight'
+      );
+
+    const demandCanvas =
+      document.getElementById(
+        'demandChart'
+      );
+
+    let sourceData = null;
+    let chart = null;
+
+    let activeView =
+      'services';
+
+    let valueMode =
+      'count';
+
+    let yoyTrendOn =
+      true;
+
+    let selectedSeries =
+      new Set([
+        ALL_SERIES_KEY,
+        '10910',
+        '10911',
+        '10912',
+        '10913',
+        '10914',
+        '10915',
+        '10916',
+        '10918'
+      ]);
+
+    let currentScale = {
+      min: 0,
+      max: 5,
+      step: 1
+    };
+
+    const yAxisTransition = {
+      from: null,
+      to: null,
+      progress: 1,
+      raf: null,
+      token: 0
+    };
+
+    // ============================================================
+    // BASIC HELPERS
+    // ============================================================
+
+    function reducedMotion() {
+      return window.matchMedia?.(
+        '(prefers-reduced-motion: reduce)'
+      )?.matches === true;
+    }
+
+    function clamp(
+      value,
+      minimum,
+      maximum
+    ) {
+      return Math.max(
+        minimum,
+        Math.min(maximum, value)
+      );
+    }
+
+    function easeOutQuart(value) {
+      return 1 -
+        Math.pow(
+          1 - value,
+          4
+        );
+    }
+
+    function finiteNumber(value) {
+      const number =
+        Number(value);
+
+      return Number.isFinite(number)
+        ? number
+        : null;
+    }
+
+    function rgba(
+      hex,
+      alpha
+    ) {
+      const cleaned =
+        String(
+          hex || '#151515'
+        )
+          .replace('#', '')
+          .trim();
+
+      const value =
+        Number.parseInt(
+          cleaned,
+          16
+        );
+
+      if (
+        !Number.isFinite(value)
+      ) {
+        return `rgba(21,21,21,${alpha})`;
+      }
+
+      const red =
+        (value >> 16) & 255;
+
+      const green =
+        (value >> 8) & 255;
+
+      const blue =
+        value & 255;
+
+      return `rgba(${red},${green},${blue},${alpha})`;
+    }
+
+    function cellValue(cell) {
+      if (!cell) {
+        return null;
+      }
+
+      const raw =
+        cell.v ??
+        cell.f ??
+        null;
+
+      return (
+        raw === null ||
+        raw === ''
+      )
+        ? null
+        : raw;
+    }
+
+    function numericCell(cell) {
+      const raw =
+        cellValue(cell);
+
+      if (
+        raw === null ||
+        raw === undefined ||
+        raw === ''
+      ) {
+        return null;
+      }
+
+      const number =
+        Number(
+          typeof raw === 'string'
+            ? raw.replace(/,/g, '')
+            : raw
+        );
+
+      return Number.isFinite(number)
+        ? number
+        : null;
+    }
+
+    function textCell(cell) {
+      const raw =
+        cellValue(cell);
+
+      return (
+        raw === null ||
+        raw === undefined
+      )
+        ? ''
+        : String(raw).trim();
+    }
+
+    function itemText(cell) {
+      const text =
+        textCell(cell);
+
+      if (
+        /^\d{5}$/.test(text)
+      ) {
+        return text;
+      }
+
+      const value =
+        numericCell(cell);
+
+      return Number.isFinite(value)
+        ? String(
+            Math.round(value)
+          )
+        : '';
+    }
+
+    function cloneData(data) {
+      return JSON.parse(
+        JSON.stringify(data)
+      );
+    }
+
+    function validSourceData(data) {
+      return Boolean(
+        data &&
+        Array.isArray(data.items) &&
+        data.items.length >= 1 &&
+        Array.isArray(data.rows) &&
+        data.rows.length >= 3
+      );
+    }
+
+    function formatInteger(value) {
+      const number =
+        finiteNumber(value);
+
+      return number === null
+        ? '—'
+        : Math.round(number)
+            .toLocaleString('en-AU');
+    }
+
+    function formatHours(value) {
+      const number =
+        finiteNumber(value);
+
+      if (number === null) {
+        return '—';
+      }
+
+      return number.toLocaleString(
+        'en-AU',
+        {
+          minimumFractionDigits: 0,
+          maximumFractionDigits:
+            Math.abs(number) < 100
+              ? 1
+              : 0
+        }
+      );
+    }
+
+    function formatPercent(value) {
+      const number =
+        finiteNumber(value);
+
+      if (number === null) {
+        return '—';
+      }
+
+      return `${number.toLocaleString(
+        'en-AU',
+        {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 1
+        }
+      )}%`;
+    }
+
+    function formatAxisValue(value) {
+      const number =
+        finiteNumber(value);
+
+      if (number === null) {
+        return '';
+      }
+
+      if (
+        valueMode === 'percent'
+      ) {
+        return `${Math.round(number)}%`;
+      }
+
+      const absolute =
+        Math.abs(number);
+
+      if (absolute >= 1000000000) {
+        return `${(
+          number /
+          1000000000
+        )
+          .toFixed(
+            absolute >= 10000000000
+              ? 0
+              : 1
+          )
+          .replace(/\.0$/, '')}b`;
+      }
+
+      if (absolute >= 1000000) {
+        return `${(
+          number /
+          1000000
+        )
+          .toFixed(
+            absolute >= 10000000
+              ? 0
+              : 1
+          )
+          .replace(/\.0$/, '')}m`;
+      }
+
+      if (absolute >= 1000) {
+        return `${(
+          number /
+          1000
+        )
+          .toFixed(
+            absolute >= 10000
+              ? 0
+              : 1
+          )
+          .replace(/\.0$/, '')}k`;
+      }
+
+      return number.toLocaleString(
+        'en-AU',
+        {
+          maximumFractionDigits: 1
+        }
+      );
+    }
+
+    function fadeTextChange(
+      element,
+      nextText,
+      duration = 240
+    ) {
+      if (
+        !element ||
+        element.textContent === nextText
+      ) {
+        return;
+      }
+
+      if (
+        reducedMotion() ||
+        !element.animate
+      ) {
+        element.textContent =
+          nextText;
+        return;
+      }
+
+      const token =
+        Symbol('text');
+
+      element._pffToken =
+        token;
+
+      const fadeOut =
+        element.animate(
+          [
+            {opacity:1},
+            {opacity:0}
+          ],
+          {
+            duration:
+              Math.round(
+                duration * 0.42
+              ),
+            easing: 'ease-out',
+            fill: 'forwards'
+          }
+        );
+
+      fadeOut.finished
+        .then(() => {
+          if (
+            element._pffToken !==
+            token
+          ) {
+            return;
+          }
+
+          element.textContent =
+            nextText;
+
+          return element.animate(
+            [
+              {opacity:0},
+              {opacity:1}
+            ],
+            {
+              duration:
+                Math.round(
+                  duration * 0.58
+                ),
+              easing:
+                'cubic-bezier(0.22, 1, 0.36, 1)',
+              fill: 'forwards'
+            }
+          ).finished;
+        })
+        .catch(() => {});
+    }
+
+    // ============================================================
+    // LIVE GOOGLE SHEETS LOAD
+    // ============================================================
+
+    function loadGVizSheet(
+      sheetName,
+      range,
+      headers = '1'
+    ) {
+      return new Promise(
+        (resolve, reject) => {
+          const callbackName =
+            `__pff_medicare_${Date.now()}_${Math.random()
+              .toString(36)
+              .slice(2)}`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let completed =
+            false;
+
+          const cleanup = () => {
+            if (
+              script.parentNode
+            ) {
+              script.parentNode
+                .removeChild(script);
+            }
+
+            try {
+              delete window[
+                callbackName
+              ];
+            } catch (_) {
+              window[
+                callbackName
+              ] = undefined;
+            }
+          };
+
+          const timer =
+            window.setTimeout(
+              () => {
+                if (completed) {
+                  return;
+                }
+
+                completed = true;
+                cleanup();
+
+                reject(
+                  new Error(
+                    `Timed out loading ${sheetName}.`
+                  )
+                );
+              },
+              FETCH_TIMEOUT_MS
+            );
+
+          window[
+            callbackName
+          ] = response => {
+            if (completed) {
+              return;
+            }
+
+            completed = true;
+            window.clearTimeout(
+              timer
+            );
+            cleanup();
+
+            if (
+              !response ||
+              response.status ===
+                'error'
+            ) {
+              const message =
+                response?.errors?.[0]
+                  ?.detailed_message ||
+                response?.errors?.[0]
+                  ?.message ||
+                `Could not load ${sheetName}.`;
+
+              reject(
+                new Error(message)
+              );
+
+              return;
+            }
+
+            const table =
+              response.table;
+
+            if (!table) {
+              reject(
+                new Error(
+                  `No table data were returned from ${sheetName}.`
+                )
+              );
+
+              return;
+            }
+
+            resolve(table);
+          };
+
+          script.onerror = () => {
+            if (completed) {
+              return;
+            }
+
+            completed = true;
+            window.clearTimeout(
+              timer
+            );
+            cleanup();
+
+            reject(
+              new Error(
+                `Could not connect to ${sheetName}.`
+              )
+            );
+          };
+
+          const params =
+            new URLSearchParams({
+              sheet: sheetName,
+              range,
+              headers,
+              tq: 'select *',
+              tqx:
+                `out:json;responseHandler:${callbackName}`
+            });
+
+          script.src =
+            `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${params.toString()}`;
+
+          script.async = true;
+          document.head
+            .appendChild(script);
+        }
+      );
+    }
+
+    function itemNumberCell(
+      cell
+    ) {
+      const value =
+        numericCell(
+          cell
+        );
+
+      if (
+        Number.isFinite(
+          value
+        )
+      ) {
+        return String(
+          Math.round(value)
+        );
+      }
+
+      const raw =
+        cell?.v ??
+        cell?.f ??
+        '';
+
+      const text =
+        String(raw)
+          .trim();
+
+      return /^\d{5}$/.test(text)
+        ? text
+        : '';
+    }
+
+    function parseMetadataRows(
+      itemTable,
+      hoursTable
+    ) {
+      const itemCells =
+        itemTable?.rows?.[0]?.c ||
+        [];
+
+      const hourCells =
+        hoursTable?.rows?.[0]?.c ||
+        [];
+
+      const colourByItem =
+        new Map(
+          EMBEDDED_FALLBACK
+            .items
+            .map(item => [
+              item.item,
+              item.colour
+            ])
+        );
+
+      const parsed =
+        [];
+
+      for (
+        let start = 0;
+        start + 8 <
+          itemCells.length;
+        start += 9
+      ) {
+        const item =
+          itemNumberCell(
+            itemCells[start]
+          );
+
+        if (
+          !/^\d{5}$/.test(
+            item
+          )
+        ) {
+          break;
+        }
+
+        const repeated =
+          Array.from(
+            {length: 9},
+            (_, offset) =>
+              itemNumberCell(
+                itemCells[
+                  start + offset
+                ]
+              )
+          );
+
+        if (
+          !repeated.every(
+            value =>
+              value === item
+          )
+        ) {
+          break;
+        }
+
+        parsed.push({
+          item,
+          hours:
+            numericCell(
+              hourCells[
+                start
+              ]
+            ),
+          colour:
+            colourByItem.get(
+              item
+            ) ||
+            EMBEDDED_FALLBACK
+              .items?.[
+                parsed.length
+              ]?.colour ||
+            '#69718a'
+        });
+      }
+
+      return parsed;
+    }
+
+    function parseMedicareDataTable(
+      table,
+      itemSchema
+    ) {
+      const rows =
+        table?.rows || [];
+
+      if (!rows.length) {
+        throw new Error(
+          'Medicareitems returned no annual rows.'
+        );
+      }
+
+      const parsedRows =
+        [];
+
+      for (const row of rows) {
+        const cells =
+          row?.c || [];
+
+        const yearValue =
+          numericCell(
+            cells[0]
+          );
+
+        if (
+          !Number.isFinite(
+            yearValue
+          )
+        ) {
+          continue;
+        }
+
+        const year =
+          Math.round(
+            yearValue
+          );
+
+        if (
+          year < 1900 ||
+          year > 2200
+        ) {
+          continue;
+        }
+
+        /*
+         * C30:KE is queried with row 30 as the single header row.
+         * Returned row data therefore begin at sheet row 31.
+         *
+         * C is index 0 (Calendar year).
+         * D:L is item 1; its Australian Total is index 9.
+         * Each next item block advances another 9 columns:
+         * 9, 18, 27, ...
+         */
+        const totals =
+          itemSchema.map(
+            (_, itemIndex) =>
+              numericCell(
+                cells[
+                  9 +
+                  itemIndex * 9
+                ]
+              )
+          );
+
+        if (
+          totals.some(
+            Number.isFinite
+          )
+        ) {
+          parsedRows.push({
+            year,
+            totals
+          });
+        }
+      }
+
+      parsedRows.sort(
+        (a, b) =>
+          a.year - b.year
+      );
+
+      return {
+        items:
+          itemSchema,
+        rows:
+          parsedRows
+      };
+    }
+
+    function saveLocalCache(
+      data
+    ) {
+      try {
+        localStorage.setItem(
+          LOCAL_CACHE_KEY,
+          JSON.stringify({
+            savedAt:
+              Date.now(),
+            data
+          })
+        );
+      } catch (_) {
+        // Cache is optional.
+      }
+    }
+
+    function readLocalCache() {
+      try {
+        const raw =
+          localStorage.getItem(
+            LOCAL_CACHE_KEY
+          );
+
+        if (!raw) {
+          return null;
+        }
+
+        const parsed =
+          JSON.parse(raw);
+
+        return validSourceData(
+          parsed?.data
+        )
+          ? parsed.data
+          : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function setDataSource(
+      source
+    ) {
+      const live =
+        source === 'live';
+
+      dataSourceIndicator
+        .classList.toggle(
+          'is-cached',
+          !live
+        );
+
+      const label =
+        live
+          ? 'Live data'
+          : source === 'cached'
+            ? 'Cached data'
+            : 'Snapshot data';
+
+      dataSourceIndicator
+        .setAttribute(
+          'aria-label',
+          label
+        );
+
+      dataSourceText.textContent =
+        live
+          ? 'LIVE data'
+          : source === 'cached'
+            ? 'CACHED data'
+            : 'SNAPSHOT data';
+    }
+
+    async function loadData() {
+      try {
+        const dataTable =
+          await loadGVizSheet(
+            MEDICARE_SHEET,
+            MEDICARE_DATA_RANGE,
+            '1'
+          );
+
+        let itemSchema =
+          EMBEDDED_FALLBACK
+            .items
+            .map(item => ({
+              ...item
+            }));
+
+        /*
+         * Rows 28 and 29 are metadata, not annual observations.
+         * Read them explicitly. If either metadata request is unavailable,
+         * retain the same schema from the embedded raw snapshot while still
+         * using the live annual billings from row 31 onward.
+         */
+        const [
+          itemResult,
+          hoursResult
+        ] =
+          await Promise.allSettled([
+            loadGVizSheet(
+              MEDICARE_SHEET,
+              MEDICARE_ITEM_RANGE,
+              '0'
+            ),
+            loadGVizSheet(
+              MEDICARE_SHEET,
+              MEDICARE_HOURS_RANGE,
+              '0'
+            )
+          ]);
+
+        if (
+          itemResult.status ===
+            'fulfilled' &&
+          hoursResult.status ===
+            'fulfilled'
+        ) {
+          const liveMetadata =
+            parseMetadataRows(
+              itemResult.value,
+              hoursResult.value
+            );
+
+          if (
+            liveMetadata.length ===
+            EMBEDDED_FALLBACK
+              .items.length
+          ) {
+            itemSchema =
+              liveMetadata;
+          }
+        }
+
+        const liveData =
+          parseMedicareDataTable(
+            dataTable,
+            itemSchema
+          );
+
+        if (
+          !validSourceData(
+            liveData
+          )
+        ) {
+          throw new Error(
+            'Live Medicare data were incomplete.'
+          );
+        }
+
+        saveLocalCache(
+          liveData
+        );
+
+        setDataSource(
+          'live'
+        );
+
+        statusElement.textContent =
+          '';
+
+        return liveData;
+      } catch (error) {
+        const cached =
+          readLocalCache();
+
+        statusElement.textContent =
+          '';
+
+        if (
+          validSourceData(
+            cached
+          )
+        ) {
+          setDataSource(
+            'cached'
+          );
+
+          return cached;
+        }
+
+        setDataSource(
+          'snapshot'
+        );
+
+        return cloneData(
+          EMBEDDED_FALLBACK
+        );
+      }
+    }
+
+    // ============================================================
+    // SERIES + METRICS
+    // ============================================================
+
+    function itemIndexFor(
+      itemNumber
+    ) {
+      return sourceData.items
+        .findIndex(
+          item =>
+            item.item ===
+            itemNumber
+        );
+    }
+
+    function itemMetaFor(
+      itemNumber
+    ) {
+      return sourceData.items
+        .find(
+          item =>
+            item.item ===
+            itemNumber
+        ) || null;
+    }
+
+    function rawItemCount(
+      row,
+      itemIndex
+    ) {
+      const value =
+        row?.totals?.[
+          itemIndex
+        ];
+
+      return finiteNumber(
+        value
+      );
+    }
+
+    function allMetric(
+      row
+    ) {
+      let total = 0;
+      let found = false;
+
+      sourceData.items
+        .forEach(
+          (
+            item,
+            itemIndex
+          ) => {
+            const count =
+              rawItemCount(
+                row,
+                itemIndex
+              );
+
+            if (
+              !Number.isFinite(
+                count
+              )
+            ) {
+              return;
+            }
+
+            if (
+              activeView ===
+              'hours'
+            ) {
+              const hours =
+                finiteNumber(
+                  item.hours
+                );
+
+              if (
+                !Number.isFinite(
+                  hours
+                )
+              ) {
+                return;
+              }
+
+              total +=
+                count *
+                hours;
+            } else {
+              total +=
+                count;
+            }
+
+            found = true;
+          }
+        );
+
+      return found
+        ? total
+        : null;
+    }
+
+    function itemMetric(
+      row,
+      itemNumber
+    ) {
+      const index =
+        itemIndexFor(
+          itemNumber
+        );
+
+      if (index < 0) {
+        return null;
+      }
+
+      const count =
+        rawItemCount(
+          row,
+          index
+        );
+
+      if (
+        !Number.isFinite(
+          count
+        )
+      ) {
+        return null;
+      }
+
+      if (
+        activeView ===
+        'services'
+      ) {
+        return count;
+      }
+
+      const hours =
+        finiteNumber(
+          sourceData.items[
+            index
+          ]?.hours
+        );
+
+      return Number.isFinite(
+        hours
+      )
+        ? count * hours
+        : null;
+    }
+
+    function absoluteMetric(
+      row,
+      seriesKey
+    ) {
+      return seriesKey ===
+        ALL_SERIES_KEY
+        ? allMetric(row)
+        : itemMetric(
+            row,
+            seriesKey
+          );
+    }
+
+    function displayMetric(
+      row,
+      seriesKey
+    ) {
+      const absolute =
+        absoluteMetric(
+          row,
+          seriesKey
+        );
+
+      if (
+        valueMode ===
+        'count'
+      ) {
+        return absolute;
+      }
+
+      if (
+        seriesKey ===
+        ALL_SERIES_KEY
+      ) {
+        return null;
+      }
+
+      const all =
+        allMetric(row);
+
+      if (
+        !Number.isFinite(
+          absolute
+        ) ||
+        !Number.isFinite(
+          all
+        ) ||
+        all <= 0
+      ) {
+        return null;
+      }
+
+      return (
+        absolute /
+        all *
+        100
+      );
+    }
+
+    function itemSeriesKeys() {
+      return sourceData.items
+        .map(
+          item => item.item
+        );
+    }
+
+    function selectableKeysForMode() {
+      const items =
+        itemSeriesKeys();
+
+      return valueMode ===
+        'percent'
+        ? items
+        : [
+            ALL_SERIES_KEY,
+            ...items
+          ];
+    }
+
+    function selectedKeys() {
+      const ordered =
+        [];
+
+      if (
+        selectedSeries.has(
+          ALL_SERIES_KEY
+        )
+      ) {
+        ordered.push(
+          ALL_SERIES_KEY
+        );
+      }
+
+      sourceData.items
+        .forEach(item => {
+          if (
+            selectedSeries.has(
+              item.item
+            )
+          ) {
+            ordered.push(
+              item.item
+            );
+          }
+        });
+
+      return ordered;
+    }
+
+    function visibleSelectedKeys() {
+      const keys =
+        selectedKeys();
+
+      return valueMode ===
+        'percent'
+        ? keys.filter(
+            key =>
+              key !==
+              ALL_SERIES_KEY
+          )
+        : keys;
+    }
+
+    function allSelectableSelected() {
+      const selectable =
+        selectableKeysForMode();
+
+      return (
+        selectable.length > 0 &&
+        selectable.every(
+          key =>
+            selectedSeries.has(
+              key
+            )
+        )
+      );
+    }
+
+    function someSelectableSelected() {
+      return selectableKeysForMode()
+        .some(
+          key =>
+            selectedSeries.has(
+              key
+            )
+        );
+    }
+
+    function toggleAllSelectable() {
+      const selectable =
+        selectableKeysForMode();
+
+      const next =
+        new Set(
+          selectedSeries
+        );
+
+      const shouldClear =
+        selectable.length > 0 &&
+        selectable.every(
+          key =>
+            next.has(key)
+        );
+
+      selectable.forEach(
+        key => {
+          if (shouldClear) {
+            next.delete(key);
+          } else {
+            next.add(key);
+          }
+        }
+      );
+
+      selectedSeries =
+        next;
+
+      updateItemButtonText();
+      syncItemMenuSelection();
+      renderChartChange(
+        true,
+        true,
+        'selection'
+      );
+    }
+
+    function seriesLabel(
+      key
+    ) {
+      return key ===
+        ALL_SERIES_KEY
+        ? 'Total Medicare'
+        : key;
+    }
+
+    function seriesColour(
+      key
+    ) {
+      if (
+        key ===
+        ALL_SERIES_KEY
+      ) {
+        return ALL_SERIES_COLOUR;
+      }
+
+      return (
+        itemMetaFor(key)
+          ?.colour ||
+        '#69718a'
+      );
+    }
+
+    function currentRows() {
+      return sourceData.rows;
+    }
+
+    function yearRatio(
+      year
+    ) {
+      const rows =
+        currentRows();
+
+      if (!rows.length) {
+        return NaN;
+      }
+
+      const first =
+        rows[0].year;
+
+      const last =
+        rows[
+          rows.length - 1
+        ].year;
+
+      return last > first
+        ? (
+            year -
+            first
+          ) /
+          (
+            last -
+            first
+          )
+        : 0.5;
+    }
+
+    function buildSeriesData(
+      key
+    ) {
+      return currentRows()
+        .map(row => ({
+          x:
+            yearRatio(
+              row.year
+            ),
+          y:
+            displayMetric(
+              row,
+              key
+            ),
+          year:
+            row.year
+        }));
+    }
+
+    function allDatasetKeys() {
+      return [
+        ALL_SERIES_KEY,
+        ...itemSeriesKeys()
+      ];
+    }
+
+    function datasetVisible(
+      key
+    ) {
+      if (
+        key ===
+        ALL_SERIES_KEY
+      ) {
+        return (
+          valueMode ===
+            'count' &&
+          selectedSeries.has(
+            key
+          )
+        );
+      }
+
+      return selectedSeries.has(
+        key
+      );
+    }
+
+    function datasetModel(
+      key
+    ) {
+      const colour =
+        seriesColour(
+          key
+        );
+
+      return {
+        label:
+          seriesLabel(key),
+        seriesKey:
+          key,
+        data:
+          buildSeriesData(
+            key
+          ),
+        parsing:
+          false,
+        hidden:
+          !datasetVisible(
+            key
+          ),
+        borderColor:
+          colour,
+        backgroundColor:
+          colour,
+        pointBackgroundColor:
+          colour,
+        pointBorderColor:
+          '#ffffff',
+        borderWidth:
+          key ===
+          ALL_SERIES_KEY
+            ? 3.2
+            : 2.7,
+        borderCapStyle:
+          'round',
+        borderJoinStyle:
+          'round',
+        pointRadius:
+          0,
+        pointHoverRadius:
+          4,
+        pointHitRadius:
+          5,
+        pointBorderWidth:
+          1,
+        tension:
+          0.28,
+        cubicInterpolationMode:
+          'monotone',
+        spanGaps:
+          false,
+        fill:
+          false
+      };
+    }
+
+    function buildDatasets() {
+      return allDatasetKeys()
+        .map(
+          datasetModel
+        );
+    }
+
+    function syncChartDatasets() {
+      if (!chart) {
+        return;
+      }
+
+      const existing =
+        new Map(
+          chart.data.datasets
+            .map(
+              dataset => [
+                dataset.seriesKey,
+                dataset
+              ]
+            )
+        );
+
+      chart.data.datasets =
+        allDatasetKeys()
+          .map(key => {
+            const model =
+              datasetModel(
+                key
+              );
+
+            const dataset =
+              existing.get(
+                key
+              );
+
+            if (!dataset) {
+              return model;
+            }
+
+            /*
+             * Retain the same dataset object so Chart.js can interpolate
+             * its existing point geometry to the new y-values instead of
+             * treating the line as a newly inserted series.
+             */
+            dataset.label =
+              model.label;
+
+            dataset.data =
+              model.data;
+
+            dataset.hidden =
+              model.hidden;
+
+            dataset.borderColor =
+              model.borderColor;
+
+            dataset.backgroundColor =
+              model.backgroundColor;
+
+            dataset.pointBackgroundColor =
+              model.pointBackgroundColor;
+
+            dataset.pointBorderColor =
+              model.pointBorderColor;
+
+            dataset.borderWidth =
+              model.borderWidth;
+
+            dataset.borderCapStyle =
+              model.borderCapStyle;
+
+            dataset.borderJoinStyle =
+              model.borderJoinStyle;
+
+            dataset.pointRadius =
+              model.pointRadius;
+
+            dataset.pointHoverRadius =
+              model.pointHoverRadius;
+
+            dataset.pointHitRadius =
+              model.pointHitRadius;
+
+            dataset.pointBorderWidth =
+              model.pointBorderWidth;
+
+            dataset.tension =
+              model.tension;
+
+            dataset.cubicInterpolationMode =
+              model.cubicInterpolationMode;
+
+            dataset.spanGaps =
+              model.spanGaps;
+
+            dataset.fill =
+              model.fill;
+
+            dataset.parsing =
+              false;
+
+            return dataset;
+          });
+    }
+
+    // ============================================================
+    // P.A. TREND
+    // ============================================================
+
+    function latestAnnualisedGrowth(
+      key
+    ) {
+      const recent =
+        currentRows()
+          .map(row => ({
+            year:
+              row.year,
+            value:
+              displayMetric(
+                row,
+                key
+              )
+          }))
+          .filter(
+            point =>
+              Number.isFinite(
+                point.value
+              ) &&
+              point.value > 0
+          )
+          .slice(-3);
+
+      if (
+        recent.length < 2
+      ) {
+        return NaN;
+      }
+
+      const points =
+        recent.map(
+          point => ({
+            x:
+              point.year,
+            y:
+              Math.log(
+                point.value
+              )
+          })
+        );
+
+      const meanX =
+        points.reduce(
+          (
+            sum,
+            point
+          ) =>
+            sum +
+            point.x,
+          0
+        ) /
+        points.length;
+
+      const meanY =
+        points.reduce(
+          (
+            sum,
+            point
+          ) =>
+            sum +
+            point.y,
+          0
+        ) /
+        points.length;
+
+      let numerator =
+        0;
+
+      let denominator =
+        0;
+
+      points.forEach(
+        point => {
+          const dx =
+            point.x -
+            meanX;
+
+          numerator +=
+            dx *
+            (
+              point.y -
+              meanY
+            );
+
+          denominator +=
+            dx *
+            dx;
+        }
+      );
+
+      if (
+        denominator <= 0
+      ) {
+        return NaN;
+      }
+
+      const slope =
+        numerator /
+        denominator;
+
+      return (
+        Math.exp(slope) -
+        1
+      ) * 100;
+    }
+
+    // ============================================================
+    // DYNAMIC PFF-STYLE Y AXIS
+    // ============================================================
+
+    function niceNumber(
+      value,
+      round
+    ) {
+      if (
+        !Number.isFinite(value) ||
+        value <= 0
+      ) {
+        return 1;
+      }
+
+      const exponent =
+        Math.floor(
+          Math.log10(
+            value
+          )
+        );
+
+      const fraction =
+        value /
+        Math.pow(
+          10,
+          exponent
+        );
+
+      let niceFraction;
+
+      if (round) {
+        if (
+          fraction < 1.5
+        ) {
+          niceFraction = 1;
+        } else if (
+          fraction < 3
+        ) {
+          niceFraction = 2;
+        } else if (
+          fraction < 7
+        ) {
+          niceFraction = 5;
+        } else {
+          niceFraction = 10;
+        }
+      } else {
+        if (
+          fraction <= 1
+        ) {
+          niceFraction = 1;
+        } else if (
+          fraction <= 2
+        ) {
+          niceFraction = 2;
+        } else if (
+          fraction <= 5
+        ) {
+          niceFraction = 5;
+        } else {
+          niceFraction = 10;
+        }
+      }
+
+      return (
+        niceFraction *
+        Math.pow(
+          10,
+          exponent
+        )
+      );
+    }
+
+    function computeScale() {
+      const values =
+        [];
+
+      visibleSelectedKeys()
+        .forEach(key => {
+          currentRows()
+            .forEach(row => {
+              const value =
+                displayMetric(
+                  row,
+                  key
+                );
+
+              if (
+                Number.isFinite(
+                  value
+                ) &&
+                value >= 0
+              ) {
+                values.push(
+                  value
+                );
+              }
+            });
+        });
+
+      const maximum =
+        values.length
+          ? Math.max(...values)
+          : 5;
+
+      const roughStep =
+        Math.max(
+          maximum / 5,
+          Number.EPSILON
+        );
+
+      const step =
+        niceNumber(
+          roughStep,
+          true
+        );
+
+      let max =
+        Math.ceil(
+          maximum /
+          step
+        ) *
+        step;
+
+      if (
+        max <= maximum
+      ) {
+        max += step;
+      }
+
+      if (
+        max <= 0
+      ) {
+        max = step * 5;
+      }
+
+      let finalStep =
+        niceNumber(
+          max / 5,
+          true
+        );
+
+      max =
+        Math.ceil(
+          maximum /
+          finalStep
+        ) *
+        finalStep;
+
+      while (
+        max /
+        finalStep < 4
+      ) {
+        max +=
+          finalStep;
+      }
+
+      return {
+        min: 0,
+        max,
+        step:
+          finalStep
+      };
+    }
+
+    function scaleValues(
+      scale
+    ) {
+      const count =
+        Math.max(
+          1,
+          Math.round(
+            (
+              scale.max -
+              scale.min
+            ) /
+            scale.step
+          )
+        );
+
+      return Array.from(
+        {
+          length:
+            count + 1
+        },
+        (
+          _,
+          index
+        ) =>
+          scale.min +
+          scale.step *
+          index
+      );
+    }
+
+    function currentYAxisTracks() {
+      const fromScale =
+        yAxisTransition.from ||
+        currentScale;
+
+      const toScale =
+        yAxisTransition.to ||
+        currentScale;
+
+      const progress =
+        clamp(
+          yAxisTransition.progress,
+          0,
+          1
+        );
+
+      const eased =
+        easeOutQuart(
+          progress
+        );
+
+      /*
+       * Keep exactly the target scale's tick count for the entire
+       * transition. The previous implementation padded the shorter
+       * tick array with its final value, which could temporarily draw
+       * the top label twice (for example 50% / 50%).
+       */
+      const toValues =
+        scaleValues(
+          toScale
+        );
+
+      return toValues.map(
+        (
+          toValue,
+          index
+        ) => {
+          const ratio =
+            toValues.length > 1
+              ? index /
+                (
+                  toValues.length -
+                  1
+                )
+              : 0;
+
+          const fromValue =
+            fromScale.min +
+            (
+              fromScale.max -
+              fromScale.min
+            ) *
+            ratio;
+
+          return {
+            ratio,
+            value:
+              fromValue +
+              (
+                toValue -
+                fromValue
+              ) *
+              eased
+          };
+        }
+      );
+    }
+
+    function startYAxisTransition(
+      fromScale,
+      toScale,
+      duration = 760
+    ) {
+      if (
+        yAxisTransition.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTransition.raf
+        );
+      }
+
+      const token =
+        ++yAxisTransition.token;
+
+      yAxisTransition.from =
+        {...fromScale};
+
+      yAxisTransition.to =
+        {...toScale};
+
+      yAxisTransition.progress =
+        0;
+
+      if (
+        reducedMotion() ||
+        duration <= 0
+      ) {
+        yAxisTransition.progress =
+          1;
+
+        chart?.draw();
+        return;
+      }
+
+      const startedAt =
+        performance.now();
+
+      const step =
+        now => {
+          if (
+            token !==
+            yAxisTransition.token
+          ) {
+            return;
+          }
+
+          yAxisTransition.progress =
+            clamp(
+              (
+                now -
+                startedAt
+              ) /
+              duration,
+              0,
+              1
+            );
+
+          chart?.draw();
+
+          if (
+            yAxisTransition.progress <
+            1
+          ) {
+            yAxisTransition.raf =
+              requestAnimationFrame(
+                step
+              );
+          } else {
+            yAxisTransition.raf =
+              null;
+
+            yAxisTransition.from =
+              {...toScale};
+
+            yAxisTransition.to =
+              {...toScale};
+          }
+        };
+
+      yAxisTransition.raf =
+        requestAnimationFrame(
+          step
+        );
+    }
+
+    // ============================================================
+    // PFF X AXIS YEAR TRACKS
+    // ============================================================
+
+    function isCompactYearRange(
+      rows
+    ) {
+      if (
+        !rows?.length
+      ) {
+        return false;
+      }
+
+      const first =
+        Number(
+          rows[0].year
+        );
+
+      const last =
+        Number(
+          rows[
+            rows.length - 1
+          ].year
+        );
+
+      return (
+        Number.isFinite(
+          first
+        ) &&
+        Number.isFinite(
+          last
+        ) &&
+        last - first <= 5
+      );
+    }
+
+    function shouldLabelYear(
+      year,
+      rows
+    ) {
+      if (
+        isCompactYearRange(
+          rows
+        )
+      ) {
+        return true;
+      }
+
+      return (
+        Number.isFinite(
+          Number(year)
+        ) &&
+        Number(year) % 2 === 0
+      );
+    }
+
+    function shouldMajorYear(
+      year
+    ) {
+      return (
+        Number.isFinite(
+          Number(year)
+        ) &&
+        Number(year) % 2 === 0
+      );
+    }
+
+    function currentXAxisTracks() {
+      const rows =
+        currentRows();
+
+      return rows.map(
+        row => ({
+          year:
+            row.year,
+          ratio:
+            yearRatio(
+              row.year
+            ),
+          alpha:
+            1,
+          labelAlpha:
+            shouldLabelYear(
+              row.year,
+              rows
+            )
+              ? 1
+              : 0,
+          majorAlpha:
+            shouldMajorYear(
+              row.year
+            )
+              ? 1
+              : 0
+        })
+      );
+    }
+
+    // ============================================================
+    // CUSTOM PFF CHART PLUGINS
+    // ============================================================
+
+    const pffAxesPlugin = {
+      id:
+        'pffAxesPlugin',
+
+      beforeDatasetsDraw(
+        chartInstance
+      ) {
+        const {
+          ctx,
+          chartArea
+        } =
+          chartInstance;
+
+        if (!chartArea) {
+          return;
+        }
+
+        const yTracks =
+          currentYAxisTracks();
+
+        ctx.save();
+
+        yTracks.forEach(
+          track => {
+            if (
+              track.ratio <=
+              0.001
+            ) {
+              return;
+            }
+
+            const y =
+              chartArea.bottom -
+              chartArea.height *
+              track.ratio;
+
+            ctx.beginPath();
+            ctx.moveTo(
+              chartArea.left,
+              Math.round(y) +
+              0.5
+            );
+            ctx.lineTo(
+              chartArea.right,
+              Math.round(y) +
+              0.5
+            );
+            ctx.strokeStyle =
+              'rgba(105, 113, 138, 0.075)';
+            ctx.lineWidth =
+              1;
+            ctx.stroke();
+          }
+        );
+
+        for (
+          let index = 0;
+          index <
+          yTracks.length - 1;
+          index += 1
+        ) {
+          const ratio =
+            (
+              yTracks[
+                index
+              ].ratio +
+              yTracks[
+                index + 1
+              ].ratio
+            ) /
+            2;
+
+          const y =
+            chartArea.bottom -
+            chartArea.height *
+            ratio;
+
+          ctx.beginPath();
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(y) +
+            0.5
+          );
+          ctx.lineTo(
+            chartArea.right,
+            Math.round(y) +
+            0.5
+          );
+          ctx.strokeStyle =
+            'rgba(105, 113, 138, 0.035)';
+          ctx.lineWidth =
+            0.7;
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      },
+
+      afterDraw(
+        chartInstance
+      ) {
+        const {
+          ctx,
+          chartArea
+        } =
+          chartInstance;
+
+        if (!chartArea) {
+          return;
+        }
+
+        const mobile =
+          window.innerWidth <=
+          430;
+
+        const yTracks =
+          currentYAxisTracks();
+
+        const xTracks =
+          currentXAxisTracks();
+
+        ctx.save();
+        ctx.lineCap =
+          'butt';
+
+        ctx.strokeStyle =
+          '#151515';
+
+        ctx.lineWidth =
+          1;
+
+        ctx.fillStyle =
+          '#151515';
+
+        ctx.textAlign =
+          'right';
+
+        ctx.textBaseline =
+          'middle';
+
+        ctx.font =
+          `${mobile ? 9 : 10}px Lato, sans-serif`;
+
+        yTracks.forEach(
+          track => {
+            const y =
+              chartArea.bottom -
+              chartArea.height *
+              track.ratio;
+
+            ctx.beginPath();
+            ctx.moveTo(
+              chartArea.left,
+              Math.round(y) +
+              0.5
+            );
+            ctx.lineTo(
+              chartArea.left -
+              5,
+              Math.round(y) +
+              0.5
+            );
+            ctx.stroke();
+
+            ctx.fillText(
+              formatAxisValue(
+                track.value
+              ),
+              chartArea.left -
+              8,
+              y
+            );
+          }
+        );
+
+        ctx.strokeStyle =
+          '#69718a';
+
+        ctx.globalAlpha =
+          0.60;
+
+        ctx.lineWidth =
+          0.7;
+
+        for (
+          let index = 0;
+          index <
+          yTracks.length - 1;
+          index += 1
+        ) {
+          const ratio =
+            (
+              yTracks[
+                index
+              ].ratio +
+              yTracks[
+                index + 1
+              ].ratio
+            ) /
+            2;
+
+          const y =
+            chartArea.bottom -
+            chartArea.height *
+            ratio;
+
+          ctx.beginPath();
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(y) +
+            0.5
+          );
+          ctx.lineTo(
+            chartArea.left -
+            2,
+            Math.round(y) +
+            0.5
+          );
+          ctx.stroke();
+        }
+
+        xTracks.forEach(
+          track => {
+            const x =
+              chartArea.left +
+              chartArea.width *
+              track.ratio;
+
+            const major =
+              track.majorAlpha >
+              0.5;
+
+            ctx.save();
+
+            ctx.globalAlpha =
+              clamp(
+                track.alpha,
+                0,
+                1
+              );
+
+            ctx.strokeStyle =
+              major
+                ? '#151515'
+                : '#69718a';
+
+            ctx.lineWidth =
+              major
+                ? 1
+                : 0.7;
+
+            ctx.beginPath();
+            ctx.moveTo(
+              Math.round(x) +
+              0.5,
+              chartArea.bottom
+            );
+            ctx.lineTo(
+              Math.round(x) +
+              0.5,
+              chartArea.bottom +
+              (
+                major
+                  ? 5
+                  : 2
+              )
+            );
+            ctx.stroke();
+
+            if (
+              track.labelAlpha >
+              0.02
+            ) {
+              ctx.globalAlpha =
+                clamp(
+                  track.labelAlpha,
+                  0,
+                  1
+                );
+
+              ctx.fillStyle =
+                '#151515';
+
+              ctx.font =
+                `${mobile ? 9 : 10}px Lato, sans-serif`;
+
+              ctx.textBaseline =
+                'top';
+
+              let labelX =
+                x;
+
+              if (
+                track.ratio <=
+                0.001
+              ) {
+                ctx.textAlign =
+                  'left';
+
+                labelX =
+                  x + 2;
+              } else if (
+                track.ratio >=
+                0.999
+              ) {
+                ctx.textAlign =
+                  'right';
+
+                labelX =
+                  x - 2;
+              } else {
+                ctx.textAlign =
+                  'center';
+              }
+
+              ctx.fillText(
+                String(
+                  track.year
+                ),
+                labelX,
+                chartArea.bottom +
+                8
+              );
+            }
+
+            ctx.restore();
+          }
+        );
+
+        ctx.restore();
+      }
+    };
+
+    const axisSpinesPlugin = {
+      id:
+        'axisSpinesPlugin',
+
+      afterDraw(
+        chartInstance
+      ) {
+        const {
+          ctx,
+          chartArea
+        } =
+          chartInstance;
+
+        if (!chartArea) {
+          return;
+        }
+
+        ctx.save();
+
+        ctx.strokeStyle =
+          '#151515';
+
+        ctx.lineWidth =
+          1.1;
+
+        ctx.beginPath();
+        ctx.moveTo(
+          Math.round(
+            chartArea.left
+          ) + 0.5,
+          chartArea.top
+        );
+        ctx.lineTo(
+          Math.round(
+            chartArea.left
+          ) + 0.5,
+          chartArea.bottom
+        );
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(
+          chartArea.left,
+          Math.round(
+            chartArea.bottom
+          ) + 0.5
+        );
+        ctx.lineTo(
+          chartArea.right,
+          Math.round(
+            chartArea.bottom
+          ) + 0.5
+        );
+        ctx.stroke();
+
+        ctx.restore();
+      }
+    };
+
+    const paTrendLabelsPlugin = {
+      id:
+        'paTrendLabelsPlugin',
+
+      afterDatasetsDraw(
+        chartInstance
+      ) {
+        if (!yoyTrendOn) {
+          return;
+        }
+
+        const {
+          ctx,
+          chartArea
+        } =
+          chartInstance;
+
+        if (!chartArea) {
+          return;
+        }
+
+        const mobile =
+          window.innerWidth <=
+          430;
+
+        const fontSize =
+          mobile
+            ? 8.2
+            : 9.1;
+
+        const labelHeight =
+          mobile
+            ? 14
+            : 15;
+
+        const paddingX =
+          mobile
+            ? 4
+            : 5;
+
+        const arrowGap =
+          mobile
+            ? 2.5
+            : 3;
+
+        const items =
+          [];
+
+        function seriesTint(
+          hex,
+          strength = 0.20,
+          alpha = 0.84
+        ) {
+          const cleaned =
+            String(
+              hex || '#69718a'
+            )
+              .replace('#', '')
+              .trim();
+
+          const value =
+            Number.parseInt(
+              cleaned,
+              16
+            );
+
+          if (
+            !Number.isFinite(
+              value
+            )
+          ) {
+            return `rgba(239,240,244,${alpha})`;
+          }
+
+          const red =
+            (value >> 16) &
+            255;
+
+          const green =
+            (value >> 8) &
+            255;
+
+          const blue =
+            value &
+            255;
+
+          const mix =
+            channel =>
+              Math.round(
+                255 +
+                (
+                  channel -
+                  255
+                ) *
+                strength
+              );
+
+          return `rgba(${mix(red)},${mix(green)},${mix(blue)},${alpha})`;
+        }
+
+        ctx.save();
+
+        ctx.font =
+          `700 ${fontSize}px Lato, sans-serif`;
+
+        ctx.textBaseline =
+          'middle';
+
+        chartInstance.data
+          .datasets
+          .forEach(
+            (
+              dataset,
+              seriesIndex
+            ) => {
+              const meta =
+                chartInstance
+                  .getDatasetMeta(
+                    seriesIndex
+                  );
+
+              if (
+                !dataset ||
+                !meta?.data?.length ||
+                !chartInstance.isDatasetVisible(
+                  seriesIndex
+                )
+              ) {
+                return;
+              }
+
+              const growth =
+                latestAnnualisedGrowth(
+                  dataset.seriesKey
+                );
+
+              if (
+                !Number.isFinite(
+                  growth
+                )
+              ) {
+                return;
+              }
+
+              let anchorIndex =
+                -1;
+
+              for (
+                let index =
+                  dataset.data.length -
+                  1;
+                index >= 0;
+                index -= 1
+              ) {
+                if (
+                  Number.isFinite(
+                    dataset.data[
+                      index
+                    ]?.y
+                  ) &&
+                  Number.isFinite(
+                    meta.data[
+                      index
+                    ]?.x
+                  ) &&
+                  Number.isFinite(
+                    meta.data[
+                      index
+                    ]?.y
+                  )
+                ) {
+                  anchorIndex =
+                    index;
+
+                  break;
+                }
+              }
+
+              if (
+                anchorIndex < 0
+              ) {
+                return;
+              }
+
+              const point =
+                meta.data[
+                  anchorIndex
+                ];
+
+              const isIncrease =
+                growth >
+                0.05;
+
+              const isDecrease =
+                growth <
+                -0.05;
+
+              const arrow =
+                isIncrease
+                  ? '↑'
+                  : isDecrease
+                    ? '↓'
+                    : '';
+
+              const valueText =
+                `${Math.abs(growth).toFixed(1)}% p.a.`;
+
+              const arrowWidth =
+                arrow
+                  ? ctx
+                      .measureText(
+                        arrow
+                      )
+                      .width
+                  : 0;
+
+              const valueWidth =
+                ctx
+                  .measureText(
+                    valueText
+                  )
+                  .width;
+
+              const labelWidth =
+                paddingX * 2 +
+                arrowWidth +
+                (
+                  arrow
+                    ? arrowGap
+                    : 0
+                ) +
+                valueWidth;
+
+              items.push({
+                seriesIndex,
+                seriesColour:
+                  dataset.borderColor,
+                growth,
+                isIncrease,
+                isDecrease,
+                arrow,
+                valueText,
+                arrowWidth,
+                labelWidth,
+                anchorX:
+                  point.x,
+                anchorY:
+                  point.y
+              });
+            }
+          );
+
+        if (!items.length) {
+          ctx.restore();
+          return;
+        }
+
+        const placed =
+          [];
+
+        function overlaps(
+          rectangle
+        ) {
+          const padding =
+            6;
+
+          return placed.some(
+            existing =>
+              !(
+                rectangle.right +
+                  padding <
+                existing.left ||
+                rectangle.left -
+                  padding >
+                existing.right ||
+                rectangle.bottom +
+                  padding <
+                existing.top ||
+                rectangle.top -
+                  padding >
+                existing.bottom
+              )
+          );
+        }
+
+        items
+          .sort(
+            (a, b) =>
+              a.anchorY -
+              b.anchorY
+          )
+          .forEach(
+            (
+              item,
+              itemIndex
+            ) => {
+              const horizontalOffsets =
+                [
+                  0,
+                  -68,
+                  -136,
+                  -34,
+                  -102,
+                  -170,
+                  -204
+                ];
+
+              const verticalOffsets =
+                [
+                  0,
+                  -2,
+                  2,
+                  -4,
+                  4,
+                  -6,
+                  6,
+                  -8,
+                  8
+                ];
+
+              let chosen =
+                null;
+
+              for (
+                const horizontalOffset
+                of horizontalOffsets
+              ) {
+                for (
+                  const verticalOffset
+                  of verticalOffsets
+                ) {
+                  const proposedRight =
+                    clamp(
+                      chartArea.right -
+                        4 +
+                        horizontalOffset,
+                      chartArea.left +
+                        item.labelWidth +
+                        5,
+                      chartArea.right -
+                        4
+                    );
+
+                  const proposedLeft =
+                    proposedRight -
+                    item.labelWidth;
+
+                  const proposedY =
+                    clamp(
+                      item.anchorY +
+                        verticalOffset,
+                      chartArea.top +
+                        labelHeight /
+                        2,
+                      chartArea.bottom -
+                        labelHeight /
+                        2
+                    );
+
+                  const rectangle = {
+                    left:
+                      proposedLeft,
+                    right:
+                      proposedRight,
+                    top:
+                      proposedY -
+                      labelHeight /
+                      2,
+                    bottom:
+                      proposedY +
+                      labelHeight /
+                      2,
+                    y:
+                      proposedY
+                  };
+
+                  if (
+                    !overlaps(
+                      rectangle
+                    )
+                  ) {
+                    chosen =
+                      rectangle;
+
+                    break;
+                  }
+                }
+
+                if (chosen) {
+                  break;
+                }
+              }
+
+              if (!chosen) {
+                const right =
+                  clamp(
+                    chartArea.right -
+                      4 -
+                      (
+                        itemIndex %
+                        5
+                      ) *
+                      72,
+                    chartArea.left +
+                      item.labelWidth +
+                      5,
+                    chartArea.right -
+                      4
+                  );
+
+                const y =
+                  clamp(
+                    item.anchorY +
+                      (
+                        itemIndex %
+                        2 ===
+                        0
+                          ? -6
+                          : 6
+                      ),
+                    chartArea.top +
+                      labelHeight /
+                      2,
+                    chartArea.bottom -
+                      labelHeight /
+                      2
+                  );
+
+                chosen = {
+                  left:
+                    right -
+                    item.labelWidth,
+                  right,
+                  top:
+                    y -
+                    labelHeight /
+                    2,
+                  bottom:
+                    y +
+                    labelHeight /
+                    2,
+                  y
+                };
+              }
+
+              item.labelLeft =
+                chosen.left;
+
+              item.labelRight =
+                chosen.right;
+
+              item.labelY =
+                chosen.y;
+
+              placed.push(
+                chosen
+              );
+            }
+          );
+
+        items.forEach(
+          item => {
+            const targetX =
+              item.anchorX <
+              item.labelLeft
+                ? item.labelLeft
+                : item.anchorX >
+                  item.labelRight
+                  ? item.labelRight
+                  : clamp(
+                      item.anchorX,
+                      item.labelLeft,
+                      item.labelRight
+                    );
+
+            const displaced =
+              Math.abs(
+                targetX -
+                item.anchorX
+              ) > 7 ||
+              Math.abs(
+                item.labelY -
+                item.anchorY
+              ) > 2 ||
+              item.labelLeft <
+                item.anchorX -
+                4;
+
+            if (!displaced) {
+              return;
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(
+              item.anchorX,
+              item.anchorY
+            );
+            ctx.lineTo(
+              targetX,
+              item.labelY
+            );
+            ctx.strokeStyle =
+              'rgba(105, 113, 138, 0.58)';
+            ctx.lineWidth =
+              0.8;
+            ctx.stroke();
+          }
+        );
+
+        items.forEach(
+          item => {
+            const fillColour =
+              seriesTint(
+                item.seriesColour,
+                0.20,
+                0.84
+              );
+
+            const directionColour =
+              item.isIncrease
+                ? '#14823b'
+                : item.isDecrease
+                  ? '#b42318'
+                  : '#69718a';
+
+            const radius =
+              3;
+
+            const top =
+              item.labelY -
+              labelHeight /
+              2;
+
+            const bottom =
+              item.labelY +
+              labelHeight /
+              2;
+
+            ctx.beginPath();
+            ctx.moveTo(
+              item.labelLeft +
+              radius,
+              top
+            );
+            ctx.lineTo(
+              item.labelRight -
+              radius,
+              top
+            );
+            ctx.quadraticCurveTo(
+              item.labelRight,
+              top,
+              item.labelRight,
+              top +
+              radius
+            );
+            ctx.lineTo(
+              item.labelRight,
+              bottom -
+              radius
+            );
+            ctx.quadraticCurveTo(
+              item.labelRight,
+              bottom,
+              item.labelRight -
+              radius,
+              bottom
+            );
+            ctx.lineTo(
+              item.labelLeft +
+              radius,
+              bottom
+            );
+            ctx.quadraticCurveTo(
+              item.labelLeft,
+              bottom,
+              item.labelLeft,
+              bottom -
+              radius
+            );
+            ctx.lineTo(
+              item.labelLeft,
+              top +
+              radius
+            );
+            ctx.quadraticCurveTo(
+              item.labelLeft,
+              top,
+              item.labelLeft +
+              radius,
+              top
+            );
+            ctx.closePath();
+
+            ctx.fillStyle =
+              fillColour;
+
+            ctx.fill();
+
+            ctx.strokeStyle =
+              rgba(
+                item.seriesColour,
+                0.42
+              );
+
+            ctx.lineWidth =
+              0.65;
+
+            ctx.stroke();
+
+            let textX =
+              item.labelLeft +
+              paddingX;
+
+            ctx.textAlign =
+              'left';
+
+            ctx.fillStyle =
+              directionColour;
+
+            if (item.arrow) {
+              ctx.fillText(
+                item.arrow,
+                textX,
+                item.labelY -
+                0.2
+              );
+
+              textX +=
+                item.arrowWidth +
+                arrowGap;
+            }
+
+            ctx.fillText(
+              item.valueText,
+              textX,
+              item.labelY
+            );
+          }
+        );
+
+        ctx.restore();
+      }
+    };
+
+    Chart.register(
+      pffAxesPlugin,
+      axisSpinesPlugin,
+      paTrendLabelsPlugin
+    );
+
+    // ============================================================
+    // ITEM MULTI-SELECT
+    // ============================================================
+
+    function updateItemButtonText() {
+      const keys =
+        visibleSelectedKeys();
+
+      const selectable =
+        selectableKeysForMode();
+
+      const selectedVisibleCount =
+        selectable.filter(
+          key =>
+            selectedSeries.has(
+              key
+            )
+        ).length;
+
+      if (
+        selectable.length > 0 &&
+        selectedVisibleCount ===
+          selectable.length
+      ) {
+        itemButtonValue
+          .textContent =
+          'All selected';
+
+        return;
+      }
+
+      if (!keys.length) {
+        itemButtonValue
+          .textContent =
+          'Select';
+
+        return;
+      }
+
+      if (
+        valueMode ===
+          'count' &&
+        keys.length === 1 &&
+        keys[0] ===
+          ALL_SERIES_KEY
+      ) {
+        itemButtonValue
+          .textContent =
+          'Total';
+
+        return;
+      }
+
+      const itemCount =
+        keys.filter(
+          key =>
+            key !==
+            ALL_SERIES_KEY
+        ).length;
+
+      const hasTotal =
+        valueMode ===
+          'count' &&
+        keys.includes(
+          ALL_SERIES_KEY
+        );
+
+      if (
+        itemCount === 1 &&
+        !hasTotal
+      ) {
+        itemButtonValue
+          .textContent =
+          keys.find(
+            key =>
+              key !==
+              ALL_SERIES_KEY
+          ) || 'Select';
+
+        return;
+      }
+
+      if (
+        hasTotal &&
+        itemCount > 0
+      ) {
+        itemButtonValue
+          .textContent =
+          `Total + ${itemCount}`;
+
+        return;
+      }
+
+      itemButtonValue
+        .textContent =
+        `${itemCount} selected`;
+    }
+
+    function buildItemMenu() {
+      itemMenuScroll
+        .replaceChildren();
+
+      const options = [
+        {
+          key:
+            SELECT_ALL_KEY,
+          label:
+            'Select all',
+          kind:
+            'master'
+        },
+        {
+          key:
+            ALL_SERIES_KEY,
+          label:
+            'Total Medicare',
+          kind:
+            'total'
+        },
+        ...sourceData.items
+          .map(item => ({
+            key:
+              item.item,
+            label:
+              item.item,
+            kind:
+              'item'
+          }))
+      ];
+
+      options.forEach(
+        option => {
+          const button =
+            document.createElement(
+              'button'
+            );
+
+          button.type =
+            'button';
+
+          button.className =
+            'item-option';
+
+          if (
+            option.kind ===
+              'master'
+          ) {
+            button.classList.add(
+              'item-option-master'
+            );
+          }
+
+          if (
+            option.kind ===
+              'total'
+          ) {
+            button.classList.add(
+              'item-option-total'
+            );
+          }
+
+          button.dataset.key =
+            option.key;
+
+          button.setAttribute(
+            'role',
+            'menuitemcheckbox'
+          );
+
+          const check =
+            document.createElement(
+              'span'
+            );
+
+          check.className =
+            'item-check';
+
+          check.setAttribute(
+            'aria-hidden',
+            'true'
+          );
+
+          const label =
+            document.createElement(
+              'span'
+            );
+
+          label.className =
+            'item-option-label';
+
+          label.textContent =
+            option.label;
+
+          button.append(
+            check,
+            label
+          );
+
+          button.addEventListener(
+            'click',
+            event => {
+              event.stopPropagation();
+
+              if (
+                option.key ===
+                  SELECT_ALL_KEY
+              ) {
+                toggleAllSelectable();
+                return;
+              }
+
+              toggleSelectedSeries(
+                option.key
+              );
+            }
+          );
+
+          itemMenuScroll
+            .appendChild(
+              button
+            );
+        }
+      );
+
+      syncItemMenuSelection();
+    }
+
+    function syncItemMenuSelection() {
+      const allSelected =
+        allSelectableSelected();
+
+      const someSelected =
+        someSelectableSelected();
+
+      itemMenuScroll
+        .querySelectorAll(
+          '.item-option'
+        )
+        .forEach(button => {
+          const key =
+            button.dataset.key;
+
+          if (
+            key ===
+              SELECT_ALL_KEY
+          ) {
+            button.hidden =
+              false;
+
+            button.classList.toggle(
+              'is-selected',
+              allSelected
+            );
+
+            button.classList.toggle(
+              'is-indeterminate',
+              !allSelected &&
+              someSelected
+            );
+
+            button.setAttribute(
+              'aria-checked',
+              allSelected
+                ? 'true'
+                : someSelected
+                  ? 'mixed'
+                  : 'false'
+            );
+
+            return;
+          }
+
+          button.classList.remove(
+            'is-indeterminate'
+          );
+
+          if (
+            key ===
+              ALL_SERIES_KEY
+          ) {
+            button.hidden =
+              valueMode ===
+                'percent';
+          } else {
+            button.hidden =
+              false;
+          }
+
+          const selected =
+            selectedSeries.has(
+              key
+            );
+
+          button.classList.toggle(
+            'is-selected',
+            selected
+          );
+
+          button.setAttribute(
+            'aria-checked',
+            String(selected)
+          );
+        });
+    }
+
+    function toggleSelectedSeries(
+      key
+    ) {
+      const next =
+        new Set(
+          selectedSeries
+        );
+
+      if (
+        next.has(key)
+      ) {
+        next.delete(
+          key
+        );
+      } else {
+        next.add(
+          key
+        );
+      }
+
+      selectedSeries =
+        next;
+
+      updateItemButtonText();
+      syncItemMenuSelection();
+
+      renderChartChange(
+        true,
+        true,
+        'selection'
+      );
+    }
+
+    function openItemMenu() {
+      itemMenu.classList.add(
+        'is-open'
+      );
+
+      itemButton.setAttribute(
+        'aria-expanded',
+        'true'
+      );
+    }
+
+    function closeItemMenu() {
+      itemMenu.classList.remove(
+        'is-open'
+      );
+
+      itemButton.setAttribute(
+        'aria-expanded',
+        'false'
+      );
+    }
+
+    // ============================================================
+    // LEGEND
+    // ============================================================
+
+    function updateOverflowButtons(
+      scroller,
+      leftButton,
+      rightButton
+    ) {
+      const maximum =
+        Math.max(
+          0,
+          scroller.scrollWidth -
+          scroller.clientWidth
+        );
+
+      const hasOverflow =
+        maximum > 2;
+
+      leftButton.classList.toggle(
+        'is-hidden',
+        !hasOverflow ||
+        scroller.scrollLeft <=
+          2
+      );
+
+      rightButton.classList.toggle(
+        'is-hidden',
+        !hasOverflow ||
+        scroller.scrollLeft >=
+          maximum - 2
+      );
+    }
+
+    function updateLegendScrollControls() {
+      updateOverflowButtons(
+        chartLegend,
+        legendScrollLeft,
+        legendScrollRight
+      );
+    }
+
+    function scrollByAmount(
+      element,
+      direction
+    ) {
+      element.scrollBy({
+        left:
+          direction *
+          Math.max(
+            80,
+            element.clientWidth *
+            0.72
+          ),
+        behavior:
+          reducedMotion()
+            ? 'auto'
+            : 'smooth'
+      });
+    }
+
+    function createLegendItem(
+      key
+    ) {
+      const item =
+        document.createElement(
+          'span'
+        );
+
+      item.className =
+        'legend-item';
+
+      item.dataset.key =
+        key;
+
+      const swatch =
+        document.createElement(
+          'span'
+        );
+
+      swatch.className =
+        'legend-line';
+
+      const text =
+        document.createElement(
+          'span'
+        );
+
+      item.append(
+        swatch,
+        text
+      );
+
+      syncLegendItemState(
+        item,
+        key
+      );
+
+      return item;
+    }
+
+    function syncLegendItemState(
+      element,
+      key
+    ) {
+      element.dataset.key =
+        key;
+
+      const swatch =
+        element.querySelector(
+          '.legend-line'
+        );
+
+      const text =
+        element.querySelector(
+          'span:last-child'
+        );
+
+      if (swatch) {
+        swatch.style.background =
+          seriesColour(
+            key
+          );
+      }
+
+      if (text) {
+        text.textContent =
+          seriesLabel(
+            key
+          );
+      }
+    }
+
+    function updateLegend(
+      animate = true
+    ) {
+      const nextKeys =
+        visibleSelectedKeys();
+
+      const existing =
+        new Map(
+          Array.from(
+            chartLegend.querySelectorAll(
+              '.legend-item[data-key]'
+            )
+          ).map(
+            element => [
+              element.dataset.key,
+              element
+            ]
+          )
+        );
+
+      const nextSet =
+        new Set(
+          nextKeys
+        );
+
+      for (
+        const [key, element]
+        of existing
+      ) {
+        if (
+          !nextSet.has(
+            key
+          )
+        ) {
+          element
+            .getAnimations?.()
+            .forEach(
+              animation =>
+                animation.cancel()
+            );
+
+          element.remove();
+          existing.delete(
+            key
+          );
+        }
+      }
+
+      const fragment =
+        document.createDocumentFragment();
+
+      const added =
+        [];
+
+      nextKeys.forEach(
+        key => {
+          let element =
+            existing.get(
+              key
+            );
+
+          if (!element) {
+            element =
+              createLegendItem(
+                key
+              );
+
+            added.push(
+              element
+            );
+          } else {
+            syncLegendItemState(
+              element,
+              key
+            );
+          }
+
+          fragment.appendChild(
+            element
+          );
+        }
+      );
+
+      chartLegend.appendChild(
+        fragment
+      );
+
+      if (
+        animate &&
+        !reducedMotion()
+      ) {
+        added.forEach(
+          element => {
+            element.animate?.(
+              [
+                {
+                  opacity: 0,
+                  transform:
+                    'translateX(5px)'
+                },
+                {
+                  opacity: 1,
+                  transform:
+                    'translateX(0)'
+                }
+              ],
+              {
+                duration: 260,
+                easing:
+                  'cubic-bezier(0.22, 1, 0.36, 1)'
+              }
+            );
+          }
+        );
+      }
+
+      requestAnimationFrame(
+        updateLegendScrollControls
+      );
+    }
+
+    // ============================================================
+    // HEADING / TABS / TOGGLES
+    // ============================================================
+
+    function headingModeText() {
+      return activeView ===
+        'hours'
+        ? 'hours'
+        : 'billings';
+    }
+
+    function yAxisTitle() {
+      if (
+        valueMode ===
+        'percent'
+      ) {
+        return activeView ===
+          'hours'
+          ? '% of hours'
+          : '% of services';
+      }
+
+      return activeView ===
+        'hours'
+        ? 'Hours'
+        : 'Count';
+    }
+
+    function updateHeading() {
+      const nextText =
+        headingModeText();
+
+      if (
+        chartHeadingMode.textContent ===
+        nextText
+      ) {
+        return;
+      }
+
+      if (
+        reducedMotion() ||
+        !chartHeadingMode.animate
+      ) {
+        chartHeadingMode.textContent =
+          nextText;
+        return;
+      }
+
+      const token =
+        Symbol('heading-mode');
+
+      chartHeadingMode._pffToken =
+        token;
+
+      const outgoing =
+        chartHeadingMode.animate(
+          [
+            {
+              opacity: 1,
+              transform:
+                'translateY(0)'
+            },
+            {
+              opacity: 0,
+              transform:
+                'translateY(-3px)'
+            }
+          ],
+          {
+            duration: 120,
+            easing: 'ease-out',
+            fill: 'forwards'
+          }
+        );
+
+      outgoing.finished
+        .catch(() => {})
+        .then(() => {
+          if (
+            chartHeadingMode._pffToken !==
+            token
+          ) {
+            return;
+          }
+
+          chartHeadingMode.textContent =
+            nextText;
+
+          return chartHeadingMode.animate(
+            [
+              {
+                opacity: 0,
+                transform:
+                  'translateY(3px)'
+              },
+              {
+                opacity: 1,
+                transform:
+                  'translateY(0)'
+              }
+            ],
+            {
+              duration: 220,
+              easing:
+                'cubic-bezier(0.22, 1, 0.36, 1)',
+              fill: 'both'
+            }
+          ).finished;
+        })
+        .catch(() => {});
+    }
+
+    function updateTabIndicator(
+      animate = true
+    ) {
+      const activeTab =
+        chartTabs.find(
+          tab =>
+            tab.dataset.view ===
+            activeView
+        );
+
+      if (!activeTab) {
+        return;
+      }
+
+      if (!animate) {
+        tabList.classList.add(
+          'is-positioning'
+        );
+      }
+
+      tabList.style.setProperty(
+        '--tab-indicator-x',
+        `${activeTab.offsetLeft}px`
+      );
+
+      tabList.style.setProperty(
+        '--tab-indicator-width',
+        `${activeTab.offsetWidth}px`
+      );
+
+      if (!animate) {
+        requestAnimationFrame(
+          () =>
+            tabList.classList
+              .remove(
+                'is-positioning'
+              )
+        );
+      }
+    }
+
+    function updateTabs() {
+      chartTabs.forEach(
+        tab => {
+          const active =
+            tab.dataset.view ===
+            activeView;
+
+          tab.classList.toggle(
+            'is-active',
+            active
+          );
+
+          tab.setAttribute(
+            'aria-selected',
+            String(active)
+          );
+        }
+      );
+
+      updateTabIndicator(
+        true
+      );
+    }
+
+    function updateValueModeToggle() {
+      valueModeToggle
+        .classList.toggle(
+          'is-percent-selected',
+          valueMode ===
+            'percent'
+        );
+
+      valueModeButtons
+        .forEach(
+          button => {
+            const active =
+              button.dataset.mode ===
+              valueMode;
+
+            button.classList.toggle(
+              'is-active',
+              active
+            );
+
+            button.setAttribute(
+              'aria-pressed',
+              String(active)
+            );
+          }
+        );
+    }
+
+    function updateYoyToggle() {
+      yoyTrendToggle
+        .classList.toggle(
+          'is-on',
+          yoyTrendOn
+        );
+
+      yoyTrendToggle
+        .setAttribute(
+          'aria-pressed',
+          String(
+            yoyTrendOn
+          )
+        );
+
+      yoyTrendToggle
+        .setAttribute(
+          'aria-label',
+          `Trend labels ${yoyTrendOn ? 'on' : 'off'}`
+        );
+
+      yoyToggleValue.textContent =
+        yoyTrendOn
+          ? 'ON'
+          : 'OFF';
+    }
+
+    // ============================================================
+    // CHART
+    // ============================================================
+
+    function tooltipValue(
+      raw
+    ) {
+      const value =
+        raw?.y;
+
+      if (
+        valueMode ===
+        'percent'
+      ) {
+        return formatPercent(
+          value
+        );
+      }
+
+      return activeView ===
+        'hours'
+        ? `${formatHours(value)} hours`
+        : `${formatInteger(value)} services`;
+    }
+
+    function baseChartOptions() {
+      const mobile =
+        window.innerWidth <=
+        430;
+
+      return {
+        responsive:
+          true,
+
+        maintainAspectRatio:
+          false,
+
+        resizeDelay:
+          40,
+
+        devicePixelRatio:
+          Math.min(
+            window.devicePixelRatio ||
+              1,
+            2
+          ),
+
+        animation: {
+          duration:
+            760,
+          easing:
+            'easeOutQuart'
+        },
+
+        animations: {
+          x: {
+            // Years/x positions are identical across all Medicare views.
+            duration: 0
+          },
+
+          y: {
+            duration:
+              760,
+            easing:
+              'easeOutQuart'
+          },
+
+          borderColor: {
+            duration:
+              0
+          },
+
+          backgroundColor: {
+            duration:
+              0
+          }
+        },
+
+        transitions: {
+          active: {
+            animation: {
+              duration:
+                180
+            }
+          }
+        },
+
+        interaction: {
+          mode:
+            'nearest',
+          intersect:
+            true,
+          axis:
+            'xy'
+        },
+
+        layout: {
+          autoPadding:
+            false,
+
+          padding: {
+            top:
+              mobile
+                ? 8
+                : 9,
+            right:
+              4,
+            bottom:
+              0,
+            left:
+              0
+          }
+        },
+
+        plugins: {
+          legend: {
+            display:
+              false
+          },
+
+          tooltip: {
+            displayColors:
+              true,
+
+            backgroundColor:
+              'rgba(21, 21, 21, 0.94)',
+
+            titleColor:
+              '#ffffff',
+
+            bodyColor:
+              '#ffffff',
+
+            borderColor:
+              'rgba(255,255,255,0.10)',
+
+            borderWidth:
+              1,
+
+            padding:
+              9,
+
+            cornerRadius:
+              4,
+
+            titleFont: {
+              family:
+                'Lato',
+              size:
+                11,
+              weight:
+                '700'
+            },
+
+            bodyFont: {
+              family:
+                'Lato',
+              size:
+                11,
+              weight:
+                '400'
+            },
+
+            callbacks: {
+              title(items) {
+                const year =
+                  items?.[0]?.raw
+                    ?.year;
+
+                return Number.isFinite(
+                  Number(year)
+                )
+                  ? String(year)
+                  : '';
+              },
+
+              label(context) {
+                const valueText =
+                  `${context.dataset.label}: ${tooltipValue(context.raw)}`;
+
+                if (
+                  !yoyTrendOn
+                ) {
+                  return valueText;
+                }
+
+                const growth =
+                  latestAnnualisedGrowth(
+                    context.dataset
+                      .seriesKey
+                  );
+
+                if (
+                  !Number.isFinite(
+                    growth
+                  )
+                ) {
+                  return valueText;
+                }
+
+                const sign =
+                  growth > 0
+                    ? '+'
+                    : growth < 0
+                      ? '−'
+                      : '';
+
+                return `${valueText} · ${sign}${Math.abs(growth).toFixed(1)}% p.a.`;
+              }
+            }
+          }
+        },
+
+        scales: {
+          x: {
+            type:
+              'linear',
+
+            min:
+              0,
+
+            max:
+              1,
+
+            afterFit(
+              scaleObject
+            ) {
+              scaleObject.height =
+                mobile
+                  ? 43
+                  : 46;
+            },
+
+            border: {
+              display:
+                false
+            },
+
+            grid: {
+              display:
+                false,
+              drawTicks:
+                false
+            },
+
+            ticks: {
+              display:
+                false
+            },
+
+            title: {
+              display:
+                true,
+              text:
+                'Year',
+              color:
+                '#151515',
+              padding: {
+                top:
+                  mobile
+                    ? 21
+                    : 22
+              },
+              font: {
+                family:
+                  'Lato',
+                size:
+                  mobile
+                    ? 12
+                    : 13,
+                weight:
+                  '700'
+              }
+            }
+          },
+
+          y: {
+            min:
+              currentScale.min,
+
+            max:
+              currentScale.max,
+
+            afterFit(
+              scaleObject
+            ) {
+              scaleObject.width =
+                mobile
+                  ? 61
+                  : 69;
+            },
+
+            border: {
+              display:
+                false
+            },
+
+            grid: {
+              display:
+                false,
+              drawTicks:
+                false
+            },
+
+            ticks: {
+              display:
+                false
+            },
+
+            title: {
+              display:
+                true,
+              text:
+                yAxisTitle(),
+              color:
+                '#151515',
+              padding: {
+                bottom:
+                  4
+              },
+              font: {
+                family:
+                  'Lato',
+                size:
+                  mobile
+                    ? 12
+                    : 13,
+                weight:
+                  '700'
+              }
+            }
+          }
+        }
+      };
+    }
+
+    function createChart() {
+      currentScale =
+        computeScale();
+
+      yAxisTransition.from =
+        {...currentScale};
+
+      yAxisTransition.to =
+        {...currentScale};
+
+      yAxisTransition.progress =
+        1;
+
+      chart =
+        new Chart(
+          demandCanvas.getContext(
+            '2d'
+          ),
+          {
+            type:
+              'line',
+
+            data: {
+              datasets:
+                buildDatasets()
+            },
+
+            options:
+              baseChartOptions()
+          }
+        );
+    }
+
+    function renderChartChange(
+      animate = true,
+      legendAnimate = true,
+      reason = 'data'
+    ) {
+      if (!chart) {
+        return;
+      }
+
+      const duration =
+        animate &&
+        !reducedMotion()
+          ? 760
+          : 0;
+
+      const previousScale =
+        {...currentScale};
+
+      const nextScale =
+        computeScale();
+
+      currentScale =
+        nextScale;
+
+      /*
+       * Keep every Medicare series attached to the same Chart.js dataset
+       * object. Only its data/visibility is updated, allowing retained
+       * lines to morph continuously between Services/Hours and Count/%.
+       */
+      syncChartDatasets();
+
+      chart.options.scales.y.min =
+        nextScale.min;
+
+      chart.options.scales.y.max =
+        nextScale.max;
+
+      chart.options.scales.y.title.text =
+        yAxisTitle();
+
+      chart.options.animation.duration =
+        duration;
+
+      // Calendar years are invariant between all views.
+      chart.options.animations.x.duration =
+        0;
+
+      chart.options.animations.y.duration =
+        duration;
+
+      chart.update(
+        duration > 0
+          ? undefined
+          : 'none'
+      );
+
+      const sameScale =
+        Math.abs(
+          previousScale.min -
+          nextScale.min
+        ) < 1e-9 &&
+        Math.abs(
+          previousScale.max -
+          nextScale.max
+        ) < 1e-9 &&
+        Math.abs(
+          previousScale.step -
+          nextScale.step
+        ) < 1e-9;
+
+      /*
+       * Count <-> % changes the unit itself, so don't animate tick text
+       * through meaningless intermediate units. Put the target axis in
+       * place immediately while the retained lines morph to their new y.
+       * For same-unit changes, animate the axis using a fixed target tick
+       * count (see currentYAxisTracks).
+       */
+      if (
+        reason ===
+          'mode' ||
+        sameScale ||
+        duration <= 0
+      ) {
+        if (
+          yAxisTransition.raf
+        ) {
+          cancelAnimationFrame(
+            yAxisTransition.raf
+          );
+
+          yAxisTransition.raf =
+            null;
+        }
+
+        yAxisTransition.token +=
+          1;
+
+        yAxisTransition.from =
+          {...nextScale};
+
+        yAxisTransition.to =
+          {...nextScale};
+
+        yAxisTransition.progress =
+          1;
+
+        chart.draw();
+      } else {
+        startYAxisTransition(
+          previousScale,
+          nextScale,
+          duration
+        );
+      }
+
+      updateLegend(
+        legendAnimate
+      );
+    }
+
+    // ============================================================
+    // EVENTS
+    // ============================================================
+
+    chartTabs.forEach(
+      tab => {
+        tab.addEventListener(
+          'click',
+          () => {
+            const nextView =
+              tab.dataset.view;
+
+            if (
+              !nextView ||
+              nextView ===
+                activeView
+            ) {
+              return;
+            }
+
+            closeItemMenu();
+
+            activeView =
+              nextView;
+
+            updateTabs();
+            updateHeading();
+            renderChartChange(
+              true,
+              true,
+              'view'
+            );
+          }
+        );
+      }
+    );
+
+    valueModeButtons.forEach(
+      button => {
+        button.addEventListener(
+          'click',
+          () => {
+            const nextMode =
+              button.dataset.mode;
+
+            if (
+              !nextMode ||
+              nextMode ===
+                valueMode
+            ) {
+              return;
+            }
+
+            closeItemMenu();
+
+            valueMode =
+              nextMode;
+
+            updateValueModeToggle();
+            syncItemMenuSelection();
+            updateItemButtonText();
+            renderChartChange(
+              true,
+              true,
+              'mode'
+            );
+          }
+        );
+      }
+    );
+
+    yoyTrendToggle
+      .addEventListener(
+        'click',
+        () => {
+          yoyTrendOn =
+            !yoyTrendOn;
+
+          updateYoyToggle();
+          chart?.draw();
+        }
+      );
+
+    itemButton.addEventListener(
+      'click',
+      event => {
+        event.stopPropagation();
+
+        if (
+          itemMenu.classList.contains(
+            'is-open'
+          )
+        ) {
+          closeItemMenu();
+        } else {
+          openItemMenu();
+        }
+      }
+    );
+
+    document.addEventListener(
+      'click',
+      event => {
+        if (
+          !itemControl.contains(
+            event.target
+          )
+        ) {
+          closeItemMenu();
+        }
+      }
+    );
+
+    document.addEventListener(
+      'keydown',
+      event => {
+        if (
+          event.key ===
+          'Escape'
+        ) {
+          closeItemMenu();
+          itemButton.focus();
+        }
+      }
+    );
+
+    legendScrollLeft
+      .addEventListener(
+        'click',
+        () =>
+          scrollByAmount(
+            chartLegend,
+            -1
+          )
+      );
+
+    legendScrollRight
+      .addEventListener(
+        'click',
+        () =>
+          scrollByAmount(
+            chartLegend,
+            1
+          )
+      );
+
+    chartLegend.addEventListener(
+      'scroll',
+      updateLegendScrollControls,
+      {
+        passive:
+          true
+      }
+    );
+
+    let resizeFrame =
+      null;
+
+    window.addEventListener(
+      'resize',
+      () => {
+        if (
+          resizeFrame
+        ) {
+          cancelAnimationFrame(
+            resizeFrame
+          );
+        }
+
+        resizeFrame =
+          requestAnimationFrame(
+            () => {
+              resizeFrame =
+                null;
+
+              updateTabIndicator(
+                false
+              );
+
+              updateLegendScrollControls();
+              chart?.resize();
+            }
+          );
+      }
+    );
+
+    // ============================================================
+    // STARTUP
+    // ============================================================
+
+    async function initialise() {
+      try {
+        sourceData =
+          await loadData();
+
+        if (
+          !validSourceData(
+            sourceData
+          )
+        ) {
+          throw new Error(
+            'No usable Medicare service data were found.'
+          );
+        }
+
+        /*
+         * Keep colour assignment stable even if a live row omits colour
+         * metadata: colour identity is tied to the raw item order.
+         */
+        sourceData.items =
+          sourceData.items.map(
+            (
+              item,
+              index
+            ) => ({
+              ...item,
+              colour:
+                item.colour ||
+                EMBEDDED_FALLBACK
+                  .items?.[
+                    index
+                  ]?.colour ||
+                '#69718a'
+            })
+          );
+
+        buildItemMenu();
+        updateItemButtonText();
+        updateValueModeToggle();
+        updateYoyToggle();
+        updateTabs();
+        updateHeading();
+
+        createChart();
+        updateLegend(false);
+
+        app.classList.remove(
+          'is-loading'
+        );
+
+        app.setAttribute(
+          'aria-busy',
+          'false'
+        );
+
+        loadingState.setAttribute(
+          'aria-hidden',
+          'true'
+        );
+
+        requestAnimationFrame(
+          () => {
+            updateTabIndicator(
+              false
+            );
+
+            updateLegendScrollControls();
+            chart.resize();
+          }
+        );
+      } catch (error) {
+        statusElement.textContent =
+          error?.message ||
+          'Could not load Medicare service data.';
+
+        app.classList.remove(
+          'is-loading'
+        );
+
+        app.setAttribute(
+          'aria-busy',
+          'false'
+        );
+      }
+    }
+
+    initialise();
+  </script>
+</body>
+</html>
