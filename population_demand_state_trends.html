@@ -109,6 +109,7 @@
       z-index: 100;
       display: flex;
       width: 100%;
+      height: 100%;
       min-height: 0;
       flex-direction: column;
       align-items: center;
@@ -207,8 +208,9 @@
 
     .module-top {
       display: flex;
-      flex: 0 0 auto;
       width: 100%;
+      min-width: 0;
+      flex: 0 0 auto;
       align-items: flex-end;
       justify-content: space-between;
       gap: 10px;
@@ -359,6 +361,7 @@
       flex: 0 0 6px;
       border-radius: 50%;
       background: var(--live-red);
+      transition: background-color 220ms ease;
     }
 
     .live-data.is-cached .live-data-dot {
@@ -385,7 +388,7 @@
 
     .chart-heading-row {
       position: relative;
-      z-index: 35;
+      z-index: 30;
       display: flex;
       flex: 0 0 auto;
       width: 100%;
@@ -398,8 +401,14 @@
     }
 
     .chart-heading {
+      display: inline-flex;
+      width: max-content;
+      min-width: max-content;
+      flex: 0 0 auto;
+      align-items: baseline;
       margin: 0;
       padding: 4px 0 0;
+      overflow: visible;
       color: var(--ink);
       font-size: 15px;
       font-weight: 700;
@@ -427,7 +436,6 @@
     }
 
     .legend-viewport {
-      position: relative;
       width: 100%;
       height: 100%;
       overflow: hidden;
@@ -491,7 +499,7 @@
 
     .legend-scroll-button:focus-visible {
       outline: 2px solid rgba(102, 0, 255, 0.22);
-      outline-offset: 1px;
+      outline-offset: 2px;
     }
 
     .legend-scroll-button.is-hidden {
@@ -513,10 +521,17 @@
       flex: 0 0 auto;
       align-items: center;
       gap: 5px;
+      padding: 0;
       color: var(--muted);
+      background: transparent;
+      border: 0;
+      font-family: inherit;
       font-size: 10px;
       font-weight: 700;
       line-height: 1;
+      cursor: pointer;
+      opacity: 1;
+      transition: opacity 180ms ease;
     }
 
     .legend-line {
@@ -524,6 +539,7 @@
       height: 3px;
       flex: 0 0 17px;
       border-radius: 2px;
+      background: var(--ink);
     }
 
     /* ==========================================================
@@ -619,10 +635,6 @@
         font-size: 8px;
       }
 
-      .chart-heading-row {
-        min-height: 30px;
-      }
-
       .chart-heading {
         padding-top: 4px;
         font-size: 14px;
@@ -641,6 +653,8 @@
       *::before,
       *::after {
         scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
       }
 
@@ -801,13 +815,7 @@
       line-height: 1;
       cursor: pointer;
       opacity: 1;
-      transition:
-        opacity 160ms ease,
-        color 160ms ease;
-    }
-
-    .legend-item:hover {
-      color: var(--ink);
+      transition: opacity 180ms ease;
     }
 
     .legend-item.is-hidden-series {
@@ -2246,7 +2254,21 @@
             );
           }
 
-          updateLegend(false);
+          row.classList.toggle(
+            'is-hidden-series',
+            state.hiddenSeries.has(
+              item.code
+            )
+          );
+
+          row.setAttribute(
+            'aria-pressed',
+            String(
+              !state.hiddenSeries.has(
+                item.code
+              )
+            )
+          );
 
           if (chart) {
             const datasetIndex =
@@ -2269,6 +2291,10 @@
               chart.update();
             }
           }
+
+          requestAnimationFrame(
+            updateLegendScrollControls
+          );
         }
       );
 
@@ -2318,7 +2344,7 @@
                     state.hiddenSeries.has(
                       SERIES[index].code
                     )
-                      ? 0.34
+                      ? 0.36
                       : 1,
                   transform:
                     'translateX(0)'
@@ -2636,7 +2662,7 @@
         // Y-axis minor ticks.
         ctx.strokeStyle = '#69718a';
         ctx.globalAlpha = 0.60;
-        ctx.lineWidth = 0.7;
+        ctx.lineWidth = 0.8;
 
         for (
           let index = 0;
@@ -2732,6 +2758,92 @@
           ctx.stroke();
         }
 
+        // Even-year labels use the exact shared PFF trend placement.
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#151515';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.font =
+          `${mobile ? 9 : 10}px Lato, sans-serif`;
+
+        state.years.forEach(
+          (rawYear, index) => {
+            const year = Number(rawYear);
+
+            if (
+              !Number.isFinite(year) ||
+              year % 2 !== 0
+            ) {
+              return;
+            }
+
+            const x =
+              scales.x.getPixelForTick(
+                index
+              );
+
+            if (!Number.isFinite(x)) {
+              return;
+            }
+
+            const yearText =
+              String(year);
+
+            const halfYearWidth =
+              ctx.measureText(
+                yearText
+              ).width / 2;
+
+            const yearX =
+              clamp(
+                x,
+                halfYearWidth + 2,
+                chartInstance.width -
+                  halfYearWidth - 2
+              );
+
+            ctx.fillText(
+              yearText,
+              yearX,
+              chartArea.bottom + 8
+            );
+          }
+        );
+
+        // Shared PFF X-axis title sizing and baseline.
+        ctx.textBaseline = 'bottom';
+        ctx.font =
+          `700 ${mobile ? 11 : 12}px Lato, sans-serif`;
+
+        ctx.fillText(
+          'Year',
+          chartArea.left +
+            chartArea.width / 2,
+          chartInstance.height -
+            (mobile ? 3 : 4)
+        );
+
+        ctx.restore();
+
+        // Shared PFF Y-axis title placement.
+        ctx.save();
+        ctx.translate(
+          chartArea.left -
+            (mobile ? 48 : 54),
+          chartArea.top +
+            chartArea.height / 2
+        );
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillStyle = '#151515';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font =
+          `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        ctx.fillText(
+          'People per FTE clinician',
+          0,
+          0
+        );
         ctx.restore();
       }
     };
@@ -3322,16 +3434,11 @@
                 0.84
               );
 
-            /*
-              Coverage is people per clinician:
-              lower = denser clinician coverage, higher = sparser coverage.
-              So falling coverage is shown green and rising coverage red.
-            */
             const directionColour =
               item.isIncrease
-                ? '#b42318'
+                ? '#14823b'
                 : item.isDecrease
-                  ? '#14823b'
+                  ? '#b42318'
                   : '#69718a';
 
             const radius = 3;
@@ -3570,6 +3677,7 @@
       return {
         responsive: true,
         maintainAspectRatio: false,
+        normalized: true,
         resizeDelay: 0,
 
         devicePixelRatio:
@@ -3609,15 +3717,12 @@
         },
 
         layout: {
-          autoPadding: true,
+          autoPadding: false,
           padding: {
-            top:
-              mobile
-                ? 16
-                : 18,
-            right: 3,
-            bottom: 0,
-            left: 0
+            top: mobile ? 8 : 9,
+            right: 5,
+            bottom: 39,
+            left: mobile ? 61 : 69
           }
         },
 
@@ -3673,115 +3778,37 @@
           x: {
             type: 'category',
             offset: false,
-
+            display: false,
             grid: {
-              drawOnChartArea: false,
+              display: false,
               drawTicks: false
             },
-
             border: {
               display: false
             },
-
             ticks: {
-              color: '#151515',
-              padding: 7,
-              maxRotation: 0,
-              minRotation: 0,
-              autoSkip: false,
-
-              font: {
-                family: 'Lato',
-                size:
-                  mobile
-                    ? 9
-                    : 10,
-                weight: '400'
-              },
-
-              callback(
-                value,
-                index
-              ) {
-                const year =
-                  Number(
-                    state.years[
-                      index
-                    ]
-                  );
-
-                return (
-                  Number.isFinite(year) &&
-                  year % 2 === 0
-                )
-                  ? String(year)
-                  : '';
-              }
+              display: false
             },
-
             title: {
-              display: true,
-              text: 'Year',
-              color: '#151515',
-              padding: {
-                top: 3
-              },
-
-              font: {
-                family: 'Lato',
-                size:
-                  mobile
-                    ? 12
-                    : 13,
-                weight: '700'
-              }
+              display: false
             }
           },
-
           y: {
             min: 0,
-            max:
-              scale.max,
-
-            afterFit(scaleObject) {
-              scaleObject.width =
-                mobile
-                  ? 61
-                  : 69;
-            },
-
+            max: scale.max,
+            display: false,
             grid: {
-              drawOnChartArea: false,
+              display: false,
               drawTicks: false
             },
-
             border: {
               display: false
             },
-
             ticks: {
-              display: false,
-              stepSize:
-                scale.step
+              display: false
             },
-
             title: {
-              display: true,
-              text:
-                'People per FTE clinician',
-              color: '#151515',
-              padding: {
-                bottom: 4
-              },
-
-              font: {
-                family: 'Lato',
-                size:
-                  mobile
-                    ? 12
-                    : 13,
-                weight: '700'
-              }
+              display: false
             }
           }
         }
@@ -4011,7 +4038,7 @@
           !state.years.length
         ) {
           throw new Error(
-            'No annual years were common to Optomsbystate and Auspopnbystate.'
+            'No annual years were common to OptomsbyPHN and Auspopnbystate.'
           );
         }
 
