@@ -1237,7 +1237,7 @@
       15000;
 
     const LOCAL_CACHE_KEY =
-      'pff-medicare-service-demand-v11';
+      'pff-medicare-service-demand-v13';
 
 
     const ALL_SERIES_KEY =
@@ -1513,25 +1513,19 @@
       step: 1
     };
 
-    const yAxisTransition = {
-      raf: null,
+    const yAxisTickAnimation = {
+      values: [],
+      ratios: [],
       token: 0,
-      progress: 1,
-      fromScale: null,
-      toScale: null,
-      currentScale: null,
-      majorTracks: [],
-      minorTracks: [],
-      unitChange: false
+      raf: null
     };
 
-    const yAxisTitleTransition = {
-      raf: null,
-      token: 0,
-      progress: 1,
+    const yAxisTitleAnimation = {
       from: '',
       to: '',
-      direction: 1
+      progress: 1,
+      token: 0,
+      raf: null
     };
 
     let headingAnimationToken = 0;
@@ -1563,6 +1557,21 @@
         Math.pow(
           1 - value,
           4
+        );
+    }
+
+    function easeOutCubic(value) {
+      const clamped =
+        clamp(
+          value,
+          0,
+          1
+        );
+
+      return 1 -
+        Math.pow(
+          1 - clamped,
+          3
         );
     }
 
@@ -1695,7 +1704,13 @@
 
       switch (reason) {
         case 'view':
+          return 820;
+
+        case 'mode':
           return 720;
+
+        case 'legend':
+          return 260;
 
         case 'initial':
           return 760;
@@ -3685,29 +3700,20 @@
           ? maximum
           : min + 1;
 
-      const derivedIntervals =
-        Number.isFinite(
-          stepValue
-        ) &&
-        stepValue > 0
-          ? Math.round(
-              (
-                max -
-                min
-              ) /
-              stepValue
-            )
-          : 5;
-
       const intervals =
         Math.max(
           1,
           Math.round(
-            Number(
-              scale?.intervals
-            ) ||
-            derivedIntervals ||
-            1
+            Number.isFinite(
+              stepValue
+            ) &&
+            stepValue > 0
+              ? (
+                  max -
+                  min
+                ) /
+                stepValue
+              : 5
           )
         );
 
@@ -3736,38 +3742,33 @@
         return false;
       }
 
+      const a =
+        copyScale(
+          first
+        );
+
+      const b =
+        copyScale(
+          second
+        );
+
       return (
         Math.abs(
-          Number(
-            first.min
-          ) -
-          Number(
-            second.min
-          )
+          a.min -
+          b.min
         ) <= tolerance &&
         Math.abs(
-          Number(
-            first.max
-          ) -
-          Number(
-            second.max
-          )
+          a.max -
+          b.max
         ) <= tolerance &&
-        Math.round(
-          Number(
-            first.intervals
-          )
-        ) ===
-          Math.round(
-            Number(
-              second.intervals
-            )
-          )
+        a.intervals ===
+          b.intervals
       );
     }
 
-    function majorTickDefinitions(
-      scale
+    function yTickTargets(
+      scale =
+        currentScale
     ) {
       const current =
         copyScale(
@@ -3783,20 +3784,16 @@
         (
           _,
           index
-        ) => ({
-          value:
-            current.min +
-            current.step *
-            index,
-          ratio:
-            index /
-            current.intervals
-        })
+        ) =>
+          current.min +
+          current.step *
+          index
       );
     }
 
-    function minorTickDefinitions(
-      scale
+    function yTickRatios(
+      scale =
+        currentScale
     ) {
       const current =
         copyScale(
@@ -3806,896 +3803,687 @@
       return Array.from(
         {
           length:
-            current.intervals
+            current.intervals +
+            1
         },
         (
           _,
           index
-        ) => ({
-          value:
-            current.min +
-            current.step *
-            (
-              index +
-              0.5
-            ),
-          ratio:
-            (
-              index +
-              0.5
-            ) /
-            current.intervals
-        })
-      );
-    }
-
-    function nearestDefinition(
-      definitions,
-      ratio
-    ) {
-      if (
-        !definitions.length
-      ) {
-        return {
-          value: 0,
-          ratio: 0
-        };
-      }
-
-      let best =
-        definitions[0];
-
-      let bestDistance =
-        Math.abs(
-          best.ratio -
-          ratio
-        );
-
-      for (
-        let index = 1;
-        index <
-          definitions.length;
-        index += 1
-      ) {
-        const candidate =
-          definitions[
-            index
-          ];
-
-        const distance =
-          Math.abs(
-            candidate.ratio -
-            ratio
-          );
-
-        if (
-          distance <
-          bestDistance
-        ) {
-          best =
-            candidate;
-
-          bestDistance =
-            distance;
-        }
-      }
-
-      return best;
-    }
-
-    function buildAxisTracks(
-      fromDefinitions,
-      toDefinitions
-    ) {
-      const from =
-        [
-          ...fromDefinitions
-        ];
-
-      const to =
-        [
-          ...toDefinitions
-        ];
-
-      if (
-        !from.length &&
-        !to.length
-      ) {
-        return [];
-      }
-
-      if (!from.length) {
-        return to.map(
-          target => ({
-            fromValue:
-              target.value,
-            toValue:
-              target.value,
-            fromRatio:
-              target.ratio,
-            toRatio:
-              target.ratio,
-            fromAlpha: 0,
-            toAlpha: 1
-          })
-        );
-      }
-
-      if (!to.length) {
-        return from.map(
-          source => ({
-            fromValue:
-              source.value,
-            toValue:
-              source.value,
-            fromRatio:
-              source.ratio,
-            toRatio:
-              source.ratio,
-            fromAlpha: 1,
-            toAlpha: 0
-          })
-        );
-      }
-
-      const pairedCount =
-        Math.min(
-          from.length,
-          to.length
-        );
-
-      const usedFrom =
-        new Set();
-
-      const usedTo =
-        new Set();
-
-      const tracks =
-        [];
-
-      for (
-        let pairIndex = 0;
-        pairIndex <
-          pairedCount;
-        pairIndex += 1
-      ) {
-        const fromIndex =
-          pairedCount === 1
-            ? 0
-            : Math.round(
-                pairIndex *
-                (
-                  from.length -
-                  1
-                ) /
-                (
-                  pairedCount -
-                  1
-                )
-              );
-
-        const toIndex =
-          pairedCount === 1
-            ? 0
-            : Math.round(
-                pairIndex *
-                (
-                  to.length -
-                  1
-                ) /
-                (
-                  pairedCount -
-                  1
-                )
-              );
-
-        if (
-          usedFrom.has(
-            fromIndex
-          ) ||
-          usedTo.has(
-            toIndex
-          )
-        ) {
-          continue;
-        }
-
-        const source =
-          from[
-            fromIndex
-          ];
-
-        const target =
-          to[
-            toIndex
-          ];
-
-        usedFrom.add(
-          fromIndex
-        );
-
-        usedTo.add(
-          toIndex
-        );
-
-        tracks.push({
-          fromValue:
-            source.value,
-          toValue:
-            target.value,
-          fromRatio:
-            source.ratio,
-          toRatio:
-            target.ratio,
-          fromAlpha: 1,
-          toAlpha: 1
-        });
-      }
-
-      from.forEach(
-        (
-          source,
-          index
-        ) => {
-          if (
-            usedFrom.has(
-              index
-            )
-          ) {
-            return;
-          }
-
-          const target =
-            nearestDefinition(
-              to,
-              source.ratio
-            );
-
-          tracks.push({
-            fromValue:
-              source.value,
-            toValue:
-              target.value,
-            fromRatio:
-              source.ratio,
-            toRatio:
-              target.ratio,
-            fromAlpha: 1,
-            toAlpha: 0
-          });
-        }
-      );
-
-      to.forEach(
-        (
-          target,
-          index
-        ) => {
-          if (
-            usedTo.has(
-              index
-            )
-          ) {
-            return;
-          }
-
-          const source =
-            nearestDefinition(
-              from,
-              target.ratio
-            );
-
-          tracks.push({
-            fromValue:
-              source.value,
-            toValue:
-              target.value,
-            fromRatio:
-              source.ratio,
-            toRatio:
-              target.ratio,
-            fromAlpha: 0,
-            toAlpha: 1
-          });
-        }
-      );
-
-      return tracks.sort(
-        (
-          first,
-          second
         ) =>
-          first.toRatio -
-          second.toRatio
+          index /
+          current.intervals
       );
     }
 
-    function interpolateAxisTrack(
-      track,
-      progress
-    ) {
-      return {
-        value:
-          track.fromValue +
-          (
-            track.toValue -
-            track.fromValue
-          ) *
-          progress,
-        fromValue:
-          track.fromValue,
-        toValue:
-          track.toValue,
-        ratio:
-          track.fromRatio +
-          (
-            track.toRatio -
-            track.fromRatio
-          ) *
-          progress,
-        alpha:
-          track.fromAlpha +
-          (
-            track.toAlpha -
-            track.fromAlpha
-          ) *
-          progress
-      };
-    }
-
-    function cancelYAxisTransition() {
-      if (
-        yAxisTransition.raf
-      ) {
-        cancelAnimationFrame(
-          yAxisTransition.raf
-        );
-
-        yAxisTransition.raf =
-          null;
-      }
-
-      ++yAxisTransition.token;
-    }
-
-    function setYAxisTransitionImmediately(
+    function setYAxisTickValuesImmediately(
       scale =
         currentScale
     ) {
-      cancelYAxisTransition();
+      if (
+        yAxisTickAnimation.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTickAnimation.raf
+        );
 
-      const current =
-        copyScale(
+        yAxisTickAnimation.raf =
+          null;
+      }
+
+      ++yAxisTickAnimation.token;
+
+      yAxisTickAnimation.values =
+        yTickTargets(
           scale
         );
 
-      yAxisTransition.progress =
-        1;
-
-      yAxisTransition.fromScale =
-        current;
-
-      yAxisTransition.toScale =
-        current;
-
-      yAxisTransition.currentScale =
-        current;
-
-      yAxisTransition.majorTracks =
-        buildAxisTracks(
-          majorTickDefinitions(
-            current
-          ),
-          majorTickDefinitions(
-            current
-          )
+      yAxisTickAnimation.ratios =
+        yTickRatios(
+          scale
         );
-
-      yAxisTransition.minorTracks =
-        buildAxisTracks(
-          minorTickDefinitions(
-            current
-          ),
-          minorTickDefinitions(
-            current
-          )
-        );
-
-      yAxisTransition.unitChange =
-        false;
     }
 
-    function currentYAxisScale() {
-      return copyScale(
-        yAxisTransition.currentScale ||
-        currentScale
-      );
-    }
-
-    function currentMajorAxisTracks() {
-      const progress =
-        clamp(
-          yAxisTransition.progress,
-          0,
-          1
-        );
-
-      const tracks =
-        yAxisTransition
-          .majorTracks.length
-          ? yAxisTransition
-              .majorTracks
-          : buildAxisTracks(
-              majorTickDefinitions(
-                currentScale
-              ),
-              majorTickDefinitions(
-                currentScale
-              )
-            );
-
-      return tracks.map(
-        track =>
-          interpolateAxisTrack(
-            track,
-            progress
-          )
-      );
-    }
-
-    function currentMinorAxisTracks() {
-      const progress =
-        clamp(
-          yAxisTransition.progress,
-          0,
-          1
-        );
-
-      const tracks =
-        yAxisTransition
-          .minorTracks.length
-          ? yAxisTransition
-              .minorTracks
-          : buildAxisTracks(
-              minorTickDefinitions(
-                currentScale
-              ),
-              minorTickDefinitions(
-                currentScale
-              )
-            );
-
-      return tracks.map(
-        track =>
-          interpolateAxisTrack(
-            track,
-            progress
-          )
-      );
-    }
-
-    function animateYAxisTransition(
-      fromScale,
-      toScale,
-      duration = 520,
-      unitChange = false
+    function mapCurrentValuesToTargetCount(
+      currentValues,
+      targetValues
     ) {
-      cancelYAxisTransition();
+      if (
+        !currentValues.length
+      ) {
+        return [
+          ...targetValues
+        ];
+      }
 
-      const from =
-        copyScale(
-          fromScale
+      return Array.from(
+        {
+          length:
+            targetValues.length
+        },
+        (
+          _,
+          index
+        ) => {
+          if (
+            targetValues.length ===
+            1
+          ) {
+            return Number(
+              currentValues[0]
+            );
+          }
+
+          const sourcePosition =
+            index *
+            (
+              currentValues.length -
+              1
+            ) /
+            (
+              targetValues.length -
+              1
+            );
+
+          const lowerIndex =
+            Math.floor(
+              sourcePosition
+            );
+
+          const upperIndex =
+            Math.min(
+              currentValues.length -
+                1,
+              Math.ceil(
+                sourcePosition
+              )
+            );
+
+          const lower =
+            Number(
+              currentValues[
+                lowerIndex
+              ]
+            );
+
+          const upper =
+            Number(
+              currentValues[
+                upperIndex
+              ]
+            );
+
+          if (
+            !Number.isFinite(
+              lower
+            )
+          ) {
+            return Number.isFinite(
+              upper
+            )
+              ? upper
+              : Number(
+                  targetValues[
+                    index
+                  ]
+                );
+          }
+
+          if (
+            !Number.isFinite(
+              upper
+            ) ||
+            upperIndex ===
+              lowerIndex
+          ) {
+            return lower;
+          }
+
+          const fraction =
+            sourcePosition -
+            lowerIndex;
+
+          return lower +
+            (
+              upper -
+              lower
+            ) *
+            fraction;
+        }
+      );
+    }
+
+    function mapCurrentRatiosToTargetCount(
+      currentRatios,
+      targetRatios
+    ) {
+      if (
+        !currentRatios.length
+      ) {
+        return [
+          ...targetRatios
+        ];
+      }
+
+      /*
+       * Use nearest existing tick positions rather than interpolating them
+       * immediately onto the target grid. This preserves the visible PFF
+       * "slide" when the number of Y-axis intervals changes.
+       */
+      return targetRatios.map(
+        (
+          _targetRatio,
+          index
+        ) => {
+          if (
+            targetRatios.length ===
+            1
+          ) {
+            return Number(
+              currentRatios[0]
+            ) || 0;
+          }
+
+          const sourceIndex =
+            Math.round(
+              index *
+              (
+                currentRatios.length -
+                1
+              ) /
+              (
+                targetRatios.length -
+                1
+              )
+            );
+
+          const ratio =
+            Number(
+              currentRatios[
+                Math.min(
+                  currentRatios.length -
+                    1,
+                  Math.max(
+                    0,
+                    sourceIndex
+                  )
+                )
+              ]
+            );
+
+          return Number.isFinite(
+            ratio
+          )
+            ? ratio
+            : targetRatios[
+                index
+              ];
+        }
+      );
+    }
+
+    function animateYAxisTickValues(
+      targets,
+      duration = 720,
+      targetScale =
+        currentScale
+    ) {
+      const targetValues =
+        Array.from(
+          targets || []
         );
 
-      const to =
-        copyScale(
-          toScale
+      const targetRatios =
+        yTickRatios(
+          targetScale
+        );
+
+      if (
+        !targetValues.length ||
+        !targetRatios.length
+      ) {
+        return;
+      }
+
+      if (
+        yAxisTickAnimation.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTickAnimation.raf
+        );
+
+        yAxisTickAnimation.raf =
+          null;
+      }
+
+      const token =
+        ++yAxisTickAnimation.token;
+
+      const currentValues =
+        Array.from(
+          yAxisTickAnimation.values ||
+          []
+        );
+
+      const currentRatios =
+        Array.from(
+          yAxisTickAnimation.ratios ||
+          []
+        );
+
+      const startValues =
+        mapCurrentValuesToTargetCount(
+          currentValues,
+          targetValues
+        );
+
+      const startRatios =
+        mapCurrentRatiosToTargetCount(
+          currentRatios,
+          targetRatios
         );
 
       if (
         reducedMotion() ||
-        duration <= 0 ||
-        scalesNearlyEqual(
-          from,
-          to
-        )
+        duration <= 0
       ) {
-        setYAxisTransitionImmediately(
-          to
-        );
+        yAxisTickAnimation.values =
+          [
+            ...targetValues
+          ];
+
+        yAxisTickAnimation.ratios =
+          [
+            ...targetRatios
+          ];
 
         chart?.draw();
         return;
       }
 
-      const token =
-        ++yAxisTransition.token;
-
-      yAxisTransition.progress =
-        0;
-
-      yAxisTransition.fromScale =
-        from;
-
-      yAxisTransition.toScale =
-        to;
-
-      yAxisTransition.currentScale =
-        from;
-
-      yAxisTransition.majorTracks =
-        buildAxisTracks(
-          majorTickDefinitions(
-            from
-          ),
-          majorTickDefinitions(
-            to
-          )
-        );
-
-      yAxisTransition.minorTracks =
-        buildAxisTracks(
-          minorTickDefinitions(
-            from
-          ),
-          minorTickDefinitions(
-            to
-          )
-        );
-
-      yAxisTransition.unitChange =
-        Boolean(
-          unitChange
-        );
-
       const startedAt =
         performance.now();
 
-      const frame =
-        now => {
-          if (
-            token !==
-            yAxisTransition.token
-          ) {
-            return;
-          }
+      function frame(now) {
+        if (
+          token !==
+          yAxisTickAnimation.token
+        ) {
+          return;
+        }
 
-          const raw =
-            clamp(
-              (
-                now -
-                startedAt
-              ) /
-                duration,
-              0,
-              1
-            );
-
-          const progress =
-            easeOutQuart(
-              raw
-            );
-
-          const min =
-            from.min +
+        const progress =
+          clamp(
             (
-              to.min -
-              from.min
-            ) *
-            progress;
+              now -
+              startedAt
+            ) /
+              duration,
+            0,
+            1
+          );
 
-          const max =
-            from.max +
+        const eased =
+          easeOutCubic(
+            progress
+          );
+
+        yAxisTickAnimation.values =
+          targetValues.map(
             (
-              to.max -
-              from.max
-            ) *
-            progress;
+              target,
+              index
+            ) => {
+              const start =
+                Number(
+                  startValues[
+                    index
+                  ]
+                );
 
-          const intervals =
-            progress < 0.5
-              ? from.intervals
-              : to.intervals;
-
-          yAxisTransition.progress =
-            progress;
-
-          yAxisTransition.currentScale = {
-            min,
-            max,
-            intervals,
-            step:
-              (
-                max -
-                min
-              ) /
-              Math.max(
-                1,
-                intervals
+              return Number.isFinite(
+                start
               )
-          };
+                ? start +
+                    (
+                      target -
+                      start
+                    ) *
+                    eased
+                : target;
+            }
+          );
+
+        yAxisTickAnimation.ratios =
+          targetRatios.map(
+            (
+              target,
+              index
+            ) => {
+              const start =
+                Number(
+                  startRatios[
+                    index
+                  ]
+                );
+
+              return Number.isFinite(
+                start
+              )
+                ? start +
+                    (
+                      target -
+                      start
+                    ) *
+                    eased
+                : target;
+            }
+          );
+
+        chart?.draw();
+
+        if (
+          progress < 1
+        ) {
+          yAxisTickAnimation.raf =
+            requestAnimationFrame(
+              frame
+            );
+        } else {
+          yAxisTickAnimation.raf =
+            null;
+
+          yAxisTickAnimation.values =
+            [
+              ...targetValues
+            ];
+
+          yAxisTickAnimation.ratios =
+            [
+              ...targetRatios
+            ];
 
           chart?.draw();
+        }
+      }
 
-          if (
-            raw < 1
-          ) {
-            yAxisTransition.raf =
-              requestAnimationFrame(
-                frame
-              );
-          } else {
-            yAxisTransition.raf =
-              null;
-
-            yAxisTransition.progress =
-              1;
-
-            yAxisTransition.fromScale =
-              to;
-
-            yAxisTransition.toScale =
-              to;
-
-            yAxisTransition.currentScale =
-              to;
-
-            yAxisTransition.majorTracks =
-              buildAxisTracks(
-                majorTickDefinitions(
-                  to
-                ),
-                majorTickDefinitions(
-                  to
-                )
-              );
-
-            yAxisTransition.minorTracks =
-              buildAxisTracks(
-                minorTickDefinitions(
-                  to
-                ),
-                minorTickDefinitions(
-                  to
-                )
-              );
-
-            yAxisTransition.unitChange =
-              false;
-
-            chart?.draw();
-          }
-        };
-
-      yAxisTransition.raf =
+      yAxisTickAnimation.raf =
         requestAnimationFrame(
           frame
         );
-    }
-
-    function cancelYAxisTitleTransition() {
-      if (
-        yAxisTitleTransition.raf
-      ) {
-        cancelAnimationFrame(
-          yAxisTitleTransition.raf
-        );
-
-        yAxisTitleTransition.raf =
-          null;
-      }
-
-      ++yAxisTitleTransition.token;
     }
 
     function setYAxisTitleImmediately(
       text =
         yAxisTitle()
     ) {
-      cancelYAxisTitleTransition();
-
       const value =
         String(
-          text ?? ''
-        );
-
-      yAxisTitleTransition.from =
-        value;
-
-      yAxisTitleTransition.to =
-        value;
-
-      yAxisTitleTransition.progress =
-        1;
-
-      yAxisTitleTransition.direction =
-        1;
-    }
-
-    function animateYAxisTitleChange(
-      nextText,
-      duration = 420,
-      direction = 1
-    ) {
-      const text =
-        String(
-          nextText ?? ''
-        );
-
-      const previous =
-        String(
-          yAxisTitleTransition.to ||
-          text
+          text || ''
         );
 
       if (
-        previous === text
+        yAxisTitleAnimation.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTitleAnimation.raf
+        );
+
+        yAxisTitleAnimation.raf =
+          null;
+      }
+
+      ++yAxisTitleAnimation.token;
+
+      yAxisTitleAnimation.from =
+        value;
+
+      yAxisTitleAnimation.to =
+        value;
+
+      yAxisTitleAnimation.progress =
+        1;
+    }
+
+    function animateYAxisTitle(
+      nextText,
+      duration = 420
+    ) {
+      const target =
+        String(
+          nextText || ''
+        );
+
+      const current =
+        yAxisTitleAnimation.progress <
+          0.5
+          ? yAxisTitleAnimation.from
+          : yAxisTitleAnimation.to;
+
+      if (
+        current === target
       ) {
         setYAxisTitleImmediately(
-          text
+          target
         );
         return;
       }
 
-      cancelYAxisTitleTransition();
+      if (
+        yAxisTitleAnimation.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTitleAnimation.raf
+        );
 
-      yAxisTitleTransition.from =
-        previous;
+        yAxisTitleAnimation.raf =
+          null;
+      }
 
-      yAxisTitleTransition.to =
-        text;
+      const token =
+        ++yAxisTitleAnimation.token;
 
-      yAxisTitleTransition.progress =
+      yAxisTitleAnimation.from =
+        current;
+
+      yAxisTitleAnimation.to =
+        target;
+
+      yAxisTitleAnimation.progress =
         0;
-
-      yAxisTitleTransition.direction =
-        direction >= 0
-          ? 1
-          : -1;
 
       if (
         reducedMotion() ||
         duration <= 0
       ) {
-        yAxisTitleTransition.progress =
-          1;
+        setYAxisTitleImmediately(
+          target
+        );
 
         chart?.draw();
         return;
       }
 
-      const token =
-        ++yAxisTitleTransition.token;
-
       const startedAt =
         performance.now();
 
-      const frame =
-        now => {
-          if (
-            token !==
-            yAxisTitleTransition.token
-          ) {
-            return;
-          }
+      function frame(now) {
+        if (
+          token !==
+          yAxisTitleAnimation.token
+        ) {
+          return;
+        }
 
-          const raw =
-            clamp(
-              (
-                now -
-                startedAt
-              ) /
-                duration,
-              0,
-              1
-            );
+        const progress =
+          clamp(
+            (
+              now -
+              startedAt
+            ) /
+              duration,
+            0,
+            1
+          );
 
-          yAxisTitleTransition.progress =
-            pffMotionEase(
-              raw
+        yAxisTitleAnimation.progress =
+          easeOutCubic(
+            progress
+          );
+
+        chart?.draw();
+
+        if (
+          progress < 1
+        ) {
+          yAxisTitleAnimation.raf =
+            requestAnimationFrame(
+              frame
             );
+        } else {
+          yAxisTitleAnimation.raf =
+            null;
+
+          setYAxisTitleImmediately(
+            target
+          );
 
           chart?.draw();
+        }
+      }
 
-          if (
-            raw < 1
-          ) {
-            yAxisTitleTransition.raf =
-              requestAnimationFrame(
-                frame
-              );
-          } else {
-            yAxisTitleTransition.raf =
-              null;
-
-            yAxisTitleTransition.progress =
-              1;
-
-            yAxisTitleTransition.from =
-              text;
-
-            yAxisTitleTransition.to =
-              text;
-
-            chart?.draw();
-          }
-        };
-
-      yAxisTitleTransition.raf =
+      yAxisTitleAnimation.raf =
         requestAnimationFrame(
           frame
         );
     }
 
-    function yAxisTitleLayers() {
+    function drawYAxisTitle(
+      context,
+      chartArea
+    ) {
+      const mobile =
+        window.innerWidth <=
+        430;
+
       const progress =
         clamp(
-          yAxisTitleTransition.progress,
+          yAxisTitleAnimation.progress,
           0,
           1
         );
 
-      const from =
-        String(
-          yAxisTitleTransition.from ||
-          ''
+      /*
+       * Exact fade profile used in the latest pasted workforce chart:
+       * the outgoing title disappears first, then the incoming title
+       * completes the cross-fade. No positional slide is applied.
+       */
+      const outgoingOpacity =
+        clamp(
+          1 -
+            progress *
+            2.2,
+          0,
+          1
         );
 
-      const to =
-        String(
-          yAxisTitleTransition.to ||
-          from
+      const incomingOpacity =
+        clamp(
+          (
+            progress -
+            0.32
+          ) /
+            0.68,
+          0,
+          1
         );
+
+      const x =
+        Math.max(
+          mobile
+            ? 10
+            : 11,
+          chartArea.left -
+            (
+              mobile
+                ? 53
+                : 59
+            )
+        );
+
+      const y =
+        chartArea.top +
+        chartArea.height /
+          2;
+
+      const draw = (
+        text,
+        opacity
+      ) => {
+        if (
+          !text ||
+          opacity <= 0
+        ) {
+          return;
+        }
+
+        context.save();
+
+        context.globalAlpha =
+          opacity;
+
+        context.translate(
+          x,
+          y
+        );
+
+        context.rotate(
+          -Math.PI /
+          2
+        );
+
+        context.fillStyle =
+          '#151515';
+
+        context.textAlign =
+          'center';
+
+        context.textBaseline =
+          'middle';
+
+        context.font =
+          `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+
+        context.fillText(
+          text,
+          0,
+          0
+        );
+
+        context.restore();
+      };
 
       if (
-        !from ||
-        from === to ||
-        progress >= 0.999
+        yAxisTitleAnimation.from ===
+          yAxisTitleAnimation.to ||
+        progress >= 1
       ) {
-        return [
-          {
-            text:
-              to || from,
-            alpha: 1,
-            offset:
-              0
-          }
-        ];
+        draw(
+          yAxisTitleAnimation.to,
+          1
+        );
+
+        return;
       }
 
-      const distance =
-        11;
+      draw(
+        yAxisTitleAnimation.from,
+        outgoingOpacity
+      );
 
-      const direction =
-        yAxisTitleTransition.direction >= 0
-          ? 1
-          : -1;
-
-      return [
-        {
-          text:
-            from,
-          alpha:
-            1 - progress,
-          offset:
-            -distance *
-            direction *
-            progress
-        },
-        {
-          text:
-            to,
-          alpha:
-            progress,
-          offset:
-            distance *
-            direction *
-            (
-              1 -
-              progress
-            )
-        }
-      ];
+      draw(
+        yAxisTitleAnimation.to,
+        incomingOpacity
+      );
     }
 
     // ============================================================
@@ -4817,32 +4605,57 @@
           return;
         }
 
-        const majorTracks =
-          currentMajorAxisTracks();
+        const scale =
+          copyScale(
+            currentScale
+          );
 
-        const minorTracks =
-          currentMinorAxisTracks();
+        const intervals =
+          scale.intervals;
+
+        const ratios =
+          yAxisTickAnimation
+            .ratios.length ===
+            intervals + 1
+            ? yAxisTickAnimation
+                .ratios
+            : yTickRatios(
+                scale
+              );
 
         ctx.save();
 
-        // Major horizontal guides move with their Y-axis markings.
+        // Minor horizontal guides slide halfway between animated major ticks.
+        ctx.strokeStyle =
+          'rgba(105, 113, 138, 0.035)';
+
+        ctx.lineWidth =
+          0.7;
+
         for (
-          const track of
-          majorTracks
+          let index = 0;
+          index < intervals;
+          index += 1
         ) {
-          if (
-            track.alpha <=
-              0.001 ||
-            track.ratio <=
-              0.001
-          ) {
-            continue;
-          }
+          const ratio =
+            (
+              Number(
+                ratios[
+                  index
+                ]
+              ) +
+              Number(
+                ratios[
+                  index + 1
+                ]
+              )
+            ) /
+            2;
 
           const y =
             chartArea.bottom -
             chartArea.height *
-            track.ratio;
+              ratio;
 
           ctx.beginPath();
 
@@ -4861,39 +4674,33 @@
             ) +
             0.5
           );
-
-          ctx.globalAlpha =
-            clamp(
-              track.alpha,
-              0,
-              1
-            );
-
-          ctx.strokeStyle =
-            'rgba(105, 113, 138, 0.075)';
-
-          ctx.lineWidth =
-            1;
 
           ctx.stroke();
         }
 
-        // Minor guides use the same transition clock.
+        // Major guides move on the same clock as the labels/tick marks.
+        ctx.strokeStyle =
+          'rgba(105, 113, 138, 0.075)';
+
+        ctx.lineWidth =
+          1;
+
         for (
-          const track of
-          minorTracks
+          let index = 0;
+          index <= intervals;
+          index += 1
         ) {
-          if (
-            track.alpha <=
-            0.001
-          ) {
-            continue;
-          }
+          const ratio =
+            Number(
+              ratios[
+                index
+              ]
+            );
 
           const y =
             chartArea.bottom -
             chartArea.height *
-            track.ratio;
+              ratio;
 
           ctx.beginPath();
 
@@ -4912,19 +4719,6 @@
             ) +
             0.5
           );
-
-          ctx.globalAlpha =
-            clamp(
-              track.alpha,
-              0,
-              1
-            );
-
-          ctx.strokeStyle =
-            'rgba(105, 113, 138, 0.035)';
-
-          ctx.lineWidth =
-            0.7;
 
           ctx.stroke();
         }
@@ -4945,15 +4739,37 @@
           return;
         }
 
+        const scale =
+          copyScale(
+            currentScale
+          );
+
+        const intervals =
+          scale.intervals;
+
         const mobile =
           window.innerWidth <=
           430;
 
-        const majorTracks =
-          currentMajorAxisTracks();
+        const values =
+          yAxisTickAnimation
+            .values.length ===
+            intervals + 1
+            ? yAxisTickAnimation
+                .values
+            : yTickTargets(
+                scale
+              );
 
-        const minorTracks =
-          currentMinorAxisTracks();
+        const ratios =
+          yAxisTickAnimation
+            .ratios.length ===
+            intervals + 1
+            ? yAxisTickAnimation
+                .ratios
+            : yTickRatios(
+                scale
+              );
 
         const xTracks =
           currentXAxisTracks();
@@ -4963,6 +4779,7 @@
         ctx.lineCap =
           'butt';
 
+        // Major Y ticks and smoothly counting labels stay in fixed positions.
         ctx.strokeStyle =
           '#151515';
 
@@ -4981,32 +4798,22 @@
         ctx.font =
           `${mobile ? 9 : 10}px Lato, sans-serif`;
 
-        // Major Y ticks and labels move/count together.
         for (
-          const track of
-          majorTracks
+          let index = 0;
+          index <= intervals;
+          index += 1
         ) {
-          if (
-            track.alpha <=
-            0.001
-          ) {
-            continue;
-          }
+          const ratio =
+            Number(
+              ratios[
+                index
+              ]
+            );
 
           const y =
             chartArea.bottom -
             chartArea.height *
-            track.ratio;
-
-          const alpha =
-            clamp(
-              track.alpha,
-              0,
-              1
-            );
-
-          ctx.globalAlpha =
-            alpha;
+              ratio;
 
           ctx.beginPath();
 
@@ -5029,74 +4836,63 @@
 
           ctx.stroke();
 
-          /*
-           * Count <-> % changes the unit. In that case, avoid displaying
-           * meaningless intermediate units: the target labels fade in while
-           * the marks/guides still use the unified movement.
-           */
-          const labelAlpha =
-            yAxisTransition
-              .unitChange
-              ? alpha *
-                clamp(
-                  yAxisTransition
-                    .progress,
-                  0,
-                  1
-                )
-              : alpha;
-
-          if (
-            labelAlpha >
-            0.015
-          ) {
-            ctx.globalAlpha =
-              labelAlpha;
-
-            ctx.fillText(
-              formatAxisValue(
-                yAxisTransition
-                  .unitChange
-                  ? track.toValue
-                  : track.value
-              ),
-              chartArea.left -
-              8,
-              y
+          const value =
+            Number(
+              values[
+                index
+              ]
             );
-          }
+
+          ctx.fillText(
+            formatAxisValue(
+              Number.isFinite(
+                value
+              )
+                ? value
+                : scale.min +
+                    scale.step *
+                    index
+            ),
+            chartArea.left -
+            8,
+            y
+          );
         }
 
-        // Minor Y ticks slide/fade on the same clock.
+        // Minor Y ticks.
         ctx.strokeStyle =
           '#69718a';
+
+        ctx.globalAlpha =
+          0.60;
 
         ctx.lineWidth =
           1;
 
         for (
-          const track of
-          minorTracks
+          let index = 0;
+          index < intervals;
+          index += 1
         ) {
-          if (
-            track.alpha <=
-            0.001
-          ) {
-            continue;
-          }
+          const ratio =
+            (
+              Number(
+                ratios[
+                  index
+                ]
+              ) +
+              Number(
+                ratios[
+                  index + 1
+                ]
+              )
+            ) /
+            2;
 
           const y =
             chartArea.bottom -
             chartArea.height *
-            track.ratio;
-
-          ctx.globalAlpha =
-            0.60 *
-            clamp(
-              track.alpha,
-              0,
-              1
-            );
+              ratio;
 
           ctx.beginPath();
 
@@ -5120,10 +4916,10 @@
           ctx.stroke();
         }
 
-        /*
-         * Calendar years/x positions never change between Medicare views,
-         * so x-axis markings and labels remain completely static.
-         */
+        // X-axis years and tick positions never change in this module.
+        ctx.globalAlpha =
+          1;
+
         xTracks.forEach(
           track => {
             const x =
@@ -5137,17 +4933,15 @@
 
             ctx.save();
 
-            ctx.globalAlpha =
-              clamp(
-                track.alpha,
-                0,
-                1
-              );
-
             ctx.strokeStyle =
               major
                 ? '#151515'
                 : '#69718a';
+
+            ctx.globalAlpha =
+              major
+                ? 1
+                : 0.60;
 
             ctx.lineWidth =
               major
@@ -5184,11 +4978,7 @@
               0.02
             ) {
               ctx.globalAlpha =
-                clamp(
-                  track.labelAlpha,
-                  0,
-                  1
-                );
+                1;
 
               ctx.fillStyle =
                 '#151515';
@@ -5240,108 +5030,11 @@
         );
 
         ctx.restore();
-      }
-    };
 
-    const axisTitlesPlugin = {
-      id:
-        'axisTitlesPlugin',
-
-      afterDraw(
-        chartInstance
-      ) {
-        const {
+        drawYAxisTitle(
           ctx,
           chartArea
-        } =
-          chartInstance;
-
-        if (!chartArea) {
-          return;
-        }
-
-        const mobile =
-          window.innerWidth <=
-          430;
-
-        const layers =
-          yAxisTitleLayers();
-
-        const titleX =
-          Math.max(
-            mobile
-              ? 10
-              : 11,
-            chartArea.left -
-              (
-                mobile
-                  ? 53
-                  : 59
-              )
-          );
-
-        const titleY =
-          (
-            chartArea.top +
-            chartArea.bottom
-          ) /
-          2;
-
-        ctx.save();
-
-        ctx.textAlign =
-          'center';
-
-        ctx.textBaseline =
-          'middle';
-
-        ctx.fillStyle =
-          '#151515';
-
-        ctx.font =
-          `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
-
-        layers.forEach(
-          layer => {
-            if (
-              !layer.text ||
-              layer.alpha <=
-                0.01
-            ) {
-              return;
-            }
-
-            ctx.save();
-
-            ctx.globalAlpha =
-              clamp(
-                layer.alpha,
-                0,
-                1
-              );
-
-            ctx.translate(
-              titleX +
-              layer.offset,
-              titleY
-            );
-
-            ctx.rotate(
-              -Math.PI /
-              2
-            );
-
-            ctx.fillText(
-              layer.text,
-              0,
-              0
-            );
-
-            ctx.restore();
-          }
         );
-
-        ctx.restore();
       }
     };
 
@@ -6056,7 +5749,6 @@
 
     Chart.register(
       pffAxesPlugin,
-      axisTitlesPlugin,
       axisSpinesPlugin,
       paTrendLabelsPlugin
     );
@@ -7219,7 +6911,7 @@
       currentScale =
         computeScale();
 
-      setYAxisTransitionImmediately(
+      setYAxisTickValuesImmediately(
         currentScale
       );
 
@@ -7263,16 +6955,42 @@
             )
           : 0;
 
-      /*
-       * If another transition is interrupted, start from the scale that is
-       * actually on screen rather than from the previous target.
-       */
       const previousScale =
-        currentYAxisScale();
+        copyScale(
+          currentScale
+        );
+
+      const previousTitle =
+        yAxisTitleAnimation
+          .progress <
+          0.5
+          ? yAxisTitleAnimation
+              .from
+          : yAxisTitleAnimation
+              .to;
 
       const nextScale =
         copyScale(
           computeScale()
+        );
+
+      const nextTitle =
+        yAxisTitle();
+
+      const scaleChanged =
+        !scalesNearlyEqual(
+          previousScale,
+          nextScale
+        );
+
+      const titleChanged =
+        String(
+          previousTitle ||
+          ''
+        ) !==
+        String(
+          nextTitle ||
+          ''
         );
 
       currentScale = {
@@ -7285,8 +7003,8 @@
       };
 
       /*
-       * Every Medicare series stays attached to the same Chart.js dataset
-       * object. Retained lines therefore morph rather than disappear/reappear.
+       * Retained Medicare datasets remain the same Chart.js objects, so the
+       * lines morph rather than disappearing/reappearing.
        */
       syncChartDatasets();
 
@@ -7302,7 +7020,11 @@
       chart.options.animation.easing =
         'easeOutQuart';
 
-      // Calendar years/x positions are invariant in every Medicare view.
+      /*
+       * Years never change between views, so keep X positions static even
+       * though the pasted generic workforce chart animates X when its
+       * categories can change.
+       */
       chart.options.animations.x.duration =
         0;
 
@@ -7319,62 +7041,47 @@
       );
 
       /*
-       * The State MMM reference uses one RAF clock for Y-axis values,
-       * tick marks and horizontal guides. Use that same model here.
-       *
-       * Count <-> % is a true unit change, so target labels fade in rather
-       * than counting through meaningless intermediate percentages.
+       * PFF-style synchronized Y-axis transition: numeric labels count
+       * smoothly while tick marks and horizontal guides slide to their new
+       * positions on the same easeOutCubic clock.
        */
       if (
-        duration <= 0 ||
-        scalesNearlyEqual(
-          previousScale,
-          nextScale
-        )
+        scaleChanged &&
+        duration > 0
       ) {
-        setYAxisTransitionImmediately(
+        animateYAxisTickValues(
+          yTickTargets(
+            nextScale
+          ),
+          duration,
           nextScale
         );
       } else {
-        animateYAxisTransition(
-          previousScale,
-          nextScale,
-          duration,
-          reason ===
-            'mode'
+        setYAxisTickValuesImmediately(
+          nextScale
         );
       }
 
-      const titleDirection =
-        reason ===
-          'view'
-          ? (
-              activeView ===
-                'hours'
-                ? 1
-                : -1
-            )
-          : reason ===
-              'mode'
-            ? (
-                valueMode ===
-                  'percent'
-                  ? 1
-                  : -1
-              )
-            : 1;
-
+      /*
+       * Axis titles use the latest PFF 420ms cross-fade, with no translation.
+       * If the title is unchanged, it remains completely static.
+       */
       if (
+        titleChanged &&
         duration > 0
       ) {
-        animateYAxisTitleChange(
-          yAxisTitle(),
-          420,
-          titleDirection
+        animateYAxisTitle(
+          nextTitle,
+          Math.min(
+            duration,
+            420
+          )
         );
-      } else {
+      } else if (
+        titleChanged
+      ) {
         setYAxisTitleImmediately(
-          yAxisTitle()
+          nextTitle
         );
       }
 
