@@ -676,6 +676,73 @@
       font-weight: 700;
     }
 
+    /* ---------- Count / % segmented toggle ---------- */
+
+    .value-mode-toggle {
+      position: relative;
+      display: grid;
+      width: 74px;
+      height: 27px;
+      flex: 0 0 74px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: center;
+      margin-top: 2px;
+      padding: 1px;
+      overflow: hidden;
+      background: rgba(232, 234, 240, 0.55);
+      border-radius: 4px;
+      isolation: isolate;
+    }
+
+    .value-mode-toggle[hidden] {
+      display: none;
+    }
+
+    .value-mode-toggle::before {
+      content: '';
+      position: absolute;
+      top: 1px;
+      bottom: 1px;
+      left: 1px;
+      z-index: 0;
+      width: calc((100% - 2px) / 2);
+      background: #fff;
+      border-radius: 3px;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.08);
+      transform: translateX(0);
+      transition: transform 300ms var(--motion-ease);
+    }
+
+    .value-mode-toggle.is-percent-selected::before {
+      transform: translateX(100%);
+    }
+
+    .value-mode-button {
+      position: relative;
+      z-index: 1;
+      min-width: 0;
+      min-height: 25px;
+      padding: 0 3px;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      border-radius: 3px;
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      transition: color 220ms ease;
+    }
+
+    .value-mode-button.is-active {
+      color: var(--purple);
+    }
+
+    .value-mode-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: -1px;
+    }
+
     /* ---------- Trend toggle: matches the PFF supply module ---------- */
 
     .yoy-trend-toggle {
@@ -1054,8 +1121,8 @@
       <div class="module-top">
         <div class="tab-scroll-shell">
           <div id="tabList" class="tab-list" role="tablist" aria-label="Medicare demand and optometry supply charts">
-            <button class="chart-tab is-active" type="button" role="tab" aria-selected="true" data-view="services">Services / FTE optom</button>
-            <button class="chart-tab" type="button" role="tab" aria-selected="false" data-view="capacity">Capacity billed</button>
+            <button class="chart-tab is-active" type="button" role="tab" aria-selected="true" data-view="services">Medicare services</button>
+            <button class="chart-tab" type="button" role="tab" aria-selected="false" data-view="capacity">Medicare-billed hours</button>
           </div>
         </div>
 
@@ -1092,6 +1159,11 @@
 
         <div class="heading-controls">
 
+          <div id="valueModeToggle" class="value-mode-toggle" role="group" aria-label="Services chart value mode">
+            <button class="value-mode-button is-active" type="button" data-mode="count" aria-pressed="true">Count</button>
+            <button class="value-mode-button" type="button" data-mode="percent" aria-pressed="false">%</button>
+          </div>
+
           <div id="itemControl" class="item-control">
             <button id="itemButton" class="item-button" type="button" aria-haspopup="true" aria-expanded="false">
               <span>Items</span>
@@ -1124,7 +1196,7 @@
       </div>
 
       <div id="chartShell" class="chart-shell">
-        <canvas id="demandChart" aria-label="Australian Medicare demand compared with optometry clinical supply" role="img"></canvas>
+        <canvas id="demandChart" aria-label="Australian Medicare services per FTE optometrist and Medicare-billed clinical hours" role="img"></canvas>
       </div>
     </main>
   </div>
@@ -1382,6 +1454,18 @@
         'headingScrollRight'
       );
 
+    const valueModeToggle =
+      document.getElementById(
+        'valueModeToggle'
+      );
+
+    const valueModeButtons =
+      Array.from(
+        document.querySelectorAll(
+          '.value-mode-button'
+        )
+      );
+
     const itemControl =
       document.getElementById(
         'itemControl'
@@ -1441,6 +1525,9 @@ const yoyTrendToggle =
 
     let activeView =
       'services';
+
+    let valueMode =
+      'count';
 
     let yoyTrendOn =
       true;
@@ -2030,7 +2117,13 @@ const yoyTrendToggle =
 
       if (
         activeView ===
-        'capacity'
+          'capacity' ||
+        (
+          activeView ===
+            'services' &&
+          valueMode ===
+            'percent'
+        )
       ) {
         return `${
           number.toLocaleString(
@@ -3294,6 +3387,39 @@ const yoyTrendToggle =
                 seriesKey
               );
 
+        if (
+          valueMode ===
+            'percent'
+        ) {
+          if (
+            seriesKey ===
+            ALL_SERIES_KEY
+          ) {
+            return null;
+          }
+
+          const allServices =
+            totalServices(
+              row
+            );
+
+          if (
+            !Number.isFinite(
+              services
+            ) ||
+            !Number.isFinite(
+              allServices
+            ) ||
+            allServices <= 0
+          ) {
+            return null;
+          }
+
+          return services /
+            allServices *
+            100;
+        }
+
         const availableClinicalHoursWeek =
           finiteNumber(
             row?.availableClinicalHoursWeek
@@ -3367,10 +3493,17 @@ const yoyTrendToggle =
     }
 
     function selectableKeysForMode() {
-      return [
-        ALL_SERIES_KEY,
-        ...itemSeriesKeys()
-      ];
+      return (
+        activeView ===
+          'services' &&
+        valueMode ===
+          'percent'
+      )
+        ? itemSeriesKeys()
+        : [
+            ALL_SERIES_KEY,
+            ...itemSeriesKeys()
+          ];
     }
 
     function selectedKeys() {
@@ -3406,7 +3539,18 @@ const yoyTrendToggle =
     }
 
     function visibleSelectedKeys() {
-      return selectedKeys();
+      return selectedKeys()
+        .filter(
+          key =>
+            !(
+              activeView ===
+                'services' &&
+              valueMode ===
+                'percent' &&
+              key ===
+                ALL_SERIES_KEY
+            )
+        );
     }
 
     function allSelectableSelected() {
@@ -3572,6 +3716,17 @@ const yoyTrendToggle =
     function datasetVisible(
       key
     ) {
+      if (
+        activeView ===
+          'services' &&
+        valueMode ===
+          'percent' &&
+        key ===
+          ALL_SERIES_KEY
+      ) {
+        return false;
+      }
+
       return selectedSeries.has(
         key
       );
@@ -6404,7 +6559,14 @@ const yoyTrendToggle =
             }
 
             button.hidden =
-              false;
+              (
+                activeView ===
+                  'services' &&
+                valueMode ===
+                  'percent' &&
+                key ===
+                  ALL_SERIES_KEY
+              );
 
             button.classList.remove(
               'is-indeterminate'
@@ -6807,16 +6969,30 @@ const yoyTrendToggle =
     // ============================================================
 
     function headingModeText() {
-      return activeView ===
+      if (
+        activeView ===
         'capacity'
-        ? 'capacity billed'
+      ) {
+        return 'billed clinical hours';
+      }
+
+      return valueMode ===
+        'percent'
+        ? 'services proportions'
         : 'services per FTE optom';
     }
 
     function yAxisTitle() {
-      return activeView ===
+      if (
+        activeView ===
         'capacity'
-        ? 'Capacity billed (%)'
+      ) {
+        return 'Proportion of clinical hours (%)';
+      }
+
+      return valueMode ===
+        'percent'
+        ? 'Proportion of Medicare services (%)'
         : 'Services / FTE optom / week';
     }
 
@@ -6907,6 +7083,39 @@ const yoyTrendToggle =
       );
     }
 
+    function updateValueModeToggle() {
+      const show =
+        activeView ===
+        'services';
+
+      valueModeToggle.hidden =
+        !show;
+
+      valueModeToggle.classList.toggle(
+        'is-percent-selected',
+        valueMode ===
+          'percent'
+      );
+
+      valueModeButtons.forEach(
+        button => {
+          const active =
+            button.dataset.mode ===
+            valueMode;
+
+          button.classList.toggle(
+            'is-active',
+            active
+          );
+
+          button.setAttribute(
+            'aria-pressed',
+            String(active)
+          );
+        }
+      );
+    }
+
     function updateYoyToggle() {
       yoyTrendToggle
         .classList.toggle(
@@ -6967,7 +7176,22 @@ const yoyTrendToggle =
               maximumFractionDigits: 2
             }
           )
-        }% of capacity billed`;
+        }% of available clinical hours`;
+      }
+
+      if (
+        valueMode ===
+        'percent'
+      ) {
+        return `${
+          number.toLocaleString(
+            'en-AU',
+            {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 2
+            }
+          )
+        }% of Medicare services`;
       }
 
       return `${
@@ -7483,11 +7707,58 @@ const yoyTrendToggle =
               nextView;
 
             updateTabs();
+            updateValueModeToggle();
+            updateItemButtonText();
+            syncItemMenuSelection();
             updateHeading();
             renderChartChange(
               true,
               true,
               'view'
+            );
+          }
+        );
+      }
+    );
+
+
+    valueModeButtons.forEach(
+      button => {
+        button.addEventListener(
+          'click',
+          () => {
+            if (
+              activeView !==
+                'services'
+            ) {
+              return;
+            }
+
+            const nextMode =
+              button.dataset.mode;
+
+            if (
+              !nextMode ||
+              nextMode ===
+                valueMode
+            ) {
+              return;
+            }
+
+            closeItemMenu();
+
+            valueMode =
+              nextMode;
+
+            updateValueModeToggle();
+            updateItemButtonText();
+            syncItemMenuSelection();
+            updateHeading();
+
+            renderChartChange(
+              true,
+              true,
+              'mode'
             );
           }
         );
@@ -7722,7 +7993,8 @@ const yoyTrendToggle =
 
         buildItemMenu();
         updateItemButtonText();
-          updateYoyToggle();
+        updateValueModeToggle();
+        updateYoyToggle();
         updateTabs();
         updateHeading();
 
