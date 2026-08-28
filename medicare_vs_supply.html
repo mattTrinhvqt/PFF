@@ -1,0 +1,5398 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Medicare Demand vs Optometry Supply</title>
+
+  <link
+    href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap"
+    rel="stylesheet"
+  >
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --purple: #6600ff;
+      --ink: #151515;
+      --muted: #69718a;
+      --track: #e8eaf0;
+      --error: #b42318;
+      --live-red: #e53935;
+      --cached-amber: #c27c00;
+
+      --demand: #00a651;
+      --supply: #f1b916;
+
+      --blue-cone: rgba(74, 86, 255, 0.82);
+      --green-cone: rgba(36, 210, 116, 0.78);
+      --red-cone: rgba(255, 92, 48, 0.76);
+
+      --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #fff;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      color: var(--ink);
+      background: #fff;
+      font-family: 'Lato', sans-serif;
+      overflow: hidden;
+      -webkit-touch-callout: none;
+    }
+
+    button {
+      font: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #fit {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      align-items: flex-start;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #app {
+      position: relative;
+      display: flex;
+      width: min(calc(100% - 12px), 520px);
+      height: 100%;
+      max-width: 100%;
+      min-width: 0;
+      min-height: 0;
+      margin-inline: auto;
+      padding: 7px 6px 4px;
+      flex-direction: column;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    #app.is-loading > :not(.app-loading) {
+      visibility: hidden;
+    }
+
+    #app:not(.is-loading) .app-loading {
+      display: none;
+    }
+
+    .app-loading {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+    }
+
+    .cone-loader {
+      position: relative;
+      width: 176px;
+      height: 78px;
+      margin: 0 auto;
+      overflow: visible;
+      isolation: isolate;
+    }
+
+    .cone {
+      position: absolute;
+      bottom: 8px;
+      width: 58px;
+      height: 68px;
+      opacity: 0;
+      clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      -webkit-clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      mix-blend-mode: normal;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      transform: translateZ(0);
+      will-change: opacity;
+    }
+
+    .cone.blue {
+      left: 33px;
+      background: var(--blue-cone);
+      animation: blueConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .cone.green {
+      left: 69px;
+      background: var(--green-cone);
+      animation: greenConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .cone.red {
+      left: 85px;
+      background: var(--red-cone);
+      animation: redConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .loader-text {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: center;
+      animation: loadingTextPulse 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    @keyframes blueConeCycle {
+      0% { opacity: 0; }
+      12% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes greenConeCycle {
+      0% { opacity: 0; }
+      20% { opacity: 0; }
+      32% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes redConeCycle {
+      0% { opacity: 0; }
+      40% { opacity: 0; }
+      52% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes loadingTextPulse {
+      0% { opacity: 0.45; }
+      52% { opacity: 0.78; }
+      76% { opacity: 0.78; }
+      87% { opacity: 0.45; }
+      100% { opacity: 0.45; }
+    }
+
+    /* ============================================================
+     * TOP TABS + LIVE STATUS
+     * ============================================================ */
+
+    .module-top {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      flex: 0 0 auto;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 4px;
+      border-bottom: 1px solid var(--track);
+    }
+
+    .tab-scroll-shell {
+      position: relative;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .tab-list {
+      position: relative;
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      align-items: flex-end;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .tab-list::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab-list::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      z-index: 2;
+      width: var(--tab-indicator-width, 0px);
+      height: 2px;
+      background: var(--purple);
+      pointer-events: none;
+      transform: translate3d(var(--tab-indicator-x, 0px), 0, 0);
+      transition:
+        transform 420ms var(--motion-ease),
+        width 420ms var(--motion-ease);
+      will-change: transform, width;
+    }
+
+    .tab-list.is-positioning::after {
+      transition: none;
+    }
+
+    .chart-tab {
+      flex: 0 0 auto;
+      min-height: 29px;
+      margin: 0;
+      padding: 0 9px 6px;
+      color: var(--muted);
+      background: #fff;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      transition: color 180ms ease;
+    }
+
+    .chart-tab:hover:not(.is-active) {
+      color: var(--ink);
+    }
+
+    .chart-tab.is-active {
+      color: var(--purple);
+      cursor: default;
+    }
+
+    .chart-tab:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: -2px;
+    }
+
+    .tab-scroll-button {
+      position: absolute;
+      top: 3px;
+      z-index: 4;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      transition:
+        opacity 160ms ease,
+        background 160ms ease;
+    }
+
+    .tab-scroll-button:hover {
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.90);
+    }
+
+    .tab-scroll-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 1px;
+    }
+
+    .tab-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .tab-scroll-left { left: 0; }
+    .tab-scroll-right { right: 0; }
+
+    .live-data {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 4px;
+      margin: 0 1px 8px 0;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .live-data-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      border-radius: 50%;
+      background: var(--live-red);
+      transition: background-color 220ms ease;
+    }
+
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
+    #status {
+      flex: 0 0 auto;
+      width: 100%;
+      margin: 3px 0 0;
+      color: var(--error);
+      font-size: 12px;
+      line-height: 1.35;
+      text-align: left;
+    }
+
+    #status:empty {
+      display: none;
+    }
+
+    /* ============================================================
+     * HEADING + TREND CONTROL
+     * ============================================================ */
+
+    .chart-heading-row {
+      position: relative;
+      z-index: 35;
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 31px;
+      flex: 0 0 auto;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 7px;
+      margin: 0;
+    }
+
+    .heading-scroll-shell {
+      position: relative;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .heading-scroll-viewport {
+      width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .heading-scroll-viewport::-webkit-scrollbar {
+      display: none;
+    }
+
+    .heading-scroll-button {
+      position: absolute;
+      top: 4px;
+      z-index: 4;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      transition:
+        opacity 160ms ease,
+        background 160ms ease;
+    }
+
+    .heading-scroll-button:hover {
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.90);
+    }
+
+    .heading-scroll-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 1px;
+    }
+
+    .heading-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .heading-scroll-left { left: 0; }
+    .heading-scroll-right { right: 0; }
+
+    .chart-heading {
+      display: inline-block;
+      width: max-content;
+      min-width: max-content;
+      margin: 0;
+      padding: 4px 0 0;
+      color: var(--ink);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 22px;
+      text-align: left;
+      white-space: nowrap;
+      will-change: opacity;
+    }
+
+    .yoy-trend-toggle {
+      display: grid;
+      width: 74px;
+      height: 27px;
+      flex: 0 0 74px;
+      grid-template-columns: 15px max-content 1fr;
+      align-items: center;
+      gap: 4px;
+      margin-top: 2px;
+      padding: 0 5px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--track);
+      border-radius: 4px;
+      box-shadow: none;
+      font-family: inherit;
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition:
+        border-color 140ms ease,
+        background 140ms ease,
+        box-shadow 140ms ease;
+    }
+
+    .yoy-trend-toggle > * {
+      pointer-events: none;
+    }
+
+    .yoy-trend-toggle:hover {
+      box-shadow: inset 0 0 0 1px rgba(21, 21, 21, 0.12);
+    }
+
+    .yoy-trend-toggle.is-on {
+      border-color: var(--purple);
+    }
+
+    .yoy-trend-toggle:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
+    }
+
+    .yoy-binary-indicator {
+      position: relative;
+      width: 15px;
+      height: 15px;
+      min-width: 15px;
+      max-width: 15px;
+      border: 1px solid var(--muted);
+      border-radius: 2px;
+      background: #fff;
+    }
+
+    .yoy-trend-toggle.is-on .yoy-binary-indicator {
+      border-color: var(--purple);
+      background: var(--purple);
+    }
+
+    .yoy-trend-toggle.is-on .yoy-binary-indicator::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 4px;
+      width: 4px;
+      height: 7px;
+      border-right: 2px solid #fff;
+      border-bottom: 2px solid #fff;
+      transform: rotate(45deg);
+    }
+
+    .yoy-toggle-label,
+    .yoy-toggle-value {
+      font-size: 8.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .yoy-toggle-label {
+      color: var(--ink);
+    }
+
+    .yoy-toggle-value {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      color: var(--muted);
+      letter-spacing: 0.025em;
+      text-align: center;
+    }
+
+    .yoy-trend-toggle.is-on .yoy-toggle-value {
+      color: var(--purple);
+    }
+
+    /* ============================================================
+     * LEGEND
+     * ============================================================ */
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .legend-nav {
+      position: relative;
+      flex: 1 1 auto;
+      min-width: 54px;
+      height: 28px;
+      overflow: hidden;
+    }
+
+    .legend-viewport {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .chart-legend {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      align-items: center;
+      gap: 10px;
+      padding: 1px 0 4px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      white-space: nowrap;
+    }
+
+    .chart-legend::-webkit-scrollbar {
+      display: none;
+    }
+
+    .legend-scroll-button {
+      position: absolute;
+      top: 3px;
+      z-index: 3;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      transition:
+        opacity 160ms ease,
+        background 160ms ease;
+    }
+
+    .legend-scroll-button:hover {
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.90);
+    }
+
+    .legend-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .legend-scroll-left { left: 0; }
+    .legend-scroll-right { right: 0; }
+
+    .legend-item {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .legend-line {
+      width: 17px;
+      height: 3px;
+      flex: 0 0 17px;
+      border-radius: 2px;
+      background: var(--legend-colour);
+    }
+
+    /* ============================================================
+     * CHART
+     * ============================================================ */
+
+    .chart-shell {
+      position: relative;
+      flex: 1 1 0;
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      margin: -2px 0 0;
+      overflow: hidden;
+      contain: layout paint;
+      isolation: isolate;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    #comparisonChart {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      outline: none;
+    }
+
+    .method-note {
+      flex: 0 0 auto;
+      width: 100%;
+      min-height: 14px;
+      margin: 0;
+      padding: 1px 0 0;
+      color: var(--muted);
+      font-size: 8px;
+      font-weight: 400;
+      line-height: 1.2;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (max-width: 430px) {
+      #app {
+        width: calc(100% - 6px);
+        padding: 6px 2px 2px;
+      }
+
+      .chart-tab {
+        padding-right: 7px;
+        padding-left: 7px;
+        font-size: 12px;
+      }
+
+      .live-data {
+        margin-right: 3px;
+        font-size: 8px;
+      }
+
+      .chart-heading {
+        font-size: 14px;
+      }
+
+      .legend-item {
+        font-size: 9px;
+      }
+
+      .yoy-trend-toggle {
+        width: 72px;
+        flex-basis: 72px;
+      }
+
+      .yoy-toggle-label,
+      .yoy-toggle-value {
+        font-size: 8px;
+      }
+
+      .method-note {
+        font-size: 7.5px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+
+      .cone.blue,
+      .cone.green,
+      .cone.red {
+        animation: none;
+        opacity: 1;
+      }
+
+      .loader-text {
+        animation: none;
+        opacity: 0.72;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div class="app-loading" role="status" aria-label="Loading Medicare demand and optometry supply data">
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p class="loader-text">Loading demand and supply data…</p>
+      </div>
+
+      <div class="module-top">
+        <div id="tabScrollShell" class="tab-scroll-shell">
+          <button
+            id="tabScrollLeft"
+            class="tab-scroll-button tab-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll chart tabs left"
+          >‹</button>
+
+          <div id="tabList" class="tab-list" role="tablist" aria-label="Medicare demand and optometry supply views">
+            <button
+              class="chart-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              data-view="growth"
+            >Demand vs supply</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              data-view="services"
+            >Services / optom</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              data-view="hours"
+            >Hours / optom</button>
+          </div>
+
+          <button
+            id="tabScrollRight"
+            class="tab-scroll-button tab-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll chart tabs right"
+          >›</button>
+        </div>
+
+        <div id="dataSourceIndicator" class="live-data" aria-label="Live data">
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="dataSourceText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div id="headingScrollShell" class="heading-scroll-shell">
+          <button
+            id="headingScrollLeft"
+            class="heading-scroll-button heading-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll graph title left"
+          >‹</button>
+
+          <div id="headingScrollViewport" class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">Medicare demand vs optometry supply</h2>
+          </div>
+
+          <button
+            id="headingScrollRight"
+            class="heading-scroll-button heading-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll graph title right"
+          >›</button>
+        </div>
+
+        <button
+          id="yoyTrendToggle"
+          class="yoy-trend-toggle is-on"
+          type="button"
+          aria-pressed="true"
+          aria-label="Trend labels on"
+        >
+          <span class="yoy-binary-indicator" aria-hidden="true"></span>
+          <span class="yoy-toggle-label">Trend</span>
+          <span id="yoyToggleValue" class="yoy-toggle-value">ON</span>
+        </button>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <button
+            id="legendScrollLeft"
+            class="legend-scroll-button legend-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll legend left"
+          >‹</button>
+
+          <div class="legend-viewport">
+            <div id="chartLegend" class="chart-legend" aria-label="Chart legend"></div>
+          </div>
+
+          <button
+            id="legendScrollRight"
+            class="legend-scroll-button legend-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll legend right"
+          >›</button>
+        </div>
+      </div>
+
+      <div class="chart-shell">
+        <canvas
+          id="comparisonChart"
+          aria-label="Australian Medicare service demand compared with optometry supply"
+          role="img"
+        ></canvas>
+      </div>
+
+      <p id="methodNote" class="method-note">
+        Medicare-equivalent hours = billed services × item consultation time; denominator = active clinicians.
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    Chart.defaults.font.family = "'Lato', sans-serif";
+    Chart.defaults.color = '#151515';
+
+    // ============================================================
+    // RAW DATA SOURCES
+    // ============================================================
+
+    const SHEET_ID =
+      '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
+
+    const MEDICARE_SHEET =
+      'Medicareitems';
+
+    /*
+     * Same raw Medicare ranges as the supplied Medicare module:
+     * row 28 = item consultation time (hours)
+     * row 29 = item number
+     * row 30 = raw header
+     * row 31 onward = annual billings
+     * C = calendar year
+     * D:KE = 32 item blocks × 9 columns
+     * Australian Total is the ninth column in each item block.
+     */
+    const MEDICARE_DATA_RANGE =
+      'C30:KE';
+
+    const MEDICARE_ITEM_RANGE =
+      'D29:KE29';
+
+    const MEDICARE_HOURS_RANGE =
+      'D28:KE28';
+
+    /*
+     * Same raw optometrist source as the supplied supply module:
+     * L = year, V = active clinicians, W = general registration.
+     */
+    const OPTOM_SHEET =
+      'Optomsbystate';
+
+    const OPTOM_RANGE =
+      'L31:W';
+
+    const FETCH_TIMEOUT_MS =
+      15000;
+
+    const CACHE_KEY =
+      'pff-medicare-demand-vs-optom-supply-v1';
+
+    const MEDICARE_FALLBACK =
+      {"items":[{"item":"10900","hours":0.475,"colour":"#4E5BD5"},{"item":"10905","hours":0.475,"colour":"#D95F02"},{"item":"10907","hours":0.475,"colour":"#00838F"},{"item":"10910","hours":0.475,"colour":"#8E44AD"},{"item":"10911","hours":0.475,"colour":"#C49A00"},{"item":"10912","hours":0.475,"colour":"#2C7FB8"},{"item":"10913","hours":0.475,"colour":"#C44569"},{"item":"10914","hours":0.475,"colour":"#6B8E23"},{"item":"10915","hours":0.475,"colour":"#7B61FF"},{"item":"10916","hours":0.25,"colour":"#C25E00"},{"item":"10918","hours":0.25,"colour":"#00796B"},{"item":"10921","hours":1.0,"colour":"#B84A9C"},{"item":"10922","hours":1.0,"colour":"#708238"},{"item":"10923","hours":1.0,"colour":"#3C78D8"},{"item":"10924","hours":1.0,"colour":"#B23A48"},{"item":"10925","hours":1.0,"colour":"#5B7F55"},{"item":"10926","hours":1.0,"colour":"#6A5ACD"},{"item":"10927","hours":1.0,"colour":"#E07A2D"},{"item":"10928","hours":1.0,"colour":"#0F6B78"},{"item":"10929","hours":1.0,"colour":"#A64AC9"},{"item":"10930","hours":1.0,"colour":"#A37B00"},{"item":"10938","hours":0.475,"colour":"#1F5A94"},{"item":"10939","hours":0.475,"colour":"#A73E65"},{"item":"10940","hours":0.475,"colour":"#436B43"},{"item":"10941","hours":0.475,"colour":"#5946B2"},{"item":"10942","hours":0.475,"colour":"#B85B1E"},{"item":"10943","hours":0.475,"colour":"#197D8C"},{"item":"10944","hours":0.25,"colour":"#8A3C8F"},{"item":"10945","hours":0.1666666667,"colour":"#827717"},{"item":"10946","hours":0.475,"colour":"#2B67B1"},{"item":"10947","hours":0.1666666667,"colour":"#9F3B43"},{"item":"10948","hours":0.475,"colour":"#355E3B"}],"rows":[{"year":2012,"totals":[3321421.0,4703.0,269533.0,null,null,75876.0,217028.0,403392.0,162653.0,639657.0,1820522.0,28811.0,5071.0,3761.0,2475.0,848.0,17.0,124.0,53.0,267.0,4591.0,null,null,289554.0,11329.0,4298.0,53961.0,null,null,null,null,null]},{"year":2013,"totals":[3360915.0,7002.0,261464.0,null,null,80456.0,241120.0,466907.0,178847.0,701849.0,1918193.0,28190.0,5036.0,3804.0,2657.0,841.0,12.0,130.0,107.0,549.0,4931.0,null,null,306131.0,11416.0,4927.0,61911.0,null,null,null,null,null]},{"year":2014,"totals":[3482886.0,8133.0,245400.0,null,null,91430.0,269277.0,550201.0,200916.0,740107.0,2014759.0,29027.0,4910.0,3689.0,2814.0,917.0,14.0,125.0,42.0,2673.0,15820.0,null,null,330171.0,12100.0,4991.0,71115.0,null,null,null,null,null]},{"year":2015,"totals":[25764.0,9316.0,318642.0,1732126.0,1066020.0,160541.0,404852.0,622006.0,217786.0,927262.0,2269885.0,32181.0,5411.0,3839.0,2635.0,964.0,27.0,147.0,48.0,1081.0,10160.0,null,null,351161.0,12943.0,5654.0,84202.0,3061.0,54.0,114.0,7.0,2.0]},{"year":2016,"totals":[276.0,9922.0,310902.0,1913167.0,1139953.0,181585.0,453191.0,705694.0,225059.0,901279.0,2241754.0,33071.0,5554.0,4156.0,2619.0,1070.0,18.0,156.0,59.0,505.0,4913.0,null,null,387002.0,14326.0,6798.0,95375.0,11078.0,214.0,450.0,12.0,16.0]},{"year":2017,"totals":[63.0,10080.0,296894.0,2190966.0,1213464.0,210668.0,506063.0,792695.0,237995.0,887323.0,2172232.0,33617.0,5600.0,4248.0,2604.0,1071.0,5.0,111.0,64.0,511.0,5001.0,null,null,437948.0,16252.0,7296.0,111191.0,13459.0,262.0,371.0,15.0,13.0]},{"year":2018,"totals":[17.0,11463.0,296589.0,2194923.0,1258474.0,240324.0,587084.0,913184.0,254635.0,928753.0,2181848.0,34202.0,5532.0,4179.0,2523.0,1061.0,11.0,148.0,62.0,580.0,4941.0,null,null,520809.0,19782.0,6933.0,119330.0,15372.0,239.0,378.0,17.0,18.0]},{"year":2019,"totals":[5.0,12302.0,329276.0,2084712.0,1295965.0,265889.0,676988.0,1063928.0,273342.0,990024.0,2270802.0,34616.0,5700.0,4116.0,2551.0,1106.0,10.0,134.0,69.0,714.0,4738.0,null,null,609282.0,22929.0,6971.0,129695.0,16951.0,200.0,353.0,5.0,22.0]},{"year":2020,"totals":[3.0,11785.0,304230.0,1873964.0,1219706.0,261112.0,642662.0,1071111.0,252699.0,914740.0,2000311.0,29518.0,4600.0,3604.0,2238.0,922.0,23.0,117.0,132.0,693.0,3763.0,null,null,524237.0,17927.0,5040.0,115460.0,18924.0,480.0,530.0,27.0,18.0]},{"year":2021,"totals":[null,12055.0,326637.0,1963180.0,1309573.0,276186.0,697075.0,1225438.0,265412.0,947583.0,2147115.0,33607.0,5145.0,4013.0,2407.0,978.0,32.0,112.0,60.0,872.0,5639.0,null,null,576401.0,19860.0,5478.0,122237.0,20711.0,978.0,548.0,41.0,22.0]},{"year":2022,"totals":[null,12780.0,338067.0,2062335.0,1403800.0,286304.0,747833.0,1410423.0,275788.0,1008694.0,2234486.0,37551.0,5501.0,4301.0,2541.0,1067.0,29.0,114.0,58.0,1058.0,4541.0,null,null,590500.0,19234.0,4931.0,127677.0,21530.0,769.0,580.0,8.0,1.0]},{"year":2023,"totals":[null,11175.0,346389.0,1991657.0,1444297.0,299084.0,844819.0,1616731.0,289137.0,1075291.0,2375868.0,37424.0,5856.0,4427.0,2692.0,1090.0,31.0,125.0,63.0,1220.0,3476.0,null,null,620731.0,19876.0,5243.0,132577.0,23251.0,897.0,623.0,null,null]},{"year":2024,"totals":[null,10685.0,339205.0,1959084.0,1470317.0,326188.0,940883.0,1776819.0,295241.0,1065166.0,2399131.0,37407.0,6073.0,4577.0,2607.0,1073.0,37.0,121.0,58.0,1483.0,3638.0,null,null,639879.0,20606.0,6539.0,134859.0,24414.0,890.0,497.0,null,null]}]};
+
+    const OPTOM_FALLBACK =
+      [{"year":2013,"general":4559.0,"active":4021.0},{"year":2014,"general":4749.0,"active":4124.0},{"year":2015,"general":4941.0,"active":4350.0},{"year":2016,"general":5134.0,"active":4510.0},{"year":2017,"general":5296.0,"active":4610.0},{"year":2018,"general":5492.0,"active":4814.0},{"year":2019,"general":5768.0,"active":5085.0},{"year":2020,"general":5962.0,"active":5171.0},{"year":2021,"general":6282.0,"active":5377.0},{"year":2022,"general":6495.0,"active":5714.0},{"year":2023,"general":6781.0,"active":5979.0},{"year":2024,"general":7104.0,"active":6210.0}];
+
+    // ============================================================
+    // DOM + STATE
+    // ============================================================
+
+    const app =
+      document.getElementById('app');
+
+    const statusElement =
+      document.getElementById('status');
+
+    const dataSourceIndicator =
+      document.getElementById('dataSourceIndicator');
+
+    const dataSourceText =
+      document.getElementById('dataSourceText');
+
+    const tabList =
+      document.getElementById('tabList');
+
+    const chartTabs =
+      Array.from(
+        document.querySelectorAll(
+          '.chart-tab'
+        )
+      );
+
+    const tabScrollLeft =
+      document.getElementById('tabScrollLeft');
+
+    const tabScrollRight =
+      document.getElementById('tabScrollRight');
+
+    const headingScrollShell =
+      document.getElementById('headingScrollShell');
+
+    const headingScrollViewport =
+      document.getElementById('headingScrollViewport');
+
+    const chartHeading =
+      document.getElementById('chartHeading');
+
+    const headingScrollLeft =
+      document.getElementById('headingScrollLeft');
+
+    const headingScrollRight =
+      document.getElementById('headingScrollRight');
+
+    const yoyTrendToggle =
+      document.getElementById('yoyTrendToggle');
+
+    const yoyToggleValue =
+      document.getElementById('yoyToggleValue');
+
+    const chartLegend =
+      document.getElementById('chartLegend');
+
+    const legendScrollLeft =
+      document.getElementById('legendScrollLeft');
+
+    const legendScrollRight =
+      document.getElementById('legendScrollRight');
+
+    const canvas =
+      document.getElementById('comparisonChart');
+
+    const methodNote =
+      document.getElementById('methodNote');
+
+    let activeView =
+      'growth';
+
+    let showTrend =
+      true;
+
+    let sourceData =
+      null;
+
+    let combinedRows =
+      [];
+
+    let baseYear =
+      null;
+
+    let chart =
+      null;
+
+    let currentScale = {
+      min: 0,
+      max: 100,
+      step: 20,
+      intervals: 5
+    };
+
+    let resizeFrame =
+      null;
+
+    let headingAnimationToken =
+      0;
+
+    const yAxisTickAnimation = {
+      values: [],
+      ratios: [],
+      token: 0,
+      raf: null
+    };
+
+    const yAxisTitleAnimation = {
+      from: '',
+      to: '',
+      progress: 1,
+      token: 0,
+      raf: null
+    };
+
+    // ============================================================
+    // UTILITIES
+    // ============================================================
+
+    function reducedMotion() {
+      return window.matchMedia?.(
+        '(prefers-reduced-motion: reduce)'
+      )?.matches === true;
+    }
+
+    function clamp(
+      value,
+      minimum,
+      maximum
+    ) {
+      return Math.min(
+        maximum,
+        Math.max(
+          minimum,
+          value
+        )
+      );
+    }
+
+    function easeOutCubic(
+      value
+    ) {
+      const clamped =
+        clamp(
+          value,
+          0,
+          1
+        );
+
+      return 1 -
+        Math.pow(
+          1 - clamped,
+          3
+        );
+    }
+
+    function cellValue(
+      cell
+    ) {
+      if (
+        cell === null ||
+        cell === undefined
+      ) {
+        return null;
+      }
+
+      if (
+        typeof cell ===
+          'object' &&
+        Object.prototype.hasOwnProperty.call(
+          cell,
+          'v'
+        )
+      ) {
+        return cell.v;
+      }
+
+      return cell;
+    }
+
+    function numericCell(
+      cell
+    ) {
+      const raw =
+        cellValue(
+          cell
+        );
+
+      if (
+        raw === null ||
+        raw === undefined ||
+        raw === ''
+      ) {
+        return null;
+      }
+
+      const number =
+        Number(
+          typeof raw ===
+            'string'
+            ? raw.replace(
+                /,/g,
+                ''
+              )
+            : raw
+        );
+
+      return Number.isFinite(
+        number
+      )
+        ? number
+        : null;
+    }
+
+    function itemNumberCell(
+      cell
+    ) {
+      const raw =
+        cellValue(
+          cell
+        );
+
+      if (
+        raw === null ||
+        raw === undefined
+      ) {
+        return '';
+      }
+
+      const text =
+        String(
+          raw
+        )
+          .trim()
+          .replace(
+            /\.0+$/,
+            ''
+          );
+
+      return text;
+    }
+
+    function compactNumber(
+      value,
+      decimals = 1
+    ) {
+      const numeric =
+        Number(
+          value
+        );
+
+      if (
+        !Number.isFinite(
+          numeric
+        )
+      ) {
+        return '—';
+      }
+
+      const absolute =
+        Math.abs(
+          numeric
+        );
+
+      if (
+        absolute >=
+        1000000
+      ) {
+        return `${(
+          numeric /
+          1000000
+        ).toFixed(decimals)}m`;
+      }
+
+      if (
+        absolute >=
+        1000
+      ) {
+        return `${(
+          numeric /
+          1000
+        ).toFixed(decimals)}k`;
+      }
+
+      return numeric.toFixed(
+        decimals
+      );
+    }
+
+    function formatInteger(
+      value
+    ) {
+      const numeric =
+        Number(
+          value
+        );
+
+      return Number.isFinite(
+        numeric
+      )
+        ? Math.round(
+            numeric
+          ).toLocaleString(
+            'en-AU'
+          )
+        : '—';
+    }
+
+    function formatOne(
+      value
+    ) {
+      const numeric =
+        Number(
+          value
+        );
+
+      return Number.isFinite(
+        numeric
+      )
+        ? numeric.toLocaleString(
+            'en-AU',
+            {
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1
+            }
+          )
+        : '—';
+    }
+
+    function chartAnimationDuration(
+      reason
+    ) {
+      if (
+        reducedMotion()
+      ) {
+        return 0;
+      }
+
+      switch (
+        reason
+      ) {
+        case 'tab':
+          return 820;
+
+        case 'legend':
+          return 260;
+
+        case 'initial':
+          return 760;
+
+        default:
+          return 520;
+      }
+    }
+
+    function fadeTextChange(
+      element,
+      nextText,
+      animate = true
+    ) {
+      if (
+        !element
+      ) {
+        return;
+      }
+
+      const text =
+        String(
+          nextText ?? ''
+        );
+
+      if (
+        element.textContent ===
+          text
+      ) {
+        return;
+      }
+
+      if (
+        !animate ||
+        reducedMotion() ||
+        typeof element.animate !==
+          'function'
+      ) {
+        element.textContent =
+          text;
+        return;
+      }
+
+      const token =
+        ++headingAnimationToken;
+
+      const fadeOut =
+        element.animate(
+          [
+            {opacity: 1},
+            {opacity: 0}
+          ],
+          {
+            duration: 176,
+            easing: 'ease-out',
+            fill: 'forwards'
+          }
+        );
+
+      fadeOut.finished
+        .then(
+          () => {
+            if (
+              token !==
+              headingAnimationToken
+            ) {
+              return;
+            }
+
+            element.textContent =
+              text;
+
+            return element.animate(
+              [
+                {opacity: 0},
+                {opacity: 1}
+              ],
+              {
+                duration: 244,
+                easing:
+                  'cubic-bezier(0.22, 1, 0.36, 1)',
+                fill:
+                  'forwards'
+              }
+            ).finished;
+          }
+        )
+        .catch(
+          () => {}
+        );
+    }
+
+    // ============================================================
+    // GOOGLE SHEETS
+    // ============================================================
+
+    function loadGVizSheet(
+      sheetName,
+      range,
+      headers = '1'
+    ) {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          const callbackName =
+            `__pff_gviz_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+          const script =
+            document.createElement(
+              'script'
+            );
+
+          let settled =
+            false;
+
+          const cleanup =
+            () => {
+              if (
+                settled
+              ) {
+                return;
+              }
+
+              settled =
+                true;
+
+              clearTimeout(
+                timer
+              );
+
+              delete window[
+                callbackName
+              ];
+
+              script.remove();
+            };
+
+          window[
+            callbackName
+          ] =
+            payload => {
+              if (
+                !payload ||
+                payload.status ===
+                  'error' ||
+                !payload.table
+              ) {
+                cleanup();
+                reject(
+                  new Error(
+                    `Could not read ${sheetName}.`
+                  )
+                );
+                return;
+              }
+
+              const table =
+                payload.table;
+
+              cleanup();
+              resolve(
+                table
+              );
+            };
+
+          const timer =
+            window.setTimeout(
+              () => {
+                cleanup();
+
+                reject(
+                  new Error(
+                    `${sheetName} request timed out.`
+                  )
+                );
+              },
+              FETCH_TIMEOUT_MS
+            );
+
+          script.onerror =
+            () => {
+              cleanup();
+
+              reject(
+                new Error(
+                  `Could not connect to ${sheetName}.`
+                )
+              );
+            };
+
+          const params =
+            new URLSearchParams({
+              sheet:
+                sheetName,
+              range,
+              headers,
+              tqx:
+                `out:json;responseHandler:${callbackName}`
+            });
+
+          script.src =
+            `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${params.toString()}`;
+
+          script.async =
+            true;
+
+          document.head.appendChild(
+            script
+          );
+        }
+      );
+    }
+
+    function parseMedicareMetadata(
+      itemTable,
+      hoursTable
+    ) {
+      const itemCells =
+        itemTable?.rows?.[0]?.c ||
+        [];
+
+      const hourCells =
+        hoursTable?.rows?.[0]?.c ||
+        [];
+
+      const parsed =
+        [];
+
+      for (
+        let start = 0;
+        start + 8 <
+          itemCells.length;
+        start += 9
+      ) {
+        const item =
+          itemNumberCell(
+            itemCells[
+              start
+            ]
+          );
+
+        if (
+          !/^\d{5}$/.test(
+            item
+          )
+        ) {
+          break;
+        }
+
+        const repeated =
+          Array.from(
+            {
+              length: 9
+            },
+            (
+              _,
+              offset
+            ) =>
+              itemNumberCell(
+                itemCells[
+                  start +
+                  offset
+                ]
+              )
+          );
+
+        if (
+          !repeated.every(
+            value =>
+              value ===
+              item
+          )
+        ) {
+          break;
+        }
+
+        parsed.push({
+          item,
+          hours:
+            numericCell(
+              hourCells[
+                start
+              ]
+            )
+        });
+      }
+
+      return parsed;
+    }
+
+    function parseMedicareTable(
+      table,
+      items
+    ) {
+      const parsed =
+        [];
+
+      (
+        table?.rows ||
+        []
+      ).forEach(
+        sourceRow => {
+          const cells =
+            sourceRow?.c ||
+            [];
+
+          const yearValue =
+            numericCell(
+              cells[0]
+            );
+
+          if (
+            !Number.isFinite(
+              yearValue
+            )
+          ) {
+            return;
+          }
+
+          const year =
+            Math.round(
+              yearValue
+            );
+
+          if (
+            year < 1900 ||
+            year > 2200
+          ) {
+            return;
+          }
+
+          /*
+           * In C30:KE, C is returned as index 0.
+           * The Australian Total for each 9-column item block is:
+           * 9, 18, 27, ...
+           */
+          const totals =
+            items.map(
+              (
+                _,
+                itemIndex
+              ) =>
+                numericCell(
+                  cells[
+                    9 +
+                    itemIndex *
+                      9
+                  ]
+                )
+            );
+
+          if (
+            totals.some(
+              Number.isFinite
+            )
+          ) {
+            parsed.push({
+              year,
+              totals
+            });
+          }
+        }
+      );
+
+      return parsed.sort(
+        (
+          first,
+          second
+        ) =>
+          first.year -
+          second.year
+      );
+    }
+
+    function parseOptomTable(
+      table
+    ) {
+      const parsed =
+        [];
+
+      (
+        table?.rows ||
+        []
+      ).forEach(
+        sourceRow => {
+          const cells =
+            sourceRow?.c ||
+            [];
+
+          const year =
+            numericCell(
+              cells[0]
+            );
+
+          const active =
+            numericCell(
+              cells[10]
+            );
+
+          const general =
+            numericCell(
+              cells[11]
+            );
+
+          if (
+            !Number.isFinite(
+              year
+            ) ||
+            year < 2000 ||
+            year > 2100 ||
+            !Number.isFinite(
+              active
+            ) ||
+            !Number.isFinite(
+              general
+            )
+          ) {
+            return;
+          }
+
+          parsed.push({
+            year:
+              Math.round(
+                year
+              ),
+            active,
+            general
+          });
+        }
+      );
+
+      return parsed.sort(
+        (
+          first,
+          second
+        ) =>
+          first.year -
+          second.year
+      );
+    }
+
+    function validMedicare(
+      data
+    ) {
+      return Boolean(
+        data &&
+        Array.isArray(
+          data.items
+        ) &&
+        data.items.length >=
+          1 &&
+        Array.isArray(
+          data.rows
+        ) &&
+        data.rows.length >=
+          3
+      );
+    }
+
+    function validOptoms(
+      rows
+    ) {
+      return Boolean(
+        Array.isArray(
+          rows
+        ) &&
+        rows.length >=
+          3
+      );
+    }
+
+    function saveCache(
+      data
+    ) {
+      try {
+        localStorage.setItem(
+          CACHE_KEY,
+          JSON.stringify({
+            savedAt:
+              Date.now(),
+            data
+          })
+        );
+      } catch (_) {}
+    }
+
+    function readCache() {
+      try {
+        const raw =
+          localStorage.getItem(
+            CACHE_KEY
+          );
+
+        if (
+          !raw
+        ) {
+          return null;
+        }
+
+        const parsed =
+          JSON.parse(
+            raw
+          );
+
+        const data =
+          parsed?.data;
+
+        return (
+          validMedicare(
+            data?.medicare
+          ) &&
+          validOptoms(
+            data?.optoms
+          )
+        )
+          ? data
+          : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function cloneFallback() {
+      return {
+        medicare:
+          JSON.parse(
+            JSON.stringify(
+              MEDICARE_FALLBACK
+            )
+          ),
+        optoms:
+          JSON.parse(
+            JSON.stringify(
+              OPTOM_FALLBACK
+            )
+          )
+      };
+    }
+
+    function setSourceStatus(
+      source
+    ) {
+      const live =
+        source ===
+        'live';
+
+      dataSourceIndicator.classList.toggle(
+        'is-cached',
+        !live
+      );
+
+      const label =
+        live
+          ? 'Live data'
+          : source ===
+              'cached'
+            ? 'Cached data'
+            : 'Snapshot data';
+
+      dataSourceIndicator.setAttribute(
+        'aria-label',
+        label
+      );
+
+      dataSourceText.textContent =
+        live
+          ? 'LIVE data'
+          : source ===
+              'cached'
+            ? 'CACHED data'
+            : 'SNAPSHOT data';
+    }
+
+    async function loadData() {
+      try {
+        const [
+          medicareTable,
+          optomTable
+        ] =
+          await Promise.all([
+            loadGVizSheet(
+              MEDICARE_SHEET,
+              MEDICARE_DATA_RANGE,
+              '1'
+            ),
+            loadGVizSheet(
+              OPTOM_SHEET,
+              OPTOM_RANGE,
+              '1'
+            )
+          ]);
+
+        let items =
+          MEDICARE_FALLBACK
+            .items
+            .map(
+              item => ({
+                item:
+                  item.item,
+                hours:
+                  item.hours
+              })
+            );
+
+        const [
+          itemResult,
+          hoursResult
+        ] =
+          await Promise.allSettled([
+            loadGVizSheet(
+              MEDICARE_SHEET,
+              MEDICARE_ITEM_RANGE,
+              '0'
+            ),
+            loadGVizSheet(
+              MEDICARE_SHEET,
+              MEDICARE_HOURS_RANGE,
+              '0'
+            )
+          ]);
+
+        if (
+          itemResult.status ===
+            'fulfilled' &&
+          hoursResult.status ===
+            'fulfilled'
+        ) {
+          const metadata =
+            parseMedicareMetadata(
+              itemResult.value,
+              hoursResult.value
+            );
+
+          if (
+            metadata.length ===
+            MEDICARE_FALLBACK
+              .items.length
+          ) {
+            items =
+              metadata;
+          }
+        }
+
+        const live =
+          {
+            medicare: {
+              items,
+              rows:
+                parseMedicareTable(
+                  medicareTable,
+                  items
+                )
+            },
+            optoms:
+              parseOptomTable(
+                optomTable
+              )
+          };
+
+        if (
+          !validMedicare(
+            live.medicare
+          ) ||
+          !validOptoms(
+            live.optoms
+          )
+        ) {
+          throw new Error(
+            'Live data were incomplete.'
+          );
+        }
+
+        saveCache(
+          live
+        );
+
+        setSourceStatus(
+          'live'
+        );
+
+        return live;
+      } catch (
+        error
+      ) {
+        const cached =
+          readCache();
+
+        if (
+          cached
+        ) {
+          setSourceStatus(
+            'cached'
+          );
+
+          return cached;
+        }
+
+        setSourceStatus(
+          'snapshot'
+        );
+
+        return cloneFallback();
+      }
+    }
+
+    // ============================================================
+    // COMBINED NATIONAL CALCULATIONS
+    // ============================================================
+
+    function buildCombinedRows(
+      data
+    ) {
+      const medicareByYear =
+        new Map();
+
+      data.medicare.rows.forEach(
+        row => {
+          let services =
+            0;
+
+          let demandHours =
+            0;
+
+          row.totals.forEach(
+            (
+              total,
+              index
+            ) => {
+              const count =
+                Number(
+                  total
+                );
+
+              const itemHours =
+                Number(
+                  data.medicare
+                    .items?.[
+                      index
+                    ]?.hours
+                );
+
+              if (
+                Number.isFinite(
+                  count
+                )
+              ) {
+                services +=
+                  count;
+
+                if (
+                  Number.isFinite(
+                    itemHours
+                  )
+                ) {
+                  demandHours +=
+                    count *
+                    itemHours;
+                }
+              }
+            }
+          );
+
+          medicareByYear.set(
+            row.year,
+            {
+              services,
+              demandHours
+            }
+          );
+        }
+      );
+
+      const optomByYear =
+        new Map(
+          data.optoms.map(
+            row => [
+              row.year,
+              row
+            ]
+          )
+        );
+
+      const years =
+        Array.from(
+          medicareByYear.keys()
+        )
+          .filter(
+            year =>
+              optomByYear.has(
+                year
+              )
+          )
+          .sort(
+            (
+              first,
+              second
+            ) =>
+              first -
+              second
+          );
+
+      if (
+        !years.length
+      ) {
+        return [];
+      }
+
+      const firstYear =
+        years[0];
+
+      const baseMedicare =
+        medicareByYear.get(
+          firstYear
+        );
+
+      const baseOptom =
+        optomByYear.get(
+          firstYear
+        );
+
+      const baseDemandHours =
+        Number(
+          baseMedicare
+            ?.demandHours
+        );
+
+      const baseActive =
+        Number(
+          baseOptom
+            ?.active
+        );
+
+      return years.map(
+        year => {
+          const medicare =
+            medicareByYear.get(
+              year
+            );
+
+          const optom =
+            optomByYear.get(
+              year
+            );
+
+          const active =
+            Number(
+              optom.active
+            );
+
+          const general =
+            Number(
+              optom.general
+            );
+
+          const services =
+            Number(
+              medicare.services
+            );
+
+          const demandHours =
+            Number(
+              medicare.demandHours
+            );
+
+          const servicesPerOptomWeek =
+            (
+              Number.isFinite(
+                services
+              ) &&
+              Number.isFinite(
+                active
+              ) &&
+              active > 0
+            )
+              ? services /
+                active /
+                52
+              : null;
+
+          const hoursPerOptomWeek =
+            (
+              Number.isFinite(
+                demandHours
+              ) &&
+              Number.isFinite(
+                active
+              ) &&
+              active > 0
+            )
+              ? demandHours /
+                active /
+                52
+              : null;
+
+          return {
+            year,
+            active,
+            general,
+            services,
+            demandHours,
+
+            demandIndex:
+              (
+                Number.isFinite(
+                  demandHours
+                ) &&
+                Number.isFinite(
+                  baseDemandHours
+                ) &&
+                baseDemandHours > 0
+              )
+                ? demandHours /
+                  baseDemandHours *
+                  100
+                : null,
+
+            supplyIndex:
+              (
+                Number.isFinite(
+                  active
+                ) &&
+                Number.isFinite(
+                  baseActive
+                ) &&
+                baseActive > 0
+              )
+                ? active /
+                  baseActive *
+                  100
+                : null,
+
+            servicesPerOptomWeek,
+            hoursPerOptomWeek,
+
+            servicesPerOptomYear:
+              (
+                Number.isFinite(
+                  servicesPerOptomWeek
+                )
+              )
+                ? servicesPerOptomWeek *
+                  52
+                : null,
+
+            hoursPerOptomYear:
+              (
+                Number.isFinite(
+                  hoursPerOptomWeek
+                )
+              )
+                ? hoursPerOptomWeek *
+                  52
+                : null
+          };
+        }
+      );
+    }
+
+    // ============================================================
+    // VIEW CONFIG
+    // ============================================================
+
+    function viewConfig() {
+      if (
+        activeView ===
+        'services'
+      ) {
+        return {
+          heading:
+            'Medicare services per active optometrist',
+          yTitle:
+            'Services / optom / week',
+          keys:
+            [
+              'servicesPerOptomWeek'
+            ],
+          labels:
+            [
+              'Services / active optom'
+            ],
+          colours:
+            [
+              '#00a651'
+            ],
+          decimals:
+            1,
+          method:
+            'Total Australian Medicare services ÷ active clinicians ÷ 52.'
+        };
+      }
+
+      if (
+        activeView ===
+        'hours'
+      ) {
+        return {
+          heading:
+            'Medicare-equivalent hours per active optometrist',
+          yTitle:
+            'Hours / optom / week',
+          keys:
+            [
+              'hoursPerOptomWeek'
+            ],
+          labels:
+            [
+              'Hours / active optom'
+            ],
+          colours:
+            [
+              '#6600ff'
+            ],
+          decimals:
+            1,
+          method:
+            'Medicare-equivalent hours = billed services × item time; divided by active clinicians and 52.'
+        };
+      }
+
+      return {
+        heading:
+          'Medicare demand vs optometry supply',
+        yTitle:
+          `Index (${baseYear} = 100)`,
+        keys:
+          [
+            'demandIndex',
+            'supplyIndex'
+          ],
+        labels:
+          [
+            'Medicare-equivalent hours',
+            'Active clinicians'
+          ],
+        colours:
+          [
+            '#00a651',
+            '#f1b916'
+          ],
+        decimals:
+          0,
+        method:
+          `Demand = Medicare-equivalent hours; supply = active clinicians; both indexed to ${baseYear}.`
+      };
+    }
+
+    function seriesValues(
+      key
+    ) {
+      return combinedRows.map(
+        row => {
+          const value =
+            Number(
+              row[
+                key
+              ]
+            );
+
+          return Number.isFinite(
+            value
+          )
+            ? value
+            : null;
+        }
+      );
+    }
+
+    function niceStep(
+      raw
+    ) {
+      if (
+        !Number.isFinite(
+          raw
+        ) ||
+        raw <= 0
+      ) {
+        return 1;
+      }
+
+      const exponent =
+        Math.pow(
+          10,
+          Math.floor(
+            Math.log10(
+              raw
+            )
+          )
+        );
+
+      const fraction =
+        raw /
+        exponent;
+
+      const candidates = [
+        1,
+        1.5,
+        2,
+        2.5,
+        3,
+        4,
+        5,
+        7.5,
+        10
+      ];
+
+      const selected =
+        candidates.find(
+          candidate =>
+            candidate >=
+            fraction
+        ) ||
+        10;
+
+      return selected *
+        exponent;
+    }
+
+    function computeScale() {
+      const config =
+        viewConfig();
+
+      const values =
+        config.keys
+          .flatMap(
+            key =>
+              seriesValues(
+                key
+              )
+          )
+          .filter(
+            Number.isFinite
+          );
+
+      if (
+        !values.length
+      ) {
+        return {
+          min: 0,
+          max: 100,
+          step: 20,
+          intervals: 5
+        };
+      }
+
+      const maximum =
+        Math.max(
+          ...values
+        );
+
+      const step =
+        niceStep(
+          maximum /
+          5
+        );
+
+      const max =
+        Math.max(
+          step,
+          Math.ceil(
+            maximum /
+            step
+          ) *
+          step
+        );
+
+      const intervals =
+        Math.max(
+          1,
+          Math.round(
+            max /
+            step
+          )
+        );
+
+      return {
+        min: 0,
+        max,
+        step,
+        intervals
+      };
+    }
+
+    function formatAxisValue(
+      value
+    ) {
+      const config =
+        viewConfig();
+
+      const numeric =
+        Number(
+          value
+        );
+
+      if (
+        !Number.isFinite(
+          numeric
+        )
+      ) {
+        return '';
+      }
+
+      if (
+        activeView ===
+        'growth'
+      ) {
+        return Math.round(
+          numeric
+        ).toLocaleString(
+          'en-AU'
+        );
+      }
+
+      return numeric.toLocaleString(
+        'en-AU',
+        {
+          minimumFractionDigits:
+            config.decimals,
+          maximumFractionDigits:
+            config.decimals
+        }
+      );
+    }
+
+    // ============================================================
+    // TREND
+    // ============================================================
+
+    function logLinearTrend(
+      values
+    ) {
+      const observations =
+        combinedRows
+          .map(
+            (
+              row,
+              index
+            ) => ({
+              year:
+                Number(
+                  row.year
+                ),
+              value:
+                Number(
+                  values[
+                    index
+                  ]
+                )
+            })
+          )
+          .filter(
+            item =>
+              Number.isFinite(
+                item.year
+              ) &&
+              Number.isFinite(
+                item.value
+              ) &&
+              item.value > 0
+          )
+          .slice(
+            -3
+          );
+
+      if (
+        observations.length <
+        2
+      ) {
+        return null;
+      }
+
+      const meanX =
+        observations.reduce(
+          (
+            sum,
+            item
+          ) =>
+            sum +
+            item.year,
+          0
+        ) /
+        observations.length;
+
+      const meanY =
+        observations.reduce(
+          (
+            sum,
+            item
+          ) =>
+            sum +
+            Math.log(
+              item.value
+            ),
+          0
+        ) /
+        observations.length;
+
+      let numerator =
+        0;
+
+      let denominator =
+        0;
+
+      observations.forEach(
+        item => {
+          const dx =
+            item.year -
+            meanX;
+
+          numerator +=
+            dx *
+            (
+              Math.log(
+                item.value
+              ) -
+              meanY
+            );
+
+          denominator +=
+            dx *
+            dx;
+        }
+      );
+
+      if (
+        denominator <= 0
+      ) {
+        return null;
+      }
+
+      const slope =
+        numerator /
+        denominator;
+
+      return (
+        Math.exp(
+          slope
+        ) -
+        1
+      ) *
+        100;
+    }
+
+    function trendText(
+      value
+    ) {
+      const numeric =
+        Number(
+          value
+        );
+
+      if (
+        !Number.isFinite(
+          numeric
+        )
+      ) {
+        return '';
+      }
+
+      const sign =
+        numeric > 0
+          ? '+'
+          : '';
+
+      return `${sign}${numeric.toFixed(1)}% p.a.`;
+    }
+
+    // ============================================================
+    // HEADING / LEGEND / SCROLLERS
+    // ============================================================
+
+    function updateOverflowButtons(
+      scroller,
+      leftButton,
+      rightButton
+    ) {
+      const maximum =
+        Math.max(
+          0,
+          scroller.scrollWidth -
+            scroller.clientWidth
+        );
+
+      const hasOverflow =
+        maximum > 2;
+
+      leftButton.classList.toggle(
+        'is-hidden',
+        !hasOverflow ||
+          scroller.scrollLeft <=
+            2
+      );
+
+      rightButton.classList.toggle(
+        'is-hidden',
+        !hasOverflow ||
+          scroller.scrollLeft >=
+            maximum -
+            2
+      );
+    }
+
+    function updateTabScrollControls() {
+      updateOverflowButtons(
+        tabList,
+        tabScrollLeft,
+        tabScrollRight
+      );
+    }
+
+    function updateHeadingScrollControls() {
+      updateOverflowButtons(
+        headingScrollViewport,
+        headingScrollLeft,
+        headingScrollRight
+      );
+    }
+
+    function updateLegendScrollControls() {
+      updateOverflowButtons(
+        chartLegend,
+        legendScrollLeft,
+        legendScrollRight
+      );
+    }
+
+    function scrollAmount(
+      element
+    ) {
+      return Math.max(
+        80,
+        element.clientWidth *
+          0.72
+      );
+    }
+
+    function updateTabIndicator(
+      animate = true
+    ) {
+      const active =
+        chartTabs.find(
+          tab =>
+            tab.dataset.view ===
+            activeView
+        );
+
+      if (
+        !active
+      ) {
+        return;
+      }
+
+      if (
+        !animate
+      ) {
+        tabList.classList.add(
+          'is-positioning'
+        );
+      }
+
+      tabList.style.setProperty(
+        '--tab-indicator-x',
+        `${active.offsetLeft}px`
+      );
+
+      tabList.style.setProperty(
+        '--tab-indicator-width',
+        `${active.offsetWidth}px`
+      );
+
+      if (
+        !animate
+      ) {
+        requestAnimationFrame(
+          () => {
+            requestAnimationFrame(
+              () => {
+                tabList.classList.remove(
+                  'is-positioning'
+                );
+              }
+            );
+          }
+        );
+      }
+    }
+
+    function updateHeading(
+      animate = true
+    ) {
+      const config =
+        viewConfig();
+
+      fadeTextChange(
+        chartHeading,
+        config.heading,
+        animate
+      );
+
+      headingScrollViewport.scrollLeft =
+        0;
+
+      methodNote.textContent =
+        config.method;
+
+      requestAnimationFrame(
+        updateHeadingScrollControls
+      );
+
+      window.setTimeout(
+        updateHeadingScrollControls,
+        animate
+          ? 420
+          : 0
+      );
+    }
+
+    function renderLegend(
+      animateNew = true
+    ) {
+      const config =
+        viewConfig();
+
+      const existing =
+        new Map(
+          Array.from(
+            chartLegend.children
+          ).map(
+            element => [
+              element.dataset.key,
+              element
+            ]
+          )
+        );
+
+      const keep =
+        new Set(
+          config.keys
+        );
+
+      existing.forEach(
+        (
+          element,
+          key
+        ) => {
+          if (
+            !keep.has(
+              key
+            )
+          ) {
+            element.remove();
+          }
+        }
+      );
+
+      config.keys.forEach(
+        (
+          key,
+          index
+        ) => {
+          let item =
+            existing.get(
+              key
+            );
+
+          const isNew =
+            !item;
+
+          if (
+            !item
+          ) {
+            item =
+              document.createElement(
+                'span'
+              );
+
+            item.className =
+              'legend-item';
+
+            item.dataset.key =
+              key;
+
+            const line =
+              document.createElement(
+                'span'
+              );
+
+            line.className =
+              'legend-line';
+
+            const label =
+              document.createElement(
+                'span'
+              );
+
+            item.appendChild(
+              line
+            );
+
+            item.appendChild(
+              label
+            );
+
+            chartLegend.appendChild(
+              item
+            );
+          }
+
+          const line =
+            item.querySelector(
+              '.legend-line'
+            );
+
+          const label =
+            item.querySelector(
+              'span:last-child'
+            );
+
+          line.style.setProperty(
+            '--legend-colour',
+            config.colours[
+              index
+            ]
+          );
+
+          label.textContent =
+            config.labels[
+              index
+            ];
+
+          if (
+            isNew &&
+            animateNew &&
+            !reducedMotion() &&
+            typeof item.animate ===
+              'function'
+          ) {
+            item.animate(
+              [
+                {
+                  opacity: 0,
+                  transform:
+                    'translateX(7px)'
+                },
+                {
+                  opacity: 1,
+                  transform:
+                    'translateX(0)'
+                }
+              ],
+              {
+                duration: 260,
+                easing:
+                  'cubic-bezier(0.22, 1, 0.36, 1)'
+              }
+            );
+          }
+        }
+      );
+
+      requestAnimationFrame(
+        updateLegendScrollControls
+      );
+    }
+
+    // ============================================================
+    // Y AXIS ANIMATION
+    // ============================================================
+
+    function copyScale(
+      scale
+    ) {
+      return {
+        min:
+          Number(
+            scale?.min
+          ) || 0,
+        max:
+          Number(
+            scale?.max
+          ) || 1,
+        step:
+          Number(
+            scale?.step
+          ) || 1,
+        intervals:
+          Math.max(
+            1,
+            Math.round(
+              Number(
+                scale?.intervals
+              ) || 1
+            )
+          )
+      };
+    }
+
+    function yTickTargets(
+      scale =
+        currentScale
+    ) {
+      const current =
+        copyScale(
+          scale
+        );
+
+      return Array.from(
+        {
+          length:
+            current.intervals +
+            1
+        },
+        (
+          _,
+          index
+        ) =>
+          current.min +
+          current.step *
+          index
+      );
+    }
+
+    function yTickRatios(
+      scale =
+        currentScale
+    ) {
+      const current =
+        copyScale(
+          scale
+        );
+
+      return Array.from(
+        {
+          length:
+            current.intervals +
+            1
+        },
+        (
+          _,
+          index
+        ) =>
+          index /
+          current.intervals
+      );
+    }
+
+    function remapValues(
+      current,
+      target
+    ) {
+      if (
+        !current.length
+      ) {
+        return [
+          ...target
+        ];
+      }
+
+      return Array.from(
+        {
+          length:
+            target.length
+        },
+        (
+          _,
+          index
+        ) => {
+          if (
+            target.length ===
+            1
+          ) {
+            return Number(
+              current[0]
+            );
+          }
+
+          const position =
+            index *
+            (
+              current.length -
+              1
+            ) /
+            (
+              target.length -
+              1
+            );
+
+          const lowerIndex =
+            Math.floor(
+              position
+            );
+
+          const upperIndex =
+            Math.min(
+              current.length -
+                1,
+              Math.ceil(
+                position
+              )
+            );
+
+          const lower =
+            Number(
+              current[
+                lowerIndex
+              ]
+            );
+
+          const upper =
+            Number(
+              current[
+                upperIndex
+              ]
+            );
+
+          if (
+            !Number.isFinite(
+              lower
+            )
+          ) {
+            return Number.isFinite(
+              upper
+            )
+              ? upper
+              : Number(
+                  target[
+                    index
+                  ]
+                );
+          }
+
+          if (
+            !Number.isFinite(
+              upper
+            ) ||
+            lowerIndex ===
+              upperIndex
+          ) {
+            return lower;
+          }
+
+          return lower +
+            (
+              upper -
+              lower
+            ) *
+            (
+              position -
+              lowerIndex
+            );
+        }
+      );
+    }
+
+    function remapRatios(
+      current,
+      target
+    ) {
+      if (
+        !current.length
+      ) {
+        return [
+          ...target
+        ];
+      }
+
+      return target.map(
+        (
+          _,
+          index
+        ) => {
+          if (
+            target.length ===
+            1
+          ) {
+            return Number(
+              current[0]
+            ) || 0;
+          }
+
+          const sourceIndex =
+            Math.round(
+              index *
+              (
+                current.length -
+                1
+              ) /
+              (
+                target.length -
+                1
+              )
+            );
+
+          const value =
+            Number(
+              current[
+                Math.min(
+                  current.length -
+                    1,
+                  Math.max(
+                    0,
+                    sourceIndex
+                  )
+                )
+              ]
+            );
+
+          return Number.isFinite(
+            value
+          )
+            ? value
+            : target[
+                index
+              ];
+        }
+      );
+    }
+
+    function setYAxisImmediately(
+      scale
+    ) {
+      if (
+        yAxisTickAnimation.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTickAnimation.raf
+        );
+
+        yAxisTickAnimation.raf =
+          null;
+      }
+
+      ++yAxisTickAnimation.token;
+
+      yAxisTickAnimation.values =
+        yTickTargets(
+          scale
+        );
+
+      yAxisTickAnimation.ratios =
+        yTickRatios(
+          scale
+        );
+    }
+
+    function animateYAxis(
+      targetScale,
+      duration
+    ) {
+      const targetValues =
+        yTickTargets(
+          targetScale
+        );
+
+      const targetRatios =
+        yTickRatios(
+          targetScale
+        );
+
+      if (
+        yAxisTickAnimation.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTickAnimation.raf
+        );
+
+        yAxisTickAnimation.raf =
+          null;
+      }
+
+      const token =
+        ++yAxisTickAnimation.token;
+
+      const startValues =
+        remapValues(
+          Array.from(
+            yAxisTickAnimation.values ||
+            []
+          ),
+          targetValues
+        );
+
+      const startRatios =
+        remapRatios(
+          Array.from(
+            yAxisTickAnimation.ratios ||
+            []
+          ),
+          targetRatios
+        );
+
+      if (
+        reducedMotion() ||
+        duration <= 0
+      ) {
+        yAxisTickAnimation.values =
+          [
+            ...targetValues
+          ];
+
+        yAxisTickAnimation.ratios =
+          [
+            ...targetRatios
+          ];
+
+        chart?.draw();
+        return;
+      }
+
+      const startedAt =
+        performance.now();
+
+      function frame(
+        now
+      ) {
+        if (
+          token !==
+          yAxisTickAnimation.token
+        ) {
+          return;
+        }
+
+        const progress =
+          clamp(
+            (
+              now -
+              startedAt
+            ) /
+              duration,
+            0,
+            1
+          );
+
+        const eased =
+          easeOutCubic(
+            progress
+          );
+
+        yAxisTickAnimation.values =
+          targetValues.map(
+            (
+              target,
+              index
+            ) =>
+              startValues[
+                index
+              ] +
+              (
+                target -
+                startValues[
+                  index
+                ]
+              ) *
+              eased
+          );
+
+        yAxisTickAnimation.ratios =
+          targetRatios.map(
+            (
+              target,
+              index
+            ) =>
+              startRatios[
+                index
+              ] +
+              (
+                target -
+                startRatios[
+                  index
+                ]
+              ) *
+              eased
+          );
+
+        chart?.draw();
+
+        if (
+          progress < 1
+        ) {
+          yAxisTickAnimation.raf =
+            requestAnimationFrame(
+              frame
+            );
+        } else {
+          yAxisTickAnimation.raf =
+            null;
+
+          yAxisTickAnimation.values =
+            [
+              ...targetValues
+            ];
+
+          yAxisTickAnimation.ratios =
+            [
+              ...targetRatios
+            ];
+
+          chart?.draw();
+        }
+      }
+
+      yAxisTickAnimation.raf =
+        requestAnimationFrame(
+          frame
+        );
+    }
+
+    function setYAxisTitleImmediately(
+      text
+    ) {
+      const value =
+        String(
+          text || ''
+        );
+
+      if (
+        yAxisTitleAnimation.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTitleAnimation.raf
+        );
+
+        yAxisTitleAnimation.raf =
+          null;
+      }
+
+      ++yAxisTitleAnimation.token;
+
+      yAxisTitleAnimation.from =
+        value;
+
+      yAxisTitleAnimation.to =
+        value;
+
+      yAxisTitleAnimation.progress =
+        1;
+    }
+
+    function animateYAxisTitle(
+      nextText,
+      duration = 420
+    ) {
+      const target =
+        String(
+          nextText || ''
+        );
+
+      const current =
+        yAxisTitleAnimation.progress <
+          0.5
+          ? yAxisTitleAnimation.from
+          : yAxisTitleAnimation.to;
+
+      if (
+        current ===
+        target
+      ) {
+        setYAxisTitleImmediately(
+          target
+        );
+        return;
+      }
+
+      if (
+        yAxisTitleAnimation.raf
+      ) {
+        cancelAnimationFrame(
+          yAxisTitleAnimation.raf
+        );
+
+        yAxisTitleAnimation.raf =
+          null;
+      }
+
+      const token =
+        ++yAxisTitleAnimation.token;
+
+      yAxisTitleAnimation.from =
+        current;
+
+      yAxisTitleAnimation.to =
+        target;
+
+      yAxisTitleAnimation.progress =
+        0;
+
+      if (
+        reducedMotion() ||
+        duration <= 0
+      ) {
+        setYAxisTitleImmediately(
+          target
+        );
+
+        chart?.draw();
+        return;
+      }
+
+      const startedAt =
+        performance.now();
+
+      function frame(
+        now
+      ) {
+        if (
+          token !==
+          yAxisTitleAnimation.token
+        ) {
+          return;
+        }
+
+        const progress =
+          clamp(
+            (
+              now -
+              startedAt
+            ) /
+              duration,
+            0,
+            1
+          );
+
+        yAxisTitleAnimation.progress =
+          easeOutCubic(
+            progress
+          );
+
+        chart?.draw();
+
+        if (
+          progress < 1
+        ) {
+          yAxisTitleAnimation.raf =
+            requestAnimationFrame(
+              frame
+            );
+        } else {
+          yAxisTitleAnimation.raf =
+            null;
+
+          setYAxisTitleImmediately(
+            target
+          );
+
+          chart?.draw();
+        }
+      }
+
+      yAxisTitleAnimation.raf =
+        requestAnimationFrame(
+          frame
+        );
+    }
+
+    function drawYAxisTitle(
+      context,
+      chartArea
+    ) {
+      const mobile =
+        window.innerWidth <=
+        430;
+
+      const progress =
+        clamp(
+          yAxisTitleAnimation.progress,
+          0,
+          1
+        );
+
+      const outgoingOpacity =
+        clamp(
+          1 -
+            progress *
+            2.2,
+          0,
+          1
+        );
+
+      const incomingOpacity =
+        clamp(
+          (
+            progress -
+            0.32
+          ) /
+            0.68,
+          0,
+          1
+        );
+
+      const x =
+        Math.max(
+          mobile
+            ? 10
+            : 11,
+          chartArea.left -
+            (
+              mobile
+                ? 53
+                : 59
+            )
+        );
+
+      const y =
+        chartArea.top +
+        chartArea.height /
+          2;
+
+      const draw =
+        (
+          text,
+          opacity
+        ) => {
+          if (
+            !text ||
+            opacity <= 0
+          ) {
+            return;
+          }
+
+          context.save();
+
+          context.globalAlpha =
+            opacity;
+
+          context.translate(
+            x,
+            y
+          );
+
+          context.rotate(
+            -Math.PI /
+            2
+          );
+
+          context.fillStyle =
+            '#151515';
+
+          context.textAlign =
+            'center';
+
+          context.textBaseline =
+            'middle';
+
+          context.font =
+            `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+
+          context.fillText(
+            text,
+            0,
+            0
+          );
+
+          context.restore();
+        };
+
+      if (
+        yAxisTitleAnimation.from ===
+          yAxisTitleAnimation.to ||
+        progress >= 1
+      ) {
+        draw(
+          yAxisTitleAnimation.to,
+          1
+        );
+
+        return;
+      }
+
+      draw(
+        yAxisTitleAnimation.from,
+        outgoingOpacity
+      );
+
+      draw(
+        yAxisTitleAnimation.to,
+        incomingOpacity
+      );
+    }
+
+    // ============================================================
+    // X AXIS TRACKS
+    // ============================================================
+
+    function xAxisTracks() {
+      if (
+        !combinedRows.length
+      ) {
+        return [];
+      }
+
+      const denominator =
+        Math.max(
+          1,
+          combinedRows.length -
+          1
+        );
+
+      return combinedRows.map(
+        (
+          row,
+          index
+        ) => {
+          const year =
+            Number(
+              row.year
+            );
+
+          const major =
+            Number.isFinite(
+              year
+            ) &&
+            year %
+              2 ===
+              0;
+
+          return {
+            year,
+            ratio:
+              index /
+              denominator,
+            major
+          };
+        }
+      );
+    }
+
+    // ============================================================
+    // CHART DATASETS
+    // ============================================================
+
+    function datasetModel(
+      slot
+    ) {
+      const config =
+        viewConfig();
+
+      const key =
+        config.keys[
+          slot
+        ];
+
+      if (
+        !key
+      ) {
+        return {
+          slot,
+          seriesKey:
+            `slot-${slot}`,
+          label: '',
+          data:
+            combinedRows.map(
+              () => null
+            ),
+          hidden: true,
+          borderColor:
+            '#69718a',
+          backgroundColor:
+            '#69718a',
+          borderWidth: 1.9,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          pointHitRadius: 10,
+          tension: 0.18,
+          cubicInterpolationMode:
+            'monotone',
+          spanGaps: true,
+          fill: false
+        };
+      }
+
+      return {
+        slot,
+        seriesKey:
+          `slot-${slot}`,
+        metricKey:
+          key,
+        label:
+          config.labels[
+            slot
+          ],
+        data:
+          seriesValues(
+            key
+          ),
+        hidden:
+          false,
+        borderColor:
+          config.colours[
+            slot
+          ],
+        backgroundColor:
+          config.colours[
+            slot
+          ],
+        borderWidth:
+          slot === 0
+            ? 2.2
+            : 2.0,
+        pointRadius: 0,
+        pointHoverRadius: 3,
+        pointHitRadius: 10,
+        tension: 0.18,
+        cubicInterpolationMode:
+          'monotone',
+        spanGaps: true,
+        fill: false
+      };
+    }
+
+    function syncDatasets() {
+      if (
+        !chart
+      ) {
+        return;
+      }
+
+      const models = [
+        datasetModel(0),
+        datasetModel(1)
+      ];
+
+      models.forEach(
+        (
+          model,
+          index
+        ) => {
+          let dataset =
+            chart.data
+              .datasets[
+                index
+              ];
+
+          if (
+            !dataset
+          ) {
+            chart.data.datasets[
+              index
+            ] =
+              model;
+            return;
+          }
+
+          dataset.slot =
+            model.slot;
+
+          dataset.seriesKey =
+            model.seriesKey;
+
+          dataset.metricKey =
+            model.metricKey;
+
+          dataset.label =
+            model.label;
+
+          dataset.data =
+            model.data;
+
+          dataset.hidden =
+            model.hidden;
+
+          dataset.borderColor =
+            model.borderColor;
+
+          dataset.backgroundColor =
+            model.backgroundColor;
+
+          dataset.borderWidth =
+            model.borderWidth;
+
+          dataset.pointRadius =
+            model.pointRadius;
+
+          dataset.pointHoverRadius =
+            model.pointHoverRadius;
+
+          dataset.pointHitRadius =
+            model.pointHitRadius;
+
+          dataset.tension =
+            model.tension;
+
+          dataset.cubicInterpolationMode =
+            model.cubicInterpolationMode;
+
+          dataset.spanGaps =
+            model.spanGaps;
+
+          dataset.fill =
+            false;
+        }
+      );
+    }
+
+    // ============================================================
+    // CUSTOM AXES + TREND LABELS
+    // ============================================================
+
+    const pffAxesPlugin = {
+      id:
+        'pffDemandSupplyAxes',
+
+      beforeDatasetsDraw(
+        chartInstance
+      ) {
+        const {
+          ctx,
+          chartArea
+        } =
+          chartInstance;
+
+        if (
+          !chartArea
+        ) {
+          return;
+        }
+
+        const scale =
+          copyScale(
+            currentScale
+          );
+
+        const intervals =
+          scale.intervals;
+
+        const ratios =
+          yAxisTickAnimation
+            .ratios.length ===
+            intervals + 1
+            ? yAxisTickAnimation
+                .ratios
+            : yTickRatios(
+                scale
+              );
+
+        ctx.save();
+
+        ctx.strokeStyle =
+          'rgba(105, 113, 138, 0.035)';
+
+        ctx.lineWidth =
+          0.7;
+
+        for (
+          let index = 0;
+          index < intervals;
+          index += 1
+        ) {
+          const ratio =
+            (
+              Number(
+                ratios[
+                  index
+                ]
+              ) +
+              Number(
+                ratios[
+                  index + 1
+                ]
+              )
+            ) /
+            2;
+
+          const y =
+            chartArea.bottom -
+            chartArea.height *
+              ratio;
+
+          ctx.beginPath();
+
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(
+              y
+            ) +
+            0.5
+          );
+
+          ctx.lineTo(
+            chartArea.right,
+            Math.round(
+              y
+            ) +
+            0.5
+          );
+
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle =
+          'rgba(105, 113, 138, 0.075)';
+
+        ctx.lineWidth =
+          1;
+
+        for (
+          let index = 0;
+          index <= intervals;
+          index += 1
+        ) {
+          const ratio =
+            Number(
+              ratios[
+                index
+              ]
+            );
+
+          const y =
+            chartArea.bottom -
+            chartArea.height *
+              ratio;
+
+          ctx.beginPath();
+
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(
+              y
+            ) +
+            0.5
+          );
+
+          ctx.lineTo(
+            chartArea.right,
+            Math.round(
+              y
+            ) +
+            0.5
+          );
+
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      },
+
+      afterDraw(
+        chartInstance
+      ) {
+        const {
+          ctx,
+          chartArea
+        } =
+          chartInstance;
+
+        if (
+          !chartArea
+        ) {
+          return;
+        }
+
+        const mobile =
+          window.innerWidth <=
+          430;
+
+        const scale =
+          copyScale(
+            currentScale
+          );
+
+        const intervals =
+          scale.intervals;
+
+        const values =
+          yAxisTickAnimation
+            .values.length ===
+            intervals + 1
+            ? yAxisTickAnimation
+                .values
+            : yTickTargets(
+                scale
+              );
+
+        const ratios =
+          yAxisTickAnimation
+            .ratios.length ===
+            intervals + 1
+            ? yAxisTickAnimation
+                .ratios
+            : yTickRatios(
+                scale
+              );
+
+        ctx.save();
+
+        ctx.lineCap =
+          'butt';
+
+        ctx.strokeStyle =
+          '#151515';
+
+        ctx.lineWidth =
+          1;
+
+        ctx.fillStyle =
+          '#151515';
+
+        ctx.textAlign =
+          'right';
+
+        ctx.textBaseline =
+          'middle';
+
+        ctx.font =
+          `${mobile ? 9 : 10}px Lato, sans-serif`;
+
+        for (
+          let index = 0;
+          index <= intervals;
+          index += 1
+        ) {
+          const ratio =
+            Number(
+              ratios[
+                index
+              ]
+            );
+
+          const y =
+            chartArea.bottom -
+            chartArea.height *
+              ratio;
+
+          ctx.beginPath();
+
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(
+              y
+            ) +
+            0.5
+          );
+
+          ctx.lineTo(
+            chartArea.left -
+            5,
+            Math.round(
+              y
+            ) +
+            0.5
+          );
+
+          ctx.stroke();
+
+          const value =
+            Number(
+              values[
+                index
+              ]
+            );
+
+          ctx.fillText(
+            formatAxisValue(
+              Number.isFinite(
+                value
+              )
+                ? value
+                : scale.min +
+                    scale.step *
+                    index
+            ),
+            chartArea.left -
+            8,
+            y
+          );
+        }
+
+        ctx.strokeStyle =
+          '#69718a';
+
+        ctx.globalAlpha =
+          0.60;
+
+        ctx.lineWidth =
+          1;
+
+        for (
+          let index = 0;
+          index < intervals;
+          index += 1
+        ) {
+          const ratio =
+            (
+              Number(
+                ratios[
+                  index
+                ]
+              ) +
+              Number(
+                ratios[
+                  index + 1
+                ]
+              )
+            ) /
+            2;
+
+          const y =
+            chartArea.bottom -
+            chartArea.height *
+              ratio;
+
+          ctx.beginPath();
+
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(
+              y
+            ) +
+            0.5
+          );
+
+          ctx.lineTo(
+            chartArea.left -
+            2,
+            Math.round(
+              y
+            ) +
+            0.5
+          );
+
+          ctx.stroke();
+        }
+
+        ctx.globalAlpha =
+          1;
+
+        xAxisTracks().forEach(
+          track => {
+            const x =
+              chartArea.left +
+              chartArea.width *
+              track.ratio;
+
+            ctx.save();
+
+            ctx.strokeStyle =
+              track.major
+                ? '#151515'
+                : '#69718a';
+
+            ctx.globalAlpha =
+              track.major
+                ? 1
+                : 0.60;
+
+            ctx.lineWidth =
+              track.major
+                ? 1
+                : 0.7;
+
+            ctx.beginPath();
+
+            ctx.moveTo(
+              Math.round(
+                x
+              ) +
+              0.5,
+              chartArea.bottom
+            );
+
+            ctx.lineTo(
+              Math.round(
+                x
+              ) +
+              0.5,
+              chartArea.bottom +
+              (
+                track.major
+                  ? 5
+                  : 2
+              )
+            );
+
+            ctx.stroke();
+
+            if (
+              track.major
+            ) {
+              ctx.globalAlpha =
+                1;
+
+              ctx.fillStyle =
+                '#151515';
+
+              ctx.font =
+                `${mobile ? 9 : 10}px Lato, sans-serif`;
+
+              ctx.textBaseline =
+                'top';
+
+              if (
+                track.ratio <=
+                0.001
+              ) {
+                ctx.textAlign =
+                  'left';
+              } else if (
+                track.ratio >=
+                0.999
+              ) {
+                ctx.textAlign =
+                  'right';
+              } else {
+                ctx.textAlign =
+                  'center';
+              }
+
+              const offset =
+                track.ratio <=
+                0.001
+                  ? 2
+                  : track.ratio >=
+                      0.999
+                    ? -2
+                    : 0;
+
+              ctx.fillText(
+                String(
+                  track.year
+                ),
+                x +
+                  offset,
+                chartArea.bottom +
+                  8
+              );
+            }
+
+            ctx.restore();
+          }
+        );
+
+        ctx.restore();
+
+        drawYAxisTitle(
+          ctx,
+          chartArea
+        );
+      }
+    };
+
+    const axisSpinesPlugin = {
+      id:
+        'pffDemandSupplySpines',
+
+      afterDraw(
+        chartInstance
+      ) {
+        const {
+          ctx,
+          chartArea
+        } =
+          chartInstance;
+
+        if (
+          !chartArea
+        ) {
+          return;
+        }
+
+        ctx.save();
+
+        ctx.strokeStyle =
+          '#151515';
+
+        ctx.lineWidth =
+          1;
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+          Math.round(
+            chartArea.left
+          ) +
+          0.5,
+          chartArea.top
+        );
+
+        ctx.lineTo(
+          Math.round(
+            chartArea.left
+          ) +
+          0.5,
+          chartArea.bottom
+        );
+
+        ctx.lineTo(
+          chartArea.right,
+          Math.round(
+            chartArea.bottom
+          ) +
+          0.5
+        );
+
+        ctx.stroke();
+
+        ctx.restore();
+      }
+    };
+
+    const trendLabelsPlugin = {
+      id:
+        'pffDemandSupplyTrendLabels',
+
+      afterDatasetsDraw(
+        chartInstance
+      ) {
+        if (
+          !showTrend
+        ) {
+          return;
+        }
+
+        const {
+          ctx,
+          chartArea
+        } =
+          chartInstance;
+
+        if (
+          !chartArea
+        ) {
+          return;
+        }
+
+        chartInstance.data.datasets.forEach(
+          (
+            dataset,
+            datasetIndex
+          ) => {
+            if (
+              !chartInstance.isDatasetVisible(
+                datasetIndex
+              ) ||
+              !dataset.metricKey
+            ) {
+              return;
+            }
+
+            const values =
+              dataset.data;
+
+            const trend =
+              logLinearTrend(
+                values
+              );
+
+            if (
+              !Number.isFinite(
+                trend
+              )
+            ) {
+              return;
+            }
+
+            let lastIndex =
+              -1;
+
+            for (
+              let index =
+                values.length -
+                1;
+              index >= 0;
+              index -= 1
+            ) {
+              if (
+                Number.isFinite(
+                  Number(
+                    values[
+                      index
+                    ]
+                  )
+                )
+              ) {
+                lastIndex =
+                  index;
+                break;
+              }
+            }
+
+            if (
+              lastIndex < 0
+            ) {
+              return;
+            }
+
+            const meta =
+              chartInstance.getDatasetMeta(
+                datasetIndex
+              );
+
+            const point =
+              meta.data[
+                lastIndex
+              ];
+
+            if (
+              !point
+            ) {
+              return;
+            }
+
+            const label =
+              trendText(
+                trend
+              );
+
+            ctx.save();
+
+            ctx.font =
+              `700 ${window.innerWidth <= 430 ? 8 : 8.5}px Lato, sans-serif`;
+
+            ctx.textAlign =
+              'right';
+
+            ctx.textBaseline =
+              'middle';
+
+            const width =
+              ctx.measureText(
+                label
+              ).width;
+
+            const x =
+              Math.min(
+                chartArea.right -
+                  2,
+                point.x -
+                  5
+              );
+
+            const y =
+              clamp(
+                point.y -
+                  (
+                    datasetIndex ===
+                      0
+                      ? 10
+                      : -10
+                  ),
+                chartArea.top +
+                  8,
+                chartArea.bottom -
+                  8
+              );
+
+            ctx.fillStyle =
+              'rgba(255,255,255,0.88)';
+
+            ctx.fillRect(
+              x -
+                width -
+                4,
+              y -
+                6,
+              width +
+                5,
+              12
+            );
+
+            ctx.fillStyle =
+              dataset.borderColor;
+
+            ctx.fillText(
+              label,
+              x,
+              y
+            );
+
+            ctx.restore();
+          }
+        );
+      }
+    };
+
+    Chart.register(
+      pffAxesPlugin,
+      axisSpinesPlugin,
+      trendLabelsPlugin
+    );
+
+    // ============================================================
+    // TOOLTIP
+    // ============================================================
+
+    function tooltipLabel(
+      context
+    ) {
+      const config =
+        viewConfig();
+
+      const value =
+        Number(
+          context.parsed.y
+        );
+
+      if (
+        !Number.isFinite(
+          value
+        )
+      ) {
+        return '';
+      }
+
+      if (
+        activeView ===
+        'growth'
+      ) {
+        return `${context.dataset.label}: ${Math.round(value)}`;
+      }
+
+      return `${context.dataset.label}: ${formatOne(value)}`;
+    }
+
+    function tooltipAfterBody(
+      items
+    ) {
+      const first =
+        items?.[0];
+
+      if (
+        !first
+      ) {
+        return [];
+      }
+
+      const row =
+        combinedRows[
+          first.dataIndex
+        ];
+
+      if (
+        !row
+      ) {
+        return [];
+      }
+
+      const lines =
+        [];
+
+      if (
+        activeView ===
+        'growth'
+      ) {
+        lines.push(
+          `Medicare hours: ${compactNumber(row.demandHours, 2)}`
+        );
+
+        lines.push(
+          `Active clinicians: ${formatInteger(row.active)}`
+        );
+      } else if (
+        activeView ===
+        'services'
+      ) {
+        lines.push(
+          `Annual / optom: ${formatInteger(row.servicesPerOptomYear)}`
+        );
+
+        lines.push(
+          `Total services: ${compactNumber(row.services, 2)}`
+        );
+
+        lines.push(
+          `Active clinicians: ${formatInteger(row.active)}`
+        );
+      } else {
+        lines.push(
+          `Annual hours / optom: ${formatOne(row.hoursPerOptomYear)}`
+        );
+
+        lines.push(
+          `Total Medicare hours: ${compactNumber(row.demandHours, 2)}`
+        );
+
+        lines.push(
+          `Active clinicians: ${formatInteger(row.active)}`
+        );
+      }
+
+      return lines;
+    }
+
+    function tooltipFooter(
+      items
+    ) {
+      if (
+        !showTrend
+      ) {
+        return '';
+      }
+
+      const first =
+        items?.[0];
+
+      if (
+        !first
+      ) {
+        return '';
+      }
+
+      const trend =
+        logLinearTrend(
+          first.dataset.data
+        );
+
+      return Number.isFinite(
+        trend
+      )
+        ? `Latest 3-point trend: ${trendText(trend)}`
+        : '';
+    }
+
+    // ============================================================
+    // CHART
+    // ============================================================
+
+    function chartOptions() {
+      const mobile =
+        window.innerWidth <=
+        430;
+
+      return {
+        responsive:
+          true,
+
+        maintainAspectRatio:
+          false,
+
+        parsing:
+          false,
+
+        normalized:
+          true,
+
+        interaction: {
+          mode:
+            'nearest',
+          intersect:
+            false,
+          axis:
+            'x'
+        },
+
+        layout: {
+          padding: {
+            top:
+              showTrend
+                ? 11
+                : 6,
+            right: 5,
+            bottom:
+              mobile
+                ? 25
+                : 27,
+            left:
+              mobile
+                ? 61
+                : 68
+          }
+        },
+
+        animation: {
+          duration:
+            760,
+          easing:
+            'easeOutQuart'
+        },
+
+        animations: {
+          x: {
+            duration:
+              0
+          },
+          y: {
+            duration:
+              760,
+            easing:
+              'easeOutQuart'
+          },
+          colors: {
+            duration:
+              520
+          }
+        },
+
+        scales: {
+          x: {
+            display:
+              false,
+            offset:
+              false
+          },
+
+          y: {
+            display:
+              false,
+            min:
+              currentScale.min,
+            max:
+              currentScale.max
+          }
+        },
+
+        plugins: {
+          legend: {
+            display:
+              false
+          },
+
+          tooltip: {
+            enabled:
+              true,
+            backgroundColor:
+              'rgba(255,255,255,0.96)',
+            titleColor:
+              '#151515',
+            bodyColor:
+              '#151515',
+            footerColor:
+              '#69718a',
+            borderColor:
+              'rgba(105, 113, 138, 0.24)',
+            borderWidth:
+              1,
+            cornerRadius:
+              4,
+            padding:
+              8,
+            displayColors:
+              true,
+            boxWidth:
+              9,
+            boxHeight:
+              9,
+            titleFont: {
+              family:
+                'Lato',
+              size:
+                mobile
+                  ? 10
+                  : 11,
+              weight:
+                '700'
+            },
+            bodyFont: {
+              family:
+                'Lato',
+              size:
+                mobile
+                  ? 9
+                  : 10,
+              weight:
+                '400'
+            },
+            footerFont: {
+              family:
+                'Lato',
+              size:
+                mobile
+                  ? 8
+                  : 9,
+              weight:
+                '700'
+            },
+            callbacks: {
+              title:
+                items =>
+                  items?.[0]
+                    ? String(
+                        combinedRows[
+                          items[0]
+                            .dataIndex
+                        ]?.year ??
+                        ''
+                      )
+                    : '',
+              label:
+                tooltipLabel,
+              afterBody:
+                tooltipAfterBody,
+              footer:
+                tooltipFooter
+            }
+          }
+        }
+      };
+    }
+
+    function createChart() {
+      currentScale =
+        computeScale();
+
+      setYAxisImmediately(
+        currentScale
+      );
+
+      setYAxisTitleImmediately(
+        viewConfig()
+          .yTitle
+      );
+
+      chart =
+        new Chart(
+          canvas,
+          {
+            type:
+              'line',
+
+            data: {
+              labels:
+                combinedRows.map(
+                  row =>
+                    String(
+                      row.year
+                    )
+                ),
+
+              datasets: [
+                datasetModel(0),
+                datasetModel(1)
+              ]
+            },
+
+            options:
+              chartOptions()
+          }
+        );
+    }
+
+    function renderChartChange(
+      reason =
+        'tab'
+    ) {
+      if (
+        !chart
+      ) {
+        return;
+      }
+
+      const config =
+        viewConfig();
+
+      const duration =
+        chartAnimationDuration(
+          reason
+        );
+
+      const previousTitle =
+        yAxisTitleAnimation.progress <
+          0.5
+          ? yAxisTitleAnimation.from
+          : yAxisTitleAnimation.to;
+
+      const nextScale =
+        computeScale();
+
+      syncDatasets();
+
+      currentScale =
+        nextScale;
+
+      chart.options.scales.y.min =
+        nextScale.min;
+
+      chart.options.scales.y.max =
+        nextScale.max;
+
+      chart.options.layout.padding.top =
+        showTrend
+          ? 11
+          : 6;
+
+      chart.options.animation.duration =
+        duration;
+
+      chart.options.animation.easing =
+        'easeOutQuart';
+
+      chart.options.animations.x.duration =
+        0;
+
+      chart.options.animations.y.duration =
+        duration;
+
+      chart.options.animations.y.easing =
+        'easeOutQuart';
+
+      chart.options.animations.colors.duration =
+        duration;
+
+      chart.update(
+        duration > 0
+          ? undefined
+          : 'none'
+      );
+
+      animateYAxis(
+        nextScale,
+        duration
+      );
+
+      if (
+        String(
+          previousTitle ||
+          ''
+        ) !==
+        String(
+          config.yTitle ||
+          ''
+        )
+      ) {
+        animateYAxisTitle(
+          config.yTitle,
+          Math.min(
+            duration,
+            420
+          )
+        );
+      }
+
+      renderLegend(
+        true
+      );
+    }
+
+    // ============================================================
+    // EVENTS
+    // ============================================================
+
+    chartTabs.forEach(
+      tab => {
+        tab.addEventListener(
+          'click',
+          () => {
+            const next =
+              tab.dataset.view;
+
+            if (
+              !next ||
+              next ===
+                activeView
+            ) {
+              return;
+            }
+
+            activeView =
+              next;
+
+            chartTabs.forEach(
+              button => {
+                const active =
+                  button.dataset.view ===
+                  activeView;
+
+                button.classList.toggle(
+                  'is-active',
+                  active
+                );
+
+                button.setAttribute(
+                  'aria-selected',
+                  String(
+                    active
+                  )
+                );
+              }
+            );
+
+            updateTabIndicator(
+              true
+            );
+
+            updateHeading(
+              true
+            );
+
+            renderChartChange(
+              'tab'
+            );
+          }
+        );
+      }
+    );
+
+    yoyTrendToggle.addEventListener(
+      'click',
+      () => {
+        showTrend =
+          !showTrend;
+
+        yoyTrendToggle.classList.toggle(
+          'is-on',
+          showTrend
+        );
+
+        yoyTrendToggle.setAttribute(
+          'aria-pressed',
+          String(
+            showTrend
+          )
+        );
+
+        yoyTrendToggle.setAttribute(
+          'aria-label',
+          `Trend labels ${showTrend ? 'on' : 'off'}`
+        );
+
+        yoyToggleValue.textContent =
+          showTrend
+            ? 'ON'
+            : 'OFF';
+
+        if (
+          chart
+        ) {
+          chart.options.layout.padding.top =
+            showTrend
+              ? 11
+              : 6;
+
+          chart.update(
+            'none'
+          );
+
+          chart.draw();
+        }
+      }
+    );
+
+    function wireScrollButton(
+      button,
+      element,
+      direction
+    ) {
+      button.addEventListener(
+        'click',
+        event => {
+          event.stopPropagation();
+
+          element.scrollBy({
+            left:
+              scrollAmount(
+                element
+              ) *
+              direction,
+            behavior:
+              reducedMotion()
+                ? 'auto'
+                : 'smooth'
+          });
+        }
+      );
+    }
+
+    wireScrollButton(
+      tabScrollLeft,
+      tabList,
+      -1
+    );
+
+    wireScrollButton(
+      tabScrollRight,
+      tabList,
+      1
+    );
+
+    wireScrollButton(
+      headingScrollLeft,
+      headingScrollViewport,
+      -1
+    );
+
+    wireScrollButton(
+      headingScrollRight,
+      headingScrollViewport,
+      1
+    );
+
+    wireScrollButton(
+      legendScrollLeft,
+      chartLegend,
+      -1
+    );
+
+    wireScrollButton(
+      legendScrollRight,
+      chartLegend,
+      1
+    );
+
+    tabList.addEventListener(
+      'scroll',
+      updateTabScrollControls,
+      {
+        passive:
+          true
+      }
+    );
+
+    headingScrollViewport.addEventListener(
+      'scroll',
+      updateHeadingScrollControls,
+      {
+        passive:
+          true
+      }
+    );
+
+    chartLegend.addEventListener(
+      'scroll',
+      updateLegendScrollControls,
+      {
+        passive:
+          true
+      }
+    );
+
+    window.addEventListener(
+      'resize',
+      () => {
+        if (
+          resizeFrame
+        ) {
+          cancelAnimationFrame(
+            resizeFrame
+          );
+        }
+
+        resizeFrame =
+          requestAnimationFrame(
+            () => {
+              resizeFrame =
+                null;
+
+              updateTabIndicator(
+                false
+              );
+
+              updateTabScrollControls();
+              updateHeadingScrollControls();
+              updateLegendScrollControls();
+
+              if (
+                chart
+              ) {
+                chart.options =
+                  chartOptions();
+
+                chart.update(
+                  'none'
+                );
+              }
+            }
+          );
+      }
+    );
+
+    if (
+      'ResizeObserver' in
+      window
+    ) {
+      const observer =
+        new ResizeObserver(
+          () => {
+            updateTabScrollControls();
+            updateHeadingScrollControls();
+            updateLegendScrollControls();
+          }
+        );
+
+      observer.observe(
+        tabList
+      );
+
+      observer.observe(
+        headingScrollShell
+      );
+
+      observer.observe(
+        headingScrollViewport
+      );
+
+      observer.observe(
+        chartHeading
+      );
+
+      observer.observe(
+        chartLegend
+      );
+    }
+
+    // ============================================================
+    // START
+    // ============================================================
+
+    async function init() {
+      try {
+        sourceData =
+          await loadData();
+
+        combinedRows =
+          buildCombinedRows(
+            sourceData
+          );
+
+        if (
+          combinedRows.length <
+          3
+        ) {
+          throw new Error(
+            'Fewer than three common annual observations were available.'
+          );
+        }
+
+        baseYear =
+          combinedRows[0]
+            .year;
+
+        updateHeading(
+          false
+        );
+
+        renderLegend(
+          false
+        );
+
+        createChart();
+
+        app.classList.remove(
+          'is-loading'
+        );
+
+        app.setAttribute(
+          'aria-busy',
+          'false'
+        );
+
+        requestAnimationFrame(
+          () => {
+            updateTabIndicator(
+              false
+            );
+
+            updateTabScrollControls();
+            updateHeadingScrollControls();
+            updateLegendScrollControls();
+
+            chart.resize();
+          }
+        );
+      } catch (
+        error
+      ) {
+        app.classList.remove(
+          'is-loading'
+        );
+
+        app.setAttribute(
+          'aria-busy',
+          'false'
+        );
+
+        statusElement.textContent =
+          error?.message ||
+          'Could not load demand and supply data.';
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
