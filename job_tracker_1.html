@@ -1412,6 +1412,35 @@
       background: var(--ink);
     }
 
+    .sticky-table-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 40;
+      display: none;
+      overflow: hidden;
+      background: #fff;
+      pointer-events: none;
+    }
+
+    .sticky-table-header.is-visible {
+      display: block;
+    }
+
+    .sticky-table-header-scroll {
+      width: 100%;
+      overflow: hidden;
+    }
+
+    .sticky-table-header .data-table thead {
+      position: relative;
+      top: auto;
+    }
+
+    .sticky-table-header .data-table th {
+      background: #fff;
+    }
+
     .data-table th,
     .data-table td {
       position: relative;
@@ -2500,6 +2529,52 @@
 
     const tableShell =
       document.getElementById('table-shell');
+
+    const tableScroll =
+      document.querySelector(
+        '.table-scroll'
+      );
+
+    const stickyTableHeader =
+      document.createElement(
+        'div'
+      );
+
+    stickyTableHeader.className =
+      'sticky-table-header';
+
+    stickyTableHeader.setAttribute(
+      'aria-hidden',
+      'true'
+    );
+
+    const stickyTableHeaderScroll =
+      document.createElement(
+        'div'
+      );
+
+    stickyTableHeaderScroll.className =
+      'sticky-table-header-scroll';
+
+    const stickyHeaderTable =
+      document.createElement(
+        'table'
+      );
+
+    stickyHeaderTable.className =
+      'data-table';
+
+    stickyTableHeaderScroll.appendChild(
+      stickyHeaderTable
+    );
+
+    stickyTableHeader.appendChild(
+      stickyTableHeaderScroll
+    );
+
+    document.body.appendChild(
+      stickyTableHeader
+    );
 
     const emptyState =
       document.getElementById('empty-state');
@@ -6611,6 +6686,93 @@
         `${totalWidth}px`;
     }
 
+    function syncStickyTableHeader() {
+      const colgroup =
+        dataTable.querySelector(
+          'colgroup'
+        );
+
+      const thead =
+        dataTable.querySelector(
+          'thead'
+        );
+
+      if (
+        !colgroup ||
+        !thead
+      ) {
+        return;
+      }
+
+      stickyHeaderTable.replaceChildren(
+        colgroup.cloneNode(true),
+        thead.cloneNode(true)
+      );
+
+      stickyHeaderTable.style.width =
+        dataTable.style.width;
+
+      stickyHeaderTable.style.minWidth =
+        dataTable.style.minWidth;
+
+      stickyTableHeaderScroll.scrollLeft =
+        tableScroll.scrollLeft;
+
+      updateStickyTableHeader();
+    }
+
+    function updateStickyTableHeader() {
+      const thead =
+        dataTable.querySelector(
+          'thead'
+        );
+
+      if (
+        !thead ||
+        dataTable.style.display ===
+          'none'
+      ) {
+        stickyTableHeader.classList.remove(
+          'is-visible'
+        );
+
+        return;
+      }
+
+      const headerRect =
+        thead.getBoundingClientRect();
+
+      const shellRect =
+        tableShell.getBoundingClientRect();
+
+      const shouldShow =
+        headerRect.top < 0 &&
+        shellRect.bottom >
+          headerRect.height;
+
+      stickyTableHeader.classList.toggle(
+        'is-visible',
+        shouldShow
+      );
+
+      if (!shouldShow) {
+        return;
+      }
+
+      stickyTableHeader.style.left =
+        `${Math.round(
+          shellRect.left
+        )}px`;
+
+      stickyTableHeader.style.width =
+        `${Math.round(
+          shellRect.width
+        )}px`;
+
+      stickyTableHeaderScroll.scrollLeft =
+        tableScroll.scrollLeft;
+    }
+
     function scheduleTightColumnWidths() {
       window.clearTimeout(
         columnResizeTimer
@@ -6622,6 +6784,8 @@
             applyTightColumnWidths(
               state.currentModel
             );
+
+            syncStickyTableHeader();
           },
           80
         );
@@ -6865,17 +7029,22 @@
         model
       );
 
+      syncStickyTableHeader();
+
       if (document.fonts?.ready) {
         document.fonts.ready.then(
           () => {
             applyTightColumnWidths(
               model
             );
+
+            syncStickyTableHeader();
           }
         );
       }
 
       applyFilters(false);
+      updateStickyTableHeader();
     }
 
     function rowMatchesEmployerType(
@@ -8115,15 +8284,29 @@
       }
     );
 
-    document
-      .querySelector('.table-scroll')
-      .addEventListener(
-        'scroll',
-        closeFullTextPopover,
-        {
-          passive: true
-        }
-      );
+    tableScroll.addEventListener(
+      'scroll',
+      () => {
+        stickyTableHeaderScroll.scrollLeft =
+          tableScroll.scrollLeft;
+
+        closeFullTextPopover();
+      },
+      {
+        passive: true
+      }
+    );
+
+    window.addEventListener(
+      'scroll',
+      () => {
+        updateStickyTableHeader();
+        closeFullTextPopover();
+      },
+      {
+        passive: true
+      }
+    );
 
     window.addEventListener(
       'resize',
@@ -8136,6 +8319,7 @@
         closeFullTextPopover();
         scheduleTightColumnWidths();
         updateControlsScrollHints();
+        updateStickyTableHeader();
       }
     );
 
