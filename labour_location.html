@@ -1,0 +1,2536 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Labour Demand Location Trends</title>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --purple: #6600ff;
+      --ink: #151515;
+      --muted: #69718a;
+      --track: #e8eaf0;
+      --error: #b42318;
+      --live-red: #e53935;
+      --cached-amber: #c27c00;
+
+      --nsw: #2db7f5;
+      --vic: #2d3a8c;
+      --qld: #7a0036;
+      --sa: #f03a47;
+      --wa: #000000;
+      --tas: #22a36b;
+      --nt: #c25e00;
+      --act: #7b61ff;
+
+      --metro: #30475d;
+      --nonmetro: #b54a0a;
+
+      --blue-cone: rgba(74, 86, 255, 0.82);
+      --green-cone: rgba(36, 210, 116, 0.78);
+      --red-cone: rgba(255, 92, 48, 0.76);
+
+      --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #fff;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      color: var(--ink);
+      background: #fff;
+      font-family: 'Lato', sans-serif;
+      overflow: hidden;
+      -webkit-touch-callout: none;
+    }
+
+    button {
+      font: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #fit {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      align-items: flex-start;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #app {
+      position: relative;
+      display: flex;
+      width: min(calc(100% - 12px), 520px);
+      height: 100%;
+      max-width: 100%;
+      min-width: 0;
+      min-height: 0;
+      margin-inline: auto;
+      padding: 7px 6px 4px;
+      flex-direction: column;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    #app.is-loading > :not(.app-loading) {
+      visibility: hidden;
+    }
+
+    #app:not(.is-loading) .app-loading {
+      display: none;
+    }
+
+    .app-loading {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+    }
+
+    .cone-loader {
+      position: relative;
+      width: 176px;
+      height: 78px;
+      margin: 0 auto;
+      overflow: visible;
+      isolation: isolate;
+    }
+
+    .cone {
+      position: absolute;
+      bottom: 8px;
+      width: 58px;
+      height: 68px;
+      opacity: 0;
+      clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      -webkit-clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      mix-blend-mode: normal;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      transform: translateZ(0);
+      will-change: opacity;
+    }
+
+    .cone.blue {
+      left: 33px;
+      background: var(--blue-cone);
+      animation: blueConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .cone.green {
+      left: 69px;
+      background: var(--green-cone);
+      animation: greenConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .cone.red {
+      left: 85px;
+      background: var(--red-cone);
+      animation: redConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    .loader-text {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: center;
+      animation: loadingTextPulse 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+    }
+
+    @keyframes blueConeCycle {
+      0% { opacity: 0; }
+      12% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes greenConeCycle {
+      0% { opacity: 0; }
+      20% { opacity: 0; }
+      32% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes redConeCycle {
+      0% { opacity: 0; }
+      40% { opacity: 0; }
+      52% { opacity: 1; }
+      76% { opacity: 1; }
+      87% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes loadingTextPulse {
+      0% { opacity: 0.45; }
+      52% { opacity: 0.78; }
+      76% { opacity: 0.78; }
+      87% { opacity: 0.45; }
+      100% { opacity: 0.45; }
+    }
+
+    /* ============================================================
+     * TOP TABS + LIVE STATUS
+     * ============================================================ */
+
+    .module-top {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      flex: 0 0 auto;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 4px;
+      border-bottom: 1px solid var(--track);
+    }
+
+    .tab-scroll-shell {
+      position: relative;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .tab-list {
+      position: relative;
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      align-items: flex-end;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .tab-list::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab-list::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      z-index: 2;
+      width: var(--tab-indicator-width, 0px);
+      height: 2px;
+      background: var(--purple);
+      pointer-events: none;
+      transform: translate3d(var(--tab-indicator-x, 0px), 0, 0);
+      transition:
+        transform 420ms var(--motion-ease),
+        width 420ms var(--motion-ease);
+      will-change: transform, width;
+    }
+
+    .tab-list.is-positioning::after {
+      transition: none;
+    }
+
+    .chart-tab {
+      flex: 0 0 auto;
+      min-height: 29px;
+      margin: 0;
+      padding: 0 9px 6px;
+      color: var(--muted);
+      background: #fff;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      transition: color 180ms ease;
+    }
+
+    .chart-tab:hover:not(.is-active) {
+      color: var(--ink);
+    }
+
+    .chart-tab.is-active {
+      color: var(--purple);
+      cursor: default;
+    }
+
+    .chart-tab:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: -2px;
+    }
+
+    .tab-scroll-button {
+      position: absolute;
+      top: 3px;
+      z-index: 4;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      transition: opacity 160ms ease, background 160ms ease;
+    }
+
+    .tab-scroll-button:hover {
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.90);
+    }
+
+    .tab-scroll-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 1px;
+    }
+
+    .tab-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .tab-scroll-left { left: 0; }
+    .tab-scroll-right { right: 0; }
+
+    .live-data {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 4px;
+      margin: 0 1px 8px 0;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .live-data-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      border-radius: 50%;
+      background: var(--live-red);
+      transition: background-color 220ms ease;
+    }
+
+    .live-data.is-cached .live-data-dot {
+      background: var(--cached-amber);
+    }
+
+    #status {
+      flex: 0 0 auto;
+      width: 100%;
+      margin: 3px 0 0;
+      color: var(--error);
+      font-size: 12px;
+      line-height: 1.35;
+      text-align: left;
+    }
+
+    #status:empty {
+      display: none;
+    }
+
+    /* ============================================================
+     * HEADING + SEGMENTED TOGGLE
+     * ============================================================ */
+
+    .chart-heading-row {
+      position: relative;
+      z-index: 30;
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 31px;
+      flex: 0 0 auto;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 7px;
+      margin: 0;
+    }
+
+    .heading-scroll-shell {
+      position: relative;
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+
+    .heading-scroll-viewport {
+      width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .heading-scroll-viewport::-webkit-scrollbar { display: none; }
+
+    .heading-scroll-button {
+      position: absolute;
+      top: 4px;
+      z-index: 4;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      transition: opacity 160ms ease, background 160ms ease;
+    }
+
+    .heading-scroll-button:hover {
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.90);
+    }
+
+    .heading-scroll-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 1px;
+    }
+
+    .heading-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .heading-scroll-left { left: 0; }
+    .heading-scroll-right { right: 0; }
+
+    .chart-heading {
+      display: inline-flex;
+      width: max-content;
+      min-width: max-content;
+      flex: 0 0 auto;
+      align-items: baseline;
+      margin: 0;
+      padding: 4px 0 0;
+      overflow: visible;
+      color: var(--ink);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 22px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .chart-heading-fixed,
+    .chart-heading-group,
+    .chart-heading-suffix {
+      display: inline-block;
+      flex: 0 0 auto;
+      will-change: opacity;
+    }
+
+    .chart-heading-suffix:not(:empty) {
+      margin-left: 0.28em;
+    }
+
+    .heading-controls {
+      display: flex;
+      min-width: 0;
+      flex: 0 0 auto;
+      align-items: flex-start;
+      gap: 5px;
+    }
+
+
+    .metric-switch {
+      position: relative;
+      display: grid;
+      width: 92px;
+      height: 27px;
+      flex: 0 0 92px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: center;
+      margin-top: 2px;
+      padding: 1px;
+      overflow: hidden;
+      background: rgba(232, 234, 240, 0.55);
+      border-radius: 4px;
+      isolation: isolate;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    .metric-switch::before {
+      content: '';
+      pointer-events: none;
+      position: absolute;
+      top: 1px;
+      bottom: 1px;
+      left: 1px;
+      z-index: 0;
+      width: calc((100% - 2px) / 2);
+      background: #fff;
+      border-radius: 3px;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.08);
+      transform: translateX(calc(var(--metric-index, 0) * 100%));
+      transition: transform 300ms var(--motion-ease);
+      will-change: transform;
+    }
+
+    .metric-button {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      min-height: 25px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 3px;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      border-radius: 3px;
+      font-family: inherit;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      touch-action: manipulation;
+      user-select: none;
+      transition: color 220ms ease;
+    }
+
+    .metric-button:hover:not(.is-active) {
+      color: var(--ink);
+    }
+
+    .metric-button.is-active {
+      color: var(--purple);
+    }
+
+    .metric-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: -1px;
+    }
+
+    /* ============================================================
+     * LEGEND
+     * ============================================================ */
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .legend-nav {
+      position: relative;
+      flex: 1 1 auto;
+      min-width: 54px;
+      height: 28px;
+      overflow: hidden;
+    }
+
+    .legend-viewport {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .chart-legend {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      align-items: center;
+      gap: 10px;
+      padding: 1px 0 4px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      white-space: nowrap;
+    }
+
+    .chart-legend::-webkit-scrollbar {
+      display: none;
+    }
+
+    .legend-scroll-button {
+      position: absolute;
+      top: 3px;
+      z-index: 3;
+      display: inline-flex;
+      width: 20px;
+      height: 20px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0 2px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(232, 234, 240, 0.74);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.68;
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      transition:
+        opacity 160ms ease,
+        background 160ms ease;
+    }
+
+    .legend-scroll-button:hover {
+      opacity: 0.96;
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    .legend-scroll-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
+    }
+
+    .legend-scroll-button.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .legend-scroll-left {
+      left: 0;
+    }
+
+    .legend-scroll-right {
+      right: 0;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 5px;
+      padding: 0;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 1;
+      transition: opacity 180ms ease;
+    }
+
+    .legend-item.is-hidden-series {
+      opacity: 0.36;
+    }
+
+    .legend-item:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    .legend-line {
+      width: 17px;
+      height: 3px;
+      flex: 0 0 17px;
+      border-radius: 2px;
+      background: var(--ink);
+    }
+
+    /* ============================================================
+     * CHART
+     * ============================================================ */
+
+    .chart-shell {
+      position: relative;
+      flex: 1 1 0;
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      margin: -2px 0 0;
+      overflow: hidden;
+      contain: layout paint;
+      isolation: isolate;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .chart-canvas {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      opacity: 1;
+      transition: opacity 260ms var(--motion-ease);
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      outline: none;
+    }
+
+    .chart-canvas.is-inactive {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .shared-chart-spines {
+      position: absolute;
+      top: 9px;
+      right: 5px;
+      bottom: 39px;
+      left: 69px;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .shared-chart-spines::before,
+    .shared-chart-spines::after {
+      content: '';
+      position: absolute;
+      background: #151515;
+      pointer-events: none;
+    }
+
+    .shared-chart-spines::before {
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 1.1px;
+    }
+
+    .shared-chart-spines::after {
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 1.1px;
+    }
+
+    @media (max-width: 430px) {
+      #app {
+        width: calc(100% - 6px);
+        padding: 6px 2px 2px;
+      }
+
+      .chart-tab {
+        padding-right: 7px;
+        padding-left: 7px;
+        font-size: 12px;
+      }
+
+      .live-data {
+        margin-right: 3px;
+        font-size: 8px;
+      }
+
+      .shared-chart-spines {
+        top: 8px;
+        left: 61px;
+      }
+
+      .chart-heading {
+        font-size: 14px;
+      }
+
+      .heading-controls {
+        gap: 4px;
+      }
+
+
+      .yoy-toggle-label,
+      .yoy-toggle-value {
+        font-size: 8px;
+      }
+
+      .yoy-toggle-value {
+        width: 100%;
+        min-width: 0;
+      }
+      .metric-switch {
+        width: 86px;
+        flex-basis: 86px;
+      }
+
+      .metric-button {
+        font-size: 8.5px;
+      }
+
+      .legend-item {
+        font-size: 9px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+
+      .cone.blue,
+      .cone.green,
+      .cone.red {
+        animation: none;
+        opacity: 1;
+      }
+
+      .loader-text {
+        animation: none;
+        opacity: 0.72;
+      }
+    }
+</style>
+</head>
+<body>
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div
+        id="loadingState"
+        class="app-loading"
+        role="status"
+        aria-label="Loading labour demand location data"
+      >
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p class="loader-text">Loading labour demand location data…</p>
+      </div>
+
+      <div class="module-top">
+        <div id="tabScrollShell" class="tab-scroll-shell">
+          <button id="tabScrollLeft" class="tab-scroll-button tab-scroll-left is-hidden" type="button" aria-label="Scroll tabs left">‹</button>
+
+          <div
+            id="tabList"
+            class="tab-list"
+            role="tablist"
+            aria-label="Labour demand location grouping"
+          >
+            <button
+              class="chart-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              data-group="state"
+            >State</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              data-group="rurality"
+            >Rurality</button>
+          </div>
+
+          <button id="tabScrollRight" class="tab-scroll-button tab-scroll-right is-hidden" type="button" aria-label="Scroll tabs right">›</button>
+        </div>
+
+        <div
+          id="dataSourceIndicator"
+          class="live-data"
+          aria-label="Live data"
+        >
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="dataSourceText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div id="headingScrollShell" class="heading-scroll-shell">
+          <button id="headingScrollLeft" class="heading-scroll-button heading-scroll-left is-hidden" type="button" aria-label="Scroll graph title left">‹</button>
+
+          <div id="headingScrollViewport" class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">
+              <span class="chart-heading-fixed">FTE job ads by&nbsp;</span><span id="chartHeadingGroup" class="chart-heading-group">state</span><span id="chartHeadingSuffix" class="chart-heading-suffix"></span>
+            </h2>
+          </div>
+
+          <button id="headingScrollRight" class="heading-scroll-button heading-scroll-right is-hidden" type="button" aria-label="Scroll graph title right">›</button>
+        </div>
+
+        <div class="heading-controls">
+
+          <div
+            id="metricSwitch"
+            class="metric-switch"
+            role="group"
+            aria-label="Display metric"
+          >
+            <button
+              class="metric-button is-active"
+              type="button"
+              data-metric="count"
+            >Count</button>
+
+            <button
+              class="metric-button"
+              type="button"
+              data-metric="share"
+            >%</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div id="legendNav" class="legend-nav">
+          <button
+            id="legendScrollLeft"
+            class="legend-scroll-button legend-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll legend left"
+          >‹</button>
+
+          <div class="legend-viewport">
+            <div
+              id="chartLegend"
+              class="chart-legend"
+              aria-label="Chart legend"
+            ></div>
+          </div>
+
+          <button
+            id="legendScrollRight"
+            class="legend-scroll-button legend-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll legend right"
+          >›</button>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas
+          id="trendChart"
+          class="chart-canvas"
+          aria-label="Australian optometry labour demand by location trend chart"
+          role="img"
+        ></canvas>
+      </div>
+
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    Chart.defaults.font.family = "'Lato', sans-serif";
+    Chart.defaults.color = '#151515';
+
+    const CONFIG = {
+      jobSheetId: '1ZcZrPHvux_ckk2cJqRYu1oz9uT4brcRmcJ80bP-v--4',
+      jobSheetGid: '1641593359',
+      jobSheetName: 'Mirror table',
+      jobRange: 'B3:V',
+      fetchTimeoutMs: 20000,
+      fetchAttempts: 2,
+      retryDelayMs: 1200,
+      localCacheKey: 'pff-labour-demand-location-v2',
+      trailingWeeks: 13,
+      minimumGroupSize: 20,
+      pointRadius: 2.7,
+      pointHoverRadius: 4.4,
+      pointOpacity: 0.20,
+      pointHoverOpacity: 0.68,
+      trendWidth: 3.6,
+      columns: {
+        repeatFlag: 0,
+        date: 2,
+        state: 7,
+        rurality: 9,
+        fteDays: 11
+      }
+    };
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY = 'pff-job-ads-data';
+    const CACHE_FETCH_TIMEOUT_MS = 10000;
+    const FORCE_CACHED_DATA = false;
+
+    const STATE_LABELS = [
+      'NSW',
+      'VIC',
+      'QLD',
+      'SA',
+      'WA',
+      'TAS',
+      'NT',
+      'ACT'
+    ];
+
+    const STATE_COLOURS = [
+      '#2db7f5',
+      '#2d3a8c',
+      '#7a0036',
+      '#f03a47',
+      '#000000',
+      '#22a36b',
+      '#c25e00',
+      '#7b61ff'
+    ];
+
+    const RURALITY_LABELS = [
+      'Metro',
+      'Non-metro'
+    ];
+
+    const RURALITY_COLOURS = [
+      '#30475d',
+      '#b54a0a'
+    ];
+
+    const SERIES_SLOT_COUNT = STATE_LABELS.length;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const AVERAGE_MONTH_DAYS = 365.2425 / 12;
+    const TRAILING_WINDOW_MS = CONFIG.trailingWeeks * 7 * DAY_MS;
+
+    const app = document.getElementById('app');
+    const loadingState = document.getElementById('loadingState');
+    const statusElement = document.getElementById('status');
+    const tabList = document.getElementById('tabList');
+    const tabScrollLeft = document.getElementById('tabScrollLeft');
+    const tabScrollRight = document.getElementById('tabScrollRight');
+    const chartTabs = Array.from(document.querySelectorAll('.chart-tab'));
+    const metricSwitch = document.getElementById('metricSwitch');
+    const metricButtons = Array.from(document.querySelectorAll('.metric-button'));
+    const headingScrollViewport = document.getElementById('headingScrollViewport');
+    const headingScrollLeft = document.getElementById('headingScrollLeft');
+    const headingScrollRight = document.getElementById('headingScrollRight');
+    const chartHeadingGroup = document.getElementById('chartHeadingGroup');
+    const chartHeadingSuffix = document.getElementById('chartHeadingSuffix');
+    const chartLegend = document.getElementById('chartLegend');
+    const legendScrollLeft = document.getElementById('legendScrollLeft');
+    const legendScrollRight = document.getElementById('legendScrollRight');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('trendChart');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
+
+    let rows = [];
+    let chart = null;
+    let activeGroup = 'state';
+    let activeMetric = 'count';
+    let axisBounds = null;
+    let responsiveFrame = null;
+
+    const hiddenSeriesByGroup = new Map();
+
+    const yAxisTickAnimation = {
+      values: [],
+      raf: null,
+      token: 0
+    };
+
+    const yAxisTitleAnimation = {
+      from: 'FTE job ads/month',
+      to: 'FTE job ads/month',
+      progress: 1,
+      raf: null,
+      token: 0
+    };
+
+    function reducedMotion() {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    function mobileLayout() {
+      return window.innerWidth <= 430;
+    }
+
+    function clamp(value, minimum, maximum) {
+      return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    function easeOutQuart(progress) {
+      const p = clamp(progress, 0, 1);
+      return 1 - Math.pow(1 - p, 4);
+    }
+
+    function yAxisTickTargets(config) {
+      const intervals = Math.max(1, Math.round((config.max - config.min) / config.majorStep));
+      return Array.from(
+        { length: intervals + 1 },
+        (_, index) => config.min + config.majorStep * index
+      );
+    }
+
+    function animateYAxisTickValues(targets, duration = 420) {
+      const targetValues = [...targets];
+      if (!targetValues.length) return;
+
+      if (yAxisTickAnimation.raf) {
+        cancelAnimationFrame(yAxisTickAnimation.raf);
+        yAxisTickAnimation.raf = null;
+      }
+
+      const token = ++yAxisTickAnimation.token;
+      const startValues = yAxisTickAnimation.values.length === targetValues.length
+        ? [...yAxisTickAnimation.values]
+        : [...targetValues];
+
+      if (reducedMotion() || duration <= 0) {
+        yAxisTickAnimation.values = targetValues;
+        chart?.draw();
+        return;
+      }
+
+      const startedAt = performance.now();
+      const step = now => {
+        if (token !== yAxisTickAnimation.token) return;
+        const progress = clamp((now - startedAt) / duration, 0, 1);
+        const eased = easeOutQuart(progress);
+        yAxisTickAnimation.values = targetValues.map(
+          (target, index) => startValues[index] + (target - startValues[index]) * eased
+        );
+        chart?.draw();
+
+        if (progress < 1) {
+          yAxisTickAnimation.raf = requestAnimationFrame(step);
+        } else {
+          yAxisTickAnimation.raf = null;
+          yAxisTickAnimation.values = targetValues;
+        }
+      };
+
+      yAxisTickAnimation.raf = requestAnimationFrame(step);
+    }
+
+    function animateYAxisTitle(nextTitle, duration = 360) {
+      if (yAxisTitleAnimation.to === nextTitle) return;
+
+      if (yAxisTitleAnimation.raf) {
+        cancelAnimationFrame(yAxisTitleAnimation.raf);
+        yAxisTitleAnimation.raf = null;
+      }
+
+      yAxisTitleAnimation.from = yAxisTitleAnimation.to;
+      yAxisTitleAnimation.to = nextTitle;
+      yAxisTitleAnimation.progress = 0;
+      const token = ++yAxisTitleAnimation.token;
+
+      if (reducedMotion() || duration <= 0) {
+        yAxisTitleAnimation.progress = 1;
+        chart?.draw();
+        return;
+      }
+
+      const startedAt = performance.now();
+      const step = now => {
+        if (token !== yAxisTitleAnimation.token) return;
+        yAxisTitleAnimation.progress = clamp((now - startedAt) / duration, 0, 1);
+        chart?.draw();
+        if (yAxisTitleAnimation.progress < 1) {
+          yAxisTitleAnimation.raf = requestAnimationFrame(step);
+        } else {
+          yAxisTitleAnimation.raf = null;
+        }
+      };
+
+      yAxisTitleAnimation.raf = requestAnimationFrame(step);
+    }
+
+    function formatYAxisValue(value, metric = activeMetric) {
+      if (!Number.isFinite(value)) return '';
+      if (metric === 'share') return `${Math.round(value)}%`;
+      return Number(value)
+        .toFixed(Math.abs(value) < 10 && Math.abs(value % 1) > 1e-8 ? 1 : 0)
+        .replace(/\.0$/, '');
+    }
+
+    function drawYAxisTitle(context, chartArea) {
+      const mobile = mobileLayout();
+      const progress = clamp(yAxisTitleAnimation.progress, 0, 1);
+      const outgoingOpacity = clamp(1 - progress * 2.2, 0, 1);
+      const incomingOpacity = clamp((progress - 0.32) / 0.68, 0, 1);
+      const x = chartArea.left - (mobile ? 46 : 50);
+      const y = chartArea.top + chartArea.height / 2;
+
+      const draw = (text, opacity) => {
+        if (!text || opacity <= 0) return;
+        context.save();
+        context.globalAlpha = opacity;
+        context.translate(x, y);
+        context.rotate(-Math.PI / 2);
+        context.fillStyle = '#151515';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        context.fillText(text, 0, 0);
+        context.restore();
+      };
+
+      if (yAxisTitleAnimation.from === yAxisTitleAnimation.to || progress >= 1) {
+        draw(yAxisTitleAnimation.to, 1);
+        return;
+      }
+
+      draw(yAxisTitleAnimation.from, outgoingOpacity);
+      draw(yAxisTitleAnimation.to, incomingOpacity);
+    }
+
+    function cleanText(value) {
+      return String(value ?? '')
+        .replace(/\u00a0/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
+    }
+
+    function normaliseText(value) {
+      return cleanText(value).toLowerCase();
+    }
+
+    function getCellText(cell) {
+      return cleanText(cell?.f ?? cell?.v ?? '');
+    }
+
+    function hideLoadingState() {
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      loadingState.setAttribute('aria-hidden', 'true');
+      refreshResponsiveLayout();
+    }
+
+    function setStatus(message = '') {
+      statusElement.textContent = message;
+    }
+
+    function setDataSource(source) {
+      const cached = source !== 'live';
+      dataSourceIndicator.classList.toggle('is-cached', cached);
+      if (source === 'live') {
+        dataSourceIndicator.setAttribute('aria-label', 'Live data');
+        dataSourceText.textContent = 'LIVE data';
+      } else {
+        dataSourceIndicator.setAttribute('aria-label', 'Cached data');
+        dataSourceText.textContent = 'CACHED data';
+      }
+    }
+
+    function configuredGroupLabels(group = activeGroup) {
+      return group === 'state' ? STATE_LABELS : RURALITY_LABELS;
+    }
+
+    function colourForGroupLabel(label, group = activeGroup) {
+      const labels = configuredGroupLabels(group);
+      const colours = group === 'state' ? STATE_COLOURS : RURALITY_COLOURS;
+      const index = labels.indexOf(label);
+      return index >= 0 ? colours[index] : '#69718a';
+    }
+
+    function groupLabels(group = activeGroup, includeSmallGroups = false) {
+      return configuredGroupLabels(group).filter(label => {
+        const count = rows.filter(row => row?.[group] === label).length;
+        return count > 0 && (includeSmallGroups || count >= CONFIG.minimumGroupSize);
+      });
+    }
+
+    function groupColours(group = activeGroup) {
+      return groupLabels(group).map(label => colourForGroupLabel(label, group));
+    }
+
+    function getExcludedGroupCount(group = activeGroup) {
+      return groupLabels(group, true).filter(label =>
+        rows.filter(row => row?.[group] === label).length < CONFIG.minimumGroupSize
+      ).length;
+    }
+
+    function hiddenSeriesSet(group = activeGroup) {
+      if (!hiddenSeriesByGroup.has(group)) {
+        hiddenSeriesByGroup.set(group, new Set());
+      }
+      return hiddenSeriesByGroup.get(group);
+    }
+
+    function parseDateValue(value) {
+      if (value instanceof Date) {
+        return Number.isNaN(value.getTime())
+          ? null
+          : new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
+      }
+
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        const googleEpoch = Date.UTC(1899, 11, 30);
+        const date = new Date(googleEpoch + value * DAY_MS);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+
+      const text = cleanText(value);
+      if (!text) return null;
+
+      let match = text.match(/^Date\((\d+),(\d+),(\d+)\)$/);
+      if (match) {
+        return new Date(Date.UTC(Number(match[1]), Number(match[2]), Number(match[3])));
+      }
+
+      match = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/);
+      if (match) {
+        let year = Number(match[3]);
+        if (year < 100) year += 2000;
+        return new Date(Date.UTC(year, Number(match[2]) - 1, Number(match[1])));
+      }
+
+      match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (match) {
+        return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+      }
+
+      const parsed = new Date(text);
+      return Number.isNaN(parsed.getTime())
+        ? null
+        : new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+    }
+
+    function parseDateCell(cell) {
+      return parseDateValue(cell?.v) || parseDateValue(cell?.f);
+    }
+
+    function parseEstimatedDaysPerWeek(value) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return clamp(value, 0, 5);
+      }
+
+      const text = cleanText(value);
+      if (!text || normaliseText(text) === 'xxx') return 5;
+
+      const values = [...text.matchAll(/\d+(?:\.\d+)?/g)]
+        .map(match => Number(match[0]))
+        .filter(number => Number.isFinite(number) && number >= 0 && number <= 7);
+
+      if (!values.length) return 5;
+      return clamp(values.reduce((total, number) => total + number, 0) / values.length, 0, 5);
+    }
+
+    function getStateGroup(value) {
+      const matches = cleanText(value)
+        .toUpperCase()
+        .match(/\b(?:NSW|QLD|VIC|ACT|SA|NT|WA|TAS)\b/g) || [];
+      return matches[0] || null;
+    }
+
+    function getRuralityGroup(value) {
+      const matches = [
+        ...cleanText(value).toUpperCase().matchAll(/\bMM\s*([1-7])\b/g)
+      ];
+      if (!matches.length) return null;
+      return matches.some(match => Number(match[1]) === 1)
+        ? 'Metro'
+        : 'Non-metro';
+    }
+
+    function normaliseRows(sourceRows) {
+      const result = [];
+
+      (sourceRows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const repeatFlag = normaliseText(getCellText(cells[CONFIG.columns.repeatFlag]));
+        if (repeatFlag !== 'no') return;
+
+        const date = parseDateCell(cells[CONFIG.columns.date]);
+        if (!date) return;
+
+        const stateText = getCellText(cells[CONFIG.columns.state]);
+        const ruralityText = getCellText(cells[CONFIG.columns.rurality]);
+        const fteCell = cells[CONFIG.columns.fteDays];
+        const fteDays = parseEstimatedDaysPerWeek(fteCell?.v ?? fteCell?.f ?? '');
+
+        result.push({
+          x: date.getTime(),
+          fteDays,
+          fteWeight: fteDays / 5,
+          state: getStateGroup(stateText),
+          rurality: getRuralityGroup(ruralityText)
+        });
+      });
+
+      return result.sort((first, second) => first.x - second.x);
+    }
+
+    function loadSheetQuery() {
+      return new Promise((resolve, reject) => {
+        const callbackName = `pffDemandLocation_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+        const script = document.createElement('script');
+        let settled = false;
+
+        const timeout = window.setTimeout(() => {
+          finish(new Error('Could not load Google Sheet data'));
+        }, CONFIG.fetchTimeoutMs);
+
+        function cleanup() {
+          window.clearTimeout(timeout);
+          try { delete window[callbackName]; } catch (_) { window[callbackName] = undefined; }
+          if (script.parentNode) script.parentNode.removeChild(script);
+        }
+
+        function finish(error, response) {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (error) {
+            reject(error);
+            return;
+          }
+          if (!response || response.status === 'error') {
+            reject(new Error(response?.errors?.[0]?.detailed_message || 'Could not load Google Sheet data'));
+            return;
+          }
+          resolve(response?.table?.rows || []);
+        }
+
+        window[callbackName] = response => finish(null, response);
+        script.onerror = () => finish(new Error('Network error loading Google Sheet data'));
+
+        const params = new URLSearchParams({
+          sheet: CONFIG.jobSheetName,
+          range: CONFIG.jobRange,
+          headers: '0',
+          tq: 'select *',
+          tqx: `responseHandler:${callbackName}`,
+          gid: CONFIG.jobSheetGid,
+          _: String(Date.now())
+        });
+
+        script.src = `https://docs.google.com/spreadsheets/d/${CONFIG.jobSheetId}/gviz/tq?${params.toString()}`;
+        document.body.appendChild(script);
+      });
+    }
+
+    function loadCentralCachedData() {
+      return new Promise((resolve, reject) => {
+        const callbackName = `pffDemandLocationCache_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+        const script = document.createElement('script');
+        let settled = false;
+
+        const timeout = window.setTimeout(() => {
+          finish(new Error('Could not load central cached data'));
+        }, CACHE_FETCH_TIMEOUT_MS);
+
+        function cleanup() {
+          window.clearTimeout(timeout);
+          try { delete window[callbackName]; } catch (_) { window[callbackName] = undefined; }
+          if (script.parentNode) script.parentNode.removeChild(script);
+        }
+
+        function finish(error, payload) {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (error) {
+            reject(error);
+            return;
+          }
+          if (!payload || payload.ok !== true || payload.appKey !== CACHE_APP_KEY || !payload.data) {
+            reject(new Error(payload?.error || 'Central cached data is invalid'));
+            return;
+          }
+          resolve(payload.data);
+        }
+
+        window[callbackName] = payload => finish(null, payload);
+        script.onerror = () => finish(new Error('Network error loading central cached data'));
+
+        const params = new URLSearchParams({
+          appKey: CACHE_APP_KEY,
+          callback: callbackName,
+          _: String(Date.now())
+        });
+
+        script.src = `${CACHE_WEB_APP_URL}?${params.toString()}`;
+        document.body.appendChild(script);
+      });
+    }
+
+    function makeCachedCell(pair) {
+      return { v: pair?.[0] ?? '', f: pair?.[1] ?? '' };
+    }
+
+    function restoreCachedJobRows(cachedRows) {
+      const sourceIndexes = [0, 2, 4, 5, 6, 7, 9, 11, 20];
+      return (Array.isArray(cachedRows) ? cachedRows : []).map(row => {
+        const cells = Array.from({ length: 21 }, () => null);
+        sourceIndexes.forEach((sourceIndex, cachedIndex) => {
+          cells[sourceIndex] = makeCachedCell(row?.[cachedIndex]);
+        });
+        return { c: cells };
+      });
+    }
+
+    function saveLocalCache(data) {
+      try {
+        localStorage.setItem(CONFIG.localCacheKey, JSON.stringify(data));
+      } catch (_) {}
+    }
+
+    function readLocalCache() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(CONFIG.localCacheKey) || 'null');
+        return Array.isArray(parsed)
+          ? parsed.filter(row => Number.isFinite(row?.x) && Number.isFinite(row?.fteWeight))
+          : [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    async function loadData() {
+      let lastError = null;
+
+      if (!FORCE_CACHED_DATA) {
+        for (let attempt = 1; attempt <= CONFIG.fetchAttempts; attempt += 1) {
+          try {
+            const liveRows = normaliseRows(await loadSheetQuery());
+            if (liveRows.length) {
+              saveLocalCache(liveRows);
+              setDataSource('live');
+              return liveRows;
+            }
+            throw new Error('No valid job ads were returned');
+          } catch (error) {
+            lastError = error;
+            if (attempt < CONFIG.fetchAttempts) {
+              await new Promise(resolve => window.setTimeout(resolve, CONFIG.retryDelayMs));
+            }
+          }
+        }
+      }
+
+      try {
+        const central = await loadCentralCachedData();
+        const cachedRows = normaliseRows(restoreCachedJobRows(central?.jobRows));
+        if (cachedRows.length) {
+          saveLocalCache(cachedRows);
+          setDataSource('cached');
+          return cachedRows;
+        }
+      } catch (error) {
+        lastError = lastError || error;
+      }
+
+      const local = readLocalCache();
+      if (local.length) {
+        setDataSource('cached');
+        return local;
+      }
+
+      throw lastError || new Error('Unable to load job ad data');
+    }
+
+    function startOfUtcMonth(date) {
+      return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+    }
+
+    function addUtcMonths(date, months) {
+      return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+    }
+
+    function getMonthTimestamp(timestamp) {
+      return startOfUtcMonth(new Date(timestamp)).getTime();
+    }
+
+    function calculateAxisBounds(data) {
+      const xValues = data.map(row => row.x);
+      const minimumDate = new Date(Math.min(...xValues));
+      const maximumDate = new Date(Math.max(...xValues));
+      const firstMonth = startOfUtcMonth(minimumDate);
+      const lastMonth = startOfUtcMonth(maximumDate);
+      return {
+        xMin: firstMonth.getTime(),
+        xMax: addUtcMonths(lastMonth, 1).getTime(),
+        firstDataTime: Math.min(...xValues),
+        lastDataMonth: lastMonth.getTime()
+      };
+    }
+
+    function buildMonthSequence() {
+      const result = [];
+      let current = new Date(axisBounds.xMin);
+      const end = new Date(axisBounds.lastDataMonth);
+      while (current.getTime() <= end.getTime()) {
+        result.push(current.getTime());
+        current = addUtcMonths(current, 1);
+      }
+      return result;
+    }
+
+    function rowsForSeries(label, group = activeGroup) {
+      return rows.filter(row => row?.[group] === label);
+    }
+
+    function classifiedRows(group = activeGroup) {
+      const allowed = new Set(groupLabels(group));
+      return rows.filter(row => allowed.has(row?.[group]));
+    }
+
+    function buildMonthlyCountSeries(data) {
+      const counts = new Map();
+      buildMonthSequence().forEach(month => counts.set(month, 0));
+      data.forEach(row => {
+        const month = getMonthTimestamp(row.x);
+        if (!counts.has(month)) return;
+        counts.set(month, counts.get(month) + row.fteWeight);
+      });
+      return [...counts.entries()].map(([x, value]) => ({
+        x,
+        y: value,
+        value,
+        monthLabel: formatTooltipMonth(x)
+      }));
+    }
+
+    function buildTrailingAverageSeries(data) {
+      const now = Date.now();
+      return buildMonthSequence().map(monthTimestamp => {
+        const monthStart = new Date(monthTimestamp);
+        const monthEnd = addUtcMonths(monthStart, 1).getTime();
+        const effectiveEnd = Math.min(monthEnd, now);
+        const windowStart = effectiveEnd - TRAILING_WINDOW_MS;
+
+        if (windowStart < axisBounds.firstDataTime) {
+          return {
+            x: monthTimestamp,
+            y: null,
+            value: null,
+            periodLabel: formatTrailingPeriod(monthTimestamp)
+          };
+        }
+
+        const windowCount = data.reduce((total, row) =>
+          total + (row.x >= windowStart && row.x < effectiveEnd ? row.fteWeight : 0), 0
+        );
+
+        const value = windowCount * AVERAGE_MONTH_DAYS / (CONFIG.trailingWeeks * 7);
+        return {
+          x: monthTimestamp,
+          y: value,
+          value,
+          periodLabel: formatTrailingPeriod(monthTimestamp)
+        };
+      });
+    }
+
+    function buildMonthlyShareSeries(data, denominatorData) {
+      const numerator = new Map();
+      const denominator = new Map();
+      buildMonthSequence().forEach(month => {
+        numerator.set(month, 0);
+        denominator.set(month, 0);
+      });
+
+      data.forEach(row => {
+        const month = getMonthTimestamp(row.x);
+        if (numerator.has(month)) numerator.set(month, numerator.get(month) + row.fteWeight);
+      });
+
+      denominatorData.forEach(row => {
+        const month = getMonthTimestamp(row.x);
+        if (denominator.has(month)) denominator.set(month, denominator.get(month) + row.fteWeight);
+      });
+
+      return buildMonthSequence().map(x => {
+        const n = numerator.get(x) || 0;
+        const d = denominator.get(x) || 0;
+        const value = d > 0 ? n / d * 100 : null;
+        return {
+          x,
+          y: value,
+          value,
+          monthLabel: formatTooltipMonth(x)
+        };
+      });
+    }
+
+    function buildTrailingShareSeries(data, denominatorData) {
+      const now = Date.now();
+      return buildMonthSequence().map(monthTimestamp => {
+        const monthStart = new Date(monthTimestamp);
+        const monthEnd = addUtcMonths(monthStart, 1).getTime();
+        const effectiveEnd = Math.min(monthEnd, now);
+        const windowStart = effectiveEnd - TRAILING_WINDOW_MS;
+
+        if (windowStart < axisBounds.firstDataTime) {
+          return {
+            x: monthTimestamp,
+            y: null,
+            value: null,
+            periodLabel: formatTrailingPeriod(monthTimestamp)
+          };
+        }
+
+        const n = data.reduce((total, row) =>
+          total + (row.x >= windowStart && row.x < effectiveEnd ? row.fteWeight : 0), 0
+        );
+        const d = denominatorData.reduce((total, row) =>
+          total + (row.x >= windowStart && row.x < effectiveEnd ? row.fteWeight : 0), 0
+        );
+        const value = d > 0 ? n / d * 100 : null;
+        return {
+          x: monthTimestamp,
+          y: value,
+          value,
+          periodLabel: formatTrailingPeriod(monthTimestamp)
+        };
+      });
+    }
+
+    function formatTooltipMonth(timestamp) {
+      return new Intl.DateTimeFormat('en-AU', {
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC'
+      }).format(new Date(timestamp));
+    }
+
+    function formatTrailingPeriod(timestamp) {
+      const monthStart = new Date(timestamp);
+      const monthEnd = addUtcMonths(monthStart, 1).getTime();
+      const effectiveEnd = Math.min(monthEnd, Date.now());
+      const windowStart = new Date(effectiveEnd - TRAILING_WINDOW_MS);
+      const endDate = new Date(effectiveEnd - 1);
+      const formatter = new Intl.DateTimeFormat('en-AU', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC'
+      });
+      return `${formatter.format(windowStart)} – ${formatter.format(endDate)}`;
+    }
+
+    function buildMonthTicks(minimum, maximum) {
+      const ticks = [];
+      let cursor = startOfUtcMonth(new Date(minimum));
+      if (cursor.getTime() < minimum) cursor = addUtcMonths(cursor, 1);
+      while (cursor.getTime() <= maximum) {
+        ticks.push({ value: cursor.getTime() });
+        cursor = addUtcMonths(cursor, 1);
+      }
+      return ticks;
+    }
+
+    function isQuarterTick(timestamp) {
+      const month = new Date(Number(timestamp)).getUTCMonth();
+      return [0, 3, 6, 9].includes(month);
+    }
+
+    function formatQuarterTick(timestamp) {
+      if (!isQuarterTick(timestamp)) return '';
+      const date = new Date(Number(timestamp));
+      return `${date.getUTCMonth() + 1}/${date.getUTCFullYear()}`;
+    }
+
+    function niceStep(value) {
+      if (!Number.isFinite(value) || value <= 0) return 1;
+      const exponent = Math.floor(Math.log10(value));
+      const magnitude = Math.pow(10, exponent);
+      const fraction = value / magnitude;
+      if (fraction <= 1) return magnitude;
+      if (fraction <= 2) return 2 * magnitude;
+      if (fraction <= 2.5) return 2.5 * magnitude;
+      if (fraction <= 5) return 5 * magnitude;
+      return 10 * magnitude;
+    }
+
+    function seriesBundle(group = activeGroup, metric = activeMetric) {
+      const labels = groupLabels(group);
+      const denominator = classifiedRows(group);
+      return labels.map(label => {
+        const data = rowsForSeries(label, group);
+        const raw = metric === 'share'
+          ? buildMonthlyShareSeries(data, denominator)
+          : buildMonthlyCountSeries(data);
+        const trend = metric === 'share'
+          ? buildTrailingShareSeries(data, denominator)
+          : buildTrailingAverageSeries(data);
+        return { label, raw, trend };
+      });
+    }
+
+    function currentYAxis(bundle = seriesBundle()) {
+      if (activeMetric === 'share') {
+        const values = bundle.flatMap(series => [
+          ...series.trend.map(point => point.value)
+        ]).filter(Number.isFinite);
+        const observedMaximum = Math.max(10, ...values);
+        const majorStep = activeGroup === 'rurality'
+          ? 20
+          : Math.max(5, niceStep(observedMaximum * 1.08 / 5));
+        return {
+          min: 0,
+          max: activeGroup === 'rurality'
+            ? 100
+            : Math.max(majorStep * 5, Math.ceil(observedMaximum / majorStep) * majorStep),
+          majorStep,
+          title: '% of FTE job ads'
+        };
+      }
+
+      const values = bundle.flatMap(series => [
+        ...series.trend.map(point => point.value)
+      ]).filter(Number.isFinite);
+      const observedMaximum = Math.max(0.5, ...values);
+      const majorStep = Math.max(0.5, niceStep(observedMaximum * 1.08 / 5));
+      return {
+        min: 0,
+        max: Math.max(majorStep * 5, Math.ceil(observedMaximum / majorStep) * majorStep),
+        majorStep,
+        title: 'FTE job ads/month'
+      };
+    }
+
+    function rgba(hex, alpha) {
+      const cleaned = String(hex).replace('#', '').trim();
+      if (!/^[0-9a-f]{6}$/i.test(cleaned)) return `rgba(21,21,21,${alpha})`;
+      const value = Number.parseInt(cleaned, 16);
+      return `rgba(${(value >> 16) & 255},${(value >> 8) & 255},${value & 255},${alpha})`;
+    }
+
+    function emptyDataset(role, slot) {
+      return {
+        type: role === 'trend' ? 'line' : 'scatter',
+        label: '',
+        _role: role,
+        _slot: slot,
+        _seriesLabel: '',
+        data: [],
+        parsing: false,
+        showLine: role === 'trend',
+        spanGaps: false,
+        fill: false,
+        borderWidth: role === 'trend' ? CONFIG.trendWidth : 0.6,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        pointHitRadius: role === 'trend' ? 7 : 0,
+        tension: role === 'trend' ? 0.28 : 0,
+        cubicInterpolationMode: role === 'trend' ? 'monotone' : 'default',
+        borderCapStyle: 'round',
+        borderJoinStyle: 'round',
+        order: role === 'trend' ? 10 : 2
+      };
+    }
+
+    function makeDatasetSlots() {
+      const datasets = [];
+      for (let index = 0; index < SERIES_SLOT_COUNT; index += 1) {
+        datasets.push(emptyDataset('raw', index));
+      }
+      for (let index = 0; index < SERIES_SLOT_COUNT; index += 1) {
+        datasets.push(emptyDataset('trend', index));
+      }
+      return datasets;
+    }
+
+    function syncDatasets(bundle) {
+      const labels = groupLabels();
+      const colours = groupColours();
+      const hiddenSet = hiddenSeriesSet();
+
+      for (let slot = 0; slot < SERIES_SLOT_COUNT; slot += 1) {
+        const series = bundle[slot] || null;
+        const colour = colours[slot] || '#69718a';
+        const hiddenByLegend = series ? hiddenSet.has(series.label) : true;
+
+        const rawDataset = chart.data.datasets[slot];
+        rawDataset.label = series?.label || '';
+        rawDataset._seriesLabel = series?.label || '';
+        rawDataset.data = [];
+        rawDataset.borderColor = 'transparent';
+        rawDataset.backgroundColor = 'transparent';
+        rawDataset.pointBackgroundColor = 'transparent';
+        rawDataset.pointHoverBackgroundColor = 'transparent';
+        rawDataset.pointBorderColor = 'transparent';
+        rawDataset.pointHoverBorderColor = 'transparent';
+        rawDataset.hidden = true;
+
+        const trendDataset = chart.data.datasets[SERIES_SLOT_COUNT + slot];
+        trendDataset.label = series?.label || '';
+        trendDataset._seriesLabel = series?.label || '';
+        trendDataset.data = series?.trend || [];
+        trendDataset.borderColor = colour;
+        trendDataset.backgroundColor = colour;
+        trendDataset.hidden = !series || hiddenByLegend;
+      }
+    }
+
+    function tooltipTitle(items) {
+      const raw = items?.[0]?.raw;
+      if (!Number.isFinite(raw?.x)) return '';
+      return raw.periodLabel || '';
+    }
+
+    function tooltipLabel(context) {
+      const value = Number(context.raw?.value);
+      if (!Number.isFinite(value)) return '';
+      const label = context.dataset?._seriesLabel || '';
+      if (activeMetric === 'share') {
+        return `${label}: ${value.toFixed(1)}%`;
+      }
+      return `${label}: ${value.toFixed(1)} FTE ads/month · 13-week average`;
+    }
+
+    function drawChartNote(context, area, text) {
+      if (!text) return;
+
+      context.save();
+      context.font = '400 8.5px Lato, sans-serif';
+      context.textBaseline = 'middle';
+      context.textAlign = 'left';
+
+      const maximumTextWidth = Math.max(90, Math.min(235, area.right - area.left - 20));
+      const words = text.split(/\s+/);
+      const lines = [];
+      let line = '';
+
+      words.forEach(word => {
+        const candidate = line ? `${line} ${word}` : word;
+        if (line && context.measureText(candidate).width > maximumTextWidth) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = candidate;
+        }
+      });
+      if (line) lines.push(line);
+
+      const paddingX = 5;
+      const paddingY = 4;
+      const lineHeight = 11;
+      const textWidth = Math.max(...lines.map(item => context.measureText(item).width));
+      const boxWidth = textWidth + paddingX * 2;
+      const boxHeight = lines.length * lineHeight + paddingY * 2;
+      const x = area.right - boxWidth - 6;
+      const y = area.bottom - boxHeight - 6;
+      const radius = 4;
+
+      context.beginPath();
+      context.moveTo(x + radius, y);
+      context.lineTo(x + boxWidth - radius, y);
+      context.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + radius);
+      context.lineTo(x + boxWidth, y + boxHeight - radius);
+      context.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - radius, y + boxHeight);
+      context.lineTo(x + radius, y + boxHeight);
+      context.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - radius);
+      context.lineTo(x, y + radius);
+      context.quadraticCurveTo(x, y, x + radius, y);
+      context.closePath();
+      context.fillStyle = 'rgba(255, 255, 255, 0.84)';
+      context.fill();
+      context.strokeStyle = 'rgba(105, 113, 138, 0.16)';
+      context.lineWidth = 1;
+      context.stroke();
+
+      context.fillStyle = 'rgba(105, 113, 138, 0.88)';
+      lines.forEach((item, index) => {
+        context.fillText(item, x + paddingX, y + paddingY + lineHeight * index + lineHeight / 2);
+      });
+      context.restore();
+    }
+
+    const animatedYAxisPlugin = {
+      id: 'animatedYAxis',
+      afterDraw(chartInstance) {
+        const area = chartInstance.chartArea;
+        if (!area) return;
+
+        const config = currentYAxis();
+        const targets = yAxisTickTargets(config);
+        const values = yAxisTickAnimation.values.length === targets.length
+          ? yAxisTickAnimation.values
+          : targets;
+        const mobile = mobileLayout();
+        const intervals = Math.max(1, targets.length - 1);
+        const context = chartInstance.ctx;
+
+        context.save();
+        context.fillStyle = '#151515';
+        context.textAlign = 'right';
+        context.textBaseline = 'middle';
+        context.font = `${mobile ? 10 : 11}px Lato, sans-serif`;
+
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const y = area.bottom - area.height * ratio;
+          context.fillText(
+            formatYAxisValue(Number(values[index]), activeMetric),
+            area.left - 8,
+            y
+          );
+        }
+        context.restore();
+
+        drawYAxisTitle(context, area);
+      }
+    };
+
+    const sourceMilestonePlugin = {
+      id: 'sourceMilestonePlugin',
+      afterDatasetsDraw(activeChart) {
+        const xScale = activeChart.scales.x;
+        const area = activeChart.chartArea;
+        if (!xScale || !area) return;
+
+        const context = activeChart.ctx;
+        const events = [
+          { date: Date.UTC(2025, 11, 1), label: 'EssilorLuxottica jobs added' },
+          { date: Date.UTC(2026, 6, 1), label: 'Indeed jobs added' }
+        ];
+
+        context.save();
+        context.fillStyle = 'rgba(105, 113, 138, 0.76)';
+        context.font = '400 9px Lato, sans-serif';
+        context.textAlign = 'left';
+        context.textBaseline = 'top';
+
+        const seekEnd = Date.UTC(2025, 11, 1);
+        if (xScale.min < seekEnd) {
+          context.fillText('SEEK jobs only', area.left + 4, area.top + 5);
+        }
+
+        events.forEach(event => {
+          const x = xScale.getPixelForValue(event.date);
+          if (x < area.left || x > area.right) return;
+
+          context.save();
+          context.beginPath();
+          context.setLineDash([4, 4]);
+          context.strokeStyle = 'rgba(105, 113, 138, 0.26)';
+          context.lineWidth = 1;
+          context.moveTo(x, area.top);
+          context.lineTo(x, area.bottom);
+          context.stroke();
+          context.setLineDash([]);
+          context.translate(x + 5, area.top + 122);
+          context.rotate(-Math.PI / 2);
+          context.fillStyle = 'rgba(105, 113, 138, 0.58)';
+          context.font = '400 9px Lato, sans-serif';
+          context.textAlign = 'left';
+          context.textBaseline = 'middle';
+          context.fillText(event.label, 0, 0);
+          context.restore();
+        });
+
+        context.restore();
+
+        const excludedGroupCount = getExcludedGroupCount(activeGroup);
+        if (excludedGroupCount > 0) {
+          drawChartNote(context, area, 'Groups with <20 job ads excluded');
+        }
+      }
+    };
+
+    function createChart() {
+      const mobile = mobileLayout();
+      const bundle = seriesBundle();
+      const axis = currentYAxis(bundle);
+
+      yAxisTickAnimation.values = yAxisTickTargets(axis);
+      yAxisTitleAnimation.from = axis.title;
+      yAxisTitleAnimation.to = axis.title;
+      yAxisTitleAnimation.progress = 1;
+
+      chart = new Chart(chartCanvas, {
+        type: 'line',
+        data: {
+          datasets: makeDatasetSlots()
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          resizeDelay: 80,
+          devicePixelRatio: Math.min(window.devicePixelRatio || 1, 3),
+          normalized: true,
+          animation: {
+            duration: reducedMotion() ? 0 : 760,
+            easing: 'easeOutQuart'
+          },
+          animations: {
+            x: { duration: 0 },
+            y: { duration: reducedMotion() ? 0 : 760, easing: 'easeOutQuart' },
+            colors: { duration: reducedMotion() ? 0 : 640, easing: 'easeOutQuart' }
+          },
+          interaction: {
+            mode: 'nearest',
+            intersect: true,
+            axis: 'xy'
+          },
+          layout: {
+            autoPadding: false,
+            padding: {
+              top: mobile ? 8 : 9,
+              right: 5,
+              bottom: 2,
+              left: 2
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              displayColors: true,
+              backgroundColor: '#ffffff',
+              titleColor: '#151515',
+              bodyColor: '#69718a',
+              borderColor: '#e8eaf0',
+              borderWidth: 1,
+              padding: 9,
+              cornerRadius: 4,
+              titleFont: { family: 'Lato', size: 12, weight: '700' },
+              bodyFont: { family: 'Lato', size: 11, weight: '400' },
+              callbacks: {
+                title: tooltipTitle,
+                label: tooltipLabel
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'linear',
+              min: axisBounds.xMin,
+              max: axisBounds.xMax,
+              bounds: 'data',
+              afterBuildTicks(scale) {
+                let firstTickMonth = startOfUtcMonth(new Date(scale.min));
+                if (firstTickMonth.getTime() < scale.min) {
+                  firstTickMonth = addUtcMonths(firstTickMonth, 1);
+                }
+                scale.ticks = buildMonthTicks(
+                  firstTickMonth.getTime(),
+                  axisBounds.lastDataMonth
+                );
+              },
+              border: {
+                display: true,
+                color: '#151515',
+                width: 1.1
+              },
+              grid: {
+                drawOnChartArea: false,
+                drawTicks: true,
+                tickColor: '#151515',
+                tickLength(context) {
+                  return isQuarterTick(context.tick?.value) ? 6 : 2;
+                }
+              },
+              ticks: {
+                color: '#151515',
+                autoSkip: false,
+                font: { family: 'Lato', size: mobile ? 9 : 10, weight: '400' },
+                maxRotation: 0,
+                minRotation: 0,
+                padding: 3,
+                callback(value) {
+                  return formatQuarterTick(value);
+                }
+              },
+              title: {
+                display: true,
+                text: 'Date advertised',
+                color: '#151515',
+                padding: { top: 7 },
+                font: { family: 'Lato', size: 13, weight: '700' }
+              }
+            },
+            y: {
+              min: axis.min,
+              max: axis.max,
+              afterFit(scale) {
+                scale.width = mobile ? 58 : 62;
+              },
+              afterBuildTicks(scale) {
+                const config = currentYAxis();
+                const halfStep = config.majorStep / 2;
+                scale.ticks = Array.from({ length: 11 }, (_, index) => ({
+                  value: config.min + halfStep * index
+                }));
+              },
+              border: {
+                display: true,
+                color: '#151515',
+                width: 1.1
+              },
+              grid: {
+                color(context) {
+                  const index = context.index ?? 0;
+                  return index % 2 === 0
+                    ? 'rgba(105, 113, 138, 0.075)'
+                    : 'rgba(105, 113, 138, 0.035)';
+                },
+                lineWidth(context) {
+                  const index = context.index ?? 0;
+                  return index % 2 === 0 ? 1 : 0.7;
+                },
+                drawTicks: true,
+                tickColor: '#151515',
+                tickWidth: 1.1,
+                tickLength(context) {
+                  const index = context.index ?? 0;
+                  return index % 2 === 0 ? 5 : 1.5;
+                }
+              },
+              ticks: {
+                display: false,
+                autoSkip: false
+              },
+              title: {
+                display: false
+              }
+            }
+          }
+        },
+        plugins: [animatedYAxisPlugin, sourceMilestonePlugin]
+      });
+
+      syncDatasets(bundle);
+      chart.update('none');
+    }
+
+    function renderChart(reason = 'update') {
+      const bundle = seriesBundle();
+      const axis = currentYAxis(bundle);
+
+      if (!chart) {
+        createChart();
+        return;
+      }
+
+      const previousTargets = yAxisTickAnimation.values.length
+        ? [...yAxisTickAnimation.values]
+        : yAxisTickTargets(axis);
+
+      syncDatasets(bundle);
+      chart.options.scales.x.min = axisBounds.xMin;
+      chart.options.scales.x.max = axisBounds.xMax;
+      chart.options.scales.y.min = axis.min;
+      chart.options.scales.y.max = axis.max;
+
+      const duration = reducedMotion()
+        ? 0
+        : reason === 'legend'
+          ? 260
+          : 760;
+
+      chart.options.animation.duration = duration;
+      chart.options.animation.easing = 'easeOutQuart';
+      chart.options.animations.x.duration = 0;
+      chart.options.animations.y.duration = duration;
+      chart.options.animations.y.easing = 'easeOutQuart';
+      chart.options.animations.colors.duration = reason === 'legend' ? 260 : duration;
+      chart.options.animations.colors.easing = 'easeOutQuart';
+      chart.update();
+
+      if (yAxisTickAnimation.values.length === 0) {
+        yAxisTickAnimation.values = previousTargets;
+      }
+      animateYAxisTickValues(yAxisTickTargets(axis), reason === 'legend' ? 260 : 420);
+      animateYAxisTitle(axis.title, reason === 'legend' ? 220 : 360);
+    }
+
+    function fadeTextChange(element, nextText, duration = 240) {
+      if (!element || element.textContent === nextText) return;
+      if (reducedMotion() || !element.animate) {
+        element.textContent = nextText;
+        return;
+      }
+      const fadeOut = element.animate([{opacity: 1}, {opacity: 0}], {
+        duration: Math.round(duration * 0.42),
+        easing: 'ease-out',
+        fill: 'forwards'
+      });
+      fadeOut.finished.then(() => {
+        element.textContent = nextText;
+        return element.animate([{opacity: 0}, {opacity: 1}], {
+          duration: Math.round(duration * 0.58),
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          fill: 'forwards'
+        }).finished;
+      }).catch(() => {});
+    }
+
+    function scrollByAmount(element, direction) {
+      element.scrollBy({
+        left: direction * Math.max(80, element.clientWidth * 0.72),
+        behavior: 'smooth'
+      });
+    }
+
+    function updateOverflowButtons(scroller, leftButton, rightButton) {
+      const maximum = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      const hasOverflow = maximum > 2;
+      leftButton.classList.toggle('is-hidden', !hasOverflow || scroller.scrollLeft <= 2);
+      rightButton.classList.toggle('is-hidden', !hasOverflow || scroller.scrollLeft >= maximum - 2);
+    }
+
+    function updateTabScrollControls() {
+      updateOverflowButtons(tabList, tabScrollLeft, tabScrollRight);
+    }
+
+    function updateHeadingScrollControls() {
+      updateOverflowButtons(headingScrollViewport, headingScrollLeft, headingScrollRight);
+    }
+
+    function updateLegendScrollControls() {
+      updateOverflowButtons(chartLegend, legendScrollLeft, legendScrollRight);
+    }
+
+    function updateHeading() {
+      fadeTextChange(chartHeadingGroup, activeGroup === 'state' ? 'state' : 'rurality');
+      fadeTextChange(chartHeadingSuffix, activeMetric === 'share' ? '(%)' : '');
+      headingScrollViewport.scrollLeft = 0;
+      requestAnimationFrame(updateHeadingScrollControls);
+      window.setTimeout(updateHeadingScrollControls, 420);
+    }
+
+    function updateMetricSwitch() {
+      const index = activeMetric === 'share' ? 1 : 0;
+      metricSwitch.style.setProperty('--metric-index', String(index));
+      metricButtons.forEach(button => {
+        const active = button.dataset.metric === activeMetric;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', String(active));
+      });
+    }
+
+
+    function updateTabIndicator(animate = true) {
+      const activeButton = chartTabs.find(button => button.dataset.group === activeGroup);
+      if (!activeButton) return;
+      if (!animate) tabList.classList.add('is-positioning');
+      const listRect = tabList.getBoundingClientRect();
+      const buttonRect = activeButton.getBoundingClientRect();
+      tabList.style.setProperty('--tab-indicator-x', `${buttonRect.left - listRect.left + tabList.scrollLeft}px`);
+      tabList.style.setProperty('--tab-indicator-width', `${buttonRect.width}px`);
+      if (!animate) requestAnimationFrame(() => tabList.classList.remove('is-positioning'));
+    }
+
+    function updateLegend(animate = true) {
+      const labels = groupLabels();
+      const colours = groupColours();
+      const hidden = hiddenSeriesSet();
+      chartLegend.innerHTML = '';
+
+      labels.forEach((label, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `legend-item${hidden.has(label) ? ' is-hidden-series' : ''}`;
+        button.dataset.label = label;
+        button.setAttribute('aria-pressed', String(!hidden.has(label)));
+
+        const swatch = document.createElement('span');
+        swatch.className = 'legend-line';
+        swatch.style.background = colours[index];
+
+        const text = document.createElement('span');
+        text.textContent = label;
+
+        button.appendChild(swatch);
+        button.appendChild(text);
+        button.addEventListener('click', () => toggleSeries(label));
+        chartLegend.appendChild(button);
+      });
+
+      if (animate && chartLegend.animate && !reducedMotion()) {
+        chartLegend.animate([
+          {opacity: 0.4, transform: 'translateY(-2px)'},
+          {opacity: 1, transform: 'translateY(0)'}
+        ], {
+          duration: 260,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+        });
+      }
+
+      requestAnimationFrame(updateLegendScrollControls);
+      window.setTimeout(updateLegendScrollControls, 280);
+    }
+
+    function toggleSeries(label) {
+      const hidden = hiddenSeriesSet();
+      if (hidden.has(label)) hidden.delete(label);
+      else hidden.add(label);
+      updateLegend(false);
+      renderChart('legend');
+    }
+
+    function setActiveGroup(group) {
+      if (!['state', 'rurality'].includes(group) || group === activeGroup) return;
+      activeGroup = group;
+      chartTabs.forEach(button => {
+        const active = button.dataset.group === activeGroup;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-selected', String(active));
+      });
+      updateTabIndicator(true);
+      updateHeading();
+      updateLegend(true);
+      renderChart('tab');
+    }
+
+    function setActiveMetric(metric) {
+      if (!['count', 'share'].includes(metric) || metric === activeMetric) return;
+      activeMetric = metric;
+      updateMetricSwitch();
+      updateHeading();
+      renderChart('metric');
+    }
+
+
+    chartTabs.forEach(button => {
+      button.addEventListener('click', () => setActiveGroup(button.dataset.group));
+    });
+
+    metricButtons.forEach(button => {
+      button.addEventListener('click', () => setActiveMetric(button.dataset.metric));
+    });
+
+    metricSwitch.addEventListener('click', event => {
+      if (event.target.closest('.metric-button')) return;
+      const rect = metricSwitch.getBoundingClientRect();
+      const metric = event.clientX < rect.left + rect.width / 2 ? 'count' : 'share';
+      setActiveMetric(metric);
+    });
+
+
+    tabScrollLeft.addEventListener('click', () => scrollByAmount(tabList, -1));
+    tabScrollRight.addEventListener('click', () => scrollByAmount(tabList, 1));
+    headingScrollLeft.addEventListener('click', () => scrollByAmount(headingScrollViewport, -1));
+    headingScrollRight.addEventListener('click', () => scrollByAmount(headingScrollViewport, 1));
+    legendScrollLeft.addEventListener('click', () => scrollByAmount(chartLegend, -1));
+    legendScrollRight.addEventListener('click', () => scrollByAmount(chartLegend, 1));
+
+    tabList.addEventListener('scroll', updateTabScrollControls, {passive: true});
+    headingScrollViewport.addEventListener('scroll', updateHeadingScrollControls, {passive: true});
+    chartLegend.addEventListener('scroll', updateLegendScrollControls, {passive: true});
+
+    chartCanvas.addEventListener('contextmenu', event => event.preventDefault());
+    chartCanvas.addEventListener('selectstart', event => event.preventDefault());
+
+    function refreshResponsiveLayout() {
+      if (responsiveFrame !== null) cancelAnimationFrame(responsiveFrame);
+      responsiveFrame = requestAnimationFrame(() => {
+        responsiveFrame = null;
+        if (chart) {
+          const mobile = mobileLayout();
+          chart.options.scales.x.ticks.font.size = mobile ? 9 : 10;
+          chart.options.scales.x.title.font.size = 13;
+          chart.resize();
+        }
+        updateTabIndicator(false);
+        updateTabScrollControls();
+        updateHeadingScrollControls();
+        updateLegendScrollControls();
+      });
+    }
+
+    let resizeObserver = null;
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(entries => {
+        if (entries.some(entry => entry.contentRect.width > 1 && entry.contentRect.height > 1)) {
+          refreshResponsiveLayout();
+        }
+      });
+      resizeObserver.observe(app);
+      resizeObserver.observe(chartShell);
+    }
+
+    window.addEventListener('resize', refreshResponsiveLayout, {passive: true});
+    window.visualViewport?.addEventListener('resize', refreshResponsiveLayout, {passive: true});
+    window.addEventListener('pageshow', refreshResponsiveLayout);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refreshResponsiveLayout();
+    });
+    if (document.fonts?.ready) document.fonts.ready.then(refreshResponsiveLayout);
+
+    async function init() {
+      setStatus();
+      updateMetricSwitch();
+      updateHeading();
+      updateTabIndicator(false);
+
+      try {
+        rows = await loadData();
+        if (!rows.length) throw new Error('No job ads available');
+        axisBounds = calculateAxisBounds(rows);
+        updateLegend(false);
+        createChart();
+        hideLoadingState();
+      } catch (error) {
+        console.error(error);
+        setStatus('⚠ Unable to load job ad data');
+        hideLoadingState();
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
