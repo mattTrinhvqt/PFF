@@ -5,7 +5,7 @@
  * Load AFTER Chart.js and BEFORE any app-specific <style> or app script:
  *
  *   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
- *   <script src="./assets/pff-chart-core-v1.js"></script>
+ *   <script src="./assets/pff-chart-core.js"></script>
  *
  * App-specific data, parsing, series, colours, scales, tooltip content and
  * calculations remain in each individual HTML file.
