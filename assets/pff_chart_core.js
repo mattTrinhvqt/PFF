@@ -3391,8 +3391,29 @@ body.pff-chart-app .pff-app {
               return;
             }
 
+            const activeIndex =
+              Math.max(
+                0,
+                buttons.findIndex(
+                  item =>
+                    valueOf(item) ===
+                    value
+                )
+              );
+
+            const nextIndex =
+              (
+                activeIndex +
+                1
+              ) %
+              buttons.length;
+
             apply(
-              valueOf(button)
+              valueOf(
+                buttons[
+                  nextIndex
+                ]
+              )
             );
           };
 
