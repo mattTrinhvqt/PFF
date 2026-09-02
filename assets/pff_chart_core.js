@@ -1,19 +1,20 @@
 /*
- * PFF Chart Core v1.0.0
- * Shared design + behaviour for Phoropter Free Fridays Chart.js apps.
+ * PFF Core v1.1.0
+ * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
- * Load AFTER Chart.js and BEFORE any app-specific <style> or app script:
+ * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
+ * <style> or app script:
  *
  *   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
- *   <script src="./assets/pff-chart-core.js"></script>
+ *   <script src="./assets/pff_chart_core.js"></script>
  *
- * App-specific data, parsing, series, colours, scales, tooltip content and
- * calculations remain in each individual HTML file.
+ * App-specific data, parsing, calculations, series, colours, scales,
+ * tooltip content and genuinely unique behaviour remain in each HTML file.
  */
 (function (global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -56,23 +57,26 @@
   box-sizing: border-box;
 }
 
-html,
-body {
+html {
   width: 100%;
   height: 100%;
-  min-height: 0;
+  min-height: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden;
   background: var(--pff-white);
   -webkit-tap-highlight-color: transparent;
 }
 
 body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
   color: var(--pff-ink);
   background: var(--pff-white);
   font-family: 'Lato', sans-serif;
-  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
 }
 
@@ -85,27 +89,44 @@ button {
 .pff-fit {
   display: flex;
   width: 100%;
-  height: 100%;
-  min-height: 0;
+  min-height: 100%;
   align-items: flex-start;
   justify-content: center;
-  overflow: hidden;
 }
 
 #app,
 .pff-app {
   position: relative;
   display: flex;
-  width: min(calc(100% - 12px), var(--pff-chart-max-width));
-  height: 100%;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 0;
+  min-height: 100%;
   margin-inline: auto;
-  padding: 0 4px;
   flex-direction: column;
-  overflow: hidden;
   background: var(--pff-white);
+}
+
+body.pff-chart-app {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.pff-chart-app #fit,
+body.pff-chart-app .pff-fit {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.pff-chart-app #app,
+body.pff-chart-app .pff-app {
+  width: min(calc(100% - 12px), var(--pff-chart-max-width));
+  height: 100%;
+  min-height: 0;
+  padding: 0 4px;
+  overflow: hidden;
 }
 
 #app.is-loading > :not(.app-loading),
@@ -681,10 +702,393 @@ button {
   white-space: nowrap !important;
   border: 0 !important;
 }
+/* ============================================================
+ * UNIVERSAL PFF APP COMPONENTS
+ * ============================================================ */
 
+.pff-card {
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  background: var(--pff-white);
+  border: 1px solid var(--pff-track);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(21, 21, 21, 0.04);
+}
+
+.pff-card + .pff-card {
+  margin-top: 8px;
+}
+
+.pff-field {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 5px;
+  margin: 0 0 10px;
+}
+
+.pff-field-label,
+.pff-label {
+  color: var(--pff-ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.pff-input,
+.pff-select,
+.pff-textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 7px 9px;
+  color: var(--pff-ink);
+  background: var(--pff-white);
+  border: 1px solid var(--pff-track);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.pff-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.pff-input:hover,
+.pff-select:hover,
+.pff-textarea:hover {
+  border-color: rgba(105, 113, 138, 0.52);
+}
+
+.pff-input:focus-visible,
+.pff-select:focus-visible,
+.pff-textarea:focus-visible {
+  border-color: var(--pff-purple);
+  box-shadow: 0 0 0 2px rgba(102, 0, 255, 0.12);
+}
+
+.pff-input:disabled,
+.pff-select:disabled,
+.pff-textarea:disabled {
+  color: var(--pff-muted);
+  background: rgba(232, 234, 240, 0.36);
+  cursor: not-allowed;
+  opacity: 0.74;
+}
+
+.pff-field-help,
+.pff-help-text {
+  color: var(--pff-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.pff-field-error,
+.pff-error-text {
+  color: var(--pff-error);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.pff-check,
+.pff-radio {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: var(--pff-ink);
+  font-size: 11px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.pff-check input,
+.pff-radio input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--pff-purple);
+}
+
+.pff-button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  color: var(--pff-white);
+  background: var(--pff-purple);
+  border: 1px solid var(--pff-purple);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    transform 140ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease,
+    background 160ms ease;
+}
+
+.pff-button:hover:not(:disabled) {
+  box-shadow: 0 2px 6px rgba(102, 0, 255, 0.18);
+}
+
+.pff-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.pff-button:focus-visible {
+  outline: 2px solid rgba(102, 0, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.pff-button.is-secondary,
+.pff-button-secondary,
+.pff-reset-button,
+.pff-recalculate-button {
+  color: var(--pff-ink);
+  background: var(--pff-white);
+  border-color: var(--pff-track);
+}
+
+.pff-button.is-secondary:hover:not(:disabled),
+.pff-button-secondary:hover:not(:disabled),
+.pff-reset-button:hover:not(:disabled),
+.pff-recalculate-button:hover:not(:disabled) {
+  border-color: rgba(105, 113, 138, 0.48);
+  box-shadow: 0 1px 4px rgba(21, 21, 21, 0.08);
+}
+
+.pff-button:disabled,
+.pff-reset-button:disabled,
+.pff-recalculate-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+  box-shadow: none;
+}
+
+.pff-reset-button,
+.pff-recalculate-button {
+  display: inline-flex;
+  min-height: 29px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border-style: solid;
+  border-width: 1px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease,
+    transform 140ms ease;
+}
+
+.pff-menu {
+  position: relative;
+  display: inline-block;
+  min-width: 0;
+}
+
+.pff-menu-button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 0 9px;
+  color: var(--pff-ink);
+  background: var(--pff-white);
+  border: 1px solid var(--pff-track);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pff-menu-button::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-right: 1.5px solid var(--pff-muted);
+  border-bottom: 1.5px solid var(--pff-muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 180ms var(--pff-motion-ease);
+}
+
+.pff-menu.is-open .pff-menu-button::after,
+.pff-menu-button[aria-expanded='true']::after {
+  transform: translateY(1px) rotate(225deg);
+}
+
+.pff-menu-button:focus-visible,
+.pff-menu-item:focus-visible {
+  outline: 2px solid rgba(102, 0, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.pff-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 80;
+  display: none;
+  min-width: 150px;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 4px;
+  overflow: hidden;
+  background: var(--pff-white);
+  border: 1px solid var(--pff-track);
+  border-radius: 5px;
+  box-shadow: 0 7px 20px rgba(21, 21, 21, 0.12);
+}
+
+.pff-menu.is-open .pff-menu-panel,
+.pff-menu-panel.is-open {
+  display: grid;
+}
+
+.pff-menu-item {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  color: var(--pff-ink);
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pff-menu-item:hover,
+.pff-menu-item.is-selected,
+.pff-menu-item[aria-selected='true'] {
+  color: var(--pff-purple);
+  background: rgba(102, 0, 255, 0.055);
+}
+
+.pff-result,
+.pff-response-summary {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 3px;
+}
+
+.pff-result-label,
+.pff-response-label {
+  color: var(--pff-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.pff-result-value,
+.pff-response-value {
+  color: var(--pff-ink);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.pff-result-detail,
+.pff-response-detail {
+  color: var(--pff-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.pff-stepper {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 10px;
+}
+
+.pff-stepper-progress {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 4px;
+}
+
+.pff-stepper-dot {
+  height: 3px;
+  flex: 1 1 0;
+  overflow: hidden;
+  background: var(--pff-track);
+  border-radius: 2px;
+  transition:
+    background 220ms ease,
+    opacity 220ms ease;
+}
+
+.pff-stepper-dot.is-complete,
+.pff-stepper-dot.is-active {
+  background: var(--pff-purple);
+}
+
+.pff-stepper-dot.is-active {
+  opacity: 0.72;
+}
+
+.pff-step {
+  display: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.pff-step.is-active {
+  display: block;
+}
+
+.pff-stepper-actions {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pff-fade-enter {
+  animation: pffFadeEnter 220ms ease both;
+}
+
+@keyframes pffFadeEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 @media (max-width: 430px) {
-  #app,
-  .pff-app {
+  body.pff-chart-app #app,
+  body.pff-chart-app .pff-app {
     width: calc(100% - 6px);
     padding: 0 3px;
   }
@@ -751,26 +1155,26 @@ button {
 
   function ensureFont() {
     if (
-      document.getElementById('pff-chart-core-font') ||
+      document.getElementById('pff-core-font') ||
       document.querySelector?.('link[href*="fonts.googleapis.com"][href*="Lato"]')
     ) {
       return;
     }
 
     const link = document.createElement('link');
-    link.id = 'pff-chart-core-font';
+    link.id = 'pff-core-font';
     link.rel = 'stylesheet';
     link.href = 'https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap';
     document.head.appendChild(link);
   }
 
   function injectStyles() {
-    if (document.getElementById('pff-chart-core-v1-styles')) {
+    if (document.getElementById('pff-core-styles')) {
       return;
     }
 
     const style = document.createElement('style');
-    style.id = 'pff-chart-core-v1-styles';
+    style.id = 'pff-core-styles';
     style.textContent = CSS;
     document.head.appendChild(style);
   }
@@ -895,7 +1299,6 @@ button {
 
   function applyChartDefaults() {
     if (!global.Chart) {
-      console.warn('PFFCharts: Chart.js is not loaded. Load Chart.js before pff-chart-core-v1.js.');
       return false;
     }
 
@@ -2404,63 +2807,1650 @@ button {
       }
     };
   }
+  function lineDataset(options = {}) {
+    const mobile = mobileLayout();
+    const colour =
+      options.borderColor ||
+      options.colour ||
+      '#69718a';
 
+    return deepMerge({
+      type: 'line',
+      label: '',
+      data: [],
+      borderColor: colour,
+      backgroundColor: colour,
+      pointBackgroundColor: colour,
+      borderWidth: 3,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      pointHitRadius: mobile ? 9 : 5,
+      pointBorderWidth: 0,
+      tension: 0.28,
+      fill: false,
+      spanGaps: false
+    }, options);
+  }
+
+  function arraysMatch(first, second) {
+    return Boolean(
+      Array.isArray(first) &&
+      Array.isArray(second) &&
+      first.length === second.length &&
+      first.every(
+        (value, index) =>
+          value === second[index]
+      )
+    );
+  }
+
+  function scalesMatch(first, second) {
+    return Boolean(
+      first &&
+      second &&
+      Number(first.min) ===
+        Number(second.min) &&
+      Number(first.max) ===
+        Number(second.max) &&
+      Number(first.step) ===
+        Number(second.step) &&
+      Number(first.intervals) ===
+        Number(second.intervals)
+    );
+  }
+
+  function cloneViewConfig(config = {}) {
+    return {
+      ...config,
+      labels:
+        Array.isArray(config.labels)
+          ? [...config.labels]
+          : config.labels,
+      colours:
+        Array.isArray(config.colours)
+          ? [...config.colours]
+          : config.colours,
+      scale:
+        config.scale
+          ? {...config.scale}
+          : config.scale
+    };
+  }
+
+  function seriesVisibilityTransitionOptions(
+    duration = 240
+  ) {
+    const transitionDuration =
+      reducedMotion()
+        ? 0
+        : Math.max(
+            0,
+            Number(duration) || 0
+          );
+
+    return {
+      hide: {
+        animations: {
+          colors: {
+            duration:
+              transitionDuration,
+            easing:
+              'easeOutCubic'
+          }
+        }
+      },
+
+      show: {
+        animations: {
+          colors: {
+            duration:
+              transitionDuration,
+            easing:
+              'easeOutCubic'
+          }
+        }
+      }
+    };
+  }
+
+  function setupLegend(options = {}) {
+    const chartLegend =
+      options.legend ||
+      document.getElementById(
+        'chartLegend'
+      );
+
+    const leftButton =
+      options.leftButton ||
+      document.getElementById(
+        'legendScrollLeft'
+      );
+
+    const rightButton =
+      options.rightButton ||
+      document.getElementById(
+        'legendScrollRight'
+      );
+
+    const getChart = () =>
+      options.getChart?.() || null;
+
+    const getItems = () => {
+      if (
+        typeof options.getItems ===
+        'function'
+      ) {
+        return Array.from(
+          options.getItems() || []
+        );
+      }
+
+      const chart =
+        getChart();
+
+      return Array.from(
+        chart?.data?.datasets || []
+      ).map(
+        (
+          dataset,
+          datasetIndex
+        ) => ({
+          datasetIndex,
+          label:
+            dataset._seriesLabel ||
+            dataset.label ||
+            `Series ${datasetIndex + 1}`,
+          colour:
+            dataset.borderColor ||
+            dataset.backgroundColor ||
+            '#69718a',
+          active:
+            dataset._activeSeries !==
+            false
+        })
+      );
+    };
+
+    if (!chartLegend) {
+      return {
+        render() {},
+        update() {},
+        destroy() {}
+      };
+    }
+
+    const scroller =
+      setupScrollableRegion({
+        scroller:
+          chartLegend,
+        leftButton,
+        rightButton
+      });
+
+    function toggleItem(item) {
+      const chart =
+        getChart();
+
+      if (!chart) {
+        return;
+      }
+
+      const datasetIndex =
+        Number(
+          item.datasetIndex
+        );
+
+      const dataset =
+        chart.data?.datasets?.[
+          datasetIndex
+        ];
+
+      if (!dataset) {
+        return;
+      }
+
+      const currentlyVisible =
+        chart.isDatasetVisible
+          ? chart.isDatasetVisible(
+              datasetIndex
+            )
+          : dataset.hidden !== true;
+
+      const nextVisible =
+        !currentlyVisible;
+
+      if (
+        typeof chart.setDatasetVisibility ===
+        'function'
+      ) {
+        chart.setDatasetVisibility(
+          datasetIndex,
+          nextVisible
+        );
+      } else {
+        dataset.hidden =
+          !nextVisible;
+      }
+
+      dataset._activeSeries =
+        nextVisible;
+
+      options.onToggle?.({
+        chart,
+        dataset,
+        datasetIndex,
+        visible:
+          nextVisible,
+        item
+      });
+
+      chart.update(
+        options.updateMode ||
+        undefined
+      );
+
+      render();
+    }
+
+    function render() {
+      const items =
+        getItems();
+
+      chartLegend.replaceChildren();
+
+      items.forEach(
+        (
+          item,
+          fallbackIndex
+        ) => {
+          const datasetIndex =
+            Number.isFinite(
+              Number(
+                item.datasetIndex
+              )
+            )
+              ? Number(
+                  item.datasetIndex
+                )
+              : fallbackIndex;
+
+          const chart =
+            getChart();
+
+          const visible =
+            item.active !== undefined
+              ? Boolean(
+                  item.active
+                )
+              : chart?.isDatasetVisible
+                ? chart.isDatasetVisible(
+                    datasetIndex
+                  )
+                : chart
+                    ?.data
+                    ?.datasets?.[
+                      datasetIndex
+                    ]
+                    ?.hidden !==
+                  true;
+
+          const button =
+            document.createElement(
+              'button'
+            );
+
+          button.type =
+            'button';
+
+          button.className =
+            'legend-item';
+
+          button.classList.toggle(
+            'is-hidden-series',
+            !visible
+          );
+
+          button.dataset.datasetIndex =
+            String(
+              datasetIndex
+            );
+
+          button.setAttribute(
+            'aria-pressed',
+            String(visible)
+          );
+
+          button.setAttribute(
+            'aria-label',
+            `${visible ? 'Hide' : 'Show'} ${item.label}`
+          );
+
+          const line =
+            document.createElement(
+              'span'
+            );
+
+          line.className =
+            'legend-line';
+
+          line.setAttribute(
+            'aria-hidden',
+            'true'
+          );
+
+          line.style.setProperty(
+            '--legend-colour',
+            item.colour ||
+              '#69718a'
+          );
+
+          const label =
+            document.createElement(
+              'span'
+            );
+
+          label.textContent =
+            item.label ||
+            `Series ${datasetIndex + 1}`;
+
+          button.append(
+            line,
+            label
+          );
+
+          button.addEventListener(
+            'click',
+            () =>
+              toggleItem({
+                ...item,
+                datasetIndex
+              })
+          );
+
+          chartLegend.appendChild(
+            button
+          );
+        }
+      );
+
+      requestAnimationFrame(
+        scroller.update
+      );
+
+      options.onRender?.(
+        items
+      );
+    }
+
+    requestAnimationFrame(
+      render
+    );
+
+    return {
+      render,
+      update:
+        render,
+
+      destroy() {
+        scroller.destroy();
+        chartLegend.replaceChildren();
+      }
+    };
+  }
+
+  function setupMetricSwitch(
+    options = {}
+  ) {
+    const element =
+      options.element ||
+      document.getElementById(
+        'metricSwitch'
+      );
+
+    const buttons =
+      Array.from(
+        options.buttons ||
+        element?.querySelectorAll?.(
+          '.metric-button'
+        ) ||
+        []
+      );
+
+    const valueAttribute =
+      options.valueAttribute ||
+      'metric';
+
+    let value =
+      options.initialValue ??
+      buttons.find(
+        button =>
+          button.classList.contains(
+            'is-active'
+          )
+      )?.dataset?.[
+        valueAttribute
+      ];
+
+    function valueOf(button) {
+      return (
+        button?.dataset?.[
+          valueAttribute
+        ] ??
+        button?.getAttribute?.(
+          'data-value'
+        ) ??
+        ''
+      );
+    }
+
+    function apply(
+      nextValue,
+      notify = true
+    ) {
+      value =
+        nextValue;
+
+      let activeIndex = 0;
+
+      buttons.forEach(
+        (
+          button,
+          index
+        ) => {
+          const active =
+            valueOf(button) ===
+            value;
+
+          button.classList.toggle(
+            'is-active',
+            active
+          );
+
+          button.setAttribute(
+            'aria-pressed',
+            String(active)
+          );
+
+          button.tabIndex =
+            active ? 0 : -1;
+
+          if (active) {
+            activeIndex =
+              index;
+          }
+        }
+      );
+
+      if (element) {
+        element.style.setProperty(
+          '--pff-metric-columns',
+          String(
+            Math.max(
+              1,
+              buttons.length
+            )
+          )
+        );
+
+        setMetricSwitchIndex(
+          element,
+          activeIndex
+        );
+      }
+
+      if (notify) {
+        options.onChange?.(
+          value,
+          activeIndex
+        );
+      }
+    }
+
+    const handlers =
+      new Map();
+
+    buttons.forEach(
+      (
+        button,
+        index
+      ) => {
+        const handler =
+          event => {
+            if (
+              event.type ===
+              'keydown'
+            ) {
+              let nextIndex =
+                null;
+
+              if (
+                event.key ===
+                'ArrowRight'
+              ) {
+                nextIndex =
+                  (
+                    index +
+                    1
+                  ) %
+                  buttons.length;
+              }
+
+              if (
+                event.key ===
+                'ArrowLeft'
+              ) {
+                nextIndex =
+                  (
+                    index -
+                    1 +
+                    buttons.length
+                  ) %
+                  buttons.length;
+              }
+
+              if (
+                event.key ===
+                'Home'
+              ) {
+                nextIndex = 0;
+              }
+
+              if (
+                event.key ===
+                'End'
+              ) {
+                nextIndex =
+                  buttons.length -
+                  1;
+              }
+
+              if (
+                nextIndex ===
+                null
+              ) {
+                return;
+              }
+
+              event.preventDefault();
+
+              buttons[
+                nextIndex
+              ].focus({
+                preventScroll:
+                  true
+              });
+
+              apply(
+                valueOf(
+                  buttons[
+                    nextIndex
+                  ]
+                )
+              );
+
+              return;
+            }
+
+            apply(
+              valueOf(button)
+            );
+          };
+
+        button.addEventListener(
+          'click',
+          handler
+        );
+
+        button.addEventListener(
+          'keydown',
+          handler
+        );
+
+        handlers.set(
+          button,
+          handler
+        );
+      }
+    );
+
+    if (
+      value === undefined &&
+      buttons.length
+    ) {
+      value =
+        valueOf(
+          buttons[0]
+        );
+    }
+
+    apply(
+      value,
+      false
+    );
+
+    return {
+      get value() {
+        return value;
+      },
+
+      set(
+        nextValue,
+        notify = true
+      ) {
+        apply(
+          nextValue,
+          notify
+        );
+      },
+
+      destroy() {
+        buttons.forEach(
+          button => {
+            const handler =
+              handlers.get(
+                button
+              );
+
+            button.removeEventListener(
+              'click',
+              handler
+            );
+
+            button.removeEventListener(
+              'keydown',
+              handler
+            );
+          }
+        );
+      }
+    };
+  }
+
+  function animateHeading(
+    options = {}
+  ) {
+    const fixed =
+      options.fixed ||
+      document.getElementById(
+        'chartHeadingFixed'
+      );
+
+    const detail =
+      options.detail ||
+      document.getElementById(
+        'chartHeadingDetail'
+      );
+
+    const nextFixed =
+      options.fixedText ??
+      fixed?.textContent ??
+      '';
+
+    const nextDetail =
+      options.detailText ??
+      detail?.textContent ??
+      '';
+
+    const duration =
+      reducedMotion()
+        ? 0
+        : Math.max(
+            0,
+            Number(
+              options.duration ??
+              DEFAULTS.viewTransitionMs
+            )
+          );
+
+    const elements =
+      [
+        fixed,
+        detail
+      ].filter(Boolean);
+
+    if (!elements.length) {
+      return Promise.resolve();
+    }
+
+    if (duration <= 0) {
+      if (fixed) {
+        fixed.textContent =
+          nextFixed;
+      }
+
+      if (detail) {
+        detail.textContent =
+          nextDetail;
+      }
+
+      options.onComplete?.();
+
+      return Promise.resolve();
+    }
+
+    return new Promise(
+      resolve => {
+        elements.forEach(
+          element => {
+            element.style.transition =
+              `opacity ${Math.round(
+                duration * 0.45
+              )}ms ease`;
+
+            element.style.opacity =
+              '0';
+          }
+        );
+
+        global.setTimeout(
+          () => {
+            if (fixed) {
+              fixed.textContent =
+                nextFixed;
+            }
+
+            if (detail) {
+              detail.textContent =
+                nextDetail;
+            }
+
+            requestAnimationFrame(
+              () => {
+                elements.forEach(
+                  element => {
+                    element.style.transition =
+                      `opacity ${Math.round(
+                        duration *
+                        0.55
+                      )}ms ease`;
+
+                    element.style.opacity =
+                      '1';
+                  }
+                );
+              }
+            );
+
+            global.setTimeout(
+              () => {
+                elements.forEach(
+                  element => {
+                    element.style.removeProperty(
+                      'transition'
+                    );
+
+                    element.style.removeProperty(
+                      'opacity'
+                    );
+                  }
+                );
+
+                options.onComplete?.();
+
+                resolve();
+              },
+              Math.round(
+                duration * 0.60
+              )
+            );
+          },
+          Math.round(
+            duration * 0.45
+          )
+        );
+      }
+    );
+  }
+
+  function setupChartInteractions(
+    options = {}
+  ) {
+    const canvas =
+      options.canvas;
+
+    const getChart = () =>
+      options.getChart?.() ||
+      null;
+
+    if (!canvas) {
+      return {
+        destroy() {}
+      };
+    }
+
+    const prevent =
+      event =>
+        event.preventDefault();
+
+    const clearOutside =
+      event => {
+        if (
+          event.target.closest?.(
+            `#${canvas.id}`
+          ) ||
+          canvas.contains(
+            event.target
+          )
+        ) {
+          return;
+        }
+
+        const chart =
+          getChart();
+
+        if (!chart?.tooltip) {
+          return;
+        }
+
+        chart.tooltip.setActiveElements(
+          [],
+          {
+            x: 0,
+            y: 0
+          }
+        );
+
+        chart.update(
+          'none'
+        );
+      };
+
+    canvas.addEventListener(
+      'contextmenu',
+      prevent
+    );
+
+    canvas.addEventListener(
+      'selectstart',
+      prevent
+    );
+
+    document.addEventListener(
+      'pointerdown',
+      clearOutside
+    );
+
+    return {
+      destroy() {
+        canvas.removeEventListener(
+          'contextmenu',
+          prevent
+        );
+
+        canvas.removeEventListener(
+          'selectstart',
+          prevent
+        );
+
+        document.removeEventListener(
+          'pointerdown',
+          clearOutside
+        );
+      }
+    };
+  }
+
+  function setupMenu(
+    options = {}
+  ) {
+    const menu =
+      options.menu;
+
+    const button =
+      options.button ||
+      menu?.querySelector?.(
+        '.pff-menu-button'
+      );
+
+    const panel =
+      options.panel ||
+      menu?.querySelector?.(
+        '.pff-menu-panel'
+      );
+
+    const items =
+      Array.from(
+        options.items ||
+        panel?.querySelectorAll?.(
+          '.pff-menu-item'
+        ) ||
+        []
+      );
+
+    let open = false;
+
+    function setOpen(
+      nextOpen,
+      focus = false
+    ) {
+      open =
+        Boolean(
+          nextOpen
+        );
+
+      menu?.classList.toggle(
+        'is-open',
+        open
+      );
+
+      panel?.classList.toggle(
+        'is-open',
+        open
+      );
+
+      button?.setAttribute(
+        'aria-expanded',
+        String(open)
+      );
+
+      if (
+        open &&
+        focus
+      ) {
+        items[0]?.focus?.({
+          preventScroll:
+            true
+        });
+      }
+
+      options.onOpenChange?.(
+        open
+      );
+    }
+
+    const buttonHandler =
+      event => {
+        event.stopPropagation();
+
+        setOpen(
+          !open,
+          !open
+        );
+      };
+
+    const outsideHandler =
+      event => {
+        if (
+          !menu?.contains(
+            event.target
+          )
+        ) {
+          setOpen(false);
+        }
+      };
+
+    const keyHandler =
+      event => {
+        if (
+          event.key ===
+          'Escape'
+        ) {
+          setOpen(false);
+
+          button?.focus?.({
+            preventScroll:
+              true
+          });
+        }
+      };
+
+    button?.addEventListener(
+      'click',
+      buttonHandler
+    );
+
+    document.addEventListener(
+      'pointerdown',
+      outsideHandler
+    );
+
+    menu?.addEventListener(
+      'keydown',
+      keyHandler
+    );
+
+    return {
+      get open() {
+        return open;
+      },
+
+      openMenu() {
+        setOpen(
+          true,
+          true
+        );
+      },
+
+      closeMenu() {
+        setOpen(false);
+      },
+
+      toggle() {
+        setOpen(
+          !open,
+          !open
+        );
+      },
+
+      destroy() {
+        button?.removeEventListener(
+          'click',
+          buttonHandler
+        );
+
+        document.removeEventListener(
+          'pointerdown',
+          outsideHandler
+        );
+
+        menu?.removeEventListener(
+          'keydown',
+          keyHandler
+        );
+      }
+    };
+  }
+
+  function setupStepper(
+    options = {}
+  ) {
+    const root =
+      options.root;
+
+    const steps =
+      Array.from(
+        options.steps ||
+        root?.querySelectorAll?.(
+          '.pff-step'
+        ) ||
+        []
+      );
+
+    const dots =
+      Array.from(
+        options.dots ||
+        root?.querySelectorAll?.(
+          '.pff-stepper-dot'
+        ) ||
+        []
+      );
+
+    const backButton =
+      options.backButton ||
+      root?.querySelector?.(
+        '[data-step-back]'
+      );
+
+    const nextButton =
+      options.nextButton ||
+      root?.querySelector?.(
+        '[data-step-next]'
+      );
+
+    let index =
+      clamp(
+        Math.round(
+          Number(
+            options.initialIndex
+          ) || 0
+        ),
+        0,
+        Math.max(
+          0,
+          steps.length - 1
+        )
+      );
+
+    function render(
+      notify = false
+    ) {
+      steps.forEach(
+        (
+          step,
+          stepIndex
+        ) => {
+          const active =
+            stepIndex ===
+            index;
+
+          step.classList.toggle(
+            'is-active',
+            active
+          );
+
+          step.setAttribute(
+            'aria-hidden',
+            String(!active)
+          );
+        }
+      );
+
+      dots.forEach(
+        (
+          dot,
+          dotIndex
+        ) => {
+          dot.classList.toggle(
+            'is-active',
+            dotIndex ===
+              index
+          );
+
+          dot.classList.toggle(
+            'is-complete',
+            dotIndex <
+              index
+          );
+        }
+      );
+
+      if (backButton) {
+        backButton.disabled =
+          index <= 0;
+      }
+
+      if (nextButton) {
+        nextButton.disabled =
+          index >=
+          steps.length - 1;
+      }
+
+      root?.style.setProperty(
+        '--pff-step-index',
+        String(index)
+      );
+
+      if (notify) {
+        options.onChange?.(
+          index,
+          steps[index]
+        );
+      }
+    }
+
+    const go =
+      nextIndex => {
+        const target =
+          clamp(
+            Math.round(
+              Number(
+                nextIndex
+              ) || 0
+            ),
+            0,
+            Math.max(
+              0,
+              steps.length -
+              1
+            )
+          );
+
+        if (
+          target ===
+          index
+        ) {
+          return;
+        }
+
+        if (
+          target >
+            index &&
+          options.canAdvance &&
+          options.canAdvance(
+            index,
+            steps[index]
+          ) === false
+        ) {
+          return;
+        }
+
+        index =
+          target;
+
+        render(true);
+
+        options.onStep?.(
+          index,
+          steps[index]
+        );
+      };
+
+    const backHandler =
+      () =>
+        go(
+          index - 1
+        );
+
+    const nextHandler =
+      () =>
+        go(
+          index + 1
+        );
+
+    backButton?.addEventListener(
+      'click',
+      backHandler
+    );
+
+    nextButton?.addEventListener(
+      'click',
+      nextHandler
+    );
+
+    render(false);
+
+    return {
+      get index() {
+        return index;
+      },
+
+      get count() {
+        return steps.length;
+      },
+
+      go,
+
+      next() {
+        go(
+          index + 1
+        );
+      },
+
+      back() {
+        go(
+          index - 1
+        );
+      },
+
+      reset() {
+        index = 0;
+        render(true);
+      },
+
+      destroy() {
+        backButton?.removeEventListener(
+          'click',
+          backHandler
+        );
+
+        nextButton?.removeEventListener(
+          'click',
+          nextHandler
+        );
+      }
+    };
+  }
+
+  function formatInteger(value) {
+    const number =
+      Number(value);
+
+    return Number.isFinite(
+      number
+    )
+      ? Math.round(
+          number
+        ).toLocaleString(
+          'en-AU'
+        )
+      : '—';
+  }
+
+  function formatOneDecimal(value) {
+    const number =
+      Number(value);
+
+    return Number.isFinite(
+      number
+    )
+      ? number.toLocaleString(
+          'en-AU',
+          {
+            minimumFractionDigits:
+              0,
+            maximumFractionDigits:
+              1
+          }
+        )
+      : '—';
+  }
+
+  function formatPercent(
+    value,
+    decimals = 1
+  ) {
+    const number =
+      Number(value);
+
+    if (
+      !Number.isFinite(
+        number
+      )
+    ) {
+      return '—';
+    }
+
+    const places =
+      Math.max(
+        0,
+        Math.round(
+          Number(decimals) ||
+          0
+        )
+      );
+
+    return `${number.toLocaleString(
+      'en-AU',
+      {
+        minimumFractionDigits:
+          places,
+        maximumFractionDigits:
+          places
+      }
+    )}%`;
+  }
+
+  function formatCurrency(
+    value,
+    options = {}
+  ) {
+    const number =
+      Number(value);
+
+    if (
+      !Number.isFinite(
+        number
+      )
+    ) {
+      return '—';
+    }
+
+    return new Intl.NumberFormat(
+      'en-AU',
+      {
+        style:
+          'currency',
+        currency:
+          options.currency ||
+          'AUD',
+        minimumFractionDigits:
+          options.minimumFractionDigits ??
+          0,
+        maximumFractionDigits:
+          options.maximumFractionDigits ??
+          0
+      }
+    ).format(number);
+  }
+
+  function formatHours(
+    value,
+    decimals = 1
+  ) {
+    const number =
+      Number(value);
+
+    if (
+      !Number.isFinite(
+        number
+      )
+    ) {
+      return '—';
+    }
+
+    const places =
+      Math.max(
+        0,
+        Math.round(
+          Number(decimals) ||
+          0
+        )
+      );
+
+    return `${number.toLocaleString(
+      'en-AU',
+      {
+        minimumFractionDigits:
+          places,
+        maximumFractionDigits:
+          places
+      }
+    )} hrs`;
+  }
+
+  function formatDate(
+    value,
+    options = {}
+  ) {
+    const date =
+      value instanceof Date
+        ? value
+        : new Date(value);
+
+    if (
+      Number.isNaN(
+        date.getTime()
+      )
+    ) {
+      return '—';
+    }
+
+    return new Intl.DateTimeFormat(
+      'en-AU',
+      {
+        day:
+          options.day ||
+          'numeric',
+        month:
+          options.month ||
+          'short',
+        year:
+          options.year ===
+          false
+            ? undefined
+            : (
+                options.year ||
+                'numeric'
+              )
+      }
+    ).format(date);
+  }
+
+  async function initialiseApp(
+    options = {}
+  ) {
+    const app =
+      options.app ||
+      document.getElementById(
+        'app'
+      );
+
+    const status =
+      options.status ||
+      document.getElementById(
+        'status'
+      );
+
+    showLoadingState(app);
+
+    setStatus(
+      '',
+      status
+    );
+
+    try {
+      const loaded =
+        options.load
+          ? await options.load()
+          : await loadLiveCacheFallback({
+              loadLive:
+                options.loadLive,
+              parseLive:
+                options.parseLive,
+              cacheKey:
+                options.cacheKey,
+              fallback:
+                options.fallback,
+              minRows:
+                options.minRows,
+              onLiveError:
+                options.onLiveError,
+
+              onSource:
+                source =>
+                  setDataSourceIndicator(
+                    source,
+                    options.dataSourceOptions
+                  )
+            });
+
+      const result =
+        await options.render?.(
+          loaded
+        );
+
+      hideLoadingState(
+        app
+      );
+
+      options.onReady?.(
+        loaded,
+        result
+      );
+
+      return {
+        loaded,
+        result
+      };
+    } catch (error) {
+      console.error(
+        error
+      );
+
+      setStatus(
+        options.errorMessage ||
+        error?.message ||
+        'Unable to load this PFF app',
+        status
+      );
+
+      hideLoadingState(
+        app
+      );
+
+      options.onError?.(
+        error
+      );
+
+      return {
+        error
+      };
+    }
+  }
   ensureFont();
   injectStyles();
   applyChartDefaults();
 
-  global.PFFCharts = Object.freeze({
-    version: VERSION,
-    defaults: DEFAULTS,
-    ensureFont,
-    injectStyles,
-    cssVar,
-    clamp,
-    rgba,
-    seriesTint,
-    easeInOutCubic,
-    easeOutCubic,
-    reducedMotion,
-    mobileLayout,
-    smallLayout,
-    chartAnimationDuration,
-    deepMerge,
-    formatAxisValue,
-    formatTrendValue,
-    applyChartDefaults,
-    tooltipOptions,
-    lineInteractionOptions,
-    baseChartOptions,
-    xYearScaleOptions,
-    yScaleOptions,
-    applyResponsiveChartOptions,
-    createResponsiveController,
-    showLoadingState,
-    hideLoadingState,
-    setDataSourceIndicator,
-    setStatus,
-    ensureChartSummary,
-    updateChartSummary,
-    scrollByAmount,
-    updateOverflowButtons,
-    setupScrollableRegion,
-    positionTabIndicator,
-    setupTabs,
-    setupTrendToggle,
-    linearSlope,
-    latestConsecutiveTrend,
-    createTrendLabelsPlugin,
-    copyScale,
-    scalesNearlyEqual,
-    createUnifiedYAxis,
-    createYearTickMarksPlugin,
-    createAxisSpinesPlugin,
-    numericCell,
-    cleanText,
-    loadGVizSheet,
-    saveLocalCache,
-    loadLocalCache,
-    loadLiveCacheFallback,
-    setMetricSwitchIndex
-  });
+  const universalAPI =
+    Object.freeze({
+      version:
+        VERSION,
+
+      defaults:
+        DEFAULTS,
+
+      cssVar,
+      clamp,
+      rgba,
+      reducedMotion,
+      mobileLayout,
+      smallLayout,
+      deepMerge,
+      cleanText,
+
+      formatInteger,
+      formatOneDecimal,
+      formatPercent,
+      formatCurrency,
+      formatHours,
+      formatDate,
+
+      showLoadingState,
+      hideLoadingState,
+      setDataSourceIndicator,
+      setStatus,
+
+      setupScrollableRegion,
+      setupTabs,
+      setupMetricSwitch,
+      setupMenu,
+      setupStepper,
+      animateHeading,
+      initialiseApp
+    });
+
+  global.PFF =
+    universalAPI;
+
+  global.PFFCharts =
+    Object.freeze({
+      ...universalAPI,
+
+      ensureFont,
+      injectStyles,
+
+      seriesTint,
+      easeInOutCubic,
+      easeOutCubic,
+      chartAnimationDuration,
+
+      formatAxisValue,
+      formatTrendValue,
+
+      applyChartDefaults,
+      tooltipOptions,
+      lineInteractionOptions,
+      baseChartOptions,
+      xYearScaleOptions,
+      yScaleOptions,
+      applyResponsiveChartOptions,
+      createResponsiveController,
+
+      ensureChartSummary,
+      updateChartSummary,
+
+      scrollByAmount,
+      updateOverflowButtons,
+      positionTabIndicator,
+
+      setupTrendToggle,
+
+      linearSlope,
+      latestConsecutiveTrend,
+      createTrendLabelsPlugin,
+
+      lineDataset,
+      arraysMatch,
+      scalesMatch,
+      cloneViewConfig,
+
+      seriesVisibilityTransitionOptions,
+      setupLegend,
+      setupChartInteractions,
+
+      copyScale,
+      scalesNearlyEqual,
+      createUnifiedYAxis,
+      createYearTickMarksPlugin,
+      createAxisSpinesPlugin,
+
+      numericCell,
+
+      loadGVizSheet,
+      saveLocalCache,
+      loadLocalCache,
+      loadLiveCacheFallback,
+
+      setMetricSwitchIndex
+    });
 })(window);                            
