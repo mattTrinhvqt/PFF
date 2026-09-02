@@ -3,12 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PFF Optometry Supply Trends</title>
+  <title>PFF Country of Qualification Trends</title>
 
   <script
     src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"
   ></script>
-
   <script src="./assets/pff_chart_core.js"></script>
 </head>
 
@@ -19,63 +18,31 @@
         id="loadingState"
         class="app-loading"
         role="status"
-        aria-label="Loading optometry supply data"
+        aria-label="Loading country of qualification data"
       >
         <div class="cone-loader" aria-hidden="true">
           <span class="cone blue"></span>
           <span class="cone green"></span>
           <span class="cone red"></span>
         </div>
-        <p class="loader-text">Loading optometry supply data…</p>
+        <p class="loader-text">Loading country of qualification data…</p>
       </div>
 
       <div class="module-top">
-        <div id="tabScrollShell" class="tab-scroll-shell">
-          <button
-            id="tabScrollLeft"
-            class="tab-scroll-button tab-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll tabs left"
-          >‹</button>
-
+        <div class="tab-list" aria-label="Country of qualification module">
           <div
-            id="tabList"
-            class="tab-list"
-            role="tablist"
-            aria-label="Optometry supply charts"
-          >
-            <button
-              class="chart-tab is-active"
-              type="button"
-              role="tab"
-              aria-selected="true"
-              data-view="optoms"
-            >Optometrists</button>
-
-            <button
-              class="chart-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              data-view="flows"
-            >Entrants & exits</button>
-          </div>
-
-          <button
-            id="tabScrollRight"
-            class="tab-scroll-button tab-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll tabs right"
-          >›</button>
+            class="chart-tab is-active"
+            style="border-bottom-color: var(--pff-purple);"
+          >Country</div>
         </div>
 
         <div
-          id="dataSourceIndicator"
+          id="sourceIndicator"
           class="live-data"
           aria-label="Live data"
         >
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span id="dataSourceText">LIVE data</span>
+          <span id="sourceText">LIVE data</span>
         </div>
       </div>
 
@@ -91,8 +58,8 @@
           >‹</button>
 
           <div id="headingScrollViewport" class="heading-scroll-viewport">
-            <h2 id="chartHeading" class="chart-heading">
-              <span id="chartHeadingFixed" class="chart-heading-fixed"></span><span id="chartHeadingDetail" class="chart-heading-detail">Optometrists</span>
+            <h2 class="chart-heading">
+              <span class="chart-heading-fixed">Country of qualification</span>
             </h2>
           </div>
 
@@ -115,12 +82,33 @@
             <span class="yoy-binary-indicator" aria-hidden="true"></span>
             <span class="yoy-toggle-label">3yr Trend</span>
           </button>
+
+          <div
+            id="metricSwitch"
+            class="metric-switch"
+            role="group"
+            aria-label="Country of qualification display"
+          >
+            <button
+              type="button"
+              class="metric-button is-active"
+              data-metric="count"
+              aria-pressed="true"
+            >Count</button>
+
+            <button
+              type="button"
+              class="metric-button"
+              data-metric="percent"
+              aria-pressed="false"
+            >%</button>
+          </div>
         </div>
       </div>
 
       <div id="legendNav" class="legend-nav">
         <button
-          id="legendScrollLeft"
+          id="legendLeft"
           class="legend-scroll-button legend-scroll-left is-hidden"
           type="button"
           aria-label="Scroll legend left"
@@ -128,14 +116,14 @@
 
         <div class="legend-viewport">
           <div
-            id="chartLegend"
+            id="legend"
             class="chart-legend"
             aria-label="Chart legend"
           ></div>
         </div>
 
         <button
-          id="legendScrollRight"
+          id="legendRight"
           class="legend-scroll-button legend-scroll-right is-hidden"
           type="button"
           aria-label="Scroll legend right"
@@ -144,8 +132,8 @@
 
       <div id="chartShell" class="chart-shell">
         <canvas
-          id="workforceChart"
-          aria-label="Australian optometry supply trend chart"
+          id="countryChart"
+          aria-label="Australian optometrist country of qualification trends"
           role="img"
         ></canvas>
       </div>
@@ -162,107 +150,46 @@
     const SHEET_ID =
       '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
 
-    const OPTOM_SHEET =
-      'Optomsbystate';
-
-    const FLOW_SHEET =
+    const SHEET_NAME =
       'Miscellaneous';
 
-    // Optomsbystate: L = Year, V = Active clinicians, W = General registration.
-    const OPTOM_RANGE =
-      'L31:W';
+    const DATA_RANGE =
+      'U31:AE';
 
-    // Miscellaneous entrant/exit table:
-    // row 30 = headers (Year, Entrants, Exits); row 31 onward = annual data.
-    const FLOW_RANGE =
-      'A30:C';
+    const CACHE_KEY =
+      'pff-country-qualification-trends-v1';
 
-    const FETCH_TIMEOUT_MS =
+    const TIMEOUT =
       15000;
 
-    const LOCAL_CACHE_KEY =
-      'pff-optoms-entrants-exits-v4';
+    const LABELS = [
+      'Australia',
+      'New Zealand',
+      'Other',
+      'Not stated'
+    ];
 
-    const EMBEDDED_FALLBACK =
-{
-      optoms: [
-        {year:2013,values:[4559,4021]},
-        {year:2014,values:[4749,4124]},
-        {year:2015,values:[4941,4350]},
-        {year:2016,values:[5134,4510]},
-        {year:2017,values:[5296,4610]},
-        {year:2018,values:[5492,4814]},
-        {year:2019,values:[5768,5085]},
-        {year:2020,values:[5962,5171]},
-        {year:2021,values:[6282,5377]},
-        {year:2022,values:[6495,5714]},
-        {year:2023,values:[6781,5979]},
-        {year:2024,values:[7104,6210]}
-      ],
-      flows: [
-        {year:2019,values:[393,79]},
-        {year:2020,values:[299,90]},
-        {year:2021,values:[343,134]},
-        {year:2022,values:[406,140]},
-        {year:2023,values:[399,142]}
-      ]
-    };
+    const COLOURS = [
+      '#0b5d1e',
+      '#151515',
+      '#ff7f0e',
+      '#b9b9b9'
+    ];
 
-    const VIEW_CONFIG = {
-      optoms: {
-        heading:
-          'Optometrists',
-
-        labels: [
-          'General registration',
-          'Active clinicians'
-        ],
-
-        colours: [
-          '#6600ff',
-          '#f1b916'
-        ],
-
-        yTitle:
-          'Optometrists',
-
-        scale: {
-          min: 0,
-          max: 7500,
-          step: 1500,
-          intervals: 5
-        },
-
-        axisDecimals: 0
-      },
-
-      flows: {
-        heading:
-          'Entrants & exits',
-
-        labels: [
-          'Entrants',
-          'Exits'
-        ],
-
-        colours: [
-          '#df2f2f',
-          '#2f8138'
-        ],
-
-        yTitle:
-          'Optometrists',
-
-        scale: {
-          min: 0,
-          max: 500,
-          step: 100,
-          intervals: 5
-        },
-
-        axisDecimals: 0
-      }
-    };
+    const EMBEDDED = [
+      {year:2013,count:[3278,226,348,171],percent:[81.48148148,5.617698235,8.650260999,4.250559284]},
+      {year:2014,count:[3381,242,379,122],percent:[81.98351115,5.868089234,9.190106693,2.958292919]},
+      {year:2015,count:[3520,251,391,187],percent:[80.9381467,5.771441711,8.990572545,4.299839043]},
+      {year:2016,count:[3739,275,388,109],percent:[82.88627799,6.096209266,8.601197074,2.416315673]},
+      {year:2017,count:[3861,270,385,93],percent:[83.77088305,5.85810371,8.353221957,2.017791278]},
+      {year:2018,count:[3999,288,387,142],percent:[83.03571429,5.980066445,8.035714286,2.948504983]},
+      {year:2019,count:[4216,298,384,187],percent:[82.91052114,5.860373648,7.551622419,3.677482793]},
+      {year:2020,count:[4329,297,366,178],percent:[83.73307544,5.744680851,7.079303675,3.442940039]},
+      {year:2021,count:[4521,290,381,185],percent:[84.0803422,5.393342012,7.08573554,3.440580249]},
+      {year:2022,count:[4793,293,357,271],percent:[83.88169408,5.127756388,6.247812391,4.742737137]},
+      {year:2023,count:[5033,308,369,269],percent:[84.17795618,5.151363104,6.171600602,4.499080114]},
+      {year:2024,count:[5221,324,370,295],percent:[84.07407407,5.217391304,5.958132045,4.750402576]}
+    ];
 
     // ============================================================
     // DOM + STATE
@@ -277,22 +204,16 @@
     const statusElement =
       document.getElementById('status');
 
-    const tabList =
-      document.getElementById('tabList');
-
-    const tabScrollLeft =
-      document.getElementById('tabScrollLeft');
-
-    const tabScrollRight =
-      document.getElementById('tabScrollRight');
-
-    const chartTabs =
-      Array.from(
-        document.querySelectorAll('.chart-tab')
-      );
-
     const yoyTrendToggle =
       document.getElementById('yoyTrendToggle');
+
+    const metricSwitch =
+      document.getElementById('metricSwitch');
+
+    const metricButtons =
+      Array.from(
+        document.querySelectorAll('.metric-button')
+      );
 
     const headingScrollViewport =
       document.getElementById('headingScrollViewport');
@@ -303,61 +224,50 @@
     const headingScrollRight =
       document.getElementById('headingScrollRight');
 
-    const chartHeadingFixed =
-      document.getElementById('chartHeadingFixed');
+    const legend =
+      document.getElementById('legend');
 
-    const chartHeadingDetail =
-      document.getElementById('chartHeadingDetail');
+    const legendLeft =
+      document.getElementById('legendLeft');
 
-    const chartLegend =
-      document.getElementById('chartLegend');
+    const legendRight =
+      document.getElementById('legendRight');
 
-    const legendScrollLeft =
-      document.getElementById('legendScrollLeft');
+    const sourceIndicator =
+      document.getElementById('sourceIndicator');
 
-    const legendScrollRight =
-      document.getElementById('legendScrollRight');
+    const sourceText =
+      document.getElementById('sourceText');
 
     const chartShell =
       document.getElementById('chartShell');
 
-    const dataSourceIndicator =
-      document.getElementById('dataSourceIndicator');
+    const canvas =
+      document.getElementById('countryChart');
 
-    const dataSourceText =
-      document.getElementById('dataSourceText');
-
-    const chartCanvas =
-      document.getElementById('workforceChart');
-
-    let sourceData = {
-      optoms: [],
-      flows: []
-    };
-
+    let rows = [];
     let chart = null;
-    let activeView = 'optoms';
+    let metric = 'count';
     let trendMode = '3yr';
-    let lastRenderedConfig = null;
+    let lastConfig = null;
 
     let yAxisController = null;
-    let tabsController = null;
+    let metricController = null;
     let trendController = null;
     let headingScroller = null;
     let legendController = null;
     let responsiveController = null;
     let chartInteractions = null;
     let chartSummary = null;
-    let legendAnimationToken = 0;
 
-    const hiddenSeriesByView =
-      new Map();
+    const hidden =
+      new Set();
 
     // ============================================================
-    // DATA PARSING
+    // DATA PARSING + VIEW CONFIGURATION
     // ============================================================
 
-    function numericSupplyCell(cell) {
+    function numericCountryCell(cell) {
       if (
         !cell ||
         cell.v === null ||
@@ -367,207 +277,162 @@
         return NaN;
       }
 
-      if (
-        typeof cell.v === 'number' &&
-        Number.isFinite(cell.v)
-      ) {
-        return cell.v;
-      }
-
-      const cleaned =
-        PFF.cleanText(
-          cell.f ?? cell.v
-        )
-          .replace(/,/g, '')
-          .replace(/[^\d.-]/g, '');
-
-      if (
-        !cleaned ||
-        !/\d/.test(cleaned)
-      ) {
-        return NaN;
-      }
-
-      const number =
-        Number(cleaned);
-
-      return Number.isFinite(number)
-        ? number
-        : NaN;
+      return PFFCharts.numericCell(
+        cell,
+        NaN
+      );
     }
 
-    function parseOptomTable(table) {
-      const parsed = [];
+    function normalise(source) {
+      const map =
+        new Map();
 
-      (table?.rows || []).forEach(sourceRow => {
-        const cells =
-          sourceRow?.c || [];
-
+      (source || []).forEach(row => {
         const year =
-          numericSupplyCell(cells[0]);
+          Math.round(
+            Number(row?.year)
+          );
 
-        const active =
-          numericSupplyCell(cells[10]);
-
-        const general =
-          numericSupplyCell(cells[11]);
-
-        if (
-          !Number.isFinite(year) ||
-          year < 2000 ||
-          year > 2100 ||
-          !Number.isFinite(active) ||
-          !Number.isFinite(general)
-        ) {
+        if (!Number.isFinite(year)) {
           return;
         }
 
-        parsed.push({
-          year:
-            Math.round(year),
+        const fix =
+          values =>
+            Array.from(
+              { length: 4 },
+              (_, index) => {
+                const value =
+                  Number(values?.[index]);
 
-          values: [
-            general,
-            active
-          ]
-        });
+                return Number.isFinite(value)
+                  ? value
+                  : null;
+              }
+            );
+
+        const record = {
+          year,
+          count: fix(row.count),
+          percent: fix(row.percent)
+        };
+
+        if (
+          [
+            ...record.count,
+            ...record.percent
+          ].some(Number.isFinite)
+        ) {
+          map.set(
+            year,
+            record
+          );
+        }
       });
 
-      return parsed.sort(
+      return Array.from(
+        map.values()
+      ).sort(
         (first, second) =>
           first.year -
           second.year
       );
     }
 
-    function parseFlowTable(table) {
-      const parsed = [];
+    function niceStep(value) {
+      if (
+        !Number.isFinite(value) ||
+        value <= 0
+      ) {
+        return 1;
+      }
 
-      (table?.rows || []).forEach(sourceRow => {
-        const cells =
-          sourceRow?.c || [];
-
-        const year =
-          numericSupplyCell(cells[0]);
-
-        const entrants =
-          numericSupplyCell(cells[1]);
-
-        const exits =
-          numericSupplyCell(cells[2]);
-
-        if (
-          !Number.isFinite(year) ||
-          year < 2000 ||
-          year > 2100 ||
-          !Number.isFinite(entrants) ||
-          !Number.isFinite(exits)
-        ) {
-          return;
-        }
-
-        parsed.push({
-          year:
-            Math.round(year),
-
-          values: [
-            entrants,
-            exits
-          ]
-        });
-      });
-
-      return parsed.sort(
-        (first, second) =>
-          first.year -
-          second.year
-      );
-    }
-
-    function validSourceData(data) {
-      return Boolean(
-        data &&
-        Array.isArray(data.optoms) &&
-        Array.isArray(data.flows) &&
-        data.optoms.length >= 3 &&
-        data.flows.length >= 3
-      );
-    }
-
-    function parseLiveTables(tables) {
-      const data = {
-        optoms:
-          parseOptomTable(
-            tables?.[0]
-          ),
-
-        flows:
-          parseFlowTable(
-            tables?.[1]
-          )
-      };
-
-      if (!validSourceData(data)) {
-        throw new Error(
-          'Live workforce supply data did not contain enough usable rows.'
+      const exponent =
+        Math.floor(
+          Math.log10(value)
         );
-      }
 
-      /*
-        PFF's shared live/cache loader stores arrays.
-        Wrap the two-source data object in one row so both
-        tables can share the same central cache helper.
-      */
-      return [data];
+      const magnitude =
+        10 ** exponent;
+
+      const fraction =
+        value /
+        magnitude;
+
+      const niceFraction =
+        fraction <= 1
+          ? 1
+          : fraction <= 2
+            ? 2
+            : fraction <= 2.5
+              ? 2.5
+              : fraction <= 5
+                ? 5
+                : 10;
+
+      return niceFraction *
+        magnitude;
     }
 
-    // ============================================================
-    // VIEW DATA + CONFIGURATION
-    // ============================================================
+    function countScale() {
+      const maximum =
+        Math.max(
+          0,
+          ...rows.flatMap(
+            row =>
+              row.count.filter(
+                Number.isFinite
+              )
+          )
+        );
+
+      const step =
+        niceStep(
+          maximum / 4
+        );
+
+      return {
+        min: 0,
+        max: step * 4,
+        step,
+        intervals: 4
+      };
+    }
 
     function currentConfig() {
-      return VIEW_CONFIG[
-        activeView
-      ];
-    }
-
-    function currentRows() {
-      return sourceData[
-        activeView
-      ] || [];
-    }
-
-    function hiddenSeriesSet(
-      view = activeView
-    ) {
-      if (
-        !hiddenSeriesByView.has(
-          view
-        )
-      ) {
-        hiddenSeriesByView.set(
-          view,
-          new Set()
-        );
+      if (metric === 'percent') {
+        return {
+          metric: 'percent',
+          yTitle: '% of optometrists',
+          scale: {
+            min: 0,
+            max: 100,
+            step: 25,
+            intervals: 4
+          },
+          axisDecimals: 0,
+          tipDecimals: 1,
+          suffix: '%'
+        };
       }
 
-      return hiddenSeriesByView.get(
-        view
-      );
+      return {
+        metric: 'count',
+        yTitle: 'Optometrists',
+        scale: countScale(),
+        axisDecimals: 0,
+        tipDecimals: 0,
+        suffix: ''
+      };
     }
 
-    function valueForRow(
+    function valuesFor(
       row,
-      seriesIndex
+      config
     ) {
-      const value =
-        row?.values?.[
-          seriesIndex
-        ];
-
-      return Number.isFinite(value)
-        ? value
-        : NaN;
+      return config.metric === 'percent'
+        ? row.percent
+        : row.count;
     }
 
     function activeTrendWindow() {
@@ -588,67 +453,131 @@
         return NaN;
       }
 
+      const config =
+        currentConfig();
+
       return PFFCharts.latestConsecutiveTrend(
-        currentRows(),
-        row =>
-          valueForRow(
-            row,
-            seriesIndex
-          ),
+        rows,
+        row => {
+          const value =
+            Number(
+              valuesFor(
+                row,
+                config
+              )[seriesIndex]
+            );
+
+          return Number.isFinite(value)
+            ? value
+            : NaN;
+        },
         windowSize
       );
     }
 
+    function formatTooltipValue(
+      value,
+      config
+    ) {
+      if (!Number.isFinite(value)) {
+        return '—';
+      }
+
+      return new Intl.NumberFormat(
+        'en-AU',
+        {
+          minimumFractionDigits:
+            config.tipDecimals,
+          maximumFractionDigits:
+            config.tipDecimals
+        }
+      ).format(value) +
+        (config.suffix || '');
+    }
+
+    function parseTable(table) {
+      const parsed = [];
+
+      (table?.rows || []).forEach(sourceRow => {
+        const cells =
+          sourceRow?.c || [];
+
+        const countYear =
+          numericCountryCell(
+            cells[0]
+          );
+
+        const percentYear =
+          numericCountryCell(
+            cells[6]
+          );
+
+        const year =
+          Number.isFinite(countYear)
+            ? Math.round(countYear)
+            : Number.isFinite(percentYear)
+              ? Math.round(percentYear)
+              : NaN;
+
+        if (!Number.isFinite(year)) {
+          return;
+        }
+
+        parsed.push({
+          year,
+          count: [
+            numericCountryCell(cells[1]),
+            numericCountryCell(cells[2]),
+            numericCountryCell(cells[3]),
+            numericCountryCell(cells[4])
+          ],
+          percent: [
+            numericCountryCell(cells[7]),
+            numericCountryCell(cells[8]),
+            numericCountryCell(cells[9]),
+            numericCountryCell(cells[10])
+          ]
+        });
+      });
+
+      return normalise(parsed);
+    }
+
     // ============================================================
-    // DATASETS
+    // DATASETS + SHARED PFF CHART PLUGINS
     // ============================================================
 
     function datasetForSeries(
       seriesIndex,
       config
     ) {
-      const rows =
-        currentRows();
-
-      const label =
-        config.labels[
-          seriesIndex
-        ];
-
-      const hidden =
-        hiddenSeriesSet();
-
-      const visible =
-        !hidden.has(label);
-
       const colour =
-        config.colours[
-          seriesIndex
-        ];
+        COLOURS[seriesIndex];
 
       return PFFCharts.lineDataset({
-        label,
-
-        data:
-          rows.map(
-            row => {
-              const value =
-                valueForRow(
-                  row,
-                  seriesIndex
-                );
-
-              return Number.isFinite(value)
-                ? value
-                : null;
-            }
-          ),
-
-        _activeSeries:
-          visible,
+        label:
+          LABELS[seriesIndex],
 
         _seriesLabel:
-          label,
+          LABELS[seriesIndex],
+
+        _activeSeries:
+          !hidden.has(seriesIndex),
+
+        data:
+          rows.map(row => {
+            const value =
+              Number(
+                valuesFor(
+                  row,
+                  config
+                )[seriesIndex]
+              );
+
+            return Number.isFinite(value)
+              ? value
+              : null;
+          }),
 
         borderColor:
           colour,
@@ -663,19 +592,7 @@
           '#ffffff',
 
         pointBorderWidth:
-          visible ? 1 : 0,
-
-        pointHoverRadius:
-          visible ? 4 : 0,
-
-        pointHitRadius:
-          visible
-            ? (
-                PFFCharts.mobileLayout()
-                  ? 9
-                  : 5
-              )
-            : 0,
+          1,
 
         cubicInterpolationMode:
           'monotone'
@@ -683,11 +600,8 @@
     }
 
     function buildDatasets(config) {
-      return config.labels.map(
-        (
-          _label,
-          seriesIndex
-        ) =>
+      return LABELS.map(
+        (_, seriesIndex) =>
           datasetForSeries(
             seriesIndex,
             config
@@ -695,25 +609,19 @@
       );
     }
 
-    function syncChartDatasets(config) {
+    function syncDatasets(config) {
       if (!chart) {
         return;
       }
 
-      const nextDatasets =
-        buildDatasets(config);
-
-      nextDatasets.forEach(
+      buildDatasets(config).forEach(
         (nextDataset, index) => {
           const current =
-            chart.data.datasets[
-              index
-            ];
+            chart.data.datasets[index];
 
           if (!current) {
-            chart.data.datasets[
-              index
-            ] = nextDataset;
+            chart.data.datasets[index] =
+              nextDataset;
           } else {
             Object.assign(
               current,
@@ -721,60 +629,33 @@
             );
           }
 
-          const hidden =
-            hiddenSeriesSet();
-
-          const label =
-            config.labels[
-              index
-            ];
-
-          const visible =
-            !hidden.has(label);
-
           if (
             typeof chart.setDatasetVisibility ===
             'function'
           ) {
             chart.setDatasetVisibility(
               index,
-              visible
+              !hidden.has(index)
             );
-          } else {
-            chart.data.datasets[
-              index
-            ].hidden =
-              !visible;
           }
         }
       );
-
-      chart.data.datasets.length =
-        nextDatasets.length;
     }
-
-    // ============================================================
-    // SHARED PFF PLUGINS
-    // ============================================================
 
     const yearTicksPlugin =
       PFFCharts.createYearTickMarksPlugin({
         id:
-          'pffSupplySummaryYearTicks',
+          'pffCountryQualificationYearTicks',
 
-        getValue({
-          index
-        }) {
-          return currentRows()[
-            index
-          ]?.year;
+        getValue({ index }) {
+          return rows[index]?.year;
         }
       });
 
     const trendLabelsPlugin =
       PFFCharts.createTrendLabelsPlugin({
         id:
-          'pffSupplySummaryTrendLabels',
+          'pffCountryQualificationTrendLabels',
 
         enabled() {
           return (
@@ -802,10 +683,9 @@
         getSeriesColour({
           datasetIndex
         }) {
-          return currentConfig()
-            .colours[
-              datasetIndex
-            ] ||
+          return COLOURS[
+            datasetIndex
+          ] ||
             '#69718a';
         }
       });
@@ -823,34 +703,23 @@
 
         plugins: {
           tooltip: {
-            filter(context) {
-              return Boolean(
-                context.dataset
-                  ._activeSeries
-              );
-            },
-
             callbacks: {
               title(items) {
                 return items?.length
                   ? String(
-                      currentRows()[
-                        items[0].dataIndex
-                      ]?.year ??
-                      ''
+                      items[0].label
                     )
                   : '';
               },
 
               label(context) {
                 const value =
-                  Number(
-                    context.raw
-                  );
+                  Number(context.raw);
 
                 const base =
-                  `${context.dataset._seriesLabel}: ${PFF.formatInteger(
-                    value
+                  `${context.dataset._seriesLabel}: ${formatTooltipValue(
+                    value,
+                    currentConfig()
                   )}`;
 
                 if (
@@ -887,25 +756,10 @@
                 ) {
                   const year =
                     Number(
-                      currentRows()[
-                        index
-                      ]?.year
+                      rows[index]?.year
                     );
 
-                  if (
-                    !Number.isFinite(
-                      year
-                    )
-                  ) {
-                    return '';
-                  }
-
-                  /*
-                    Keep the compact Entrants & exits view readable by
-                    labelling each available year. The longer Optometrists
-                    view follows the shared even-year PFF convention.
-                  */
-                  return currentRows().length <= 6 ||
+                  return Number.isFinite(year) &&
                     year % 2 === 0
                     ? String(year)
                     : '';
@@ -927,7 +781,7 @@
       });
     }
 
-    function syncChartScale(config) {
+    function syncScale(config) {
       if (!chart) {
         return;
       }
@@ -945,169 +799,26 @@
         config.scale.step;
     }
 
-    function updateHeading(
-      previousConfig,
-      nextConfig,
-      animate = true
-    ) {
-      const changed =
-        !previousConfig ||
-        previousConfig.heading !==
-          nextConfig.heading;
-
-      if (changed) {
-        if (animate) {
-          PFFCharts.animateHeading({
-            fixed:
-              chartHeadingFixed,
-
-            detail:
-              chartHeadingDetail,
-
-            fixedText:
-              '',
-
-            detailText:
-              nextConfig.heading,
-
-            duration:
-              PFFCharts.defaults
-                .viewTransitionMs,
-
-            onComplete() {
-              headingScroller?.update();
-            }
-          });
-        } else {
-          chartHeadingFixed.textContent =
-            '';
-
-          chartHeadingDetail.textContent =
-            nextConfig.heading;
-        }
-      }
-
-      headingScrollViewport.scrollLeft =
-        0;
-
-      requestAnimationFrame(
-        () =>
-          headingScroller?.update()
-      );
-    }
-
     function legendItems() {
-      const config =
-        currentConfig();
-
-      const hidden =
-        hiddenSeriesSet();
-
-      return config.labels.map(
+      return LABELS.map(
         (
           label,
           datasetIndex
         ) => ({
           datasetIndex,
           label,
-
           colour:
-            config.colours[
-              datasetIndex
-            ],
-
+            COLOURS[datasetIndex],
           active:
-            !hidden.has(label)
+            !hidden.has(datasetIndex)
         })
       );
-    }
-
-    function renderLegend(
-      animate = false
-    ) {
-      if (!legendController) {
-        return;
-      }
-
-      const draw = () => {
-        legendController.render();
-        chartLegend.scrollLeft = 0;
-      };
-
-      if (
-        !animate ||
-        PFFCharts.reducedMotion() ||
-        typeof chartLegend.animate !==
-          'function' ||
-        !chartLegend.childElementCount
-      ) {
-        draw();
-        return;
-      }
-
-      const token =
-        ++legendAnimationToken;
-
-      chartLegend
-        .getAnimations?.()
-        .forEach(
-          animation =>
-            animation.cancel()
-        );
-
-      const outgoing =
-        chartLegend.animate(
-          [
-            { opacity: 1 },
-            { opacity: 0 }
-          ],
-          {
-            duration: 120,
-            easing: 'ease-out',
-            fill: 'forwards'
-          }
-        );
-
-      outgoing.finished
-        .catch(() => {})
-        .then(() => {
-          if (
-            token !==
-            legendAnimationToken
-          ) {
-            return;
-          }
-
-          outgoing.cancel();
-          draw();
-
-          const incoming =
-            chartLegend.animate(
-              [
-                { opacity: 0 },
-                { opacity: 1 }
-              ],
-              {
-                duration: 220,
-                easing:
-                  'cubic-bezier(0.22, 1, 0.36, 1)',
-                fill: 'both'
-              }
-            );
-
-          incoming.finished
-            .then(
-              () =>
-                incoming.cancel()
-            )
-            .catch(() => {});
-        });
     }
 
     function updateAccessibleSummary() {
       if (
         !chartSummary ||
-        !currentRows().length
+        !rows.length
       ) {
         return;
       }
@@ -1115,33 +826,29 @@
       const config =
         currentConfig();
 
-      const rows =
-        currentRows();
-
       const latest =
-        rows[
-          rows.length - 1
-        ];
+        rows[rows.length - 1];
 
       const values =
-        config.labels
-          .map(
-            (
-              label,
-              index
-            ) => {
-              const value =
-                valueForRow(
+        LABELS.map(
+          (
+            label,
+            index
+          ) => {
+            const value =
+              Number(
+                valuesFor(
                   latest,
-                  index
-                );
+                  config
+                )[index]
+              );
 
-              return `${label} ${PFF.formatInteger(
-                value
-              )}`;
-            }
-          )
-          .join(', ');
+            return `${label} ${formatTooltipValue(
+              value,
+              config
+            )}`;
+          }
+        ).join(', ');
 
       const trendDescription =
         trendMode ===
@@ -1150,22 +857,16 @@
           : `${activeTrendWindow()}-year trend annotations are on.`;
 
       PFFCharts.updateChartSummary(
-        `${config.heading}. Latest data ${latest.year}: ${values}. ${trendDescription}`,
+        `Country of qualification. Latest data ${latest.year}: ${values}. ${trendDescription}`,
         chartSummary
       );
     }
 
     function createChart(config) {
-      chartHeadingFixed.textContent =
-        '';
-
-      chartHeadingDetail.textContent =
-        config.heading;
-
       yAxisController =
         PFFCharts.createUnifiedYAxis({
           id:
-            'pffSupplySummaryAxes',
+            'pffCountryQualificationAxes',
 
           getChart() {
             return chart;
@@ -1196,14 +897,9 @@
         config.yTitle
       );
 
-      const rows =
-        currentRows();
-
       chart =
         new Chart(
-          chartCanvas.getContext(
-            '2d'
-          ),
+          canvas.getContext('2d'),
           {
             type: 'line',
 
@@ -1229,30 +925,31 @@
           }
         );
 
-      syncChartDatasets(config);
+      LABELS.forEach(
+        (_, index) =>
+          chart.setDatasetVisibility(
+            index,
+            !hidden.has(index)
+          )
+      );
 
-      lastRenderedConfig =
+      lastConfig =
         PFFCharts.cloneViewConfig(
           config
         );
 
+      legendController?.render();
       updateAccessibleSummary();
     }
 
     function updateChart(
-      reason = 'tab'
+      reason = 'option'
     ) {
       const config =
         currentConfig();
 
       const previousConfig =
-        lastRenderedConfig;
-
-      updateHeading(
-        previousConfig,
-        config,
-        reason !== 'initial'
-      );
+        lastConfig;
 
       if (!chart) {
         createChart(config);
@@ -1287,28 +984,8 @@
         previousConfig.yTitle !==
           config.yTitle;
 
-      const legendChanged =
-        !previousConfig ||
-        !PFFCharts.arraysMatch(
-          previousConfig.labels,
-          config.labels
-        ) ||
-        !PFFCharts.arraysMatch(
-          previousConfig.colours,
-          config.colours
-        );
-
-      const rows =
-        currentRows();
-
-      chart.data.labels =
-        rows.map(
-          row =>
-            String(row.year)
-        );
-
-      syncChartDatasets(config);
-      syncChartScale(config);
+      syncDatasets(config);
+      syncScale(config);
 
       const duration =
         reason === 'initial'
@@ -1345,10 +1022,8 @@
           config.scale,
           {
             duration,
-
             fromDecimals:
               previousAxisDecimals,
-
             toDecimals:
               config.axisDecimals
           }
@@ -1373,15 +1048,9 @@
         );
       }
 
-      if (legendChanged) {
-        renderLegend(
-          reason !== 'initial'
-        );
-      } else {
-        legendController?.render();
-      }
+      legendController?.render();
 
-      lastRenderedConfig =
+      lastConfig =
         PFFCharts.cloneViewConfig(
           config
         );
@@ -1406,42 +1075,6 @@
             headingScrollRight
         });
 
-      tabsController =
-        PFFCharts.setupTabs({
-          tabList,
-
-          tabs:
-            chartTabs,
-
-          valueAttribute:
-            'view',
-
-          initialValue:
-            activeView,
-
-          leftButton:
-            tabScrollLeft,
-
-          rightButton:
-            tabScrollRight,
-
-          onChange(view) {
-            if (
-              view ===
-              activeView
-            ) {
-              return;
-            }
-
-            activeView =
-              view;
-
-            updateChart(
-              'tab'
-            );
-          }
-        });
-
       trendController =
         PFFCharts.setupTrendToggle({
           button:
@@ -1459,16 +1092,45 @@
           }
         });
 
+      metricController =
+        PFFCharts.setupMetricSwitch({
+          element:
+            metricSwitch,
+
+          buttons:
+            metricButtons,
+
+          valueAttribute:
+            'metric',
+
+          initialValue:
+            metric,
+
+          onChange(nextMetric) {
+            if (
+              nextMetric === metric
+            ) {
+              return;
+            }
+
+            metric =
+              nextMetric;
+
+            updateChart(
+              'option'
+            );
+          }
+        });
+
       legendController =
         PFFCharts.setupLegend({
-          legend:
-            chartLegend,
+          legend,
 
           leftButton:
-            legendScrollLeft,
+            legendLeft,
 
           rightButton:
-            legendScrollRight,
+            legendRight,
 
           getChart() {
             return chart;
@@ -1479,28 +1141,17 @@
 
           onToggle({
             datasetIndex,
-            visible,
-            item
+            visible
           }) {
-            const hidden =
-              new Set(
-                hiddenSeriesSet()
-              );
-
             if (visible) {
               hidden.delete(
-                item.label
+                datasetIndex
               );
             } else {
               hidden.add(
-                item.label
+                datasetIndex
               );
             }
-
-            hiddenSeriesByView.set(
-              activeView,
-              hidden
-            );
 
             const dataset =
               chart?.data?.datasets?.[
@@ -1510,21 +1161,6 @@
             if (dataset) {
               dataset._activeSeries =
                 visible;
-
-              dataset.pointBorderWidth =
-                visible ? 1 : 0;
-
-              dataset.pointHoverRadius =
-                visible ? 4 : 0;
-
-              dataset.pointHitRadius =
-                visible
-                  ? (
-                      PFFCharts.mobileLayout()
-                        ? 9
-                        : 5
-                    )
-                  : 0;
             }
 
             const visibilityDuration =
@@ -1550,8 +1186,7 @@
 
       chartInteractions =
         PFFCharts.setupChartInteractions({
-          canvas:
-            chartCanvas,
+          canvas,
 
           getChart() {
             return chart;
@@ -1590,7 +1225,6 @@
           },
 
           onRefresh() {
-            tabsController?.update();
             headingScroller?.update();
             legendController?.update();
           }
@@ -1616,93 +1250,78 @@
         statusElement,
 
       loadLive() {
-        return Promise.all([
-          PFFCharts.loadGVizSheet({
-            sheetId:
-              SHEET_ID,
+        return PFFCharts.loadGVizSheet({
+          sheetId:
+            SHEET_ID,
 
-            sheetName:
-              OPTOM_SHEET,
+          sheetName:
+            SHEET_NAME,
 
-            range:
-              OPTOM_RANGE,
+          range:
+            DATA_RANGE,
 
-            timeoutMs:
-              FETCH_TIMEOUT_MS,
+          timeoutMs:
+            TIMEOUT,
 
-            headers:
-              '1'
-          }),
-
-          PFFCharts.loadGVizSheet({
-            sheetId:
-              SHEET_ID,
-
-            sheetName:
-              FLOW_SHEET,
-
-            range:
-              FLOW_RANGE,
-
-            timeoutMs:
-              FETCH_TIMEOUT_MS,
-
-            headers:
-              '1'
-          })
-        ]);
+          headers:
+            '1'
+        });
       },
 
       parseLive:
-        parseLiveTables,
+        parseTable,
 
       cacheKey:
-        LOCAL_CACHE_KEY,
+        CACHE_KEY,
 
-      fallback: [
-        EMBEDDED_FALLBACK
-      ],
+      fallback:
+        EMBEDDED,
 
       minRows:
         1,
 
       dataSourceOptions: {
         indicator:
-          dataSourceIndicator,
+          sourceIndicator,
 
         text:
-          dataSourceText
+          sourceText
       },
 
       onLiveError(error) {
         console.warn(
-          'Live optometry supply data unavailable; using cached data.',
+          'Live country of qualification data unavailable; using cached data.',
           error
         );
       },
 
       render(loaded) {
-        const data =
-          loaded.rows?.[0];
+        rows =
+          normalise(
+            loaded.rows || []
+          );
 
-        if (!validSourceData(data)) {
+        if (!rows.length) {
           throw new Error(
-            'Unable to read optometry supply data.'
+            'No country of qualification data are available.'
           );
         }
-
-        sourceData =
-          data;
 
         const config =
           currentConfig();
 
         createChart(config);
-        tabsController?.update();
+
+        metricController?.set(
+          metric,
+          false
+        );
+
         trendController?.set(
           trendMode,
           false
         );
+
         legendController?.render();
         responsiveController?.refresh();
 
@@ -1719,7 +1338,7 @@
       },
 
       errorMessage:
-        'Unable to render optometry supply chart'
+        'Country of qualification data unavailable.'
     });
   </script>
 </body>
