@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PFF Workforce Location Trends</title>
+  <title>PFF Optometry Supply Trends</title>
 
   <script
     src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"
@@ -19,14 +19,14 @@
         id="loadingState"
         class="app-loading"
         role="status"
-        aria-label="Loading workforce location data"
+        aria-label="Loading optometry supply data"
       >
         <div class="cone-loader" aria-hidden="true">
           <span class="cone blue"></span>
           <span class="cone green"></span>
           <span class="cone red"></span>
         </div>
-        <p class="loader-text">Loading workforce location data…</p>
+        <p class="loader-text">Loading optometry supply data…</p>
       </div>
 
       <div class="module-top">
@@ -42,23 +42,23 @@
             id="tabList"
             class="tab-list"
             role="tablist"
-            aria-label="Workforce location grouping"
+            aria-label="Optometry supply charts"
           >
             <button
               class="chart-tab is-active"
               type="button"
               role="tab"
               aria-selected="true"
-              data-group="state"
-            >State</button>
+              data-view="optoms"
+            >Optometrists</button>
 
             <button
               class="chart-tab"
               type="button"
               role="tab"
               aria-selected="false"
-              data-group="rurality"
-            >Rurality</button>
+              data-view="flows"
+            >Entrants & exits</button>
           </div>
 
           <button
@@ -92,7 +92,7 @@
 
           <div id="headingScrollViewport" class="heading-scroll-viewport">
             <h2 id="chartHeading" class="chart-heading">
-              <span id="chartHeadingFixed" class="chart-heading-fixed">Clinicians by&nbsp;</span><span id="chartHeadingDetail" class="chart-heading-detail">state</span>
+              <span id="chartHeadingFixed" class="chart-heading-fixed"></span><span id="chartHeadingDetail" class="chart-heading-detail">Optometrists</span>
             </h2>
           </div>
 
@@ -115,27 +115,6 @@
             <span class="yoy-binary-indicator" aria-hidden="true"></span>
             <span class="yoy-toggle-label">3yr Trend</span>
           </button>
-
-          <div
-            id="metricSwitch"
-            class="metric-switch"
-            role="group"
-            aria-label="Display metric"
-          >
-            <button
-              class="metric-button is-active"
-              type="button"
-              data-metric="count"
-              aria-pressed="true"
-            >Count</button>
-
-            <button
-              class="metric-button"
-              type="button"
-              data-metric="share"
-              aria-pressed="false"
-            >%</button>
-          </div>
         </div>
       </div>
 
@@ -166,7 +145,7 @@
       <div id="chartShell" class="chart-shell">
         <canvas
           id="workforceChart"
-          aria-label="Australian optometry workforce location trend chart"
+          aria-label="Australian optometry supply trend chart"
           role="img"
         ></canvas>
       </div>
@@ -183,112 +162,107 @@
     const SHEET_ID =
       '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
 
-    const STATE_SHEET =
+    const OPTOM_SHEET =
       'Optomsbystate';
 
-    const RURALITY_SHEET =
-      'OptomsbyMMM';
+    const FLOW_SHEET =
+      'Miscellaneous';
 
-    /*
-      Optomsbystate:
-        L31:V
-        L = Year
-        M:T = NSW, VIC, QLD, SA, WA, TAS, NT, ACT
-        U = Other
-        V = Active clinicians
+    // Optomsbystate: L = Year, V = Active clinicians, W = General registration.
+    const OPTOM_RANGE =
+      'L31:W';
 
-      OptomsbyMMM:
-        A31:J
-        A = Year
-        B:H = MM1-MM7
-        I = Non-metro
-        J = Metro
-
-      Both use row 31 as the single GViz header row and row 32 onward
-      as raw annual data.
-    */
-    const STATE_RANGE =
-      'L31:V';
-
-    const RURALITY_RANGE =
-      'A31:J';
+    // Miscellaneous entrant/exit table:
+    // row 30 = headers (Year, Entrants, Exits); row 31 onward = annual data.
+    const FLOW_RANGE =
+      'A30:C';
 
     const FETCH_TIMEOUT_MS =
       15000;
 
     const LOCAL_CACHE_KEY =
-      'pff-workforce-location-v1';
-
-    const STATE_LABELS = [
-      'NSW',
-      'VIC',
-      'QLD',
-      'SA',
-      'WA',
-      'TAS',
-      'NT',
-      'ACT'
-    ];
-
-    const STATE_COLOURS = [
-      '#2db7f5',
-      '#2d3a8c',
-      '#7a0036',
-      '#f03a47',
-      '#000000',
-      '#22a36b',
-      '#c25e00',
-      '#7b61ff'
-    ];
-
-    const RURALITY_LABELS = [
-      'Metro',
-      'Non-metro'
-    ];
-
-    const RURALITY_COLOURS = [
-      '#30475d',
-      '#b54a0a'
-    ];
-
-    const SERIES_SLOT_COUNT =
-      STATE_LABELS.length;
+      'pff-optoms-entrants-exits-v4';
 
     const EMBEDDED_FALLBACK =
 {
-      state: [
-        {year:2013,values:[1382,1037,846,237,342,80,30,67]},
-        {year:2014,values:[1392,1064,862,251,368,87,34,66]},
-        {year:2015,values:[1508,1103,907,264,381,81,25,78]},
-        {year:2016,values:[1533,1171,939,282,394,88,31,72]},
-        {year:2017,values:[1568,1217,955,287,381,93,33,73]},
-        {year:2018,values:[1609,1256,1021,297,415,104,33,79]},
-        {year:2019,values:[1700,1339,1067,329,431,99,30,85]},
-        {year:2020,values:[1726,1333,1107,339,429,108,32,94]},
-        {year:2021,values:[1738,1426,1138,374,472,104,30,92]},
-        {year:2022,values:[1856,1529,1205,393,475,117,29,105]},
-        {year:2023,values:[1898,1598,1253,429,539,124,34,98]},
-        {year:2024,values:[1971,1656,1307,437,555,122,37,116]}
+      optoms: [
+        {year:2013,values:[4559,4021]},
+        {year:2014,values:[4749,4124]},
+        {year:2015,values:[4941,4350]},
+        {year:2016,values:[5134,4510]},
+        {year:2017,values:[5296,4610]},
+        {year:2018,values:[5492,4814]},
+        {year:2019,values:[5768,5085]},
+        {year:2020,values:[5962,5171]},
+        {year:2021,values:[6282,5377]},
+        {year:2022,values:[6495,5714]},
+        {year:2023,values:[6781,5979]},
+        {year:2024,values:[7104,6210]}
       ],
-
-      rurality: [
-        {year:2013,values:[3129,893]},
-        {year:2014,values:[3194,930]},
-        {year:2015,values:[3396,952]},
-        {year:2016,values:[3519,991]},
-        {year:2017,values:[3606,1001]},
-        {year:2018,values:[3764,1050]},
-        {year:2019,values:[3999,1081]},
-        {year:2020,values:[4022,1146]},
-        {year:2021,values:[4200,1174]},
-        {year:2022,values:[4494,1215]},
-        {year:2023,values:[4686,1287]},
-        {year:2024,values:[4857,1344]}
+      flows: [
+        {year:2019,values:[393,79]},
+        {year:2020,values:[299,90]},
+        {year:2021,values:[343,134]},
+        {year:2022,values:[406,140]},
+        {year:2023,values:[399,142]}
       ]
     };
 
-    const TRANSPARENT_COLOUR =
-      'rgba(0, 0, 0, 0)';
+    const VIEW_CONFIG = {
+      optoms: {
+        heading:
+          'Optometrists',
+
+        labels: [
+          'General registration',
+          'Active clinicians'
+        ],
+
+        colours: [
+          '#6600ff',
+          '#f1b916'
+        ],
+
+        yTitle:
+          'Optometrists',
+
+        scale: {
+          min: 0,
+          max: 7500,
+          step: 1500,
+          intervals: 5
+        },
+
+        axisDecimals: 0
+      },
+
+      flows: {
+        heading:
+          'Entrants & exits',
+
+        labels: [
+          'Entrants',
+          'Exits'
+        ],
+
+        colours: [
+          '#df2f2f',
+          '#2f8138'
+        ],
+
+        yTitle:
+          'Optometrists',
+
+        scale: {
+          min: 0,
+          max: 500,
+          step: 100,
+          intervals: 5
+        },
+
+        axisDecimals: 0
+      }
+    };
 
     // ============================================================
     // DOM + STATE
@@ -319,14 +293,6 @@
 
     const yoyTrendToggle =
       document.getElementById('yoyTrendToggle');
-
-    const metricSwitch =
-      document.getElementById('metricSwitch');
-
-    const metricButtons =
-      Array.from(
-        document.querySelectorAll('.metric-button')
-      );
 
     const headingScrollViewport =
       document.getElementById('headingScrollViewport');
@@ -365,19 +331,17 @@
       document.getElementById('workforceChart');
 
     let sourceData = {
-      state: [],
-      rurality: []
+      optoms: [],
+      flows: []
     };
 
     let chart = null;
-    let activeGroup = 'state';
-    let activeMetric = 'count';
+    let activeView = 'optoms';
     let trendMode = '3yr';
     let lastRenderedConfig = null;
 
     let yAxisController = null;
     let tabsController = null;
-    let metricController = null;
     let trendController = null;
     let headingScroller = null;
     let legendController = null;
@@ -386,14 +350,14 @@
     let chartSummary = null;
     let legendAnimationToken = 0;
 
-    const hiddenSeriesByGroup =
+    const hiddenSeriesByView =
       new Map();
 
     // ============================================================
     // DATA PARSING
     // ============================================================
 
-    function numericWorkforceCell(cell) {
+    function numericSupplyCell(cell) {
       if (
         !cell ||
         cell.v === null ||
@@ -414,6 +378,7 @@
         PFF.cleanText(
           cell.f ?? cell.v
         )
+          .replace(/,/g, '')
           .replace(/[^\d.-]/g, '');
 
       if (
@@ -431,7 +396,7 @@
         : NaN;
     }
 
-    function parseStateTable(table) {
+    function parseOptomTable(table) {
       const parsed = [];
 
       (table?.rows || []).forEach(sourceRow => {
@@ -439,30 +404,20 @@
           sourceRow?.c || [];
 
         const year =
-          numericWorkforceCell(cells[0]);
+          numericSupplyCell(cells[0]);
+
+        const active =
+          numericSupplyCell(cells[10]);
+
+        const general =
+          numericSupplyCell(cells[11]);
 
         if (
           !Number.isFinite(year) ||
           year < 2000 ||
-          year > 2100
-        ) {
-          return;
-        }
-
-        const values =
-          Array.from(
-            { length: 8 },
-            (_, index) =>
-              numericWorkforceCell(
-                cells[index + 1]
-              )
-          );
-
-        if (
-          values.some(
-            value =>
-              !Number.isFinite(value)
-          )
+          year > 2100 ||
+          !Number.isFinite(active) ||
+          !Number.isFinite(general)
         ) {
           return;
         }
@@ -470,7 +425,11 @@
         parsed.push({
           year:
             Math.round(year),
-          values
+
+          values: [
+            general,
+            active
+          ]
         });
       });
 
@@ -481,7 +440,7 @@
       );
     }
 
-    function parseRuralityTable(table) {
+    function parseFlowTable(table) {
       const parsed = [];
 
       (table?.rows || []).forEach(sourceRow => {
@@ -489,20 +448,20 @@
           sourceRow?.c || [];
 
         const year =
-          numericWorkforceCell(cells[0]);
+          numericSupplyCell(cells[0]);
 
-        const nonMetro =
-          numericWorkforceCell(cells[8]);
+        const entrants =
+          numericSupplyCell(cells[1]);
 
-        const metro =
-          numericWorkforceCell(cells[9]);
+        const exits =
+          numericSupplyCell(cells[2]);
 
         if (
           !Number.isFinite(year) ||
           year < 2000 ||
           year > 2100 ||
-          !Number.isFinite(metro) ||
-          !Number.isFinite(nonMetro)
+          !Number.isFinite(entrants) ||
+          !Number.isFinite(exits)
         ) {
           return;
         }
@@ -512,8 +471,8 @@
             Math.round(year),
 
           values: [
-            metro,
-            nonMetro
+            entrants,
+            exits
           ]
         });
       });
@@ -528,39 +487,36 @@
     function validSourceData(data) {
       return Boolean(
         data &&
-        Array.isArray(data.state) &&
-        Array.isArray(data.rurality) &&
-        data.state.length >= 3 &&
-        data.rurality.length >= 3
+        Array.isArray(data.optoms) &&
+        Array.isArray(data.flows) &&
+        data.optoms.length >= 3 &&
+        data.flows.length >= 3
       );
     }
 
     function parseLiveTables(tables) {
-      const state =
-        parseStateTable(
-          tables?.[0]
-        );
-
-      const rurality =
-        parseRuralityTable(
-          tables?.[1]
-        );
-
       const data = {
-        state,
-        rurality
+        optoms:
+          parseOptomTable(
+            tables?.[0]
+          ),
+
+        flows:
+          parseFlowTable(
+            tables?.[1]
+          )
       };
 
       if (!validSourceData(data)) {
         throw new Error(
-          'Live workforce location data did not contain enough usable rows.'
+          'Live workforce supply data did not contain enough usable rows.'
         );
       }
 
       /*
         PFF's shared live/cache loader stores arrays.
-        Wrap this two-table data object in one row so both
-        source areas can share the same central cache helper.
+        Wrap the two-source data object in one row so both
+        tables can share the same central cache helper.
       */
       return [data];
     }
@@ -569,194 +525,35 @@
     // VIEW DATA + CONFIGURATION
     // ============================================================
 
-    function groupLabels(
-      group = activeGroup
-    ) {
-      return group === 'state'
-        ? STATE_LABELS
-        : RURALITY_LABELS;
-    }
-
-    function groupColours(
-      group = activeGroup
-    ) {
-      return group === 'state'
-        ? STATE_COLOURS
-        : RURALITY_COLOURS;
-    }
-
-    function groupRows(
-      group = activeGroup
-    ) {
-      return sourceData[group] || [];
-    }
-
-    function shareRows(rows) {
-      return rows.map(row => {
-        const total =
-          row.values.reduce(
-            (sum, value) =>
-              sum +
-              (
-                Number.isFinite(value)
-                  ? value
-                  : 0
-              ),
-            0
-          );
-
-        return {
-          year:
-            row.year,
-
-          values:
-            row.values.map(
-              value =>
-                total > 0
-                  ? value /
-                    total *
-                    100
-                  : NaN
-            )
-        };
-      });
+    function currentConfig() {
+      return VIEW_CONFIG[
+        activeView
+      ];
     }
 
     function currentRows() {
-      const rows =
-        groupRows();
-
-      return activeMetric === 'share'
-        ? shareRows(rows)
-        : rows;
+      return sourceData[
+        activeView
+      ] || [];
     }
 
-    function currentViewConfig() {
+    function hiddenSeriesSet(
+      view = activeView
+    ) {
       if (
-        activeGroup === 'state' &&
-        activeMetric === 'count'
+        !hiddenSeriesByView.has(
+          view
+        )
       ) {
-        return {
-          headingFixed:
-            'Clinicians by\u00a0',
-
-          headingDetail:
-            'state',
-
-          labels:
-            STATE_LABELS,
-
-          colours:
-            STATE_COLOURS,
-
-          yTitle:
-            'Clinicians',
-
-          scale: {
-            min: 0,
-            max: 2500,
-            step: 500,
-            intervals: 5
-          },
-
-          axisDecimals: 0,
-          valueDecimals: 0,
-          suffix: ''
-        };
+        hiddenSeriesByView.set(
+          view,
+          new Set()
+        );
       }
 
-      if (
-        activeGroup === 'rurality' &&
-        activeMetric === 'count'
-      ) {
-        return {
-          headingFixed:
-            'Clinicians by\u00a0',
-
-          headingDetail:
-            'rurality',
-
-          labels:
-            RURALITY_LABELS,
-
-          colours:
-            RURALITY_COLOURS,
-
-          yTitle:
-            'Clinicians',
-
-          scale: {
-            min: 0,
-            max: 5000,
-            step: 1000,
-            intervals: 5
-          },
-
-          axisDecimals: 0,
-          valueDecimals: 0,
-          suffix: ''
-        };
-      }
-
-      if (
-        activeGroup === 'state'
-      ) {
-        return {
-          headingFixed:
-            'Clinicians by\u00a0',
-
-          headingDetail:
-            'state',
-
-          labels:
-            STATE_LABELS,
-
-          colours:
-            STATE_COLOURS,
-
-          yTitle:
-            '% of clinicians',
-
-          scale: {
-            min: 0,
-            max: 50,
-            step: 10,
-            intervals: 5
-          },
-
-          axisDecimals: 0,
-          valueDecimals: 1,
-          suffix: '%'
-        };
-      }
-
-      return {
-        headingFixed:
-          'Clinicians by\u00a0',
-
-        headingDetail:
-          'rurality',
-
-        labels:
-          RURALITY_LABELS,
-
-        colours:
-          RURALITY_COLOURS,
-
-        yTitle:
-          '% of clinicians',
-
-        scale: {
-          min: 0,
-          max: 100,
-          step: 20,
-          intervals: 5
-        },
-
-        axisDecimals: 0,
-        valueDecimals: 1,
-        suffix: '%'
-      };
+      return hiddenSeriesByView.get(
+        view
+      );
     }
 
     function valueForRow(
@@ -802,108 +599,50 @@
       );
     }
 
-    function formatTooltipValue(
-      value,
-      config
-    ) {
-      if (!Number.isFinite(value)) {
-        return '—';
-      }
-
-      if (activeMetric === 'share') {
-        return `${value.toFixed(
-          config.valueDecimals
-        )}%`;
-      }
-
-      return Math.round(
-        value
-      ).toLocaleString(
-        'en-AU'
-      );
-    }
-
     // ============================================================
     // DATASETS
     // ============================================================
 
-    function slotSeriesIndex(
-      slotIndex,
-      config
-    ) {
-      if (!config.labels.length) {
-        return 0;
-      }
-
-      return slotIndex <
-        config.labels.length
-        ? slotIndex
-        : slotIndex %
-            config.labels.length;
-    }
-
-    function datasetForSlot(
-      slotIndex,
+    function datasetForSeries(
+      seriesIndex,
       config
     ) {
       const rows =
         currentRows();
 
-      const activeSeries =
-        slotIndex <
-        config.labels.length;
-
-      const sourceIndex =
-        slotSeriesIndex(
-          slotIndex,
-          config
-        );
-
       const label =
-        activeSeries
-          ? config.labels[
-              slotIndex
-            ]
-          : '';
+        config.labels[
+          seriesIndex
+        ];
 
       const hidden =
-        hiddenSeriesByGroup.get(
-          activeGroup
-        ) ||
-        new Set();
-
-      const userHidden =
-        activeSeries &&
-        hidden.has(label);
+        hiddenSeriesSet();
 
       const visible =
-        activeSeries &&
-        !userHidden;
+        !hidden.has(label);
 
       const colour =
-        visible
-          ? config.colours[
-              slotIndex
-            ]
-          : TRANSPARENT_COLOUR;
+        config.colours[
+          seriesIndex
+        ];
 
       return PFFCharts.lineDataset({
         label,
 
         data:
-          rows.map(row => {
-            const value =
-              valueForRow(
-                row,
-                sourceIndex
-              );
+          rows.map(
+            row => {
+              const value =
+                valueForRow(
+                  row,
+                  seriesIndex
+                );
 
-            return Number.isFinite(
-              value
-            )
-              ? value
-              : null;
-          }),
+              return Number.isFinite(value)
+                ? value
+                : null;
+            }
+          ),
 
         _activeSeries:
           visible,
@@ -944,14 +683,13 @@
     }
 
     function buildDatasets(config) {
-      return Array.from(
-        {
-          length:
-            SERIES_SLOT_COUNT
-        },
-        (_, slotIndex) =>
-          datasetForSlot(
-            slotIndex,
+      return config.labels.map(
+        (
+          _label,
+          seriesIndex
+        ) =>
+          datasetForSeries(
+            seriesIndex,
             config
           )
       );
@@ -983,24 +721,16 @@
             );
           }
 
-          const activeSeries =
-            index <
-            config.labels.length;
-
           const hidden =
-            hiddenSeriesByGroup.get(
-              activeGroup
-            ) ||
-            new Set();
+            hiddenSeriesSet();
 
           const label =
-            activeSeries
-              ? config.labels[index]
-              : '';
+            config.labels[
+              index
+            ];
 
-          const userHidden =
-            activeSeries &&
-            hidden.has(label);
+          const visible =
+            !hidden.has(label);
 
           if (
             typeof chart.setDatasetVisibility ===
@@ -1008,13 +738,19 @@
           ) {
             chart.setDatasetVisibility(
               index,
-              activeSeries
-                ? !userHidden
-                : true
+              visible
             );
+          } else {
+            chart.data.datasets[
+              index
+            ].hidden =
+              !visible;
           }
         }
       );
+
+      chart.data.datasets.length =
+        nextDatasets.length;
     }
 
     // ============================================================
@@ -1024,7 +760,7 @@
     const yearTicksPlugin =
       PFFCharts.createYearTickMarksPlugin({
         id:
-          'pffWorkforceLocationYearTicks',
+          'pffSupplySummaryYearTicks',
 
         getValue({
           index
@@ -1038,7 +774,7 @@
     const trendLabelsPlugin =
       PFFCharts.createTrendLabelsPlugin({
         id:
-          'pffWorkforceLocationTrendLabels',
+          'pffSupplySummaryTrendLabels',
 
         enabled() {
           return (
@@ -1066,7 +802,7 @@
         getSeriesColour({
           datasetIndex
         }) {
-          return currentViewConfig()
+          return currentConfig()
             .colours[
               datasetIndex
             ] ||
@@ -1098,7 +834,10 @@
               title(items) {
                 return items?.length
                   ? String(
-                      items[0].label
+                      currentRows()[
+                        items[0].dataIndex
+                      ]?.year ??
+                      ''
                     )
                   : '';
               },
@@ -1110,9 +849,8 @@
                   );
 
                 const base =
-                  `${context.dataset._seriesLabel}: ${formatTooltipValue(
-                    value,
-                    currentViewConfig()
+                  `${context.dataset._seriesLabel}: ${PFF.formatInteger(
+                    value
                   )}`;
 
                 if (
@@ -1154,7 +892,20 @@
                       ]?.year
                     );
 
-                  return Number.isFinite(year) &&
+                  if (
+                    !Number.isFinite(
+                      year
+                    )
+                  ) {
+                    return '';
+                  }
+
+                  /*
+                    Keep the compact Entrants & exits view readable by
+                    labelling each available year. The longer Optometrists
+                    view follows the shared even-year PFF convention.
+                  */
+                  return currentRows().length <= 6 ||
                     year % 2 === 0
                     ? String(year)
                     : '';
@@ -1201,10 +952,8 @@
     ) {
       const changed =
         !previousConfig ||
-        previousConfig.headingFixed !==
-          nextConfig.headingFixed ||
-        previousConfig.headingDetail !==
-          nextConfig.headingDetail;
+        previousConfig.heading !==
+          nextConfig.heading;
 
       if (changed) {
         if (animate) {
@@ -1216,10 +965,10 @@
               chartHeadingDetail,
 
             fixedText:
-              nextConfig.headingFixed,
+              '',
 
             detailText:
-              nextConfig.headingDetail,
+              nextConfig.heading,
 
             duration:
               PFFCharts.defaults
@@ -1231,10 +980,10 @@
           });
         } else {
           chartHeadingFixed.textContent =
-            nextConfig.headingFixed;
+            '';
 
           chartHeadingDetail.textContent =
-            nextConfig.headingDetail;
+            nextConfig.heading;
         }
       }
 
@@ -1249,13 +998,10 @@
 
     function legendItems() {
       const config =
-        currentViewConfig();
+        currentConfig();
 
       const hidden =
-        hiddenSeriesByGroup.get(
-          activeGroup
-        ) ||
-        new Set();
+        hiddenSeriesSet();
 
       return config.labels.map(
         (
@@ -1358,21 +1104,6 @@
         });
     }
 
-    function syncTrendVisibility() {
-      yoyTrendToggle.hidden =
-        false;
-
-      yoyTrendToggle.setAttribute(
-        'aria-hidden',
-        'false'
-      );
-
-      trendController?.set(
-        trendMode,
-        false
-      );
-    }
-
     function updateAccessibleSummary() {
       if (
         !chartSummary ||
@@ -1382,7 +1113,7 @@
       }
 
       const config =
-        currentViewConfig();
+        currentConfig();
 
       const rows =
         currentRows();
@@ -1405,9 +1136,8 @@
                   index
                 );
 
-              return `${label} ${formatTooltipValue(
-                value,
-                config
+              return `${label} ${PFF.formatInteger(
+                value
               )}`;
             }
           )
@@ -1420,39 +1150,39 @@
           : `${activeTrendWindow()}-year trend annotations are on.`;
 
       PFFCharts.updateChartSummary(
-        `${config.headingFixed}${config.headingDetail}. Latest data ${latest.year}: ${values}. ${trendDescription}`,
+        `${config.heading}. Latest data ${latest.year}: ${values}. ${trendDescription}`,
         chartSummary
       );
     }
 
     function createChart(config) {
       chartHeadingFixed.textContent =
-        config.headingFixed;
+        '';
 
       chartHeadingDetail.textContent =
-        config.headingDetail;
+        config.heading;
 
       yAxisController =
         PFFCharts.createUnifiedYAxis({
           id:
-            'pffWorkforceLocationAxes',
+            'pffSupplySummaryAxes',
 
           getChart() {
             return chart;
           },
 
           getScale() {
-            return currentViewConfig()
+            return currentConfig()
               .scale;
           },
 
           getDecimals() {
-            return currentViewConfig()
+            return currentConfig()
               .axisDecimals;
           },
 
           getTitle() {
-            return currentViewConfig()
+            return currentConfig()
               .yTitle;
           }
         });
@@ -1510,10 +1240,10 @@
     }
 
     function updateChart(
-      reason = 'option'
+      reason = 'tab'
     ) {
       const config =
-        currentViewConfig();
+        currentConfig();
 
       const previousConfig =
         lastRenderedConfig;
@@ -1523,8 +1253,6 @@
         config,
         reason !== 'initial'
       );
-
-      syncTrendVisibility();
 
       if (!chart) {
         createChart(config);
@@ -1686,10 +1414,10 @@
             chartTabs,
 
           valueAttribute:
-            'group',
+            'view',
 
           initialValue:
-            activeGroup,
+            activeView,
 
           leftButton:
             tabScrollLeft,
@@ -1697,50 +1425,19 @@
           rightButton:
             tabScrollRight,
 
-          onChange(group) {
+          onChange(view) {
             if (
-              group ===
-              activeGroup
+              view ===
+              activeView
             ) {
               return;
             }
 
-            activeGroup =
-              group;
+            activeView =
+              view;
 
             updateChart(
               'tab'
-            );
-          }
-        });
-
-      metricController =
-        PFFCharts.setupMetricSwitch({
-          element:
-            metricSwitch,
-
-          buttons:
-            metricButtons,
-
-          valueAttribute:
-            'metric',
-
-          initialValue:
-            activeMetric,
-
-          onChange(metric) {
-            if (
-              metric ===
-              activeMetric
-            ) {
-              return;
-            }
-
-            activeMetric =
-              metric;
-
-            updateChart(
-              'option'
             );
           }
         });
@@ -1787,10 +1484,7 @@
           }) {
             const hidden =
               new Set(
-                hiddenSeriesByGroup.get(
-                  activeGroup
-                ) ||
-                []
+                hiddenSeriesSet()
               );
 
             if (visible) {
@@ -1803,13 +1497,10 @@
               );
             }
 
-            hiddenSeriesByGroup.set(
-              activeGroup,
+            hiddenSeriesByView.set(
+              activeView,
               hidden
             );
-
-            const config =
-              currentViewConfig();
 
             const dataset =
               chart?.data?.datasets?.[
@@ -1819,22 +1510,6 @@
             if (dataset) {
               dataset._activeSeries =
                 visible;
-
-              const colour =
-                visible
-                  ? config.colours[
-                      datasetIndex
-                    ]
-                  : TRANSPARENT_COLOUR;
-
-              dataset.borderColor =
-                colour;
-
-              dataset.backgroundColor =
-                colour;
-
-              dataset.pointBackgroundColor =
-                colour;
 
               dataset.pointBorderWidth =
                 visible ? 1 : 0;
@@ -1926,8 +1601,6 @@
           parent:
             app
         });
-
-      syncTrendVisibility();
     }
 
     // ============================================================
@@ -1949,10 +1622,10 @@
               SHEET_ID,
 
             sheetName:
-              STATE_SHEET,
+              OPTOM_SHEET,
 
             range:
-              STATE_RANGE,
+              OPTOM_RANGE,
 
             timeoutMs:
               FETCH_TIMEOUT_MS,
@@ -1966,10 +1639,10 @@
               SHEET_ID,
 
             sheetName:
-              RURALITY_SHEET,
+              FLOW_SHEET,
 
             range:
-              RURALITY_RANGE,
+              FLOW_RANGE,
 
             timeoutMs:
               FETCH_TIMEOUT_MS,
@@ -2003,7 +1676,7 @@
 
       onLiveError(error) {
         console.warn(
-          'Live workforce location data unavailable; using cached data.',
+          'Live optometry supply data unavailable; using cached data.',
           error
         );
       },
@@ -2014,7 +1687,7 @@
 
         if (!validSourceData(data)) {
           throw new Error(
-            'Unable to read workforce location data.'
+            'Unable to read optometry supply data.'
           );
         }
 
@@ -2022,19 +1695,14 @@
           data;
 
         const config =
-          currentViewConfig();
+          currentConfig();
 
         createChart(config);
         tabsController?.update();
-        metricController?.set(
-          activeMetric,
-          false
-        );
         trendController?.set(
           trendMode,
           false
         );
-        syncTrendVisibility();
         legendController?.render();
         responsiveController?.refresh();
 
@@ -2051,7 +1719,7 @@
       },
 
       errorMessage:
-        'Unable to render workforce location chart'
+        'Unable to render optometry supply chart'
     });
   </script>
 </body>
