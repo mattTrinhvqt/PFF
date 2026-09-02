@@ -3306,107 +3306,116 @@ body.pff-chart-app .pff-app {
       }
     }
 
-    const handlers =
+    const keyHandlers =
       new Map();
+
+    function advanceMetric() {
+      if (!buttons.length) {
+        return;
+      }
+
+      const activeIndex =
+        Math.max(
+          0,
+          buttons.findIndex(
+            button =>
+              valueOf(button) ===
+              value
+          )
+        );
+
+      const nextIndex =
+        (
+          activeIndex +
+          1
+        ) %
+        buttons.length;
+
+      apply(
+        valueOf(
+          buttons[
+            nextIndex
+          ]
+        )
+      );
+    }
+
+    const switchClickHandler =
+      () => {
+        advanceMetric();
+      };
+
+    element?.addEventListener(
+      'click',
+      switchClickHandler
+    );
 
     buttons.forEach(
       (
         button,
         index
       ) => {
-        const handler =
+        const keyHandler =
           event => {
+            let nextIndex =
+              null;
+
             if (
-              event.type ===
-              'keydown'
+              event.key ===
+              'ArrowRight'
             ) {
-              let nextIndex =
-                null;
+              nextIndex =
+                (
+                  index +
+                  1
+                ) %
+                buttons.length;
+            }
 
-              if (
-                event.key ===
-                'ArrowRight'
-              ) {
-                nextIndex =
-                  (
-                    index +
-                    1
-                  ) %
-                  buttons.length;
-              }
+            if (
+              event.key ===
+              'ArrowLeft'
+            ) {
+              nextIndex =
+                (
+                  index -
+                  1 +
+                  buttons.length
+                ) %
+                buttons.length;
+            }
 
-              if (
-                event.key ===
-                'ArrowLeft'
-              ) {
-                nextIndex =
-                  (
-                    index -
-                    1 +
-                    buttons.length
-                  ) %
-                  buttons.length;
-              }
+            if (
+              event.key ===
+              'Home'
+            ) {
+              nextIndex = 0;
+            }
 
-              if (
-                event.key ===
-                'Home'
-              ) {
-                nextIndex = 0;
-              }
+            if (
+              event.key ===
+              'End'
+            ) {
+              nextIndex =
+                buttons.length -
+                1;
+            }
 
-              if (
-                event.key ===
-                'End'
-              ) {
-                nextIndex =
-                  buttons.length -
-                  1;
-              }
-
-              if (
-                nextIndex ===
-                null
-              ) {
-                return;
-              }
-
-              event.preventDefault();
-
-              buttons[
-                nextIndex
-              ].focus({
-                preventScroll:
-                  true
-              });
-
-              apply(
-                valueOf(
-                  buttons[
-                    nextIndex
-                  ]
-                )
-              );
-
+            if (
+              nextIndex ===
+              null
+            ) {
               return;
             }
 
-            const activeIndex =
-              Math.max(
-                0,
-                buttons.findIndex(
-                  item =>
-                    valueOf(item) ===
-                    value
-                )
-              );
+            event.preventDefault();
 
-            const nextIndex =
-              (
-                activeIndex +
-                1
-              ) %
-              buttons.length;
+            buttons[
+              nextIndex
+            ].focus({
+              preventScroll:
+                true
+            });
 
             apply(
               valueOf(
@@ -3418,18 +3427,13 @@ body.pff-chart-app .pff-app {
           };
 
         button.addEventListener(
-          'click',
-          handler
-        );
-
-        button.addEventListener(
           'keydown',
-          handler
+          keyHandler
         );
 
-        handlers.set(
+        keyHandlers.set(
           button,
-          handler
+          keyHandler
         );
       }
     );
@@ -3465,21 +3469,21 @@ body.pff-chart-app .pff-app {
       },
 
       destroy() {
+        element?.removeEventListener(
+          'click',
+          switchClickHandler
+        );
+
         buttons.forEach(
           button => {
-            const handler =
-              handlers.get(
+            const keyHandler =
+              keyHandlers.get(
                 button
               );
 
             button.removeEventListener(
-              'click',
-              handler
-            );
-
-            button.removeEventListener(
               'keydown',
-              handler
+              keyHandler
             );
           }
         );
