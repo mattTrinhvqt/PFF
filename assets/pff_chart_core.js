@@ -2252,7 +2252,23 @@ body.pff-chart-app .pff-app {
     const getScale = () => copyScale(options.getScale?.() || { min: 0, max: 1, intervals: 4 });
     const getDecimals = () => Math.max(0, Math.round(Number(options.getDecimals?.()) || 0));
     const getTitle = () => String(options.getTitle?.() || '');
+    const formatValue = (value, decimals) => {
+      if (typeof options.formatValue === 'function') {
+        const formatted = options.formatValue(value, decimals);
 
+        if (
+          formatted !== undefined &&
+          formatted !== null
+        ) {
+          return String(formatted);
+        }
+      }
+
+      return formatAxisValue(
+        value,
+        decimals
+      );
+    };
     function cancel() {
       if (state.raf) cancelAnimationFrame(state.raf);
       state.raf = null;
@@ -2484,18 +2500,41 @@ body.pff-chart-app .pff-app {
 
           if (state.fromDecimals === state.toDecimals || state.progress >= 1) {
             ctx.globalAlpha = baseAlpha;
-            ctx.fillText(formatAxisValue(track.value, state.toDecimals), chartArea.left - 8, y);
+            ctx.fillText(
+              formatValue(
+                track.value,
+                state.toDecimals
+              ),
+              chartArea.left - 8,
+              y
+            );
           } else {
             const p = clamp(state.progress, 0, 1);
             const outgoing = clamp(1 - p * 2.2, 0, 1);
             const incoming = clamp((p - 0.32) / 0.68, 0, 1);
+
             if (outgoing > 0) {
               ctx.globalAlpha = baseAlpha * outgoing;
-              ctx.fillText(formatAxisValue(track.value, state.fromDecimals), chartArea.left - 8, y);
+              ctx.fillText(
+                formatValue(
+                  track.value,
+                  state.fromDecimals
+                ),
+                chartArea.left - 8,
+                y
+              );
             }
+
             if (incoming > 0) {
               ctx.globalAlpha = baseAlpha * incoming;
-              ctx.fillText(formatAxisValue(track.value, state.toDecimals), chartArea.left - 8, y);
+              ctx.fillText(
+                formatValue(
+                  track.value,
+                  state.toDecimals
+                ),
+                chartArea.left - 8,
+                y
+              );
             }
           }
         });
