@@ -3,15 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PFF Australian Population Trends</title>
+  <title>PFF Population Location Trends</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
 
   <style>
     .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
       min-height: 28px;
-      padding-bottom: 2px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .yoy-trend-toggle.is-hidden {
+      display: none;
     }
   </style>
 </head>
@@ -23,33 +32,54 @@
         id="loadingState"
         class="app-loading"
         role="status"
-        aria-label="Loading Australian population data"
+        aria-label="Loading population location data"
       >
         <div class="cone-loader" aria-hidden="true">
           <span class="cone blue"></span>
           <span class="cone green"></span>
           <span class="cone red"></span>
         </div>
-        <p class="loader-text">Loading Australian population data…</p>
+        <p class="loader-text">Loading population location data…</p>
       </div>
 
       <div class="module-top">
         <div class="tab-scroll-shell">
+          <button
+            id="tabScrollLeft"
+            class="tab-scroll-button tab-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll tabs left"
+          >‹</button>
+
           <div
             id="tabList"
             class="tab-list"
             role="tablist"
-            aria-label="Australian population chart"
+            aria-label="Population location grouping"
           >
             <button
-              id="populationTab"
               class="chart-tab is-active"
               type="button"
               role="tab"
               aria-selected="true"
-              data-view="population"
-            >Population</button>
+              data-group="state"
+            >State</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              data-group="rurality"
+            >Rurality</button>
           </div>
+
+          <button
+            id="tabScrollRight"
+            class="tab-scroll-button tab-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll tabs right"
+          >›</button>
         </div>
 
         <div
@@ -66,7 +96,7 @@
       <div id="status" role="status" aria-live="polite"></div>
 
       <div class="chart-heading-row">
-        <div id="headingScrollShell" class="heading-scroll-shell">
+        <div class="heading-scroll-shell">
           <button
             id="headingScrollLeft"
             class="heading-scroll-button heading-scroll-left is-hidden"
@@ -75,7 +105,10 @@
           >‹</button>
 
           <div id="headingScrollViewport" class="heading-scroll-viewport">
-            <h2 id="chartHeading" class="chart-heading">Australian population</h2>
+            <h2 id="chartHeading" class="chart-heading">
+              <span id="chartHeadingFixed" class="chart-heading-fixed">Population by&nbsp;</span>
+              <span id="chartHeadingDetail" class="chart-heading-detail">state</span>
+            </h2>
           </div>
 
           <button
@@ -97,11 +130,37 @@
             <span class="yoy-binary-indicator" aria-hidden="true"></span>
             <span class="yoy-toggle-label">3yr Trend</span>
           </button>
+
+          <div
+            id="metricSwitch"
+            class="metric-switch"
+            role="group"
+            aria-label="Display metric"
+          >
+            <button
+              class="metric-button is-active"
+              type="button"
+              data-metric="count"
+            >Count</button>
+
+            <button
+              class="metric-button"
+              type="button"
+              data-metric="share"
+            >%</button>
+          </div>
         </div>
       </div>
 
       <div class="chart-options-row">
         <div class="legend-nav">
+          <button
+            id="legendScrollLeft"
+            class="legend-scroll-button legend-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll legend left"
+          >‹</button>
+
           <div class="legend-viewport">
             <div
               id="chartLegend"
@@ -109,13 +168,20 @@
               aria-label="Chart legend"
             ></div>
           </div>
+
+          <button
+            id="legendScrollRight"
+            class="legend-scroll-button legend-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll legend right"
+          >›</button>
         </div>
       </div>
 
       <div id="chartShell" class="chart-shell">
         <canvas
           id="trendChart"
-          aria-label="Australian population trend chart"
+          aria-label="Australian population location trend chart"
           role="img"
         ></canvas>
       </div>
@@ -125,33 +191,71 @@
   <script>
     'use strict';
 
-    const CONFIG = {
+    const CONFIG = Object.freeze({
       sheetId:
         '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
 
-      sheetName:
+      stateSheet:
         'Auspopnbystate',
 
-      // Row 30 = headers; row 31 onward = raw data.
-      // A = Year; J = Australia.
-      range:
+      stateRange:
         'A30:J',
 
-      localCacheKey:
-        'pff-australian-population-trends-v1',
+      ruralitySheet:
+        'AuspopnbyMMM',
 
-      scaleTargetIntervals:
-        7
-    };
+      ruralityRange:
+        'A30:I',
+
+      localCacheKey:
+        'pff-population-location-v1'
+    });
 
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
 
+    /*
+     * The population-location app shares the existing population cache
+     * snapshot. Backend 1 is extended below so this same snapshot also
+     * contains stateRows and ruralityRows.
+     */
     const CACHE_APP_KEY =
       'pff-australian-population-trends';
 
-    const AUSTRALIA_COLOUR =
-      '#0b5d1e';
+    const STATE_LABELS = Object.freeze([
+      'NSW',
+      'VIC',
+      'QLD',
+      'SA',
+      'WA',
+      'TAS',
+      'NT',
+      'ACT'
+    ]);
+
+    const STATE_COLOURS = Object.freeze([
+      '#2db7f5',
+      '#2d3a8c',
+      '#7a0036',
+      '#f03a47',
+      '#000000',
+      '#22a36b',
+      '#c25e00',
+      '#7b61ff'
+    ]);
+
+    const RURALITY_LABELS = Object.freeze([
+      'Metro',
+      'Non-metro'
+    ]);
+
+    const RURALITY_COLOURS = Object.freeze([
+      '#30475d',
+      '#b54a0a'
+    ]);
+
+    const SERIES_SLOT_COUNT =
+      STATE_LABELS.length;
 
     const app =
       document.getElementById('app');
@@ -162,14 +266,16 @@
     const tabList =
       document.getElementById('tabList');
 
-    const populationTab =
-      document.getElementById('populationTab');
+    const tabScrollLeft =
+      document.getElementById('tabScrollLeft');
 
-    const dataSourceIndicator =
-      document.getElementById('dataSourceIndicator');
+    const tabScrollRight =
+      document.getElementById('tabScrollRight');
 
-    const dataSourceText =
-      document.getElementById('dataSourceText');
+    const chartTabs =
+      Array.from(
+        document.querySelectorAll('.chart-tab')
+      );
 
     const headingScrollViewport =
       document.getElementById('headingScrollViewport');
@@ -180,56 +286,154 @@
     const headingScrollRight =
       document.getElementById('headingScrollRight');
 
+    const chartHeadingFixed =
+      document.getElementById('chartHeadingFixed');
+
+    const chartHeadingDetail =
+      document.getElementById('chartHeadingDetail');
+
     const yoyTrendToggle =
       document.getElementById('yoyTrendToggle');
+
+    const metricSwitch =
+      document.getElementById('metricSwitch');
+
+    const metricButtons =
+      Array.from(
+        document.querySelectorAll('.metric-button')
+      );
 
     const chartLegend =
       document.getElementById('chartLegend');
 
+    const legendScrollLeft =
+      document.getElementById('legendScrollLeft');
+
+    const legendScrollRight =
+      document.getElementById('legendScrollRight');
+
     const chartShell =
       document.getElementById('chartShell');
+
+    const dataSourceIndicator =
+      document.getElementById('dataSourceIndicator');
+
+    const dataSourceText =
+      document.getElementById('dataSourceText');
 
     const chartCanvas =
       document.getElementById('trendChart');
 
-    let rows = [];
-    let chart = null;
-    let chartSummary = null;
-    let seriesHidden = false;
-    let tabsController = null;
-    let headingScroller = null;
-    let trendController = null;
-    let legendController = null;
-    let interactionsController = null;
-    let responsiveController = null;
+    let sourceData = {
+      state: [],
+      rurality: []
+    };
 
-    function populationNumber(cell) {
+    let activeGroup =
+      'state';
+
+    let activeMetric =
+      'count';
+
+    let chart =
+      null;
+
+    let chartSummary =
+      null;
+
+    let tabsController =
+      null;
+
+    let headingScroller =
+      null;
+
+    let metricController =
+      null;
+
+    let trendController =
+      null;
+
+    let legendController =
+      null;
+
+    let interactionsController =
+      null;
+
+    let responsiveController =
+      null;
+
+    let yAxisController =
+      null;
+
+    let lastYAxisTitle =
+      'Population';
+
+    const hiddenSeriesByGroup =
+      new Map();
+
+    function groupLabels(group = activeGroup) {
+      return group === 'state'
+        ? STATE_LABELS
+        : RURALITY_LABELS;
+    }
+
+    function groupColours(group = activeGroup) {
+      return group === 'state'
+        ? STATE_COLOURS
+        : RURALITY_COLOURS;
+    }
+
+    function groupRows(group = activeGroup) {
+      return sourceData[group] || [];
+    }
+
+    function hiddenSeriesSet(group = activeGroup) {
       if (
-        !cell ||
-        cell.v === null ||
-        cell.v === undefined ||
-        cell.v === ''
-      ) {
-        return NaN;
-      }
-
-      const direct =
-        PFFCharts.numericCell(
-          cell
-        );
-
-      if (
-        Number.isFinite(
-          direct
+        !hiddenSeriesByGroup.has(
+          group
         )
       ) {
-        return direct;
+        hiddenSeriesByGroup.set(
+          group,
+          new Set()
+        );
+      }
+
+      return hiddenSeriesByGroup.get(
+        group
+      );
+    }
+
+    function dataNumber(value) {
+      if (
+        value &&
+        typeof value === 'object' &&
+        (
+          Object.prototype.hasOwnProperty.call(value, 'v') ||
+          Object.prototype.hasOwnProperty.call(value, 'f')
+        )
+      ) {
+        const direct =
+          PFFCharts.numericCell(
+            value
+          );
+
+        if (
+          Number.isFinite(
+            direct
+          )
+        ) {
+          return direct;
+        }
+
+        value =
+          value.f ??
+          value.v;
       }
 
       const cleaned =
         PFF.cleanText(
-          cell.f ??
-          cell.v
+          value
         )
           .replace(/,/g, '')
           .replace(/[^\d.-]/g, '');
@@ -255,76 +459,63 @@
         : NaN;
     }
 
-    function normalisePopulationRows(sourceRows) {
+    function normaliseViewRows(
+      sourceRows,
+      group,
+      expectedValueCount
+    ) {
       return (
         Array.isArray(sourceRows)
           ? sourceRows
           : []
       )
         .map(row => {
-          const rawYear =
-            Array.isArray(row)
-              ? row?.[0]
-              : row?.year;
+          if (
+            !row ||
+            row.group !== group
+          ) {
+            return null;
+          }
 
-          const rawValue =
-            Array.isArray(row)
-              ? row?.[1]
-              : row?.value;
-
-          const yearText =
-            PFF.cleanText(
-              rawYear
+          const year =
+            Number(
+              row.year
             );
 
-          const valueText =
-            PFF.cleanText(
-              rawValue
-            );
+          const values =
+            Array.from(
+              row.values || []
+            )
+              .slice(
+                0,
+                expectedValueCount
+              )
+              .map(Number);
+
+          if (
+            !Number.isFinite(year) ||
+            year < 2000 ||
+            year > 2100 ||
+            values.length !== expectedValueCount ||
+            values.some(
+              value =>
+                !Number.isFinite(
+                  value
+                )
+            )
+          ) {
+            return null;
+          }
 
           return {
             year:
-              yearText
-                ? Number(
-                    yearText.replace(
-                      /,/g,
-                      ''
-                    )
-                  )
-                : NaN,
-
-            value:
-              valueText
-                ? Number(
-                    valueText.replace(
-                      /,/g,
-                      ''
-                    )
-                  )
-                : NaN
+              Math.round(
+                year
+              ),
+            values
           };
         })
-        .filter(
-          row =>
-            Number.isFinite(
-              row.year
-            ) &&
-            row.year >= 1900 &&
-            row.year <= 2200 &&
-            Number.isFinite(
-              row.value
-            ) &&
-            row.value >= 0
-        )
-        .map(row => ({
-          year:
-            Math.round(
-              row.year
-            ),
-
-          value:
-            row.value
-        }))
+        .filter(Boolean)
         .sort(
           (
             first,
@@ -335,58 +526,364 @@
         );
     }
 
-    function parsePopulationTable(table) {
-      const parsed = [];
+    function splitCombinedRows(combinedRows) {
+      return {
+        state:
+          normaliseViewRows(
+            combinedRows,
+            'state',
+            STATE_LABELS.length
+          ),
+
+        rurality:
+          normaliseViewRows(
+            combinedRows,
+            'rurality',
+            RURALITY_LABELS.length
+          )
+      };
+    }
+
+    function combineSourceData(data) {
+      const state =
+        normaliseViewRows(
+          (data?.state || []).map(
+            row => ({
+              group:
+                'state',
+              year:
+                row.year,
+              values:
+                row.values
+            })
+          ),
+          'state',
+          STATE_LABELS.length
+        );
+
+      const rurality =
+        normaliseViewRows(
+          (data?.rurality || []).map(
+            row => ({
+              group:
+                'rurality',
+              year:
+                row.year,
+              values:
+                row.values
+            })
+          ),
+          'rurality',
+          RURALITY_LABELS.length
+        );
+
+      return [
+        ...state.map(
+          row => ({
+            group:
+              'state',
+            year:
+              row.year,
+            values:
+              [...row.values]
+          })
+        ),
+        ...rurality.map(
+          row => ({
+            group:
+              'rurality',
+            year:
+              row.year,
+            values:
+              [...row.values]
+          })
+        )
+      ];
+    }
+
+    function validSourceData(data) {
+      return Boolean(
+        data &&
+        Array.isArray(data.state) &&
+        Array.isArray(data.rurality) &&
+        data.state.length >= 3 &&
+        data.rurality.length >= 3
+      );
+    }
+
+    function validateCombinedRows(combinedRows) {
+      const split =
+        splitCombinedRows(
+          combinedRows
+        );
+
+      if (
+        !validSourceData(
+          split
+        )
+      ) {
+        throw new Error(
+          'Population location data were incomplete.'
+        );
+      }
+
+      return [
+        ...split.state.map(
+          row => ({
+            group:
+              'state',
+            year:
+              row.year,
+            values:
+              [...row.values]
+          })
+        ),
+        ...split.rurality.map(
+          row => ({
+            group:
+              'rurality',
+            year:
+              row.year,
+            values:
+              [...row.values]
+          })
+        )
+      ];
+    }
+
+    function parseStateTable(table) {
+      const rows = [];
 
       (
-        table?.rows ||
-        []
+        table?.rows || []
       ).forEach(sourceRow => {
         const cells =
-          sourceRow?.c ||
-          [];
+          sourceRow?.c || [];
 
         const year =
-          populationNumber(
+          dataNumber(
             cells[0]
           );
 
-        const australia =
-          populationNumber(
-            cells[9]
+        const values =
+          Array.from(
+            {
+              length:
+                STATE_LABELS.length
+            },
+            (_, index) =>
+              dataNumber(
+                cells[index + 1]
+              ) /
+              1000000
           );
 
         if (
-          !Number.isFinite(
-            year
-          ) ||
-          year < 1900 ||
-          year > 2200 ||
-          !Number.isFinite(
-            australia
+          !Number.isFinite(year) ||
+          year < 2000 ||
+          year > 2100 ||
+          values.some(
+            value =>
+              !Number.isFinite(
+                value
+              )
           )
         ) {
           return;
         }
 
-        parsed.push({
+        rows.push({
+          group:
+            'state',
           year:
             Math.round(
               year
             ),
-          value:
-            australia
+          values
         });
       });
 
-      return normalisePopulationRows(
-        parsed
+      return rows;
+    }
+
+    function parseRuralityTable(table) {
+      const rows = [];
+
+      (
+        table?.rows || []
+      ).forEach(sourceRow => {
+        const cells =
+          sourceRow?.c || [];
+
+        const year =
+          dataNumber(
+            cells[0]
+          );
+
+        const metro =
+          dataNumber(
+            cells[1]
+          );
+
+        const nonMetro =
+          dataNumber(
+            cells[8]
+          );
+
+        if (
+          !Number.isFinite(year) ||
+          year < 2000 ||
+          year > 2100 ||
+          !Number.isFinite(metro) ||
+          !Number.isFinite(nonMetro)
+        ) {
+          return;
+        }
+
+        rows.push({
+          group:
+            'rurality',
+          year:
+            Math.round(
+              year
+            ),
+          values: [
+            metro,
+            nonMetro
+          ]
+        });
+      });
+
+      return rows;
+    }
+
+    function parseLiveData(raw) {
+      const combined = [
+        ...parseStateTable(
+          raw?.stateTable
+        ),
+        ...parseRuralityTable(
+          raw?.ruralityTable
+        )
+      ];
+
+      return validateCombinedRows(
+        combined
       );
     }
 
-    function parseRemoteRows(snapshot) {
-      return normalisePopulationRows(
-        snapshot?.data?.rows
+    function parseRemoteStateRows(sourceRows) {
+      return (
+        Array.isArray(sourceRows)
+          ? sourceRows
+          : []
+      )
+        .map(row => {
+          const year =
+            dataNumber(
+              row?.[0]
+            );
+
+          const values =
+            Array.from(
+              {
+                length:
+                  STATE_LABELS.length
+              },
+              (_, index) =>
+                dataNumber(
+                  row?.[index + 1]
+                ) /
+                1000000
+            );
+
+          if (
+            !Number.isFinite(year) ||
+            year < 2000 ||
+            year > 2100 ||
+            values.some(
+              value =>
+                !Number.isFinite(
+                  value
+                )
+            )
+          ) {
+            return null;
+          }
+
+          return {
+            group:
+              'state',
+            year:
+              Math.round(
+                year
+              ),
+            values
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function parseRemoteRuralityRows(sourceRows) {
+      return (
+        Array.isArray(sourceRows)
+          ? sourceRows
+          : []
+      )
+        .map(row => {
+          const year =
+            dataNumber(
+              row?.[0]
+            );
+
+          const metro =
+            dataNumber(
+              row?.[1]
+            );
+
+          const nonMetro =
+            dataNumber(
+              row?.[8]
+            );
+
+          if (
+            !Number.isFinite(year) ||
+            year < 2000 ||
+            year > 2100 ||
+            !Number.isFinite(metro) ||
+            !Number.isFinite(nonMetro)
+          ) {
+            return null;
+          }
+
+          return {
+            group:
+              'rurality',
+            year:
+              Math.round(
+                year
+              ),
+            values: [
+              metro,
+              nonMetro
+            ]
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function parseRemoteCache(snapshot) {
+      const combined = [
+        ...parseRemoteStateRows(
+          snapshot?.data?.stateRows
+        ),
+        ...parseRemoteRuralityRows(
+          snapshot?.data?.ruralityRows
+        )
+      ];
+
+      return validateCombinedRows(
+        combined
       );
     }
 
@@ -408,13 +905,20 @@
 
         if (
           Array.isArray(
+            parsed?.rows
+          )
+        ) {
+          return;
+        }
+
+        if (
+          validSourceData(
             parsed?.data
-          ) &&
-          parsed.data.length
+          )
         ) {
           PFFCharts.saveLocalCache(
             CONFIG.localCacheKey,
-            normalisePopulationRows(
+            combineSourceData(
               parsed.data
             )
           );
@@ -423,7 +927,120 @@
       }
     }
 
-    function formatMillions(value) {
+    function shareRows(viewRows) {
+      return viewRows.map(row => {
+        const total =
+          row.values.reduce(
+            (
+              sum,
+              value
+            ) =>
+              sum +
+              (
+                Number.isFinite(value)
+                  ? value
+                  : 0
+              ),
+            0
+          );
+
+        return {
+          year:
+            row.year,
+          values:
+            row.values.map(
+              value =>
+                total > 0
+                  ? value /
+                    total *
+                    100
+                  : NaN
+            )
+        };
+      });
+    }
+
+    function viewRows() {
+      const rows =
+        groupRows();
+
+      return activeMetric === 'share'
+        ? shareRows(
+            rows
+          )
+        : rows;
+    }
+
+    function currentViewConfig() {
+      if (
+        activeGroup === 'state' &&
+        activeMetric === 'count'
+      ) {
+        return {
+          scale: {
+            min:
+              0,
+            max:
+              10,
+            intervals:
+              5
+          },
+          yTitle:
+            'Population'
+        };
+      }
+
+      if (
+        activeGroup === 'rurality' &&
+        activeMetric === 'count'
+      ) {
+        return {
+          scale: {
+            min:
+              0,
+            max:
+              25,
+            intervals:
+              5
+          },
+          yTitle:
+            'Population'
+        };
+      }
+
+      if (
+        activeGroup === 'state' &&
+        activeMetric === 'share'
+      ) {
+        return {
+          scale: {
+            min:
+              0,
+            max:
+              40,
+            intervals:
+              4
+          },
+          yTitle:
+            '% of population'
+        };
+      }
+
+      return {
+        scale: {
+          min:
+            0,
+          max:
+            100,
+          intervals:
+            5
+        },
+        yTitle:
+          '% of population'
+      };
+    }
+
+    function formatYAxisValue(value) {
       const number =
         Number(
           value
@@ -434,143 +1051,87 @@
           number
         )
       ) {
-        return '—';
+        return '';
       }
 
       if (
-        Math.abs(
-          number
-        ) < 0.5
+        activeMetric === 'share'
+      ) {
+        return `${Math.round(number)}%`;
+      }
+
+      if (
+        Math.abs(number) <
+        0.0000005
       ) {
         return '0';
       }
 
-      return `${
-        PFF.formatOneDecimal(
-          number /
-          1000000
-        )
-      }m`;
+      return `${Math.round(number)}m`;
     }
 
-    function niceStep(value) {
+    function latestTrendForSeries(seriesIndex) {
       if (
-        !Number.isFinite(
-          value
-        ) ||
-        value <= 0
-      ) {
-        return 1000000;
-      }
-
-      const exponent =
-        Math.floor(
-          Math.log10(
-            value
-          )
-        );
-
-      const magnitude =
-        Math.pow(
-          10,
-          exponent
-        );
-
-      const fraction =
-        value /
-        magnitude;
-
-      const multipliers =
-        [
-          1,
-          2,
-          2.5,
-          5,
-          10
-        ];
-
-      const multiplier =
-        multipliers.find(
-          candidate =>
-            fraction <=
-            candidate
-        ) ??
-        10;
-
-      return multiplier *
-        magnitude;
-    }
-
-    function populationScale() {
-      const maximumObserved =
-        rows.reduce(
-          (
-            maximum,
-            row
-          ) =>
-            Number.isFinite(
-              row?.value
-            )
-              ? Math.max(
-                  maximum,
-                  row.value
-                )
-              : maximum,
-          0
-        );
-
-      const paddedMaximum =
-        maximumObserved > 0
-          ? maximumObserved *
-            1.06
-          : 30000000;
-
-      const step =
-        niceStep(
-          paddedMaximum /
-          CONFIG.scaleTargetIntervals
-        );
-
-      const max =
-        Math.max(
-          step,
-          Math.ceil(
-            paddedMaximum /
-            step
-          ) *
-          step
-        );
-
-      return {
-        min:
-          0,
-        max,
-        step,
-        intervals:
-          Math.max(
-            1,
-            Math.round(
-              max /
-              step
-            )
-          )
-      };
-    }
-
-    function trendGrowth() {
-      if (
+        activeMetric !== 'count' ||
         !trendController ||
-        trendController.mode ===
-          'off'
+        trendController.mode === 'off'
       ) {
         return NaN;
       }
 
       return PFFCharts.latestConsecutiveTrend(
-        rows,
+        groupRows(),
         row =>
-          row.value,
+          row.values[
+            seriesIndex
+          ],
         trendController.windowSize
+      );
+    }
+
+    function updateTrendVisibility() {
+      const hidden =
+        activeMetric !== 'count';
+
+      yoyTrendToggle.classList.toggle(
+        'is-hidden',
+        hidden
+      );
+
+      yoyTrendToggle.setAttribute(
+        'aria-hidden',
+        String(hidden)
+      );
+    }
+
+    function updateHeading() {
+      const detailText =
+        `${
+          activeGroup === 'state'
+            ? 'state'
+            : 'rurality'
+        }${
+          activeMetric === 'share'
+            ? ' (%)'
+            : ''
+        }`;
+
+      PFF.animateHeading({
+        fixed:
+          chartHeadingFixed,
+        detail:
+          chartHeadingDetail,
+        fixedText:
+          'Population by\u00a0',
+        detailText
+      });
+
+      headingScrollViewport.scrollLeft =
+        0;
+
+      requestAnimationFrame(
+        () =>
+          headingScroller?.update()
       );
     }
 
@@ -580,256 +1141,360 @@
       }
 
       const latest =
-        rows.at(-1);
+        groupRows().at(-1);
 
-      const growth =
-        trendGrowth();
+      if (!latest) {
+        PFFCharts.updateChartSummary(
+          'Australian population location chart.',
+          chartSummary
+        );
+        return;
+      }
+
+      const labels =
+        groupLabels();
+
+      const hidden =
+        hiddenSeriesSet();
+
+      const visibleLabels =
+        labels.filter(
+          label =>
+            !hidden.has(
+              label
+            )
+        );
+
+      const metricText =
+        activeMetric === 'share'
+          ? 'percentage share'
+          : 'population count';
 
       const trendText =
-        Number.isFinite(
-          growth
-        )
-          ? ` ${trendController.windowSize}-year trend ${growth >= 0 ? '+' : '−'}${Math.abs(growth).toFixed(1)}% per year.`
+        activeMetric === 'count' &&
+        trendController?.mode !== 'off'
+          ? ` ${trendController.windowSize}-year trend labels are on.`
           : '';
 
       PFFCharts.updateChartSummary(
-        latest
-          ? `Australian population. Latest value ${PFF.formatInteger(latest.value)} in ${latest.year}.${trendText}`
-          : 'Australian population chart.',
+        `Population by ${activeGroup}, ${metricText}. Latest year ${latest.year}. Visible series: ${visibleLabels.join(', ')}.${trendText}`,
         chartSummary
       );
     }
 
-    function yScaleOptions() {
-      const scale =
-        populationScale();
+    function datasetForSlot(slotIndex) {
+      const rows =
+        viewRows();
 
-      const halfStep =
-        scale.step /
-        2;
+      const labels =
+        groupLabels();
 
-      return PFFCharts.yScaleOptions(
-        scale,
+      const colours =
+        groupColours();
+
+      const hidden =
+        hiddenSeriesSet();
+
+      const active =
+        slotIndex <
+        labels.length;
+
+      const label =
+        active
+          ? labels[
+              slotIndex
+            ]
+          : `slot-${slotIndex}`;
+
+      const colour =
+        active
+          ? colours[
+              slotIndex
+            ]
+          : '#69718a';
+
+      const fallbackValues =
+        rows.map(
+          row =>
+            row.values[0]
+        );
+
+      const data =
+        active
+          ? rows.map(
+              row =>
+                row.values[
+                  slotIndex
+                ]
+            )
+          : fallbackValues;
+
+      const visible =
+        active &&
+        !hidden.has(
+          label
+        );
+
+      return PFFCharts.lineDataset({
+        label,
+        _seriesLabel:
+          label,
+        _slotActive:
+          active,
+        _activeSeries:
+          visible,
+        data,
+        colour,
+        pointBorderColor:
+          '#ffffff',
+        pointBorderWidth:
+          active
+            ? 1
+            : 0,
+        cubicInterpolationMode:
+          'monotone',
+        hidden:
+          !visible
+      });
+    }
+
+    function buildDatasets() {
+      return Array.from(
         {
-          border: {
-            display:
-              false
-          },
+          length:
+            SERIES_SLOT_COUNT
+        },
+        (_, index) =>
+          datasetForSlot(
+            index
+          )
+      );
+    }
 
-          grid: {
-            display:
-              true,
-            drawOnChartArea:
-              true,
-            drawTicks:
-              true,
-            tickColor:
-              '#151515',
-            tickWidth:
-              1,
-            tickLength(context) {
-              const index =
-                context.index ??
-                0;
+    function applyDatasetVisibility() {
+      if (!chart) {
+        return;
+      }
 
-              return index % 2 === 0
-                ? 5
-                : 2;
-            },
-            color(context) {
-              const index =
-                context.index ??
-                0;
+      const labels =
+        groupLabels();
 
-              return index % 2 === 0
-                ? 'rgba(105, 113, 138, 0.075)'
-                : 'rgba(105, 113, 138, 0.035)';
-            },
-            lineWidth(context) {
-              const index =
-                context.index ??
-                0;
+      const hidden =
+        hiddenSeriesSet();
 
-              return index % 2 === 0
-                ? 1
-                : 0.7;
-            }
-          },
+      chart.data.datasets.forEach(
+        (
+          dataset,
+          index
+        ) => {
+          const active =
+            index <
+            labels.length;
 
-          ticks: {
-            display:
-              true,
-            autoSkip:
-              false,
-            stepSize:
-              halfStep,
-            color:
-              '#151515',
-            padding:
-              3,
-            font: {
-              family:
-                'Lato',
-              size:
-                12,
-              weight:
-                '400'
-            },
-            callback(
-              value,
-              index
-            ) {
-              return index % 2 === 0
-                ? formatMillions(
-                    value
-                  )
-                : '';
-            }
-          },
+          const label =
+            active
+              ? labels[index]
+              : dataset._seriesLabel;
 
-          title: {
-            display:
-              true,
-            text:
-              'Population',
-            color:
-              '#151515',
-            padding: {
-              bottom:
-                4
-            },
-            font: {
-              family:
-                'Lato',
-              size:
-                PFF.mobileLayout()
-                  ? 12
-                  : 13,
-              weight:
-                '700'
-            }
-          }
+          const visible =
+            active &&
+            !hidden.has(
+              label
+            );
+
+          dataset._slotActive =
+            active;
+
+          dataset._activeSeries =
+            visible;
+
+          chart.setDatasetVisibility(
+            index,
+            visible
+          );
         }
       );
+    }
+
+    function syncDatasets() {
+      if (!chart) {
+        return;
+      }
+
+      const next =
+        buildDatasets();
+
+      next.forEach(
+        (
+          dataset,
+          index
+        ) => {
+          const current =
+            chart.data.datasets[
+              index
+            ];
+
+          if (!current) {
+            chart.data.datasets[
+              index
+            ] =
+              dataset;
+            return;
+          }
+
+          Object.assign(
+            current,
+            dataset
+          );
+        }
+      );
+
+      applyDatasetVisibility();
+    }
+
+    function tooltipLabel(context) {
+      const dataset =
+        context.dataset;
+
+      if (
+        !dataset?._slotActive
+      ) {
+        return '';
+      }
+
+      const value =
+        Number(
+          context.raw
+        );
+
+      if (
+        activeMetric === 'share'
+      ) {
+        return `${dataset._seriesLabel}: ${PFF.formatOneDecimal(value)}%`;
+      }
+
+      const population =
+        PFF.formatInteger(
+          value *
+          1000000
+        );
+
+      const trend =
+        latestTrendForSeries(
+          context.datasetIndex
+        );
+
+      if (
+        !Number.isFinite(
+          trend
+        )
+      ) {
+        return `${dataset._seriesLabel}: ${population}`;
+      }
+
+      const sign =
+        trend > 0
+          ? '+'
+          : trend < 0
+            ? '−'
+            : '';
+
+      return `${dataset._seriesLabel}: ${population} · ${sign}${Math.abs(trend).toFixed(1)}% p.a.`;
     }
 
     const yearTickPlugin =
       PFFCharts.createYearTickMarksPlugin({
         id:
-          'populationYearTicks'
-      });
-
-    const axisSpinesPlugin =
-      PFFCharts.createAxisSpinesPlugin({
-        id:
-          'populationAxisSpines'
+          'populationLocationYearTicks'
       });
 
     const trendLabelsPlugin =
       PFFCharts.createTrendLabelsPlugin({
         id:
-          'populationTrendLabels',
+          'populationLocationTrendLabels',
 
         enabled() {
           return (
-            trendController?.mode !==
-            'off'
+            activeMetric === 'count' &&
+            trendController?.mode !== 'off'
           );
         },
 
-        getTrendValue() {
-          return trendGrowth();
+        isActive({
+          chart: chartInstance,
+          dataset,
+          datasetIndex
+        }) {
+          return Boolean(
+            dataset?._slotActive &&
+            chartInstance.isDatasetVisible(
+              datasetIndex
+            )
+          );
+        },
+
+        getTrendValue({
+          datasetIndex
+        }) {
+          return latestTrendForSeries(
+            datasetIndex
+          );
         }
       });
 
-    function buildDataset() {
-      return PFFCharts.lineDataset({
-        label:
-          'Australia',
-
-        _seriesLabel:
-          'Australia',
-
-        _activeSeries:
-          !seriesHidden,
-
-        data:
-          rows.map(
-            row =>
-              row.value
-          ),
-
-        colour:
-          AUSTRALIA_COLOUR,
-
-        pointBorderColor:
-          '#ffffff',
-
-        pointBorderWidth:
-          1,
-
-        borderCapStyle:
-          'round',
-
-        borderJoinStyle:
-          'round',
-
-        cubicInterpolationMode:
-          'monotone',
-
-        hidden:
-          seriesHidden
-      });
-    }
-
     function createChart() {
+      const config =
+        currentViewConfig();
+
+      yAxisController =
+        PFFCharts.createUnifiedYAxis({
+          id:
+            'populationLocationYAxis',
+
+          getChart() {
+            return chart;
+          },
+
+          getScale() {
+            return currentViewConfig()
+              .scale;
+          },
+
+          getDecimals() {
+            return 0;
+          },
+
+          getTitle() {
+            return currentViewConfig()
+              .yTitle;
+          },
+
+          formatValue(value) {
+            return formatYAxisValue(
+              value
+            );
+          }
+        });
+
       const options =
         PFFCharts.baseChartOptions({
+          normalized:
+            true,
+
+          transitions:
+            PFFCharts.seriesVisibilityTransitionOptions(),
+
           plugins: {
             tooltip: {
               callbacks: {
                 title(items) {
-                  const index =
-                    items?.[0]?.dataIndex;
-
-                  return Number.isInteger(
-                    index
-                  )
-                    ? String(
-                        rows?.[index]?.year ??
-                        ''
-                      )
-                    : '';
+                  return items?.[0]?.label || '';
                 },
 
                 label(context) {
-                  const value =
-                    Number(
-                      context.raw
-                    );
-
-                  const valueText =
-                    `Australia: ${PFF.formatInteger(value)}`;
-
-                  const growth =
-                    trendGrowth();
-
-                  if (
-                    !Number.isFinite(
-                      growth
-                    )
-                  ) {
-                    return valueText;
-                  }
-
-                  const sign =
-                    growth > 0
-                      ? '+'
-                      : growth < 0
-                        ? '−'
-                        : '';
-
-                  return `${valueText} · ${sign}${Math.abs(growth).toFixed(1)}% p.a.`;
+                  return tooltipLabel(
+                    context
+                  );
                 }
               }
             }
@@ -837,35 +1502,12 @@
 
           scales: {
             x:
-              PFFCharts.xYearScaleOptions({
-                ticks: {
-                  callback(value) {
-                    const label =
-                      this.getLabelForValue(
-                        value
-                      );
-
-                    const year =
-                      Number(
-                        label
-                      );
-
-                    return (
-                      Number.isFinite(
-                        year
-                      ) &&
-                      year % 2 === 0
-                    )
-                      ? String(
-                          year
-                        )
-                      : '';
-                  }
-                }
-              }),
+              PFFCharts.xYearScaleOptions(),
 
             y:
-              yScaleOptions()
+              PFFCharts.yScaleOptions(
+                config.scale
+              )
           }
         });
 
@@ -875,41 +1517,154 @@
           {
             type:
               'line',
+
             data: {
               labels:
-                rows.map(
+                viewRows().map(
                   row =>
                     String(
                       row.year
                     )
                 ),
-              datasets: [
-                buildDataset()
-              ]
+
+              datasets:
+                buildDatasets()
             },
+
             options,
+
             plugins: [
+              yAxisController.plugin,
               trendLabelsPlugin,
-              yearTickPlugin,
-              axisSpinesPlugin
+              yearTickPlugin
             ]
           }
         );
 
+      applyDatasetVisibility();
+
+      lastYAxisTitle =
+        config.yTitle;
+
       updateAccessibleSummary();
+    }
+
+    function renderCurrentChart() {
+      if (!chart) {
+        return;
+      }
+
+      const previousScale =
+        yAxisController.currentScale();
+
+      const previousTitle =
+        lastYAxisTitle;
+
+      const config =
+        currentViewConfig();
+
+      chart.data.labels =
+        viewRows().map(
+          row =>
+            String(
+              row.year
+            )
+        );
+
+      syncDatasets();
+
+      chart.options.scales.y.min =
+        config.scale.min;
+
+      chart.options.scales.y.max =
+        config.scale.max;
+
+      yAxisController.animate(
+        previousScale,
+        config.scale
+      );
+
+      if (
+        previousTitle !==
+        config.yTitle
+      ) {
+        yAxisController.animateTitle(
+          previousTitle,
+          config.yTitle
+        );
+      }
+
+      lastYAxisTitle =
+        config.yTitle;
+
+      chart.update();
+
+      legendController?.render();
+      updateAccessibleSummary();
+    }
+
+    function setGroup(nextGroup) {
+      if (
+        ![
+          'state',
+          'rurality'
+        ].includes(
+          nextGroup
+        ) ||
+        nextGroup ===
+          activeGroup
+      ) {
+        return;
+      }
+
+      activeGroup =
+        nextGroup;
+
+      updateHeading();
+      renderCurrentChart();
+    }
+
+    function setMetric(nextMetric) {
+      if (
+        ![
+          'count',
+          'share'
+        ].includes(
+          nextMetric
+        ) ||
+        nextMetric ===
+          activeMetric
+      ) {
+        return;
+      }
+
+      activeMetric =
+        nextMetric;
+
+      updateTrendVisibility();
+      updateHeading();
+      renderCurrentChart();
     }
 
     function setupControls() {
       tabsController =
         PFF.setupTabs({
           tabList,
-          tabs: [
-            populationTab
-          ],
+          tabs:
+            chartTabs,
           valueAttribute:
-            'view',
+            'group',
           initialValue:
-            'population'
+            activeGroup,
+          leftButton:
+            tabScrollLeft,
+          rightButton:
+            tabScrollRight,
+          onChange(value) {
+            setGroup(
+              value
+            );
+          }
         });
 
       headingScroller =
@@ -934,38 +1689,83 @@
           }
         });
 
+      metricController =
+        PFF.setupMetricSwitch({
+          element:
+            metricSwitch,
+          buttons:
+            metricButtons,
+          valueAttribute:
+            'metric',
+          initialValue:
+            activeMetric,
+          onChange(value) {
+            setMetric(
+              value
+            );
+          }
+        });
+
       legendController =
         PFFCharts.setupLegend({
           legend:
             chartLegend,
+          leftButton:
+            legendScrollLeft,
+          rightButton:
+            legendScrollRight,
           getChart() {
             return chart;
           },
           getItems() {
-            return [
-              {
+            const labels =
+              groupLabels();
+
+            const colours =
+              groupColours();
+
+            const hidden =
+              hiddenSeriesSet();
+
+            return labels.map(
+              (
+                label,
+                index
+              ) => ({
                 datasetIndex:
-                  0,
-                label:
-                  'Australia',
+                  index,
+                label,
                 colour:
-                  AUSTRALIA_COLOUR,
+                  colours[index],
                 active:
-                  !seriesHidden
-              }
-            ];
+                  !hidden.has(
+                    label
+                  )
+              })
+            );
           },
           onToggle({
-            visible
+            visible,
+            item,
+            dataset
           }) {
-            seriesHidden =
-              !visible;
+            const hidden =
+              hiddenSeriesSet();
 
-            if (
-              chart?.data?.datasets?.[0]
-            ) {
-              chart.data.datasets[0]._activeSeries =
-                visible;
+            if (visible) {
+              hidden.delete(
+                item.label
+              );
+            } else {
+              hidden.add(
+                item.label
+              );
+            }
+
+            if (dataset) {
+              dataset._activeSeries =
+                visible &&
+                dataset._slotActive;
             }
 
             updateAccessibleSummary();
@@ -980,6 +1780,8 @@
             return chart;
           }
         });
+
+      updateTrendVisibility();
     }
 
     migrateLegacyLocalCache();
@@ -990,21 +1792,43 @@
       status:
         statusElement,
 
-      loadLive() {
-        return PFFCharts.loadGVizSheet({
-          sheetId:
-            CONFIG.sheetId,
-          sheetName:
-            CONFIG.sheetName,
-          range:
-            CONFIG.range,
-          headers:
-            '1'
-        });
+      async loadLive() {
+        const [
+          stateTable,
+          ruralityTable
+        ] =
+          await Promise.all([
+            PFFCharts.loadGVizSheet({
+              sheetId:
+                CONFIG.sheetId,
+              sheetName:
+                CONFIG.stateSheet,
+              range:
+                CONFIG.stateRange,
+              headers:
+                '1'
+            }),
+
+            PFFCharts.loadGVizSheet({
+              sheetId:
+                CONFIG.sheetId,
+              sheetName:
+                CONFIG.ruralitySheet,
+              range:
+                CONFIG.ruralityRange,
+              headers:
+                '1'
+            })
+          ]);
+
+        return {
+          stateTable,
+          ruralityTable
+        };
       },
 
       parseLive:
-        parsePopulationTable,
+        parseLiveData,
 
       loadRemoteCache() {
         return PFFCharts.loadAppsScriptCache({
@@ -1015,25 +1839,24 @@
         });
       },
 
-      parseRemoteCache:
-        parseRemoteRows,
+      parseRemoteCache,
 
       cacheKey:
         CONFIG.localCacheKey,
 
       minRows:
-        3,
+        6,
 
       onLiveError(error) {
         console.warn(
-          'Live Australian population data unavailable; trying Apps Script cache.',
+          'Live population location data unavailable; trying Apps Script cache.',
           error
         );
       },
 
       onRemoteCacheError(error) {
         console.warn(
-          'Apps Script Australian population cache unavailable; trying browser cache.',
+          'Apps Script population location cache unavailable; trying browser cache.',
           error
         );
       },
@@ -1046,20 +1869,31 @@
       },
 
       render(loaded) {
-        rows =
-          normalisePopulationRows(
+        const combinedRows =
+          validateCombinedRows(
             loaded.rows
+          );
+
+        sourceData =
+          splitCombinedRows(
+            combinedRows
           );
 
         chartSummary =
           PFFCharts.ensureChartSummary({
-            canvas:
-              chartCanvas,
             id:
-              'populationChartSummary'
+              'populationLocationChartSummary',
+            parent:
+              app
           });
 
+        chartCanvas.setAttribute(
+          'aria-describedby',
+          chartSummary.id
+        );
+
         createChart();
+
         legendController.render();
         tabsController.update();
         headingScroller.update();
@@ -1083,7 +1917,7 @@
       },
 
       errorMessage:
-        'Australian population data unavailable.'
+        'Population location data unavailable.'
     });
   </script>
 </body>
