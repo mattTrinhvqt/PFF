@@ -2704,6 +2704,114 @@ body.pff-chart-app .pff-app {
     });
   }
 
+  function loadAppsScriptCache(options = {}) {
+    const url = String(options.url || '').trim();
+    const appKey = String(options.appKey || '').trim();
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 10000);
+
+    if (!url) {
+      return Promise.reject(new Error('Apps Script cache URL is missing.'));
+    }
+
+    if (!appKey) {
+      return Promise.reject(new Error('Apps Script cache app key is missing.'));
+    }
+
+    return new Promise((resolve, reject) => {
+      const callbackName = `__pff_cache_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const script = document.createElement('script');
+      let completed = false;
+
+      const cleanup = () => {
+        script.remove();
+
+        try {
+          delete global[callbackName];
+        } catch (_) {
+          global[callbackName] = undefined;
+        }
+      };
+
+      const finish = callback => value => {
+        if (completed) {
+          return;
+        }
+
+        completed = true;
+        global.clearTimeout(timer);
+        cleanup();
+        callback(value);
+      };
+
+      const timer = global.setTimeout(
+        () =>
+          finish(reject)(
+            new Error(
+              `Timed out loading cached data for ${appKey}.`
+            )
+          ),
+        timeoutMs
+      );
+
+      global[callbackName] = payload => {
+        if (
+          !payload ||
+          payload.ok !== true
+        ) {
+          finish(reject)(
+            new Error(
+              payload?.error ||
+              `Cached data for ${appKey} were unavailable.`
+            )
+          );
+
+          return;
+        }
+
+        if (
+          payload.appKey !==
+          appKey
+        ) {
+          finish(reject)(
+            new Error(
+              `Cached data returned the wrong app key for ${appKey}.`
+            )
+          );
+
+          return;
+        }
+
+        finish(resolve)(
+          payload
+        );
+      };
+
+      script.onerror =
+        () =>
+          finish(reject)(
+            new Error(
+              `Could not connect to the cached data backend for ${appKey}.`
+            )
+          );
+
+      const params =
+        new URLSearchParams({
+          appKey,
+          callback:
+            callbackName
+        });
+
+      script.src =
+        `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
+
+      script.async = true;
+
+      document.head.appendChild(
+        script
+      );
+    });
+  }
+
   function saveLocalCache(key, rows, metadata = {}) {
     try {
       localStorage.setItem(key, JSON.stringify({
@@ -2733,27 +2841,170 @@ body.pff-chart-app .pff-app {
 
   async function loadLiveCacheFallback(options = {}) {
     try {
-      const liveRaw = await options.loadLive();
-      const rows = await options.parseLive(liveRaw);
-      if (!Array.isArray(rows) || rows.length < (options.minRows || 1)) {
-        throw new Error('Live data did not contain enough usable rows.');
-      }
-      if (options.cacheKey) {
-        saveLocalCache(options.cacheKey, rows);
-      }
-      options.onSource?.('live');
-      return { rows, source: 'live' };
-    } catch (liveError) {
-      options.onLiveError?.(liveError);
-      const cached = options.cacheKey ? loadLocalCache(options.cacheKey, { minRows: options.minRows || 1 }) : null;
-      if (cached?.rows) {
-        options.onSource?.('cached');
-        return { rows: cached.rows, source: 'cached', savedAt: cached.savedAt || null };
+      const liveRaw =
+        await options.loadLive();
+
+      const rows =
+        await options.parseLive(
+          liveRaw
+        );
+
+      if (
+        !Array.isArray(rows) ||
+        rows.length <
+          (options.minRows || 1)
+      ) {
+        throw new Error(
+          'Live data did not contain enough usable rows.'
+        );
       }
 
-      if (Array.isArray(options.fallback) && options.fallback.length) {
-        options.onSource?.('cached');
-        return { rows: options.fallback, source: 'cached', fallback: true };
+      if (
+        options.cacheKey
+      ) {
+        saveLocalCache(
+          options.cacheKey,
+          rows
+        );
+      }
+
+      options.onSource?.(
+        'live'
+      );
+
+      return {
+        rows,
+        source:
+          'live'
+      };
+    } catch (
+      liveError
+    ) {
+      options.onLiveError?.(
+        liveError
+      );
+
+      if (
+        typeof options.loadRemoteCache ===
+        'function'
+      ) {
+        try {
+          const remoteRaw =
+            await options.loadRemoteCache();
+
+          const remoteRows =
+            typeof options.parseRemoteCache ===
+              'function'
+              ? await options.parseRemoteCache(
+                  remoteRaw
+                )
+              : remoteRaw?.data;
+
+          if (
+            !Array.isArray(
+              remoteRows
+            ) ||
+            remoteRows.length <
+              (options.minRows || 1)
+          ) {
+            throw new Error(
+              'Remote cached data did not contain enough usable rows.'
+            );
+          }
+
+          if (
+            options.cacheKey
+          ) {
+            saveLocalCache(
+              options.cacheKey,
+              remoteRows,
+              {
+                remoteCachedAt:
+                  remoteRaw?.cachedAt ||
+                  null
+              }
+            );
+          }
+
+          options.onSource?.(
+            'cached'
+          );
+
+          return {
+            rows:
+              remoteRows,
+
+            source:
+              'cached',
+
+            savedAt:
+              remoteRaw?.cachedAt ||
+              null,
+
+            remote:
+              true
+          };
+        } catch (
+          remoteError
+        ) {
+          options.onRemoteCacheError?.(
+            remoteError
+          );
+        }
+      }
+
+      const cached =
+        options.cacheKey
+          ? loadLocalCache(
+              options.cacheKey,
+              {
+                minRows:
+                  options.minRows ||
+                  1
+              }
+            )
+          : null;
+
+      if (
+        cached?.rows
+      ) {
+        options.onSource?.(
+          'cached'
+        );
+
+        return {
+          rows:
+            cached.rows,
+
+          source:
+            'cached',
+
+          savedAt:
+            cached.savedAt ||
+            null
+        };
+      }
+
+      if (
+        Array.isArray(
+          options.fallback
+        ) &&
+        options.fallback.length
+      ) {
+        options.onSource?.(
+          'cached'
+        );
+
+        return {
+          rows:
+            options.fallback,
+
+          source:
+            'cached',
+
+          fallback:
+            true
+        };
       }
 
       throw liveError;
@@ -4310,16 +4561,30 @@ body.pff-chart-app .pff-app {
           : await loadLiveCacheFallback({
               loadLive:
                 options.loadLive,
+
               parseLive:
                 options.parseLive,
+
+              loadRemoteCache:
+                options.loadRemoteCache,
+
+              parseRemoteCache:
+                options.parseRemoteCache,
+
               cacheKey:
                 options.cacheKey,
+
               fallback:
                 options.fallback,
+
               minRows:
                 options.minRows,
+
               onLiveError:
                 options.onLiveError,
+
+              onRemoteCacheError:
+                options.onRemoteCacheError,
 
               onSource:
                 source =>
@@ -4472,6 +4737,7 @@ body.pff-chart-app .pff-app {
       numericCell,
 
       loadGVizSheet,
+      loadAppsScriptCache,
       saveLocalCache,
       loadLocalCache,
       loadLiveCacheFallback,
