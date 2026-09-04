@@ -2665,8 +2665,43 @@ body.pff-chart-app .pff-app {
   }
 
   function numericCell(cell) {
-    const value = Number(cell?.v ?? cell?.f);
-    return Number.isFinite(value) ? value : NaN;
+    if (
+      !cell ||
+      cell.v === null ||
+      cell.v === undefined ||
+      cell.v === ''
+    ) {
+      return NaN;
+    }
+
+    if (
+      typeof cell.v === 'number' &&
+      Number.isFinite(cell.v)
+    ) {
+      return cell.v;
+    }
+
+    const cleaned =
+      cleanText(
+        cell.f ??
+        cell.v
+      )
+        .replace(/,/g, '')
+        .replace(/[^\d.-]/g, '');
+
+    if (
+      !cleaned ||
+      !/\d/.test(cleaned)
+    ) {
+      return NaN;
+    }
+
+    const value =
+      Number(cleaned);
+
+    return Number.isFinite(value)
+      ? value
+      : NaN;
   }
 
   function cleanText(value) {
