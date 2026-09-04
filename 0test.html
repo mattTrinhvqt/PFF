@@ -3,32 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PFF Labour Demand Location Trends</title>
+  <title>PFF Australian Population Trends</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
 
   <style>
     :root {
-      --pff-metric-width: 92px;
-      --pff-metric-width-mobile: 86px;
-      --pff-metric-width-small: 82px;
+      --population-green: #0b5d1e;
     }
 
     .chart-options-row {
-      display: flex;
-      width: 100%;
-      min-width: 0;
       min-height: 28px;
-      flex: 0 0 auto;
-      align-items: center;
-      padding: 0 0 2px;
-    }
-
-    .chart-heading-detail {
-      display: inline-block;
-      flex: 0 0 auto;
-      will-change: opacity;
+      padding-bottom: 2px;
     }
   </style>
 </head>
@@ -40,54 +27,33 @@
         id="loadingState"
         class="app-loading"
         role="status"
-        aria-label="Loading labour demand location data"
+        aria-label="Loading Australian population data"
       >
         <div class="cone-loader" aria-hidden="true">
           <span class="cone blue"></span>
           <span class="cone green"></span>
           <span class="cone red"></span>
         </div>
-        <p class="loader-text">Loading labour demand location data…</p>
+        <p class="loader-text">Loading Australian population data…</p>
       </div>
 
       <div class="module-top">
         <div class="tab-scroll-shell">
-          <button
-            id="tabScrollLeft"
-            class="tab-scroll-button tab-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll tabs left"
-          >‹</button>
-
           <div
             id="tabList"
             class="tab-list"
             role="tablist"
-            aria-label="Labour demand location grouping"
+            aria-label="Australian population chart"
           >
             <button
+              id="populationTab"
               class="chart-tab is-active"
               type="button"
               role="tab"
               aria-selected="true"
-              data-group="state"
-            >State</button>
-
-            <button
-              class="chart-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              data-group="rurality"
-            >Rurality</button>
+              data-view="population"
+            >Population</button>
           </div>
-
-          <button
-            id="tabScrollRight"
-            class="tab-scroll-button tab-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll tabs right"
-          >›</button>
         </div>
 
         <div
@@ -113,9 +79,7 @@
           >‹</button>
 
           <div id="headingScrollViewport" class="heading-scroll-viewport">
-            <h2 class="chart-heading">
-              <span id="chartHeadingFixed" class="chart-heading-fixed">FTE job ads by</span><span id="chartHeadingDetail" class="chart-heading-detail">&nbsp;state</span>
-            </h2>
+            <h2 class="chart-heading">Australian population</h2>
           </div>
 
           <button
@@ -127,38 +91,21 @@
         </div>
 
         <div class="heading-controls">
-          <div
-            id="metricSwitch"
-            class="metric-switch"
-            role="group"
-            aria-label="Display metric"
+          <button
+            id="yoyTrendToggle"
+            class="yoy-trend-toggle is-on"
+            type="button"
+            aria-pressed="true"
+            aria-label="3-year trend. Press to switch to 10-year trend."
           >
-            <button
-              class="metric-button is-active"
-              type="button"
-              data-metric="count"
-              aria-pressed="true"
-            >Count</button>
-
-            <button
-              class="metric-button"
-              type="button"
-              data-metric="share"
-              aria-pressed="false"
-            >%</button>
-          </div>
+            <span class="yoy-binary-indicator" aria-hidden="true"></span>
+            <span class="yoy-toggle-label">3yr Trend</span>
+          </button>
         </div>
       </div>
 
       <div class="chart-options-row">
         <div class="legend-nav">
-          <button
-            id="legendScrollLeft"
-            class="legend-scroll-button legend-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll legend left"
-          >‹</button>
-
           <div class="legend-viewport">
             <div
               id="chartLegend"
@@ -166,20 +113,13 @@
               aria-label="Chart legend"
             ></div>
           </div>
-
-          <button
-            id="legendScrollRight"
-            class="legend-scroll-button legend-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll legend right"
-          >›</button>
         </div>
       </div>
 
       <div id="chartShell" class="chart-shell">
         <canvas
           id="trendChart"
-          aria-label="Australian optometry labour demand by location trend chart"
+          aria-label="Australian population trend chart"
           role="img"
         ></canvas>
       </div>
@@ -190,93 +130,38 @@
     'use strict';
 
     const CONFIG = {
-      jobSheetId:
-        '1ZcZrPHvux_ckk2cJqRYu1oz9uT4brcRmcJ80bP-v--4',
+      sheetId:
+        '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
 
-      jobSheetName:
-        'Mirror table',
+      sheetName:
+        'Auspopnbystate',
 
-      jobRange:
-        'B3:V',
+      // Row 30 = headers; row 31 onward = raw data.
+      // A = Year; J = Australia.
+      range:
+        'A30:J',
 
       fetchTimeoutMs:
-        20000,
+        15000,
 
       cacheFetchTimeoutMs:
         10000,
 
       localCacheKey:
-        'pff-labour-demand-location-v2',
+        'pff-australian-population-trends-v1',
 
-      trailingWeeks:
-        13,
-
-      minimumGroupSize:
-        20,
-
-      trendWidth:
-        3.6,
-
-      columns: {
-        repeatFlag: 0,
-        date: 2,
-        state: 7,
-        rurality: 9,
-        fteDays: 11
-      }
+      scaleTargetIntervals:
+        7
     };
 
     const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbx4E4fZUhs1RDLFfsMAhJCSHQIWHcNg-PjZOSif93hKSOq6o0gv1OD8wcLjsa3ssy4mDQ/exec';
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
 
     const CACHE_APP_KEY =
-      'pff-optometry-related-job-tracker';
+      'pff-australian-population-trends';
 
-    const STATE_LABELS = [
-      'NSW',
-      'VIC',
-      'QLD',
-      'SA',
-      'WA',
-      'TAS',
-      'NT',
-      'ACT'
-    ];
-
-    const STATE_COLOURS = [
-      '#2db7f5',
-      '#2d3a8c',
-      '#7a0036',
-      '#f03a47',
-      '#000000',
-      '#22a36b',
-      '#c25e00',
-      '#7b61ff'
-    ];
-
-    const RURALITY_LABELS = [
-      'Metro',
-      'Non-metro'
-    ];
-
-    const RURALITY_COLOURS = [
-      '#30475d',
-      '#b54a0a'
-    ];
-
-    const SERIES_SLOT_COUNT =
-      STATE_LABELS.length;
-
-    const DAY_MS =
-      24 * 60 * 60 * 1000;
-
-    const AVERAGE_MONTH_DAYS =
-      365.2425 / 12;
-
-    const TRAILING_WINDOW_MS =
-      CONFIG.trailingWeeks *
-      7 *
-      DAY_MS;
+    const AUSTRALIA_COLOUR =
+      '#0b5d1e';
 
     const app =
       document.getElementById('app');
@@ -287,16 +172,14 @@
     const tabList =
       document.getElementById('tabList');
 
-    const chartTabs =
-      Array.from(
-        document.querySelectorAll('.chart-tab')
-      );
+    const populationTab =
+      document.getElementById('populationTab');
 
-    const tabScrollLeft =
-      document.getElementById('tabScrollLeft');
+    const dataSourceIndicator =
+      document.getElementById('dataSourceIndicator');
 
-    const tabScrollRight =
-      document.getElementById('tabScrollRight');
+    const dataSourceText =
+      document.getElementById('dataSourceText');
 
     const headingScrollViewport =
       document.getElementById('headingScrollViewport');
@@ -307,28 +190,11 @@
     const headingScrollRight =
       document.getElementById('headingScrollRight');
 
-    const chartHeadingFixed =
-      document.getElementById('chartHeadingFixed');
-
-    const chartHeadingDetail =
-      document.getElementById('chartHeadingDetail');
-
-    const metricSwitch =
-      document.getElementById('metricSwitch');
-
-    const metricButtons =
-      Array.from(
-        document.querySelectorAll('.metric-button')
-      );
+    const yoyTrendToggle =
+      document.getElementById('yoyTrendToggle');
 
     const chartLegend =
       document.getElementById('chartLegend');
-
-    const legendScrollLeft =
-      document.getElementById('legendScrollLeft');
-
-    const legendScrollRight =
-      document.getElementById('legendScrollRight');
 
     const chartShell =
       document.getElementById('chartShell');
@@ -336,509 +202,170 @@
     const chartCanvas =
       document.getElementById('trendChart');
 
-    const dataSourceIndicator =
-      document.getElementById('dataSourceIndicator');
-
-    const dataSourceText =
-      document.getElementById('dataSourceText');
-
     let rows = [];
     let chart = null;
     let chartSummary = null;
-    let activeGroup = 'state';
-    let activeMetric = 'count';
-    let axisBounds = null;
+    let seriesHidden = false;
     let tabsController = null;
     let headingScroller = null;
-    let metricController = null;
+    let trendController = null;
     let legendController = null;
+    let interactionsController = null;
     let responsiveController = null;
 
-    const hiddenSeriesByGroup =
-      new Map();
-
-    const yAxisTickAnimation = {
-      values: [],
-      raf: null,
-      token: 0
-    };
-
-    const yAxisTitleAnimation = {
-      from: 'FTE job ads/month',
-      to: 'FTE job ads/month',
-      progress: 1,
-      raf: null,
-      token: 0
-    };
-
-    function normaliseText(value) {
-      return PFF.cleanText(value)
-        .toLowerCase();
-    }
-
-    function getCellText(cell) {
-      return PFF.cleanText(
-        cell?.f ??
-        cell?.v ??
-        ''
-      );
-    }
-
-    function configuredGroupLabels(
-      group = activeGroup
-    ) {
-      return group === 'state'
-        ? STATE_LABELS
-        : RURALITY_LABELS;
-    }
-
-    function configuredGroupColours(
-      group = activeGroup
-    ) {
-      return group === 'state'
-        ? STATE_COLOURS
-        : RURALITY_COLOURS;
-    }
-
-    function colourForGroupLabel(
-      label,
-      group = activeGroup
-    ) {
-      const labels =
-        configuredGroupLabels(group);
-
-      const colours =
-        configuredGroupColours(group);
-
-      const index =
-        labels.indexOf(label);
-
-      return index >= 0
-        ? colours[index]
-        : '#69718a';
-    }
-
-    function groupLabels(
-      group = activeGroup,
-      includeSmallGroups = false
-    ) {
-      return configuredGroupLabels(group)
-        .filter(label => {
-          const count =
-            rows.filter(
-              row =>
-                row?.[group] === label
-            ).length;
-
-          return (
-            count > 0 &&
-            (
-              includeSmallGroups ||
-              count >= CONFIG.minimumGroupSize
-            )
-          );
-        });
-    }
-
-    function groupColours(
-      group = activeGroup
-    ) {
-      return groupLabels(group)
-        .map(
-          label =>
-            colourForGroupLabel(
-              label,
-              group
-            )
+    function populationNumber(cell) {
+      const direct =
+        PFFCharts.numericCell(
+          cell
         );
-    }
-
-    function getExcludedGroupCount(
-      group = activeGroup
-    ) {
-      return groupLabels(
-        group,
-        true
-      ).filter(label =>
-        rows.filter(
-          row =>
-            row?.[group] === label
-        ).length <
-          CONFIG.minimumGroupSize
-      ).length;
-    }
-
-    function hiddenSeriesSet(
-      group = activeGroup
-    ) {
-      if (!hiddenSeriesByGroup.has(group)) {
-        hiddenSeriesByGroup.set(
-          group,
-          new Set()
-        );
-      }
-
-      return hiddenSeriesByGroup.get(group);
-    }
-
-    function parseDateValue(value) {
-      if (value instanceof Date) {
-        return Number.isNaN(
-          value.getTime()
-        )
-          ? null
-          : new Date(
-              Date.UTC(
-                value.getFullYear(),
-                value.getMonth(),
-                value.getDate()
-              )
-            );
-      }
 
       if (
-        typeof value === 'number' &&
-        Number.isFinite(value)
-      ) {
-        const googleEpoch =
-          Date.UTC(
-            1899,
-            11,
-            30
-          );
-
-        const date =
-          new Date(
-            googleEpoch +
-            value * DAY_MS
-          );
-
-        return Number.isNaN(
-          date.getTime()
+        Number.isFinite(
+          direct
         )
-          ? null
-          : date;
+      ) {
+        return direct;
       }
 
-      const text =
-        PFF.cleanText(value);
+      const cleaned =
+        PFF.cleanText(
+          cell?.f ??
+          cell?.v ??
+          ''
+        )
+          .replace(/,/g, '')
+          .replace(/[^\d.-]/g, '');
 
-      if (!text) {
-        return null;
-      }
-
-      let match =
-        text.match(
-          /^Date\((\d+),(\d+),(\d+)\)$/
+      const number =
+        Number(
+          cleaned
         );
 
-      if (match) {
-        return new Date(
-          Date.UTC(
-            Number(match[1]),
-            Number(match[2]),
-            Number(match[3])
-          )
-        );
-      }
-
-      match =
-        text.match(
-          /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/
-        );
-
-      if (match) {
-        let year =
-          Number(match[3]);
-
-        if (year < 100) {
-          year += 2000;
-        }
-
-        return new Date(
-          Date.UTC(
-            year,
-            Number(match[2]) - 1,
-            Number(match[1])
-          )
-        );
-      }
-
-      match =
-        text.match(
-          /^(\d{4})-(\d{1,2})-(\d{1,2})$/
-        );
-
-      if (match) {
-        return new Date(
-          Date.UTC(
-            Number(match[1]),
-            Number(match[2]) - 1,
-            Number(match[3])
-          )
-        );
-      }
-
-      const parsed =
-        new Date(text);
-
-      return Number.isNaN(
-        parsed.getTime()
+      return Number.isFinite(
+        number
       )
-        ? null
-        : new Date(
-            Date.UTC(
-              parsed.getFullYear(),
-              parsed.getMonth(),
-              parsed.getDate()
-            )
-          );
+        ? number
+        : NaN;
     }
 
-    function parseDateCell(cell) {
+    function normalisePopulationRows(sourceRows) {
       return (
-        parseDateValue(cell?.v) ||
-        parseDateValue(cell?.f)
-      );
-    }
-
-    function parseEstimatedDaysPerWeek(
-      value
-    ) {
-      if (
-        typeof value === 'number' &&
-        Number.isFinite(value)
-      ) {
-        return PFF.clamp(
-          value,
-          0,
-          5
-        );
-      }
-
-      const text =
-        PFF.cleanText(value);
-
-      if (
-        !text ||
-        normaliseText(text) === 'xxx'
-      ) {
-        return 5;
-      }
-
-      const values = [
-        ...text.matchAll(
-          /\d+(?:\.\d+)?/g
-        )
-      ]
-        .map(
-          match =>
-            Number(match[0])
-        )
-        .filter(
-          number =>
-            Number.isFinite(number) &&
-            number >= 0 &&
-            number <= 7
-        );
-
-      if (!values.length) {
-        return 5;
-      }
-
-      const estimate =
-        values.reduce(
-          (
-            total,
-            number
-          ) =>
-            total + number,
-          0
-        ) /
-        values.length;
-
-      return PFF.clamp(
-        estimate,
-        0,
-        5
-      );
-    }
-
-    function getStateGroup(value) {
-      const matches =
-        PFF.cleanText(value)
-          .toUpperCase()
-          .match(
-            /\b(?:NSW|QLD|VIC|ACT|SA|NT|WA|TAS)\b/g
-          ) ||
-        [];
-
-      return matches[0] || null;
-    }
-
-    function getRuralityGroup(value) {
-      const matches = [
-        ...PFF.cleanText(value)
-          .toUpperCase()
-          .matchAll(
-            /\bMM\s*([1-7])\b/g
-          )
-      ];
-
-      if (!matches.length) {
-        return null;
-      }
-
-      return matches.some(
-        match =>
-          Number(match[1]) === 1
+        Array.isArray(sourceRows)
+          ? sourceRows
+          : []
       )
-        ? 'Metro'
-        : 'Non-metro';
-    }
-
-    function normaliseRows(
-      sourceRows
-    ) {
-      const result = [];
-
-      (sourceRows || [])
-        .forEach(sourceRow => {
-          const cells =
-            sourceRow?.c ||
-            [];
-
-          const repeatFlag =
-            normaliseText(
-              getCellText(
-                cells[
-                  CONFIG.columns.repeatFlag
-                ]
-              )
-            );
-
-          if (repeatFlag !== 'no') {
-            return;
-          }
-
-          const date =
-            parseDateCell(
-              cells[
-                CONFIG.columns.date
-              ]
-            );
-
-          if (!date) {
-            return;
-          }
-
-          const fteCell =
-            cells[
-              CONFIG.columns.fteDays
-            ];
-
-          const fteDays =
-            parseEstimatedDaysPerWeek(
-              fteCell?.v ??
-              fteCell?.f ??
-              ''
-            );
-
-          result.push({
-            x: date.getTime(),
-            fteDays,
-            fteWeight:
-              fteDays / 5,
-            state:
-              getStateGroup(
-                getCellText(
-                  cells[
-                    CONFIG.columns.state
-                  ]
-                )
-              ),
-            rurality:
-              getRuralityGroup(
-                getCellText(
-                  cells[
-                    CONFIG.columns.rurality
-                  ]
-                )
-              )
-          });
-        });
-
-      return result.sort(
-        (
-          first,
-          second
-        ) =>
-          first.x - second.x
-      );
-    }
-
-    function parseRemoteRows(snapshot) {
-      const sourceRows =
-        Array.isArray(
-          snapshot?.data?.labourLocationRows
-        )
-          ? snapshot.data.labourLocationRows
-          : [];
-
-      return sourceRows
         .map(row => {
-          const x =
-            Number(row?.[0]);
-
-          const fteWeight =
-            Number(row?.[1]);
-
-          const stateText =
-            String(
-              row?.[2] ??
-              ''
+          if (
+            Array.isArray(
+              row
             )
-              .trim()
-              .toUpperCase();
-
-          const ruralityText =
-            String(
-              row?.[3] ??
-              ''
-            )
-              .trim();
+          ) {
+            return {
+              year:
+                Number(
+                  row?.[0]
+                ),
+              value:
+                Number(
+                  row?.[1]
+                )
+            };
+          }
 
           return {
-            x,
-            fteDays:
-              fteWeight * 5,
-            fteWeight,
-            state:
-              STATE_LABELS.includes(
-                stateText
+            year:
+              Number(
+                row?.year
+              ),
+            value:
+              Number(
+                row?.value
               )
-                ? stateText
-                : null,
-            rurality:
-              RURALITY_LABELS.includes(
-                ruralityText
-              )
-                ? ruralityText
-                : null
           };
         })
         .filter(
           row =>
-            Number.isFinite(row.x) &&
-            Number.isFinite(row.fteWeight)
+            Number.isFinite(
+              row.year
+            ) &&
+            row.year >= 1900 &&
+            row.year <= 2200 &&
+            Number.isFinite(
+              row.value
+            ) &&
+            row.value >= 0
         )
+        .map(row => ({
+          year:
+            Math.round(
+              row.year
+            ),
+          value:
+            row.value
+        }))
         .sort(
           (
             first,
             second
           ) =>
-            first.x - second.x
+            first.year -
+            second.year
         );
+    }
+
+    function parsePopulationTable(table) {
+      const parsed = [];
+
+      (
+        table?.rows ||
+        []
+      ).forEach(sourceRow => {
+        const cells =
+          sourceRow?.c ||
+          [];
+
+        const year =
+          populationNumber(
+            cells[0]
+          );
+
+        const australia =
+          populationNumber(
+            cells[9]
+          );
+
+        if (
+          !Number.isFinite(
+            year
+          ) ||
+          year < 1900 ||
+          year > 2200 ||
+          !Number.isFinite(
+            australia
+          )
+        ) {
+          return;
+        }
+
+        parsed.push({
+          year:
+            Math.round(
+              year
+            ),
+          value:
+            australia
+        });
+      });
+
+      return normalisePopulationRows(
+        parsed
+      );
+    }
+
+    function parseRemoteRows(snapshot) {
+      return normalisePopulationRows(
+        snapshot?.data?.rows
+      );
     }
 
     function migrateLegacyLocalCache() {
@@ -853,517 +380,84 @@
         }
 
         const parsed =
-          JSON.parse(raw);
+          JSON.parse(
+            raw
+          );
 
-        if (!Array.isArray(parsed)) {
-          return;
-        }
-
-        const legacyRows =
-          parsed
-            .map(row => ({
-              x:
-                Number(row?.x),
-              fteDays:
-                Number(row?.fteDays),
-              fteWeight:
-                Number(row?.fteWeight),
-              state:
-                STATE_LABELS.includes(
-                  row?.state
-                )
-                  ? row.state
-                  : null,
-              rurality:
-                RURALITY_LABELS.includes(
-                  row?.rurality
-                )
-                  ? row.rurality
-                  : null
-            }))
-            .filter(
-              row =>
-                Number.isFinite(row.x) &&
-                Number.isFinite(row.fteWeight)
-            );
-
-        if (legacyRows.length) {
+        if (
+          Array.isArray(
+            parsed?.data
+          ) &&
+          parsed.data.length
+        ) {
           PFFCharts.saveLocalCache(
             CONFIG.localCacheKey,
-            legacyRows
+            normalisePopulationRows(
+              parsed.data
+            )
           );
         }
       } catch (_) {
       }
     }
 
-    function startOfUtcMonth(date) {
-      return new Date(
-        Date.UTC(
-          date.getUTCFullYear(),
-          date.getUTCMonth(),
-          1
-        )
-      );
-    }
-
-    function addUtcMonths(
-      date,
-      months
-    ) {
-      return new Date(
-        Date.UTC(
-          date.getUTCFullYear(),
-          date.getUTCMonth() + months,
-          1
-        )
-      );
-    }
-
-    function getMonthTimestamp(
-      timestamp
-    ) {
-      return startOfUtcMonth(
-        new Date(timestamp)
-      ).getTime();
-    }
-
-    function calculateAxisBounds(data) {
-      const xValues =
-        data
-          .map(
-            row =>
-              Number(row?.x)
-          )
-          .filter(
-            Number.isFinite
-          );
-
-      if (!xValues.length) {
-        throw new Error(
-          'Labour location data had no valid dates.'
-        );
-      }
-
-      const minimumDate =
-        new Date(
-          Math.min(
-            ...xValues
-          )
-        );
-
-      const maximumDate =
-        new Date(
-          Math.max(
-            ...xValues
-          )
-        );
-
-      const firstMonth =
-        startOfUtcMonth(
-          minimumDate
-        );
-
-      const lastMonth =
-        startOfUtcMonth(
-          maximumDate
-        );
-
-      return {
-        xMin:
-          firstMonth.getTime(),
-
-        xMax:
-          addUtcMonths(
-            lastMonth,
-            1
-          ).getTime(),
-
-        firstDataTime:
-          Math.min(
-            ...xValues
-          ),
-
-        lastDataMonth:
-          lastMonth.getTime()
-      };
-    }
-
-    function buildMonthSequence() {
-      const result = [];
-
-      let current =
-        new Date(
-          axisBounds.xMin
-        );
-
-      const end =
-        new Date(
-          axisBounds.lastDataMonth
-        );
-
-      while (
-        current.getTime() <=
-        end.getTime()
-      ) {
-        result.push(
-          current.getTime()
-        );
-
-        current =
-          addUtcMonths(
-            current,
-            1
-          );
-      }
-
-      return result;
-    }
-
-    function rowsForSeries(
-      label,
-      group = activeGroup
-    ) {
-      return rows.filter(
-        row =>
-          row?.[group] === label
-      );
-    }
-
-    function classifiedRows(
-      group = activeGroup
-    ) {
-      const allowed =
-        new Set(
-          groupLabels(group)
-        );
-
-      return rows.filter(
-        row =>
-          allowed.has(
-            row?.[group]
-          )
-      );
-    }
-
-    function buildTrailingAverageSeries(
-      data
-    ) {
-      const now =
-        Date.now();
-
-      return buildMonthSequence()
-        .map(monthTimestamp => {
-          const monthStart =
-            new Date(
-              monthTimestamp
-            );
-
-          const monthEnd =
-            addUtcMonths(
-              monthStart,
-              1
-            ).getTime();
-
-          const effectiveEnd =
-            Math.min(
-              monthEnd,
-              now
-            );
-
-          const windowStart =
-            effectiveEnd -
-            TRAILING_WINDOW_MS;
-
-          if (
-            windowStart <
-            axisBounds.firstDataTime
-          ) {
-            return {
-              x:
-                monthTimestamp,
-              y:
-                null,
-              value:
-                null,
-              periodLabel:
-                formatTrailingPeriod(
-                  monthTimestamp
-                )
-            };
-          }
-
-          const windowCount =
-            data.reduce(
-              (
-                total,
-                row
-              ) =>
-                total +
-                (
-                  row.x >= windowStart &&
-                  row.x < effectiveEnd
-                    ? row.fteWeight
-                    : 0
-                ),
-              0
-            );
-
-          const value =
-            windowCount *
-            AVERAGE_MONTH_DAYS /
-            (
-              CONFIG.trailingWeeks *
-              7
-            );
-
-          return {
-            x:
-              monthTimestamp,
-            y:
-              value,
-            value,
-            periodLabel:
-              formatTrailingPeriod(
-                monthTimestamp
-              )
-          };
-        });
-    }
-
-    function buildTrailingShareSeries(
-      data,
-      denominatorData
-    ) {
-      const now =
-        Date.now();
-
-      return buildMonthSequence()
-        .map(monthTimestamp => {
-          const monthStart =
-            new Date(
-              monthTimestamp
-            );
-
-          const monthEnd =
-            addUtcMonths(
-              monthStart,
-              1
-            ).getTime();
-
-          const effectiveEnd =
-            Math.min(
-              monthEnd,
-              now
-            );
-
-          const windowStart =
-            effectiveEnd -
-            TRAILING_WINDOW_MS;
-
-          if (
-            windowStart <
-            axisBounds.firstDataTime
-          ) {
-            return {
-              x:
-                monthTimestamp,
-              y:
-                null,
-              value:
-                null,
-              periodLabel:
-                formatTrailingPeriod(
-                  monthTimestamp
-                )
-            };
-          }
-
-          const numerator =
-            data.reduce(
-              (
-                total,
-                row
-              ) =>
-                total +
-                (
-                  row.x >= windowStart &&
-                  row.x < effectiveEnd
-                    ? row.fteWeight
-                    : 0
-                ),
-              0
-            );
-
-          const denominator =
-            denominatorData.reduce(
-              (
-                total,
-                row
-              ) =>
-                total +
-                (
-                  row.x >= windowStart &&
-                  row.x < effectiveEnd
-                    ? row.fteWeight
-                    : 0
-                ),
-              0
-            );
-
-          const value =
-            denominator > 0
-              ? numerator /
-                denominator *
-                100
-              : null;
-
-          return {
-            x:
-              monthTimestamp,
-            y:
-              value,
-            value,
-            periodLabel:
-              formatTrailingPeriod(
-                monthTimestamp
-              )
-          };
-        });
-    }
-
-    function formatTrailingPeriod(
-      timestamp
-    ) {
-      const monthStart =
-        new Date(timestamp);
-
-      const monthEnd =
-        addUtcMonths(
-          monthStart,
-          1
-        ).getTime();
-
-      const effectiveEnd =
-        Math.min(
-          monthEnd,
-          Date.now()
-        );
-
-      const windowStart =
-        new Date(
-          effectiveEnd -
-          TRAILING_WINDOW_MS
-        );
-
-      const endDate =
-        new Date(
-          effectiveEnd - 1
-        );
-
-      const formatter =
-        new Intl.DateTimeFormat(
-          'en-AU',
-          {
-            day:
-              'numeric',
-            month:
-              'short',
-            year:
-              'numeric',
-            timeZone:
-              'UTC'
-          }
-        );
-
-      return (
-        `${formatter.format(windowStart)} – ` +
-        formatter.format(endDate)
-      );
-    }
-
-    function buildMonthTicks(
-      minimum,
-      maximum
-    ) {
-      const ticks = [];
-
-      let cursor =
-        startOfUtcMonth(
-          new Date(minimum)
+    function formatMillions(value) {
+      const number =
+        Number(
+          value
         );
 
       if (
-        cursor.getTime() < minimum
+        !Number.isFinite(
+          number
+        )
       ) {
-        cursor =
-          addUtcMonths(
-            cursor,
-            1
-          );
-      }
-
-      while (
-        cursor.getTime() <= maximum
-      ) {
-        ticks.push({
-          value:
-            cursor.getTime()
-        });
-
-        cursor =
-          addUtcMonths(
-            cursor,
-            1
-          );
-      }
-
-      return ticks;
-    }
-
-    function isQuarterTick(timestamp) {
-      const month =
-        new Date(
-          Number(timestamp)
-        ).getUTCMonth();
-
-      return [
-        0,
-        3,
-        6,
-        9
-      ].includes(month);
-    }
-
-    function formatQuarterTick(
-      timestamp
-    ) {
-      if (!isQuarterTick(timestamp)) {
         return '';
       }
 
-      const date =
-        new Date(
-          Number(timestamp)
-        );
+      if (
+        Math.abs(
+          number
+        ) < 0.5
+      ) {
+        return '0';
+      }
 
-      return (
-        `${date.getUTCMonth() + 1}/` +
-        date.getUTCFullYear()
-      );
+      const millions =
+        number /
+        1000000;
+
+      const rounded =
+        Math.round(
+          millions *
+          10
+        ) /
+        10;
+
+      return `${
+        Number.isInteger(
+          rounded
+        )
+          ? rounded.toFixed(0)
+          : rounded.toFixed(1)
+      }m`;
     }
 
     function niceStep(value) {
       if (
-        !Number.isFinite(value) ||
+        !Number.isFinite(
+          value
+        ) ||
         value <= 0
       ) {
-        return 1;
+        return 1000000;
       }
 
       const exponent =
         Math.floor(
-          Math.log10(value)
+          Math.log10(
+            value
+          )
         );
 
       const magnitude =
@@ -1376,1372 +470,448 @@
         value /
         magnitude;
 
-      if (fraction <= 1) {
-        return magnitude;
-      }
+      const multipliers =
+        [
+          1,
+          2,
+          2.5,
+          5,
+          10
+        ];
 
-      if (fraction <= 2) {
-        return 2 * magnitude;
-      }
+      const multiplier =
+        multipliers.find(
+          candidate =>
+            fraction <=
+            candidate
+        ) ??
+        10;
 
-      if (fraction <= 2.5) {
-        return 2.5 * magnitude;
-      }
-
-      if (fraction <= 5) {
-        return 5 * magnitude;
-      }
-
-      return 10 * magnitude;
+      return multiplier *
+        magnitude;
     }
 
-    function seriesBundle(
-      group = activeGroup,
-      metric = activeMetric
-    ) {
-      const labels =
-        groupLabels(group);
-
-      const denominator =
-        classifiedRows(group);
-
-      return labels.map(label => {
-        const data =
-          rowsForSeries(
-            label,
-            group
-          );
-
-        const trend =
-          metric === 'share'
-            ? buildTrailingShareSeries(
-                data,
-                denominator
-              )
-            : buildTrailingAverageSeries(
-                data
-              );
-
-        return {
-          label,
-          trend
-        };
-      });
-    }
-
-    function currentYAxis(
-      bundle = seriesBundle()
-    ) {
-      if (activeMetric === 'share') {
-        const values =
-          bundle
-            .flatMap(
-              series =>
-                series.trend.map(
-                  point =>
-                    point.value
-                )
+    function populationScale() {
+      const maximumObserved =
+        rows.reduce(
+          (
+            maximum,
+            row
+          ) =>
+            Number.isFinite(
+              row?.value
             )
-            .filter(
-              Number.isFinite
-            );
-
-        const observedMaximum =
-          Math.max(
-            10,
-            ...values
-          );
-
-        const majorStep =
-          activeGroup === 'rurality'
-            ? 20
-            : Math.max(
-                5,
-                niceStep(
-                  observedMaximum *
-                  1.08 /
-                  5
+              ? Math.max(
+                  maximum,
+                  row.value
                 )
-              );
-
-        return {
-          min: 0,
-          max:
-            activeGroup === 'rurality'
-              ? 100
-              : Math.max(
-                  majorStep * 5,
-                  Math.ceil(
-                    observedMaximum /
-                    majorStep
-                  ) *
-                  majorStep
-                ),
-          majorStep,
-          title:
-            '% of FTE job ads'
-        };
-      }
-
-      const values =
-        bundle
-          .flatMap(
-            series =>
-              series.trend.map(
-                point =>
-                  point.value
-              )
-          )
-          .filter(
-            Number.isFinite
-          );
-
-      const observedMaximum =
-        Math.max(
-          0.5,
-          ...values
+              : maximum,
+          0
         );
 
-      const majorStep =
+      const paddedMaximum =
+        maximumObserved > 0
+          ? maximumObserved *
+            1.06
+          : 30000000;
+
+      const step =
+        niceStep(
+          paddedMaximum /
+          CONFIG.scaleTargetIntervals
+        );
+
+      const max =
         Math.max(
-          0.5,
-          niceStep(
-            observedMaximum *
-            1.08 /
-            5
-          )
+          step,
+          Math.ceil(
+            paddedMaximum /
+            step
+          ) *
+          step
         );
 
       return {
-        min: 0,
-        max:
+        min:
+          0,
+        max,
+        step,
+        intervals:
           Math.max(
-            majorStep * 5,
-            Math.ceil(
-              observedMaximum /
-              majorStep
-            ) *
-            majorStep
-          ),
-        majorStep,
-        title:
-          'FTE job ads/month'
+            1,
+            Math.round(
+              max /
+              step
+            )
+          )
       };
     }
 
-    function yAxisTickTargets(config) {
-      const intervals =
-        Math.max(
-          1,
-          Math.round(
-            (
-              config.max -
-              config.min
-            ) /
-            config.majorStep
-          )
-        );
+    function trendGrowth() {
+      if (
+        !trendController ||
+        trendController.mode ===
+          'off'
+      ) {
+        return NaN;
+      }
 
-      return Array.from(
-        {
-          length:
-            intervals + 1
-        },
-        (
-          _,
-          index
-        ) =>
-          config.min +
-          config.majorStep *
-          index
+      return PFFCharts.latestConsecutiveTrend(
+        rows,
+        row =>
+          row.value,
+        trendController.windowSize
       );
     }
 
-    function animateYAxisTickValues(
-      targets,
-      duration = 420
-    ) {
-      const targetValues =
-        [...targets];
-
-      if (!targetValues.length) {
+    function updateAccessibleSummary() {
+      if (!chartSummary) {
         return;
       }
 
-      if (yAxisTickAnimation.raf) {
-        cancelAnimationFrame(
-          yAxisTickAnimation.raf
-        );
+      const latest =
+        rows.at(-1);
 
-        yAxisTickAnimation.raf =
-          null;
-      }
+      const growth =
+        trendGrowth();
 
-      const token =
-        ++yAxisTickAnimation.token;
-
-      const startValues =
-        yAxisTickAnimation.values.length ===
-        targetValues.length
-          ? [...yAxisTickAnimation.values]
-          : [...targetValues];
-
-      if (
-        PFF.reducedMotion() ||
-        duration <= 0
-      ) {
-        yAxisTickAnimation.values =
-          targetValues;
-
-        chart?.draw();
-        return;
-      }
-
-      const startedAt =
-        performance.now();
-
-      const frame = now => {
-        if (
-          token !==
-          yAxisTickAnimation.token
-        ) {
-          return;
-        }
-
-        const progress =
-          PFF.clamp(
-            (
-              now -
-              startedAt
-            ) /
-            duration,
-            0,
-            1
-          );
-
-        const eased =
-          PFFCharts.easeOutCubic(
-            progress
-          );
-
-        yAxisTickAnimation.values =
-          targetValues.map(
-            (
-              target,
-              index
-            ) =>
-              startValues[index] +
-              (
-                target -
-                startValues[index]
-              ) *
-              eased
-          );
-
-        chart?.draw();
-
-        if (progress < 1) {
-          yAxisTickAnimation.raf =
-            requestAnimationFrame(
-              frame
-            );
-        } else {
-          yAxisTickAnimation.raf =
-            null;
-
-          yAxisTickAnimation.values =
-            targetValues;
-        }
-      };
-
-      yAxisTickAnimation.raf =
-        requestAnimationFrame(
-          frame
-        );
-    }
-
-    function animateYAxisTitle(
-      nextTitle,
-      duration = 360
-    ) {
-      if (
-        yAxisTitleAnimation.to ===
-        nextTitle
-      ) {
-        return;
-      }
-
-      if (yAxisTitleAnimation.raf) {
-        cancelAnimationFrame(
-          yAxisTitleAnimation.raf
-        );
-
-        yAxisTitleAnimation.raf =
-          null;
-      }
-
-      yAxisTitleAnimation.from =
-        yAxisTitleAnimation.to;
-
-      yAxisTitleAnimation.to =
-        nextTitle;
-
-      yAxisTitleAnimation.progress =
-        0;
-
-      const token =
-        ++yAxisTitleAnimation.token;
-
-      if (
-        PFF.reducedMotion() ||
-        duration <= 0
-      ) {
-        yAxisTitleAnimation.progress =
-          1;
-
-        chart?.draw();
-        return;
-      }
-
-      const startedAt =
-        performance.now();
-
-      const frame = now => {
-        if (
-          token !==
-          yAxisTitleAnimation.token
-        ) {
-          return;
-        }
-
-        yAxisTitleAnimation.progress =
-          PFF.clamp(
-            (
-              now -
-              startedAt
-            ) /
-            duration,
-            0,
-            1
-          );
-
-        chart?.draw();
-
-        if (
-          yAxisTitleAnimation.progress <
-          1
-        ) {
-          yAxisTitleAnimation.raf =
-            requestAnimationFrame(
-              frame
-            );
-        } else {
-          yAxisTitleAnimation.raf =
-            null;
-        }
-      };
-
-      yAxisTitleAnimation.raf =
-        requestAnimationFrame(
-          frame
-        );
-    }
-
-    function formatYAxisValue(
-      value,
-      metric = activeMetric
-    ) {
-      if (!Number.isFinite(value)) {
-        return '';
-      }
-
-      if (metric === 'share') {
-        return `${Math.round(value)}%`;
-      }
-
-      return Number(value)
-        .toFixed(
-          Math.abs(value) < 10 &&
-          Math.abs(value % 1) > 1e-8
-            ? 1
-            : 0
+      const trendText =
+        Number.isFinite(
+          growth
         )
-        .replace(
-          /\.0$/,
-          ''
-        );
+          ? ` ${trendController.windowSize}-year trend ${growth >= 0 ? '+' : '−'}${Math.abs(growth).toFixed(1)}% per year.`
+          : '';
+
+      PFFCharts.updateChartSummary(
+        latest
+          ? `Australian population. Latest value ${PFF.formatInteger(latest.value)} in ${latest.year}.${trendText}`
+          : 'Australian population chart.',
+        chartSummary
+      );
     }
 
-    function drawYAxisTitle(
-      context,
-      chartArea
-    ) {
-      const progress =
-        PFF.clamp(
-          yAxisTitleAnimation.progress,
-          0,
-          1
-        );
+    function yScaleOptions() {
+      const scale =
+        populationScale();
 
-      const x =
-        Math.max(
-          PFF.mobileLayout()
-            ? 9
-            : 10,
-          chartArea.left -
-            (
-              PFF.mobileLayout()
-                ? 53
-                : 59
-            )
-        );
-
-      const y =
-        chartArea.top +
-        chartArea.height /
+      const halfStep =
+        scale.step /
         2;
 
-      const draw = (
-        text,
-        opacity
-      ) => {
-        if (
-          !text ||
-          opacity <= 0
-        ) {
-          return;
+      return PFFCharts.yScaleOptions(
+        scale,
+        {
+          border: {
+            display:
+              false
+          },
+
+          grid: {
+            display:
+              true,
+            drawOnChartArea:
+              true,
+            drawTicks:
+              true,
+            tickColor:
+              '#151515',
+            tickWidth:
+              1,
+            tickLength(context) {
+              const index =
+                context.index ??
+                0;
+
+              return index % 2 === 0
+                ? 5
+                : 2;
+            },
+            color(context) {
+              const index =
+                context.index ??
+                0;
+
+              return index % 2 === 0
+                ? 'rgba(105, 113, 138, 0.075)'
+                : 'rgba(105, 113, 138, 0.035)';
+            },
+            lineWidth(context) {
+              const index =
+                context.index ??
+                0;
+
+              return index % 2 === 0
+                ? 1
+                : 0.7;
+            }
+          },
+
+          ticks: {
+            display:
+              true,
+            autoSkip:
+              false,
+            stepSize:
+              halfStep,
+            color:
+              '#151515',
+            padding:
+              3,
+            font: {
+              family:
+                'Lato',
+              size:
+                PFF.mobileLayout()
+                  ? 10
+                  : 11,
+              weight:
+                '400'
+            },
+            callback(
+              value,
+              index
+            ) {
+              return index % 2 === 0
+                ? formatMillions(
+                    value
+                  )
+                : '';
+            }
+          },
+
+          title: {
+            display:
+              true,
+            text:
+              'Population',
+            color:
+              '#151515',
+            padding: {
+              bottom:
+                4
+            },
+            font: {
+              family:
+                'Lato',
+              size:
+                PFF.mobileLayout()
+                  ? 12
+                  : 13,
+              weight:
+                '700'
+            }
+          }
         }
-
-        context.save();
-        context.globalAlpha =
-          opacity;
-        context.translate(
-          x,
-          y
-        );
-        context.rotate(
-          -Math.PI /
-          2
-        );
-        context.fillStyle =
-          '#151515';
-        context.textAlign =
-          'center';
-        context.textBaseline =
-          'middle';
-        context.font =
-          `700 ${PFF.mobileLayout() ? 12 : 13}px Lato, sans-serif`;
-        context.fillText(
-          text,
-          0,
-          0
-        );
-        context.restore();
-      };
-
-      if (
-        yAxisTitleAnimation.from ===
-          yAxisTitleAnimation.to ||
-        progress >= 1
-      ) {
-        draw(
-          yAxisTitleAnimation.to,
-          1
-        );
-        return;
-      }
-
-      draw(
-        yAxisTitleAnimation.from,
-        PFF.clamp(
-          1 -
-          progress *
-          2.2,
-          0,
-          1
-        )
-      );
-
-      draw(
-        yAxisTitleAnimation.to,
-        PFF.clamp(
-          (
-            progress -
-            0.32
-          ) /
-          0.68,
-          0,
-          1
-        )
       );
     }
 
-    function tooltipTitle(items) {
-      const raw =
-        items?.[0]?.raw;
-
-      return Number.isFinite(
-        raw?.x
-      )
-        ? raw.periodLabel || ''
-        : '';
-    }
-
-    function tooltipLabel(context) {
-      const value =
-        Number(
-          context.raw?.value
-        );
-
-      if (!Number.isFinite(value)) {
-        return '';
-      }
-
-      const label =
-        context.dataset?._seriesLabel ||
-        '';
-
-      if (activeMetric === 'share') {
-        return (
-          `${label}: ` +
-          `${value.toFixed(1)}% · ` +
-          '13-week average'
-        );
-      }
-
-      return (
-        `${label}: ` +
-        `${value.toFixed(1)} FTE ads/month · ` +
-        '13-week average'
-      );
-    }
-
-    function drawChartNote(
-      context,
-      area,
-      text
-    ) {
-      if (!text) {
-        return;
-      }
-
-      context.save();
-      context.font =
-        '400 8.5px Lato, sans-serif';
-      context.textBaseline =
-        'middle';
-      context.textAlign =
-        'left';
-
-      const maximumTextWidth =
-        Math.max(
-          90,
-          Math.min(
-            235,
-            area.right -
-            area.left -
-            20
-          )
-        );
-
-      const words =
-        text.split(/\s+/);
-
-      const lines = [];
-      let line = '';
-
-      words.forEach(word => {
-        const candidate =
-          line
-            ? `${line} ${word}`
-            : word;
-
-        if (
-          line &&
-          context.measureText(
-            candidate
-          ).width >
-          maximumTextWidth
-        ) {
-          lines.push(line);
-          line = word;
-        } else {
-          line = candidate;
+    const yearTickPlugin =
+      PFFCharts.createYearTickMarksPlugin({
+        id:
+          'populationYearTicks',
+        isMajor(value) {
+          return (
+            Number.isFinite(
+              Number(
+                value
+              )
+            ) &&
+            Number(
+              value
+            ) % 2 === 0
+          );
         }
       });
-
-      if (line) {
-        lines.push(line);
-      }
-
-      const paddingX = 5;
-      const paddingY = 4;
-      const lineHeight = 11;
-
-      const textWidth =
-        Math.max(
-          ...lines.map(
-            item =>
-              context.measureText(
-                item
-              ).width
-          )
-        );
-
-      const boxWidth =
-        textWidth +
-        paddingX * 2;
-
-      const boxHeight =
-        lines.length *
-        lineHeight +
-        paddingY * 2;
-
-      const x =
-        area.right -
-        boxWidth -
-        6;
-
-      const y =
-        area.bottom -
-        boxHeight -
-        6;
-
-      const radius = 4;
-
-      context.beginPath();
-      context.moveTo(
-        x + radius,
-        y
-      );
-      context.lineTo(
-        x + boxWidth - radius,
-        y
-      );
-      context.quadraticCurveTo(
-        x + boxWidth,
-        y,
-        x + boxWidth,
-        y + radius
-      );
-      context.lineTo(
-        x + boxWidth,
-        y + boxHeight - radius
-      );
-      context.quadraticCurveTo(
-        x + boxWidth,
-        y + boxHeight,
-        x + boxWidth - radius,
-        y + boxHeight
-      );
-      context.lineTo(
-        x + radius,
-        y + boxHeight
-      );
-      context.quadraticCurveTo(
-        x,
-        y + boxHeight,
-        x,
-        y + boxHeight - radius
-      );
-      context.lineTo(
-        x,
-        y + radius
-      );
-      context.quadraticCurveTo(
-        x,
-        y,
-        x + radius,
-        y
-      );
-      context.closePath();
-
-      context.fillStyle =
-        'rgba(255, 255, 255, 0.84)';
-      context.fill();
-
-      context.strokeStyle =
-        'rgba(105, 113, 138, 0.16)';
-      context.lineWidth = 1;
-      context.stroke();
-
-      context.fillStyle =
-        'rgba(105, 113, 138, 0.88)';
-
-      lines.forEach(
-        (
-          item,
-          index
-        ) => {
-          context.fillText(
-            item,
-            x + paddingX,
-            y +
-              paddingY +
-              lineHeight * index +
-              lineHeight / 2
-          );
-        }
-      );
-
-      context.restore();
-    }
-
-    const locationYAxisPlugin = {
-      id:
-        'locationYAxisPlugin',
-
-      beforeDatasetsDraw(
-        activeChart
-      ) {
-        const {
-          ctx,
-          chartArea
-        } = activeChart;
-
-        if (!chartArea) {
-          return;
-        }
-
-        const config =
-          currentYAxis();
-
-        const targets =
-          yAxisTickTargets(config);
-
-        const intervals =
-          Math.max(
-            1,
-            targets.length - 1
-          );
-
-        ctx.save();
-
-        for (
-          let index = 1;
-          index <= intervals;
-          index += 1
-        ) {
-          const ratio =
-            index /
-            intervals;
-
-          const y =
-            chartArea.bottom -
-            chartArea.height *
-            ratio;
-
-          ctx.beginPath();
-          ctx.moveTo(
-            chartArea.left,
-            Math.round(y) + 0.5
-          );
-          ctx.lineTo(
-            chartArea.right,
-            Math.round(y) + 0.5
-          );
-          ctx.strokeStyle =
-            'rgba(105, 113, 138, 0.075)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-        }
-
-        for (
-          let index = 0;
-          index < intervals;
-          index += 1
-        ) {
-          const ratio =
-            (
-              index +
-              0.5
-            ) /
-            intervals;
-
-          const y =
-            chartArea.bottom -
-            chartArea.height *
-            ratio;
-
-          ctx.beginPath();
-          ctx.moveTo(
-            chartArea.left,
-            Math.round(y) + 0.5
-          );
-          ctx.lineTo(
-            chartArea.right,
-            Math.round(y) + 0.5
-          );
-          ctx.strokeStyle =
-            'rgba(105, 113, 138, 0.035)';
-          ctx.lineWidth = 0.7;
-          ctx.stroke();
-        }
-
-        ctx.restore();
-      },
-
-      afterDraw(
-        activeChart
-      ) {
-        const {
-          ctx,
-          chartArea
-        } = activeChart;
-
-        if (!chartArea) {
-          return;
-        }
-
-        const config =
-          currentYAxis();
-
-        const targets =
-          yAxisTickTargets(config);
-
-        const values =
-          yAxisTickAnimation.values.length ===
-          targets.length
-            ? yAxisTickAnimation.values
-            : targets;
-
-        const intervals =
-          Math.max(
-            1,
-            targets.length - 1
-          );
-
-        ctx.save();
-        ctx.lineCap =
-          'butt';
-        ctx.strokeStyle =
-          '#151515';
-        ctx.lineWidth = 1;
-        ctx.fillStyle =
-          '#151515';
-        ctx.textAlign =
-          'right';
-        ctx.textBaseline =
-          'middle';
-        ctx.font =
-          '12px Lato, sans-serif';
-
-        for (
-          let index = 0;
-          index <= intervals;
-          index += 1
-        ) {
-          const ratio =
-            index /
-            intervals;
-
-          const y =
-            chartArea.bottom -
-            chartArea.height *
-            ratio;
-
-          ctx.beginPath();
-          ctx.moveTo(
-            chartArea.left,
-            Math.round(y) + 0.5
-          );
-          ctx.lineTo(
-            chartArea.left - 5,
-            Math.round(y) + 0.5
-          );
-          ctx.stroke();
-
-          ctx.fillText(
-            formatYAxisValue(
-              Number(values[index]),
-              activeMetric
-            ),
-            chartArea.left - 8,
-            y
-          );
-        }
-
-        ctx.strokeStyle =
-          '#69718a';
-        ctx.globalAlpha = 0.60;
-        ctx.lineWidth = 0.7;
-
-        for (
-          let index = 0;
-          index < intervals;
-          index += 1
-        ) {
-          const ratio =
-            (
-              index +
-              0.5
-            ) /
-            intervals;
-
-          const y =
-            chartArea.bottom -
-            chartArea.height *
-            ratio;
-
-          ctx.beginPath();
-          ctx.moveTo(
-            chartArea.left,
-            Math.round(y) + 0.5
-          );
-          ctx.lineTo(
-            chartArea.left - 2,
-            Math.round(y) + 0.5
-          );
-          ctx.stroke();
-        }
-
-        ctx.restore();
-
-        drawYAxisTitle(
-          ctx,
-          chartArea
-        );
-      }
-    };
-
-    const sourceMilestonePlugin = {
-      id:
-        'sourceMilestonePlugin',
-
-      afterDatasetsDraw(
-        activeChart
-      ) {
-        const xScale =
-          activeChart.scales.x;
-
-        const area =
-          activeChart.chartArea;
-
-        if (
-          !xScale ||
-          !area
-        ) {
-          return;
-        }
-
-        const context =
-          activeChart.ctx;
-
-        const events = [
-          {
-            date:
-              Date.UTC(
-                2025,
-                11,
-                1
-              ),
-            label:
-              'EssilorLuxottica jobs added'
-          },
-          {
-            date:
-              Date.UTC(
-                2026,
-                6,
-                1
-              ),
-            label:
-              'Indeed jobs added'
-          }
-        ];
-
-        context.save();
-        context.fillStyle =
-          'rgba(105, 113, 138, 0.76)';
-        context.font =
-          '400 9px Lato, sans-serif';
-        context.textAlign =
-          'left';
-        context.textBaseline =
-          'top';
-
-        const seekEnd =
-          Date.UTC(
-            2025,
-            11,
-            1
-          );
-
-        if (xScale.min < seekEnd) {
-          context.fillText(
-            'SEEK jobs only',
-            area.left + 4,
-            area.top + 5
-          );
-        }
-
-        events.forEach(event => {
-          const x =
-            xScale.getPixelForValue(
-              event.date
-            );
-
-          if (
-            x < area.left ||
-            x > area.right
-          ) {
-            return;
-          }
-
-          context.save();
-          context.beginPath();
-          context.setLineDash([
-            4,
-            4
-          ]);
-          context.strokeStyle =
-            'rgba(105, 113, 138, 0.26)';
-          context.lineWidth = 1;
-          context.moveTo(
-            x,
-            area.top
-          );
-          context.lineTo(
-            x,
-            area.bottom
-          );
-          context.stroke();
-          context.setLineDash([]);
-          context.translate(
-            x + 5,
-            area.top +
-              Math.min(
-                122,
-                area.height * 0.52
-              )
-          );
-          context.rotate(
-            -Math.PI /
-            2
-          );
-          context.fillStyle =
-            'rgba(105, 113, 138, 0.58)';
-          context.font =
-            '400 9px Lato, sans-serif';
-          context.textAlign =
-            'left';
-          context.textBaseline =
-            'middle';
-          context.fillText(
-            event.label,
-            0,
-            0
-          );
-          context.restore();
-        });
-
-        context.restore();
-
-        if (
-          getExcludedGroupCount(
-            activeGroup
-          ) > 0
-        ) {
-          drawChartNote(
-            context,
-            area,
-            'Groups with <20 job ads excluded'
-          );
-        }
-      }
-    };
 
     const axisSpinesPlugin =
       PFFCharts.createAxisSpinesPlugin({
         id:
-          'labourLocationAxisSpines'
+          'populationAxisSpines',
+        lineWidth:
+          1.1
       });
 
-    function makeDatasetSlots() {
-      return Array.from(
-        {
-          length:
-            SERIES_SLOT_COUNT
-        },
-        (
-          _,
-          slot
-        ) =>
-          PFFCharts.lineDataset({
-            label:
-              '',
-            _seriesLabel:
-              '',
-            _slot:
-              slot,
-            _activeSeries:
-              false,
-            data:
-              [],
-            parsing:
-              false,
-            borderWidth:
-              CONFIG.trendWidth,
-            pointRadius:
-              0,
-            pointHoverRadius:
-              0,
-            pointHitRadius:
-              PFF.mobileLayout()
-                ? 9
-                : 5,
-            tension:
-              0.28,
-            cubicInterpolationMode:
-              'monotone',
-            order:
-              10,
-            hidden:
-              true
-          })
-      );
-    }
+    const trendLabelsPlugin =
+      PFFCharts.createTrendLabelsPlugin({
+        id:
+          'populationTrendLabels',
 
-    function syncDatasets(bundle) {
-      const colours =
-        groupColours();
-
-      const hidden =
-        hiddenSeriesSet();
-
-      for (
-        let slot = 0;
-        slot < SERIES_SLOT_COUNT;
-        slot += 1
-      ) {
-        const series =
-          bundle[slot] ||
-          null;
-
-        const dataset =
-          chart.data.datasets[slot];
-
-        const colour =
-          colours[slot] ||
-          '#69718a';
-
-        const visible =
-          Boolean(series) &&
-          !hidden.has(
-            series.label
+        enabled() {
+          return (
+            trendController?.mode !==
+              'off' &&
+            !seriesHidden
           );
+        },
 
-        dataset.label =
-          series?.label ||
-          '';
+        isActive({
+          dataset,
+          meta
+        }) {
+          return (
+            dataset?._activeSeries !==
+              false &&
+            !meta?.hidden
+          );
+        },
 
-        dataset._seriesLabel =
-          series?.label ||
-          '';
+        getTrendValue() {
+          return trendGrowth();
+        },
 
-        dataset._activeSeries =
-          visible;
+        getSeriesColour() {
+          return AUSTRALIA_COLOUR;
+        },
 
-        dataset.data =
-          series?.trend ||
-          [];
+        formatValue(value) {
+          return `${Math.abs(value).toFixed(1)}% p.a.`;
+        }
+      });
 
-        dataset.borderColor =
-          colour;
+    function buildDataset() {
+      return PFFCharts.lineDataset({
+        label:
+          'Australia',
 
-        dataset.backgroundColor =
-          colour;
+        _seriesLabel:
+          'Australia',
 
-        dataset.pointBackgroundColor =
-          colour;
+        _activeSeries:
+          !seriesHidden,
 
-        dataset.hidden =
-          !visible;
+        data:
+          rows.map(
+            row =>
+              row.value
+          ),
 
-        chart.setDatasetVisibility(
-          slot,
-          visible
-        );
-      }
+        borderColor:
+          AUSTRALIA_COLOUR,
+
+        backgroundColor:
+          AUSTRALIA_COLOUR,
+
+        pointBackgroundColor:
+          AUSTRALIA_COLOUR,
+
+        pointBorderColor:
+          '#ffffff',
+
+        borderWidth:
+          3,
+
+        pointRadius:
+          0,
+
+        pointHoverRadius:
+          4,
+
+        pointHitRadius:
+          PFF.mobileLayout()
+            ? 9
+            : 5,
+
+        pointBorderWidth:
+          1,
+
+        cubicInterpolationMode:
+          'monotone',
+
+        hidden:
+          seriesHidden
+      });
     }
 
     function createChart() {
-      const bundle =
-        seriesBundle();
-
-      const axis =
-        currentYAxis(bundle);
-
-      yAxisTickAnimation.values =
-        yAxisTickTargets(axis);
-
-      yAxisTitleAnimation.from =
-        axis.title;
-
-      yAxisTitleAnimation.to =
-        axis.title;
-
-      yAxisTitleAnimation.progress =
-        1;
+      const scale =
+        populationScale();
 
       const options =
         PFFCharts.baseChartOptions({
-          animations: {
-            x: {
-              duration: 0
-            },
-            colors: {
-              duration: 0
-            }
-          },
-
           plugins: {
             tooltip:
               PFFCharts.tooltipOptions({
                 displayColors:
-                  true,
+                  false,
                 callbacks: {
-                  title:
-                    tooltipTitle,
-                  label:
-                    tooltipLabel
+                  title(items) {
+                    const index =
+                      items?.[0]?.dataIndex;
+
+                    return Number.isInteger(
+                      index
+                    )
+                      ? String(
+                          rows?.[index]?.year ??
+                          ''
+                        )
+                      : '';
+                  },
+
+                  label(context) {
+                    const value =
+                      Number(
+                        context.raw
+                      );
+
+                    const valueText =
+                      `Australia: ${PFF.formatInteger(value)}`;
+
+                    const growth =
+                      trendGrowth();
+
+                    if (
+                      !Number.isFinite(
+                        growth
+                      )
+                    ) {
+                      return valueText;
+                    }
+
+                    const sign =
+                      growth > 0
+                        ? '+'
+                        : growth < 0
+                          ? '−'
+                          : '';
+
+                    return `${valueText} · ${sign}${Math.abs(growth).toFixed(1)}% p.a.`;
+                  }
                 }
               })
           },
 
           scales: {
-            x: {
-              type:
-                'linear',
+            x:
+              PFFCharts.xYearScaleOptions({
+                ticks: {
+                  callback(value) {
+                    const label =
+                      this.getLabelForValue(
+                        value
+                      );
 
-              min:
-                axisBounds.xMin,
+                    const year =
+                      Number(
+                        label
+                      );
 
-              max:
-                axisBounds.xMax,
-
-              bounds:
-                'data',
-
-              afterBuildTicks(scale) {
-                let firstTickMonth =
-                  startOfUtcMonth(
-                    new Date(
-                      scale.min
+                    return (
+                      Number.isFinite(
+                        year
+                      ) &&
+                      year % 2 === 0
                     )
-                  );
-
-                if (
-                  firstTickMonth.getTime() <
-                  scale.min
-                ) {
-                  firstTickMonth =
-                    addUtcMonths(
-                      firstTickMonth,
-                      1
-                    );
+                      ? String(
+                          year
+                        )
+                      : '';
+                  }
                 }
-
-                scale.ticks =
-                  buildMonthTicks(
-                    firstTickMonth.getTime(),
-                    axisBounds.lastDataMonth
-                  );
-              },
-
-              border: {
-                display:
-                  false
-              },
-
-              grid: {
-                drawOnChartArea:
-                  false,
-                drawTicks:
-                  true,
-                tickColor:
-                  '#151515',
-                tickLength(context) {
-                  return isQuarterTick(
-                    context.tick?.value
-                  )
-                    ? 6
-                    : 2;
-                }
-              },
-
-              ticks: {
-                color:
-                  '#151515',
-                autoSkip:
-                  false,
-                font: {
-                  family:
-                    'Lato',
-                  size:
-                    PFF.mobileLayout()
-                      ? 9
-                      : 10,
-                  weight:
-                    '400'
-                },
-                maxRotation:
-                  0,
-                minRotation:
-                  0,
-                padding:
-                  3,
-                callback(value) {
-                  return formatQuarterTick(
-                    value
-                  );
-                }
-              },
-
-              title: {
-                display:
-                  true,
-                text:
-                  'Date advertised',
-                color:
-                  '#151515',
-                padding: {
-                  top:
-                    7
-                },
-                font: {
-                  family:
-                    'Lato',
-                  size:
-                    PFF.mobileLayout()
-                      ? 12
-                      : 13,
-                  weight:
-                    '700'
-                }
-              }
-            },
+              }),
 
             y:
-              PFFCharts.yScaleOptions({
-                min:
-                  axis.min,
-                max:
-                  axis.max,
-                step:
-                  axis.majorStep,
-                intervals:
-                  Math.max(
-                    1,
-                    Math.round(
-                      (
-                        axis.max -
-                        axis.min
-                      ) /
-                      axis.majorStep
-                    )
-                  )
-              })
+              yScaleOptions()
           }
         });
 
@@ -2752,246 +922,50 @@
             type:
               'line',
             data: {
-              datasets:
-                makeDatasetSlots()
+              labels:
+                rows.map(
+                  row =>
+                    String(
+                      row.year
+                    )
+                ),
+              datasets: [
+                buildDataset()
+              ]
             },
             options,
             plugins: [
-              locationYAxisPlugin,
-              sourceMilestonePlugin,
+              trendLabelsPlugin,
+              yearTickPlugin,
               axisSpinesPlugin
             ]
           }
         );
 
-      syncDatasets(bundle);
-      chart.update('none');
-      updateAccessibleSummary();
-    }
-
-    function renderChart(
-      reason = 'view'
-    ) {
-      if (!chart) {
-        return;
-      }
-
-      const bundle =
-        seriesBundle();
-
-      const axis =
-        currentYAxis(bundle);
-
-      syncDatasets(bundle);
-
-      chart.options.scales.x.min =
-        axisBounds.xMin;
-
-      chart.options.scales.x.max =
-        axisBounds.xMax;
-
       chart.options.scales.y.min =
-        axis.min;
+        scale.min;
 
       chart.options.scales.y.max =
-        axis.max;
-
-      const duration =
-        reason === 'legend'
-          ? (
-              PFF.reducedMotion()
-                ? 0
-                : 260
-            )
-          : PFFCharts.chartAnimationDuration();
-
-      chart.options.animation.duration =
-        duration;
-
-      chart.options.animation.easing =
-        'easeInOutCubic';
-
-      chart.options.animations.x.duration =
-        0;
-
-      chart.options.animations.y.duration =
-        duration;
-
-      chart.options.animations.y.easing =
-        'easeInOutCubic';
-
-      chart.options.animations.colors.duration =
-        0;
+        scale.max;
 
       chart.update(
-        duration > 0
-          ? undefined
-          : 'none'
-      );
-
-      animateYAxisTickValues(
-        yAxisTickTargets(axis),
-        Math.min(
-          duration,
-          420
-        )
-      );
-
-      animateYAxisTitle(
-        axis.title,
-        Math.min(
-          duration,
-          360
-        )
+        'none'
       );
 
       updateAccessibleSummary();
-    }
-
-    function headingDetailText() {
-      return (
-        `\u00a0${activeGroup === 'state' ? 'state' : 'rurality'}` +
-        (
-          activeMetric === 'share'
-            ? ' (%)'
-            : ''
-        )
-      );
-    }
-
-    function updateHeading() {
-      PFF.animateHeading({
-        fixed:
-          chartHeadingFixed,
-        detail:
-          chartHeadingDetail,
-        fixedText:
-          'FTE job ads by',
-        detailText:
-          headingDetailText(),
-        duration:
-          PFF.defaults.microTransitionMs
-      });
-
-      headingScrollViewport.scrollLeft =
-        0;
-
-      requestAnimationFrame(
-        () =>
-          headingScroller?.update()
-      );
-    }
-
-    function legendItems() {
-      const labels =
-        groupLabels();
-
-      const colours =
-        groupColours();
-
-      const hidden =
-        hiddenSeriesSet();
-
-      return labels.map(
-        (
-          label,
-          index
-        ) => ({
-          datasetIndex:
-            index,
-          label,
-          colour:
-            colours[index],
-          active:
-            !hidden.has(label)
-        })
-      );
-    }
-
-    function updateAccessibleSummary() {
-      if (!chartSummary) {
-        return;
-      }
-
-      const hidden =
-        hiddenSeriesSet();
-
-      const visibleSeries =
-        seriesBundle()
-          .filter(
-            series =>
-              !hidden.has(
-                series.label
-              )
-          );
-
-      const latestText =
-        visibleSeries
-          .map(series => {
-            const latest =
-              [...series.trend]
-                .reverse()
-                .find(
-                  point =>
-                    Number.isFinite(
-                      point?.value
-                    )
-                );
-
-            if (!latest) {
-              return null;
-            }
-
-            return activeMetric === 'share'
-              ? `${series.label} ${latest.value.toFixed(1)}%`
-              : `${series.label} ${latest.value.toFixed(1)} FTE ads per month`;
-          })
-          .filter(Boolean)
-          .join(', ');
-
-      const excluded =
-        getExcludedGroupCount(
-          activeGroup
-        );
-
-      PFFCharts.updateChartSummary(
-        `Labour demand by ${activeGroup === 'state' ? 'state' : 'rurality'}, ` +
-        `${activeMetric === 'share' ? 'percentage share' : 'FTE job ads per month'} using a 13-week trailing average. ` +
-        `${latestText || 'No visible series.'}` +
-        `${excluded > 0 ? ` ${excluded} small group${excluded === 1 ? '' : 's'} with fewer than ${CONFIG.minimumGroupSize} job ads excluded.` : ''}`,
-        chartSummary
-      );
     }
 
     function setupControls() {
       tabsController =
         PFF.setupTabs({
           tabList,
-          tabs:
-            chartTabs,
+          tabs: [
+            populationTab
+          ],
           valueAttribute:
-            'group',
+            'view',
           initialValue:
-            activeGroup,
-          leftButton:
-            tabScrollLeft,
-          rightButton:
-            tabScrollRight,
-          onChange(nextGroup) {
-            if (
-              !nextGroup ||
-              nextGroup === activeGroup
-            ) {
-              return;
-            }
-
-            activeGroup =
-              nextGroup;
-
-            updateHeading();
-            legendController?.render();
-            renderChart('view');
-          }
+            'population'
         });
 
       headingScroller =
@@ -3004,29 +978,15 @@
             headingScrollRight
         });
 
-      metricController =
-        PFF.setupMetricSwitch({
-          element:
-            metricSwitch,
-          buttons:
-            metricButtons,
-          valueAttribute:
-            'metric',
-          initialValue:
-            activeMetric,
-          onChange(nextMetric) {
-            if (
-              !nextMetric ||
-              nextMetric === activeMetric
-            ) {
-              return;
-            }
-
-            activeMetric =
-              nextMetric;
-
-            updateHeading();
-            renderChart('view');
+      trendController =
+        PFFCharts.setupTrendToggle({
+          button:
+            yoyTrendToggle,
+          initialMode:
+            '3yr',
+          onChange() {
+            chart?.draw();
+            updateAccessibleSummary();
           }
         });
 
@@ -3034,56 +994,54 @@
         PFFCharts.setupLegend({
           legend:
             chartLegend,
-          leftButton:
-            legendScrollLeft,
-          rightButton:
-            legendScrollRight,
           getChart() {
             return chart;
           },
-          getItems:
-            legendItems,
+          getItems() {
+            return [
+              {
+                datasetIndex:
+                  0,
+                label:
+                  'Australia',
+                colour:
+                  AUSTRALIA_COLOUR,
+                active:
+                  !seriesHidden
+              }
+            ];
+          },
           updateMode:
-            PFF.reducedMotion()
-              ? 'none'
-              : undefined,
+            'none',
           onToggle({
-            visible,
-            item
+            visible
           }) {
-            const hidden =
-              hiddenSeriesSet();
+            seriesHidden =
+              !visible;
 
-            if (visible) {
-              hidden.delete(
-                item.label
-              );
-            } else {
-              hidden.add(
-                item.label
-              );
+            if (
+              chart?.data?.datasets?.[0]
+            ) {
+              chart.data.datasets[0]._activeSeries =
+                visible;
             }
 
             updateAccessibleSummary();
           }
         });
 
-      chartCanvas.addEventListener(
-        'contextmenu',
-        event =>
-          event.preventDefault()
-      );
-
-      chartCanvas.addEventListener(
-        'selectstart',
-        event =>
-          event.preventDefault()
-      );
+      interactionsController =
+        PFFCharts.setupChartInteractions({
+          canvas:
+            chartCanvas,
+          getChart() {
+            return chart;
+          }
+        });
     }
 
     migrateLegacyLocalCache();
     setupControls();
-    updateHeading();
 
     PFF.initialiseApp({
       app,
@@ -3093,26 +1051,20 @@
       loadLive() {
         return PFFCharts.loadGVizSheet({
           sheetId:
-            CONFIG.jobSheetId,
+            CONFIG.sheetId,
           sheetName:
-            CONFIG.jobSheetName,
+            CONFIG.sheetName,
           range:
-            CONFIG.jobRange,
+            CONFIG.range,
           headers:
-            '0',
+            '1',
           timeoutMs:
-            CONFIG.fetchTimeoutMs,
-          query:
-            'select *'
+            CONFIG.fetchTimeoutMs
         });
       },
 
-      parseLive(table) {
-        return normaliseRows(
-          table?.rows ||
-          []
-        );
-      },
+      parseLive:
+        parsePopulationTable,
 
       loadRemoteCache() {
         return PFFCharts.loadAppsScriptCache({
@@ -3132,18 +1084,18 @@
         CONFIG.localCacheKey,
 
       minRows:
-        1,
+        3,
 
       onLiveError(error) {
         console.warn(
-          'Live labour location data unavailable; trying Apps Script cache.',
+          'Live Australian population data unavailable; trying Apps Script cache.',
           error
         );
       },
 
       onRemoteCacheError(error) {
         console.warn(
-          'Apps Script labour location cache unavailable; trying browser cache.',
+          'Apps Script Australian population cache unavailable; trying browser cache.',
           error
         );
       },
@@ -3157,11 +1109,8 @@
 
       render(loaded) {
         rows =
-          loaded.rows;
-
-        axisBounds =
-          calculateAxisBounds(
-            rows
+          normalisePopulationRows(
+            loaded.rows
           );
 
         chartSummary =
@@ -3169,7 +1118,7 @@
             canvas:
               chartCanvas,
             id:
-              'labourLocationSummary'
+              'populationChartSummary'
           });
 
         createChart();
@@ -3196,7 +1145,7 @@
       },
 
       errorMessage:
-        'Labour demand location data unavailable.'
+        'Australian population data unavailable.'
     });
   </script>
 </body>
