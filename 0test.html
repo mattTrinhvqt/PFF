@@ -9,10 +9,6 @@
   <script src="./assets/pff_chart_core.js"></script>
 
   <style>
-    :root {
-      --population-green: #0b5d1e;
-    }
-
     .chart-options-row {
       min-height: 28px;
       padding-bottom: 2px;
@@ -70,7 +66,7 @@
       <div id="status" role="status" aria-live="polite"></div>
 
       <div class="chart-heading-row">
-        <div class="heading-scroll-shell">
+        <div id="headingScrollShell" class="heading-scroll-shell">
           <button
             id="headingScrollLeft"
             class="heading-scroll-button heading-scroll-left is-hidden"
@@ -79,7 +75,7 @@
           >‹</button>
 
           <div id="headingScrollViewport" class="heading-scroll-viewport">
-            <h2 class="chart-heading">Australian population</h2>
+            <h2 id="chartHeading" class="chart-heading">Australian population</h2>
           </div>
 
           <button
@@ -140,12 +136,6 @@
       // A = Year; J = Australia.
       range:
         'A30:J',
-
-      fetchTimeoutMs:
-        15000,
-
-      cacheFetchTimeoutMs:
-        10000,
 
       localCacheKey:
         'pff-australian-population-trends-v1',
@@ -214,6 +204,15 @@
     let responsiveController = null;
 
     function populationNumber(cell) {
+      if (
+        !cell ||
+        cell.v === null ||
+        cell.v === undefined ||
+        cell.v === ''
+      ) {
+        return NaN;
+      }
+
       const direct =
         PFFCharts.numericCell(
           cell
@@ -229,12 +228,20 @@
 
       const cleaned =
         PFF.cleanText(
-          cell?.f ??
-          cell?.v ??
-          ''
+          cell.f ??
+          cell.v
         )
           .replace(/,/g, '')
           .replace(/[^\d.-]/g, '');
+
+      if (
+        !cleaned ||
+        !/\d/.test(
+          cleaned
+        )
+      ) {
+        return NaN;
+      }
 
       const number =
         Number(
@@ -255,32 +262,46 @@
           : []
       )
         .map(row => {
-          if (
-            Array.isArray(
-              row
-            )
-          ) {
-            return {
-              year:
-                Number(
-                  row?.[0]
-                ),
-              value:
-                Number(
-                  row?.[1]
-                )
-            };
-          }
+          const rawYear =
+            Array.isArray(row)
+              ? row?.[0]
+              : row?.year;
+
+          const rawValue =
+            Array.isArray(row)
+              ? row?.[1]
+              : row?.value;
+
+          const yearText =
+            PFF.cleanText(
+              rawYear
+            );
+
+          const valueText =
+            PFF.cleanText(
+              rawValue
+            );
 
           return {
             year:
-              Number(
-                row?.year
-              ),
+              yearText
+                ? Number(
+                    yearText.replace(
+                      /,/g,
+                      ''
+                    )
+                  )
+                : NaN,
+
             value:
-              Number(
-                row?.value
-              )
+              valueText
+                ? Number(
+                    valueText.replace(
+                      /,/g,
+                      ''
+                    )
+                  )
+                : NaN
           };
         })
         .filter(
@@ -300,6 +321,7 @@
             Math.round(
               row.year
             ),
+
           value:
             row.value
         }))
@@ -412,7 +434,7 @@
           number
         )
       ) {
-        return '';
+        return '—';
       }
 
       if (
@@ -423,23 +445,11 @@
         return '0';
       }
 
-      const millions =
-        number /
-        1000000;
-
-      const rounded =
-        Math.round(
-          millions *
-          10
-        ) /
-        10;
-
       return `${
-        Number.isInteger(
-          rounded
+        PFF.formatOneDecimal(
+          number /
+          1000000
         )
-          ? rounded.toFixed(0)
-          : rounded.toFixed(1)
       }m`;
     }
 
@@ -661,9 +671,7 @@
               family:
                 'Lato',
               size:
-                PFF.mobileLayout()
-                  ? 10
-                  : 11,
+                12,
               weight:
                 '400'
             },
@@ -708,27 +716,13 @@
     const yearTickPlugin =
       PFFCharts.createYearTickMarksPlugin({
         id:
-          'populationYearTicks',
-        isMajor(value) {
-          return (
-            Number.isFinite(
-              Number(
-                value
-              )
-            ) &&
-            Number(
-              value
-            ) % 2 === 0
-          );
-        }
+          'populationYearTicks'
       });
 
     const axisSpinesPlugin =
       PFFCharts.createAxisSpinesPlugin({
         id:
-          'populationAxisSpines',
-        lineWidth:
-          1.1
+          'populationAxisSpines'
       });
 
     const trendLabelsPlugin =
@@ -739,32 +733,12 @@
         enabled() {
           return (
             trendController?.mode !==
-              'off' &&
-            !seriesHidden
-          );
-        },
-
-        isActive({
-          dataset,
-          meta
-        }) {
-          return (
-            dataset?._activeSeries !==
-              false &&
-            !meta?.hidden
+            'off'
           );
         },
 
         getTrendValue() {
           return trendGrowth();
-        },
-
-        getSeriesColour() {
-          return AUSTRALIA_COLOUR;
-        },
-
-        formatValue(value) {
-          return `${Math.abs(value).toFixed(1)}% p.a.`;
         }
       });
 
@@ -785,34 +759,20 @@
               row.value
           ),
 
-        borderColor:
-          AUSTRALIA_COLOUR,
-
-        backgroundColor:
-          AUSTRALIA_COLOUR,
-
-        pointBackgroundColor:
+        colour:
           AUSTRALIA_COLOUR,
 
         pointBorderColor:
           '#ffffff',
 
-        borderWidth:
-          3,
-
-        pointRadius:
-          0,
-
-        pointHoverRadius:
-          4,
-
-        pointHitRadius:
-          PFF.mobileLayout()
-            ? 9
-            : 5,
-
         pointBorderWidth:
           1,
+
+        borderCapStyle:
+          'round',
+
+        borderJoinStyle:
+          'round',
 
         cubicInterpolationMode:
           'monotone',
@@ -823,62 +783,56 @@
     }
 
     function createChart() {
-      const scale =
-        populationScale();
-
       const options =
         PFFCharts.baseChartOptions({
           plugins: {
-            tooltip:
-              PFFCharts.tooltipOptions({
-                displayColors:
-                  false,
-                callbacks: {
-                  title(items) {
-                    const index =
-                      items?.[0]?.dataIndex;
+            tooltip: {
+              callbacks: {
+                title(items) {
+                  const index =
+                    items?.[0]?.dataIndex;
 
-                    return Number.isInteger(
-                      index
-                    )
-                      ? String(
-                          rows?.[index]?.year ??
-                          ''
-                        )
-                      : '';
-                  },
-
-                  label(context) {
-                    const value =
-                      Number(
-                        context.raw
-                      );
-
-                    const valueText =
-                      `Australia: ${PFF.formatInteger(value)}`;
-
-                    const growth =
-                      trendGrowth();
-
-                    if (
-                      !Number.isFinite(
-                        growth
+                  return Number.isInteger(
+                    index
+                  )
+                    ? String(
+                        rows?.[index]?.year ??
+                        ''
                       )
-                    ) {
-                      return valueText;
-                    }
+                    : '';
+                },
 
-                    const sign =
-                      growth > 0
-                        ? '+'
-                        : growth < 0
-                          ? '−'
-                          : '';
+                label(context) {
+                  const value =
+                    Number(
+                      context.raw
+                    );
 
-                    return `${valueText} · ${sign}${Math.abs(growth).toFixed(1)}% p.a.`;
+                  const valueText =
+                    `Australia: ${PFF.formatInteger(value)}`;
+
+                  const growth =
+                    trendGrowth();
+
+                  if (
+                    !Number.isFinite(
+                      growth
+                    )
+                  ) {
+                    return valueText;
                   }
+
+                  const sign =
+                    growth > 0
+                      ? '+'
+                      : growth < 0
+                        ? '−'
+                        : '';
+
+                  return `${valueText} · ${sign}${Math.abs(growth).toFixed(1)}% p.a.`;
                 }
-              })
+              }
+            }
           },
 
           scales: {
@@ -942,16 +896,6 @@
           }
         );
 
-      chart.options.scales.y.min =
-        scale.min;
-
-      chart.options.scales.y.max =
-        scale.max;
-
-      chart.update(
-        'none'
-      );
-
       updateAccessibleSummary();
     }
 
@@ -1011,8 +955,6 @@
               }
             ];
           },
-          updateMode:
-            'none',
           onToggle({
             visible
           }) {
@@ -1057,9 +999,7 @@
           range:
             CONFIG.range,
           headers:
-            '1',
-          timeoutMs:
-            CONFIG.fetchTimeoutMs
+            '1'
         });
       },
 
@@ -1071,9 +1011,7 @@
           url:
             CACHE_WEB_APP_URL,
           appKey:
-            CACHE_APP_KEY,
-          timeoutMs:
-            CONFIG.cacheFetchTimeoutMs
+            CACHE_APP_KEY
         });
       },
 
