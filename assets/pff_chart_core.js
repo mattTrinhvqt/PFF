@@ -4000,9 +4000,7 @@ body.pff-chart-app .pff-app {
           }
         );
 
-        chart.update(
-          'none'
-        );
+        chart.draw();
       };
 
     canvas.addEventListener(
