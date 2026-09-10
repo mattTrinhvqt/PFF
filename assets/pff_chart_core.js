@@ -4950,16 +4950,23 @@ body.pff-chart-app .pff-app {
         sheet: sheetName,
         range,
         headers,
-        tqx: `out:json;responseHandler:${callbackName}`
+        tqx: `responseHandler:${callbackName}`,
+        _: String(Date.now())
       });
 
       if (options.query) {
         params.set('tq', options.query);
       }
 
-      script.src = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?${params.toString()}`;
+      script.src =
+        `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?` +
+        params.toString();
+
       script.async = true;
-      document.head.appendChild(script);
+
+      document.body.appendChild(
+        script
+      );
     });
   }
 
@@ -5057,7 +5064,11 @@ body.pff-chart-app .pff-app {
         new URLSearchParams({
           appKey,
           callback:
-            callbackName
+            callbackName,
+          _:
+            String(
+              Date.now()
+            )
         });
 
       script.src =
@@ -5065,7 +5076,7 @@ body.pff-chart-app .pff-app {
 
       script.async = true;
 
-      document.head.appendChild(
+      document.body.appendChild(
         script
       );
     });
