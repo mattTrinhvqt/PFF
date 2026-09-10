@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.1.1
+ * PFF Core v1.2.0
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.1.1';
+  const VERSION = '1.2.0';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -28,6 +28,27 @@
     yAxisDesktopWidth: 69,
     yAxisMobileWidth: 61,
     trendModes: Object.freeze(['3yr', '10yr', 'off'])
+  });
+
+  const STATE_COLOURS = Object.freeze({
+    NSW: '#2db7f5',
+    VIC: '#2d3a8c',
+    QLD: '#7a0036',
+    SA: '#f03a47',
+    WA: '#000000',
+    TAS: '#22a36b',
+    NT: '#c25e00',
+    ACT: '#7b61ff'
+  });
+
+  const MMM_COLOURS = Object.freeze({
+    MM1: '#3f4851',
+    MM2: '#4f1500',
+    MM3: '#7e2800',
+    MM4: '#a14216',
+    MM5: '#c87452',
+    MM6: '#e1b69a',
+    MM7: '#f3e0d3'
   });
 
   const CSS = String.raw`
@@ -823,6 +844,8 @@ body.pff-chart-app .pff-app {
 
 .legend-item:hover { color: var(--pff-ink); }
 .legend-item.is-hidden-series { opacity: 0.36; }
+.legend-item.is-display-only { cursor: default; }
+.legend-item.is-display-only:hover { color: var(--pff-muted); }
 
 .legend-line {
   width: 17px;
@@ -830,6 +853,20 @@ body.pff-chart-app .pff-app {
   flex: 0 0 17px;
   border-radius: 2px;
   background: var(--legend-colour);
+}
+
+.legend-square {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border: 1px solid transparent;
+}
+
+.legend-bubble {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 50%;
 }
 
 .chart-shell {
@@ -1825,6 +1862,7 @@ body.pff-chart-app .pff-app {
     const activeClass = options.activeClass || 'is-active';
     let activeValue = options.initialValue ?? tabs.find(tab => tab.classList.contains(activeClass))?.dataset?.[valueAttribute];
     let scrollController = null;
+    const controlled = options.controlled === true;
 
     tabList?.setAttribute('role', 'tablist');
     tabs.forEach(tab => tab.setAttribute('role', 'tab'));
@@ -1873,7 +1911,14 @@ body.pff-chart-app .pff-app {
     const keyHandlers = new Map();
 
     tabs.forEach((tab, index) => {
-      const clickHandler = () => apply(valueOf(tab));
+      const clickHandler = () => {
+        const value = valueOf(tab);
+        if (controlled) {
+          options.onRequest?.(value, tab);
+          return;
+        }
+        apply(value);
+      };
       const keyHandler = event => {
         let nextIndex = null;
         if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
@@ -1886,7 +1931,14 @@ body.pff-chart-app .pff-app {
         }
 
         event.preventDefault();
-        apply(valueOf(tabs[nextIndex]), { focus: true });
+        const nextTab = tabs[nextIndex];
+        const nextValue = valueOf(nextTab);
+        if (controlled) {
+          nextTab?.focus({ preventScroll: true });
+          options.onRequest?.(nextValue, nextTab);
+          return;
+        }
+        apply(nextValue, { focus: true });
       };
 
       tab.addEventListener('click', clickHandler);
@@ -2882,6 +2934,1965 @@ body.pff-chart-app .pff-app {
     return String(value ?? '').replace(/\s+/g, ' ').trim();
   }
 
+  function normaliseText(value) {
+    return cleanText(value)
+      .replace(/[’‘]/g, "'")
+      .toLowerCase();
+  }
+
+  function toNumber(value) {
+    const cleaned = cleanText(value)
+      .replace(/[^\d.-]/g, '');
+
+    if (!cleaned || !/\d/.test(cleaned)) {
+      return NaN;
+    }
+
+    const number = Number(cleaned);
+
+    return Number.isFinite(number)
+      ? number
+      : NaN;
+  }
+
+  function cellValue(cell) {
+    return cell?.v ?? cell?.f ?? '';
+  }
+
+  function parseDateUtc(value) {
+    const dayMs = 86400000;
+
+    if (
+      typeof value === 'number' &&
+      value > 20000 &&
+      value < 80000
+    ) {
+      return Date.UTC(1899, 11, 30) + value * dayMs;
+    }
+
+    const text = cleanText(value);
+
+    if (!text) {
+      return null;
+    }
+
+    const googleDate = text.match(
+      /^Date\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})/
+    );
+
+    if (googleDate) {
+      return Date.UTC(
+        Number(googleDate[1]),
+        Number(googleDate[2]),
+        Number(googleDate[3])
+      );
+    }
+
+    const auDate = text.match(
+      /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})/
+    );
+
+    if (auDate) {
+      let year = Number(auDate[3]);
+
+      if (year < 100) {
+        year += 2000;
+      }
+
+      return Date.UTC(
+        year,
+        Number(auDate[2]) - 1,
+        Number(auDate[1])
+      );
+    }
+
+    const isoDate = text.match(
+      /^(\d{4})-(\d{1,2})-(\d{1,2})/
+    );
+
+    if (isoDate) {
+      return Date.UTC(
+        Number(isoDate[1]),
+        Number(isoDate[2]) - 1,
+        Number(isoDate[3])
+      );
+    }
+
+    const parsed = new Date(text);
+
+    return Number.isNaN(parsed.getTime())
+      ? null
+      : Date.UTC(
+          parsed.getFullYear(),
+          parsed.getMonth(),
+          parsed.getDate()
+        );
+  }
+
+  function normaliseMMM(value) {
+    const text = cleanText(value).toUpperCase();
+
+    if (
+      !text ||
+      text === 'X' ||
+      text === 'XXX'
+    ) {
+      return null;
+    }
+
+    const match = text.match(
+      /(?:MM\s*)?([1-7])/
+    );
+
+    return match
+      ? `MM${match[1]}`
+      : null;
+  }
+
+  function normaliseState(value) {
+    return cleanText(value)
+      .toUpperCase()
+      .match(/\b(?:NSW|QLD|VIC|ACT|SA|NT|WA|TAS)\b/)?.[0] || null;
+  }
+
+  function formatNumber(value, maximumFractionDigits = 1) {
+    const number = Number(value);
+
+    return Number.isFinite(number)
+      ? new Intl.NumberFormat('en-AU', {
+          maximumFractionDigits: Math.max(
+            0,
+            Math.round(Number(maximumFractionDigits) || 0)
+          )
+        }).format(number)
+      : '—';
+  }
+
+  function formatCompactNumber(value, options = {}) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+      return options.invalid ?? '—';
+    }
+
+    const absolute = Math.abs(number);
+    const millionThreshold = Number(options.millionThreshold ?? 1000000);
+    const thousandThreshold = Number(options.thousandThreshold ?? 1000);
+    const millionDecimals = Math.max(
+      0,
+      Math.round(Number(options.millionDecimals ?? 1) || 0)
+    );
+    const thousandDecimals = Math.max(
+      0,
+      Math.round(Number(options.thousandDecimals ?? 1) || 0)
+    );
+
+    if (absolute >= millionThreshold) {
+      return `${formatNumber(
+        number / 1000000,
+        millionDecimals
+      )}m`;
+    }
+
+    if (absolute >= thousandThreshold) {
+      return `${formatNumber(
+        number / 1000,
+        thousandDecimals
+      )}k`;
+    }
+
+    return formatNumber(
+      number,
+      Math.max(
+        0,
+        Math.round(Number(options.decimals ?? 0) || 0)
+      )
+    );
+  }
+
+  function formatQuarterTick(timestamp) {
+    const date = new Date(Number(timestamp));
+
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+
+    const month = date.getUTCMonth();
+
+    return [0, 3, 6, 9].includes(month)
+      ? `${String(month + 1).padStart(2, '0')}/${date.getUTCFullYear()}`
+      : '';
+  }
+
+  function formatExperienceBand(value) {
+    const experience = Number(value);
+
+    if (
+      !Number.isFinite(experience) ||
+      experience < 0
+    ) {
+      return 'Unspecified';
+    }
+
+    if (experience >= 20) {
+      return '20+ years';
+    }
+
+    const lower =
+      Math.floor(experience / 5) * 5;
+
+    const upper =
+      lower + 4;
+
+    return `${lower}–${upper} years`;
+  }
+
+  function animateTextChange(
+    element,
+    nextText,
+    options = {}
+  ) {
+    const text =
+      String(nextText ?? '');
+
+    if (
+      !element ||
+      element.textContent === text
+    ) {
+      return;
+    }
+
+    if (
+      reducedMotion() ||
+      !element.animate ||
+      options.animate === false
+    ) {
+      element.textContent = text;
+      return;
+    }
+
+    const fadeOut =
+      element.animate(
+        [
+          {
+            opacity: 1
+          },
+          {
+            opacity: 0
+          }
+        ],
+        {
+          duration:
+            Number(options.fadeOutMs ?? 170),
+          easing:
+            options.fadeOutEasing ||
+            'ease-out',
+          fill:
+            'forwards'
+        }
+      );
+
+    fadeOut.finished
+      .then(() => {
+        fadeOut.cancel();
+
+        element.textContent =
+          text;
+
+        const fadeIn =
+          element.animate(
+            [
+              {
+                opacity: 0
+              },
+              {
+                opacity: 1
+              }
+            ],
+            {
+              duration:
+                Number(options.fadeInMs ?? 260),
+              easing:
+                options.fadeInEasing ||
+                'cubic-bezier(0.22, 1, 0.36, 1)'
+            }
+          );
+
+        fadeIn.finished
+          .then(
+            () =>
+              fadeIn.cancel()
+          )
+          .catch(
+            () => {}
+          );
+      })
+      .catch(() => {
+        element.textContent =
+          text;
+      });
+  }
+
+  function percentile(
+    sortedValues,
+    probability
+  ) {
+    if (!sortedValues.length) {
+      return NaN;
+    }
+
+    const index =
+      (sortedValues.length - 1) *
+      probability;
+
+    const lowerIndex =
+      Math.floor(index);
+
+    const upperIndex =
+      Math.ceil(index);
+
+    if (
+      lowerIndex ===
+      upperIndex
+    ) {
+      return sortedValues[
+        lowerIndex
+      ];
+    }
+
+    return (
+      sortedValues[
+        lowerIndex
+      ] +
+      (
+        sortedValues[
+          upperIndex
+        ] -
+        sortedValues[
+          lowerIndex
+        ]
+      ) *
+      (
+        index -
+        lowerIndex
+      )
+    );
+  }
+
+  function calculateStatistics(values) {
+    const sorted =
+      Array.from(values || [])
+        .filter(
+          Number.isFinite
+        )
+        .slice()
+        .sort(
+          (
+            first,
+            second
+          ) =>
+            first -
+            second
+        );
+
+    return {
+      count:
+        sorted.length,
+      median:
+        percentile(
+          sorted,
+          0.5
+        ),
+      q1:
+        percentile(
+          sorted,
+          0.25
+        ),
+      q3:
+        percentile(
+          sorted,
+          0.75
+        )
+    };
+  }
+
+  function logGamma(value) {
+    const coefficients = [
+      676.5203681218851,
+      -1259.1392167224028,
+      771.3234287776531,
+      -176.6150291621406,
+      12.507343278686905,
+      -0.13857109526572012,
+      9.984369578019572e-6,
+      1.5056327351493116e-7
+    ];
+
+    if (value < 0.5) {
+      return (
+        Math.log(Math.PI) -
+        Math.log(
+          Math.sin(
+            Math.PI *
+            value
+          )
+        ) -
+        logGamma(
+          1 -
+          value
+        )
+      );
+    }
+
+    const shifted =
+      value -
+      1;
+
+    let series =
+      0.9999999999998099;
+
+    coefficients.forEach(
+      (
+        coefficient,
+        index
+      ) => {
+        series +=
+          coefficient /
+          (
+            shifted +
+            index +
+            1
+          );
+      }
+    );
+
+    const total =
+      shifted +
+      coefficients.length -
+      0.5;
+
+    return (
+      0.5 *
+      Math.log(
+        2 *
+        Math.PI
+      ) +
+      (
+        shifted +
+        0.5
+      ) *
+      Math.log(total) -
+      total +
+      Math.log(series)
+    );
+  }
+
+  function betaContinuedFraction(
+    a,
+    b,
+    x
+  ) {
+    const maximumIterations =
+      200;
+
+    const epsilon =
+      3e-14;
+
+    const minimumValue =
+      1e-300;
+
+    const qab =
+      a + b;
+
+    const qap =
+      a + 1;
+
+    const qam =
+      a - 1;
+
+    let c =
+      1;
+
+    let d =
+      1 -
+      qab *
+      x /
+      qap;
+
+    if (
+      Math.abs(d) <
+      minimumValue
+    ) {
+      d =
+        minimumValue;
+    }
+
+    d =
+      1 /
+      d;
+
+    let result =
+      d;
+
+    for (
+      let iteration = 1;
+      iteration <=
+        maximumIterations;
+      iteration += 1
+    ) {
+      const doubledIteration =
+        2 *
+        iteration;
+
+      let coefficient =
+        iteration *
+        (
+          b -
+          iteration
+        ) *
+        x /
+        (
+          (
+            qam +
+            doubledIteration
+          ) *
+          (
+            a +
+            doubledIteration
+          )
+        );
+
+      d =
+        1 +
+        coefficient *
+        d;
+
+      if (
+        Math.abs(d) <
+        minimumValue
+      ) {
+        d =
+          minimumValue;
+      }
+
+      c =
+        1 +
+        coefficient /
+        c;
+
+      if (
+        Math.abs(c) <
+        minimumValue
+      ) {
+        c =
+          minimumValue;
+      }
+
+      d =
+        1 /
+        d;
+
+      result *=
+        d *
+        c;
+
+      coefficient =
+        -(
+          a +
+          iteration
+        ) *
+        (
+          qab +
+          iteration
+        ) *
+        x /
+        (
+          (
+            a +
+            doubledIteration
+          ) *
+          (
+            qap +
+            doubledIteration
+          )
+        );
+
+      d =
+        1 +
+        coefficient *
+        d;
+
+      if (
+        Math.abs(d) <
+        minimumValue
+      ) {
+        d =
+          minimumValue;
+      }
+
+      c =
+        1 +
+        coefficient /
+        c;
+
+      if (
+        Math.abs(c) <
+        minimumValue
+      ) {
+        c =
+          minimumValue;
+      }
+
+      d =
+        1 /
+        d;
+
+      const change =
+        d *
+        c;
+
+      result *=
+        change;
+
+      if (
+        Math.abs(
+          change -
+          1
+        ) <
+        epsilon
+      ) {
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  function regularizedIncompleteBeta(
+    x,
+    a,
+    b
+  ) {
+    if (x <= 0) {
+      return 0;
+    }
+
+    if (x >= 1) {
+      return 1;
+    }
+
+    const betaTerm =
+      Math.exp(
+        logGamma(
+          a +
+          b
+        ) -
+        logGamma(a) -
+        logGamma(b) +
+        a *
+        Math.log(x) +
+        b *
+        Math.log1p(
+          -x
+        )
+      );
+
+    if (
+      x <
+      (
+        a +
+        1
+      ) /
+      (
+        a +
+        b +
+        2
+      )
+    ) {
+      return (
+        betaTerm *
+        betaContinuedFraction(
+          a,
+          b,
+          x
+        ) /
+        a
+      );
+    }
+
+    return (
+      1 -
+      betaTerm *
+      betaContinuedFraction(
+        b,
+        a,
+        1 - x
+      ) /
+      b
+    );
+  }
+
+  function calculateTwoSidedTTestPValue(
+    tStatistic,
+    degreesOfFreedom
+  ) {
+    if (
+      !Number.isFinite(
+        tStatistic
+      ) ||
+      !Number.isFinite(
+        degreesOfFreedom
+      ) ||
+      degreesOfFreedom <=
+        0
+    ) {
+      return NaN;
+    }
+
+    const absoluteT =
+      Math.abs(
+        tStatistic
+      );
+
+    const betaInput =
+      degreesOfFreedom /
+      (
+        degreesOfFreedom +
+        absoluteT *
+        absoluteT
+      );
+
+    return clamp(
+      regularizedIncompleteBeta(
+        betaInput,
+        degreesOfFreedom /
+        2,
+        0.5
+      ),
+      0,
+      1
+    );
+  }
+
+  function formatPValue(value) {
+    if (
+      !Number.isFinite(
+        value
+      )
+    ) {
+      return 'p unavailable';
+    }
+
+    if (
+      value <
+      0.0001
+    ) {
+      return 'p < 0.0001';
+    }
+
+    if (
+      value <
+      0.001
+    ) {
+      return 'p < 0.001';
+    }
+
+    if (
+      value <
+      0.01
+    ) {
+      return 'p < 0.01';
+    }
+
+    if (
+      value <
+      0.05
+    ) {
+      return 'p < 0.05';
+    }
+
+    return `p = ${value.toFixed(2)}`;
+  }
+
+  function calculateRegression(
+    data,
+    transformX =
+      value =>
+        value
+  ) {
+    const transformedData =
+      Array.from(data || [])
+        .map(
+          point => ({
+            originalX:
+              point.x,
+            x:
+              transformX(
+                point.x
+              ),
+            y:
+              point.y
+          })
+        )
+        .filter(
+          point =>
+            Number.isFinite(
+              point.x
+            ) &&
+            Number.isFinite(
+              point.y
+            )
+        );
+
+    if (
+      transformedData.length <
+      2
+    ) {
+      return null;
+    }
+
+    const meanX =
+      transformedData.reduce(
+        (
+          total,
+          point
+        ) =>
+          total +
+          point.x,
+        0
+      ) /
+      transformedData.length;
+
+    const meanY =
+      transformedData.reduce(
+        (
+          total,
+          point
+        ) =>
+          total +
+          point.y,
+        0
+      ) /
+      transformedData.length;
+
+    let numerator =
+      0;
+
+    let denominator =
+      0;
+
+    transformedData.forEach(
+      point => {
+        numerator +=
+          (
+            point.x -
+            meanX
+          ) *
+          (
+            point.y -
+            meanY
+          );
+
+        denominator +=
+          Math.pow(
+            point.x -
+            meanX,
+            2
+          );
+      }
+    );
+
+    if (!denominator) {
+      return null;
+    }
+
+    const slope =
+      numerator /
+      denominator;
+
+    const intercept =
+      meanY -
+      slope *
+      meanX;
+
+    const minimumX =
+      Math.min(
+        ...transformedData.map(
+          point =>
+            point.originalX
+        )
+      );
+
+    const maximumX =
+      Math.max(
+        ...transformedData.map(
+          point =>
+            point.originalX
+        )
+      );
+
+    const predict =
+      originalX =>
+        intercept +
+        slope *
+        transformX(
+          originalX
+        );
+
+    const residualVariation =
+      transformedData.reduce(
+        (
+          total,
+          point
+        ) => {
+          const predicted =
+            intercept +
+            slope *
+            point.x;
+
+          return (
+            total +
+            Math.pow(
+              point.y -
+              predicted,
+              2
+            )
+          );
+        },
+        0
+      );
+
+    let pValue =
+      NaN;
+
+    if (
+      transformedData.length >
+      2
+    ) {
+      const degreesOfFreedom =
+        transformedData.length -
+        2;
+
+      const residualVariance =
+        residualVariation /
+        degreesOfFreedom;
+
+      const slopeStandardError =
+        Math.sqrt(
+          residualVariance /
+          denominator
+        );
+
+      if (
+        slopeStandardError ===
+        0
+      ) {
+        pValue =
+          slope ===
+          0
+            ? 1
+            : 0;
+      } else if (
+        Number.isFinite(
+          slopeStandardError
+        )
+      ) {
+        pValue =
+          calculateTwoSidedTTestPValue(
+            slope /
+            slopeStandardError,
+            degreesOfFreedom
+          );
+      }
+    }
+
+    return {
+      slope,
+      minimumX,
+      maximumX,
+      predict,
+      pValue
+    };
+  }
+
+  function parseCssColour(
+    value,
+    fallback =
+      'rgba(119, 119, 119, 1)'
+  ) {
+    const text =
+      String(value || '')
+        .trim();
+
+    const hex =
+      text.match(
+        /^#([0-9a-f]{6})$/i
+      );
+
+    const rgbaMatch =
+      text.match(
+        /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i
+      );
+
+    if (hex) {
+      const digits =
+        hex[1];
+
+      return {
+        red:
+          parseInt(
+            digits.slice(
+              0,
+              2
+            ),
+            16
+          ),
+        green:
+          parseInt(
+            digits.slice(
+              2,
+              4
+            ),
+            16
+          ),
+        blue:
+          parseInt(
+            digits.slice(
+              4,
+              6
+            ),
+            16
+          ),
+        alpha:
+          1
+      };
+    }
+
+    if (rgbaMatch) {
+      return {
+        red:
+          clamp(
+            Number(
+              rgbaMatch[1]
+            ),
+            0,
+            255
+          ),
+        green:
+          clamp(
+            Number(
+              rgbaMatch[2]
+            ),
+            0,
+            255
+          ),
+        blue:
+          clamp(
+            Number(
+              rgbaMatch[3]
+            ),
+            0,
+            255
+          ),
+        alpha:
+          clamp(
+            rgbaMatch[4] ===
+            undefined
+              ? 1
+              : Number(
+                  rgbaMatch[4]
+                ),
+            0,
+            1
+          )
+      };
+    }
+
+    if (
+      text !==
+      fallback
+    ) {
+      return parseCssColour(
+        fallback,
+        'rgba(119, 119, 119, 1)'
+      );
+    }
+
+    return {
+      red: 119,
+      green: 119,
+      blue: 119,
+      alpha: 1
+    };
+  }
+
+  function interpolateCssColour(
+    firstColour,
+    secondColour,
+    progress
+  ) {
+    const first =
+      parseCssColour(
+        firstColour
+      );
+
+    const second =
+      parseCssColour(
+        secondColour
+      );
+
+    const mix =
+      clamp(
+        progress,
+        0,
+        1
+      );
+
+    return `rgba(${Math.round(
+      first.red +
+      (
+        second.red -
+        first.red
+      ) *
+      mix
+    )}, ${Math.round(
+      first.green +
+      (
+        second.green -
+        first.green
+      ) *
+      mix
+    )}, ${Math.round(
+      first.blue +
+      (
+        second.blue -
+        first.blue
+      ) *
+      mix
+    )}, ${
+      first.alpha +
+      (
+        second.alpha -
+        first.alpha
+      ) *
+      mix
+    })`;
+  }
+
+  function fadeCssColour(
+    colour,
+    opacityMultiplier
+  ) {
+    const parsed =
+      parseCssColour(
+        colour
+      );
+
+    return `rgba(${Math.round(
+      parsed.red
+    )}, ${Math.round(
+      parsed.green
+    )}, ${Math.round(
+      parsed.blue
+    )}, ${
+      parsed.alpha *
+      clamp(
+        opacityMultiplier,
+        0,
+        1
+      )
+    })`;
+  }
+
+  function resolveScriptableValue(
+    value,
+    context,
+    fallback
+  ) {
+    try {
+      if (
+        typeof value ===
+        'function'
+      ) {
+        return value(
+          context
+        );
+      }
+
+      if (
+        Array.isArray(
+          value
+        )
+      ) {
+        return (
+          value[
+            context.dataIndex
+          ] ??
+          fallback
+        );
+      }
+
+      return (
+        value ??
+        fallback
+      );
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function isLineDataset(dataset) {
+    return (
+      dataset?.datasetRole ===
+        'regression' ||
+      dataset?.datasetRole ===
+        'categoryMedian' ||
+      (
+        dataset?.type ===
+          'line' &&
+        dataset?.showLine !==
+          false
+      )
+    );
+  }
+
+  function createAnimationController() {
+    let activeAnimationFrame =
+      null;
+
+    function cancel() {
+      if (
+        activeAnimationFrame !==
+        null
+      ) {
+        cancelAnimationFrame(
+          activeAnimationFrame
+        );
+
+        activeAnimationFrame =
+          null;
+      }
+    }
+
+    function run({
+      duration,
+      easing =
+        value =>
+          value,
+      onFrame,
+      onComplete
+    } = {}) {
+      cancel();
+
+      const animationDuration =
+        Math.max(
+          0,
+          Number(duration) ||
+          0
+        );
+
+      if (
+        reducedMotion() ||
+        animationDuration <=
+          0
+      ) {
+        onFrame?.(
+          1
+        );
+
+        onComplete?.();
+
+        return;
+      }
+
+      const startedAt =
+        performance.now();
+
+      function frame(now) {
+        const rawProgress =
+          Math.min(
+            (
+              now -
+              startedAt
+            ) /
+            animationDuration,
+            1
+          );
+
+        onFrame?.(
+          easing(
+            rawProgress
+          )
+        );
+
+        if (
+          rawProgress <
+          1
+        ) {
+          activeAnimationFrame =
+            requestAnimationFrame(
+              frame
+            );
+        } else {
+          activeAnimationFrame =
+            null;
+
+          onComplete?.();
+        }
+      }
+
+      activeAnimationFrame =
+        requestAnimationFrame(
+          frame
+        );
+    }
+
+    return {
+      run,
+      cancel,
+
+      get active() {
+        return (
+          activeAnimationFrame !==
+          null
+        );
+      }
+    };
+  }
+
+  function setupDisplayLegend(
+    options = {}
+  ) {
+    const legend =
+      options.legend ||
+      document.getElementById(
+        'chartLegend'
+      );
+
+    const leftButton =
+      options.leftButton ||
+      document.getElementById(
+        'legendScrollLeft'
+      );
+
+    const rightButton =
+      options.rightButton ||
+      document.getElementById(
+        'legendScrollRight'
+      );
+
+    if (!legend) {
+      return {
+        update() {},
+        refresh() {},
+        destroy() {}
+      };
+    }
+
+    const scroller =
+      setupScrollableRegion({
+        scroller:
+          legend,
+        leftButton,
+        rightButton
+      });
+
+    let currentSignature =
+      '';
+
+    let animationToken =
+      0;
+
+    function appendItem(item) {
+      const wrapper =
+        document.createElement(
+          'span'
+        );
+
+      wrapper.className =
+        'legend-item is-display-only';
+
+      const marker =
+        document.createElement(
+          'span'
+        );
+
+      marker.className =
+        item.markerType ===
+          'line'
+          ? 'legend-line'
+          : item.markerType ===
+              'bubble'
+            ? 'legend-bubble'
+            : 'legend-square';
+
+      marker.style.background =
+        item.colour ||
+        '#69718a';
+
+      if (
+        item.markerType !==
+        'line'
+      ) {
+        marker.style.borderColor =
+          item.colour ||
+          '#69718a';
+      }
+
+      const label =
+        document.createElement(
+          'span'
+        );
+
+      label.textContent =
+        String(
+          item.label ||
+          ''
+        );
+
+      wrapper.append(
+        marker,
+        label
+      );
+
+      legend.appendChild(
+        wrapper
+      );
+    }
+
+    function renderItems(items) {
+      legend.replaceChildren();
+
+      legend.scrollLeft =
+        0;
+
+      Array.from(
+        items ||
+        []
+      ).forEach(
+        appendItem
+      );
+
+      requestAnimationFrame(
+        scroller.update
+      );
+    }
+
+    function update(
+      items,
+      animate = true
+    ) {
+      const nextItems =
+        Array.from(
+          items ||
+          []
+        );
+
+      const signature =
+        JSON.stringify(
+          nextItems
+        );
+
+      if (
+        signature ===
+        currentSignature
+      ) {
+        requestAnimationFrame(
+          scroller.update
+        );
+
+        return;
+      }
+
+      const token =
+        ++animationToken;
+
+      legend
+        .getAnimations?.()
+        .forEach(
+          animation =>
+            animation.cancel()
+        );
+
+      if (
+        !animate ||
+        reducedMotion() ||
+        !legend.animate
+      ) {
+        renderItems(
+          nextItems
+        );
+
+        currentSignature =
+          signature;
+
+        legend.style.opacity =
+          '';
+
+        return;
+      }
+
+      const fadeOut =
+        legend.animate(
+          [
+            {
+              opacity: 1
+            },
+            {
+              opacity: 0
+            }
+          ],
+          {
+            duration:
+              170,
+            easing:
+              'ease-out',
+            fill:
+              'forwards'
+          }
+        );
+
+      fadeOut.finished
+        .then(() => {
+          if (
+            token !==
+            animationToken
+          ) {
+            return;
+          }
+
+          fadeOut.cancel();
+
+          renderItems(
+            nextItems
+          );
+
+          currentSignature =
+            signature;
+
+          const fadeIn =
+            legend.animate(
+              [
+                {
+                  opacity: 0
+                },
+                {
+                  opacity: 1
+                }
+              ],
+              {
+                duration:
+                  270,
+                easing:
+                  'cubic-bezier(0.22, 1, 0.36, 1)'
+              }
+            );
+
+          fadeIn.finished
+            .then(
+              () =>
+                fadeIn.cancel()
+            )
+            .catch(
+              () => {}
+            );
+        })
+        .catch(() => {
+          if (
+            token !==
+            animationToken
+          ) {
+            return;
+          }
+
+          renderItems(
+            nextItems
+          );
+
+          currentSignature =
+            signature;
+        });
+    }
+
+    return {
+      update,
+
+      refresh() {
+        scroller.update();
+      },
+
+      destroy() {
+        animationToken +=
+          1;
+
+        legend
+          .getAnimations?.()
+          .forEach(
+            animation =>
+              animation.cancel()
+          );
+
+        scroller.destroy();
+
+        legend.replaceChildren();
+      }
+    };
+  }
+
+  function runViewMorph(
+    options = {}
+  ) {
+    const chart =
+      options.chart;
+
+    const model =
+      options.model;
+
+    const xAxisFade =
+      options.xAxisFade;
+
+    const animationController =
+      options.animationController;
+
+    if (
+      !chart ||
+      !model ||
+      !xAxisFade ||
+      !animationController
+    ) {
+      return;
+    }
+
+    const geometry =
+      options.captureRenderedGeometry?.();
+
+    const previousXAxis =
+      options.captureXAxisSnapshot?.(
+        chart.scales.x,
+        options.currentXAxisOptions
+      );
+
+    const xAxisChanges =
+      options.getXAxisChangeMap?.(
+        options.currentXAxisOptions,
+        model.xScale
+      ) || {
+        ticks: false,
+        labels: false,
+        title: false,
+        border: false
+      };
+
+    xAxisFade.from =
+      previousXAxis;
+
+    xAxisFade.progress =
+      0;
+
+    xAxisFade.changes =
+      xAxisChanges;
+
+    xAxisFade.active =
+      true;
+
+    options.setInteractionLocked?.(
+      true
+    );
+
+    options.setViewMorphInProgress?.(
+      true
+    );
+
+    chart.tooltip?.setActiveElements(
+      [],
+      {
+        x: 0,
+        y: 0
+      }
+    );
+
+    if (
+      chart.options.animation &&
+      typeof chart.options.animation ===
+        'object'
+    ) {
+      chart.options.animation.duration =
+        0;
+    } else {
+      chart.options.animation = {
+        duration:
+          0
+      };
+    }
+
+    const fadingXAxisOptions =
+      options.createFadingXAxisOptions?.(
+        model.xScale
+      ) ||
+      model.xScale;
+
+    chart.options.scales.x =
+      fadingXAxisOptions;
+
+    chart.options.scales.y =
+      options.createYAxisOptions?.() ||
+      chart.options.scales.y;
+
+    chart.data.datasets =
+      [];
+
+    chart.update(
+      'none'
+    );
+
+    const plans =
+      options.createTransitionPlans?.(
+        model.datasets,
+        geometry
+      ) ||
+      [];
+
+    const departingLinePlans =
+      options.createDepartingLinePlans?.(
+        geometry,
+        model.datasets
+      ) ||
+      [];
+
+    chart.data.datasets = [
+      ...plans.map(
+        plan =>
+          plan.transitionDataset
+      ),
+
+      ...departingLinePlans.map(
+        plan =>
+          plan.dataset
+      )
+    ];
+
+    chart.update(
+      'none'
+    );
+
+    animationController.run({
+      duration:
+        options.duration,
+
+      easing:
+        easeInOutCubic,
+
+      onFrame(progress) {
+        xAxisFade.progress =
+          progress;
+
+        plans.forEach(
+          (
+            plan,
+            datasetIndex
+          ) => {
+            const dataset =
+              chart.data.datasets[
+                datasetIndex
+              ];
+
+            dataset.data =
+              plan.targetData.map(
+                (
+                  targetPoint,
+                  pointIndex
+                ) => {
+                  const startPoint =
+                    plan.startData[
+                      pointIndex
+                    ] ||
+                    targetPoint;
+
+                  return {
+                    ...targetPoint,
+
+                    x:
+                      startPoint.x +
+                      (
+                        targetPoint.x -
+                        startPoint.x
+                      ) *
+                      progress,
+
+                    y:
+                      startPoint.y +
+                      (
+                        targetPoint.y -
+                        startPoint.y
+                      ) *
+                      progress
+                  };
+                }
+              );
+
+            if (
+              plan.kind ===
+              'line'
+            ) {
+              dataset.borderColor =
+                interpolateCssColour(
+                  plan.startColour,
+                  plan.targetColour,
+                  progress
+                );
+
+              dataset.backgroundColor =
+                dataset.borderColor;
+
+              dataset.borderWidth =
+                plan.startWidth +
+                (
+                  plan.targetWidth -
+                  plan.startWidth
+                ) *
+                progress;
+
+              return;
+            }
+
+            dataset.pointBackgroundColor =
+              plan.startStyles.map(
+                (
+                  startStyle,
+                  pointIndex
+                ) =>
+                  interpolateCssColour(
+                    startStyle
+                      .backgroundColour,
+                    plan.targetStyles[
+                      pointIndex
+                    ].backgroundColour,
+                    progress
+                  )
+              );
+
+            dataset.pointHoverBackgroundColor =
+              dataset.pointBackgroundColor;
+
+            dataset.pointBorderColor =
+              plan.startStyles.map(
+                (
+                  startStyle,
+                  pointIndex
+                ) =>
+                  interpolateCssColour(
+                    startStyle
+                      .borderColour,
+                    plan.targetStyles[
+                      pointIndex
+                    ].borderColour,
+                    progress
+                  )
+              );
+
+            dataset.pointHoverBorderColor =
+              dataset.pointBorderColor;
+
+            dataset.pointRadius =
+              plan.startStyles.map(
+                (
+                  startStyle,
+                  pointIndex
+                ) =>
+                  startStyle.radius +
+                  (
+                    plan.targetStyles[
+                      pointIndex
+                    ].radius -
+                    startStyle.radius
+                  ) *
+                  progress
+              );
+
+            dataset.pointHoverRadius =
+              dataset.pointRadius;
+          }
+        );
+
+        departingLinePlans.forEach(
+          (
+            plan,
+            ghostIndex
+          ) => {
+            const dataset =
+              chart.data.datasets[
+                plans.length +
+                ghostIndex
+              ];
+
+            dataset.borderColor =
+              fadeCssColour(
+                plan.colour,
+                1 -
+                progress
+              );
+
+            dataset.backgroundColor =
+              dataset.borderColor;
+
+            dataset.borderWidth =
+              plan.width *
+              (
+                1 -
+                progress
+              );
+          }
+        );
+
+        chart.update(
+          'none'
+        );
+      },
+
+      onComplete() {
+        xAxisFade.active =
+          false;
+
+        xAxisFade.progress =
+          1;
+
+        xAxisFade.from =
+          null;
+
+        xAxisFade.changes = {
+          ticks: false,
+          labels: false,
+          title: false,
+          border: false
+        };
+
+        options.setCurrentXAxisOptions?.(
+          model.xScale
+        );
+
+        chart.options.scales.x =
+          model.xScale;
+
+        chart.data.datasets =
+          model.datasets;
+
+        options.setInteractionLocked?.(
+          false
+        );
+
+        options.setViewMorphInProgress?.(
+          false
+        );
+
+        chart.update(
+          'none'
+        );
+
+        options.onComplete?.();
+      }
+    });
+  }
+
   function loadGVizSheet(options = {}) {
     const sheetId = options.sheetId;
     const sheetName = options.sheetName;
@@ -3088,175 +5099,195 @@ body.pff-chart-app .pff-app {
   }
 
   async function loadLiveCacheFallback(options = {}) {
-    try {
-      const liveRaw =
-        await options.loadLive();
+    let liveError =
+      null;
 
-      const rows =
-        await options.parseLive(
-          liveRaw
-        );
-
-      if (
-        !Array.isArray(rows) ||
-        rows.length <
-          (options.minRows || 1)
-      ) {
-        throw new Error(
-          'Live data did not contain enough usable rows.'
-        );
-      }
-
-      if (
-        options.cacheKey
-      ) {
-        saveLocalCache(
-          options.cacheKey,
-          rows
-        );
-      }
-
-      options.onSource?.(
-        'live'
-      );
-
-      return {
-        rows,
-        source:
-          'live'
-      };
-    } catch (
-      liveError
+    if (
+      !options.forceCached
     ) {
-      options.onLiveError?.(
-        liveError
-      );
+      try {
+        const liveRaw =
+          await options.loadLive();
 
-      if (
-        typeof options.loadRemoteCache ===
-        'function'
-      ) {
-        try {
-          const remoteRaw =
-            await options.loadRemoteCache();
-
-          const remoteRows =
-            typeof options.parseRemoteCache ===
-              'function'
-              ? await options.parseRemoteCache(
-                  remoteRaw
-                )
-              : remoteRaw?.data;
-
-          if (
-            !Array.isArray(
-              remoteRows
-            ) ||
-            remoteRows.length <
-              (options.minRows || 1)
-          ) {
-            throw new Error(
-              'Remote cached data did not contain enough usable rows.'
-            );
-          }
-
-          if (
-            options.cacheKey
-          ) {
-            saveLocalCache(
-              options.cacheKey,
-              remoteRows,
-              {
-                remoteCachedAt:
-                  remoteRaw?.cachedAt ||
-                  null
-              }
-            );
-          }
-
-          options.onSource?.(
-            'cached'
+        const rows =
+          await options.parseLive(
+            liveRaw
           );
 
-          return {
-            rows:
-              remoteRows,
-
-            source:
-              'cached',
-
-            savedAt:
-              remoteRaw?.cachedAt ||
-              null,
-
-            remote:
-              true
-          };
-        } catch (
-          remoteError
+        if (
+          !Array.isArray(rows) ||
+          rows.length <
+            (options.minRows || 1)
         ) {
-          options.onRemoteCacheError?.(
-            remoteError
+          throw new Error(
+            'Live data did not contain enough usable rows.'
           );
         }
-      }
 
-      const cached =
-        options.cacheKey
-          ? loadLocalCache(
-              options.cacheKey,
-              {
-                minRows:
-                  options.minRows ||
-                  1
-              }
-            )
-          : null;
+        if (
+          options.cacheKey
+        ) {
+          saveLocalCache(
+            options.cacheKey,
+            rows
+          );
+        }
 
-      if (
-        cached?.rows
+        options.onSource?.(
+          'live'
+        );
+
+        return {
+          rows,
+          source:
+            'live'
+        };
+      } catch (
+        error
       ) {
+        liveError =
+          error;
+
+        options.onLiveError?.(
+          error
+        );
+      }
+    } else {
+      liveError =
+        new Error(
+          'Live data was skipped because forceCached is enabled.'
+        );
+    }
+
+    if (
+      typeof options.loadRemoteCache ===
+      'function'
+    ) {
+      try {
+        const remoteRaw =
+          await options.loadRemoteCache();
+
+        const remoteRows =
+          typeof options.parseRemoteCache ===
+            'function'
+            ? await options.parseRemoteCache(
+                remoteRaw
+              )
+            : remoteRaw?.data;
+
+        if (
+          !Array.isArray(
+            remoteRows
+          ) ||
+          remoteRows.length <
+            (options.minRows || 1)
+        ) {
+          throw new Error(
+            'Remote cached data did not contain enough usable rows.'
+          );
+        }
+
+        if (
+          options.cacheKey
+        ) {
+          saveLocalCache(
+            options.cacheKey,
+            remoteRows,
+            {
+              remoteCachedAt:
+                remoteRaw?.cachedAt ||
+                null
+            }
+          );
+        }
+
         options.onSource?.(
           'cached'
         );
 
         return {
           rows:
-            cached.rows,
+            remoteRows,
 
           source:
             'cached',
 
           savedAt:
-            cached.savedAt ||
-            null
-        };
-      }
+            remoteRaw?.cachedAt ||
+            null,
 
-      if (
-        Array.isArray(
-          options.fallback
-        ) &&
-        options.fallback.length
-      ) {
-        options.onSource?.(
-          'cached'
-        );
-
-        return {
-          rows:
-            options.fallback,
-
-          source:
-            'cached',
-
-          fallback:
+          remote:
             true
         };
+      } catch (
+        remoteError
+      ) {
+        options.onRemoteCacheError?.(
+          remoteError
+        );
       }
-
-      throw liveError;
     }
+
+    const cached =
+      options.cacheKey
+        ? loadLocalCache(
+            options.cacheKey,
+            {
+              minRows:
+                options.minRows ||
+                1
+            }
+          )
+        : null;
+
+    if (
+      cached?.rows
+    ) {
+      options.onSource?.(
+        'cached'
+      );
+
+      return {
+        rows:
+          cached.rows,
+
+        source:
+          'cached',
+
+        savedAt:
+          cached.savedAt ||
+          null
+      };
+    }
+
+    if (
+      Array.isArray(
+        options.fallback
+      ) &&
+      options.fallback.length
+    ) {
+      options.onSource?.(
+        'cached'
+      );
+
+      return {
+        rows:
+          options.fallback,
+
+        source:
+          'cached',
+
+        fallback:
+          true
+      };
+    }
+
+    throw (
+      liveError ||
+      new Error(
+        'Live, remote cached and local cached data are unavailable.'
+      )
+    );
   }
 
   function setMetricSwitchIndex(element, index) {
@@ -3273,7 +5304,9 @@ body.pff-chart-app .pff-app {
         raf = null;
         const chart = options.getChart?.();
         if (chart) {
-          applyResponsiveChartOptions(chart);
+          if (options.applyResponsiveChartOptions !== false) {
+            applyResponsiveChartOptions(chart);
+          }
           options.beforeResize?.(chart);
           chart.resize();
           options.afterResize?.(chart);
@@ -3290,9 +5323,16 @@ body.pff-chart-app .pff-app {
       (options.observe || []).filter(Boolean).forEach(element => observer.observe(element));
     }
 
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        refresh();
+      }
+    };
+
     global.addEventListener('resize', refresh, { passive: true });
     global.visualViewport?.addEventListener('resize', refresh, { passive: true });
     global.addEventListener('pageshow', refresh);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     document.fonts?.ready?.then(refresh);
 
     return {
@@ -3303,6 +5343,7 @@ body.pff-chart-app .pff-app {
         global.removeEventListener('resize', refresh);
         global.visualViewport?.removeEventListener('resize', refresh);
         global.removeEventListener('pageshow', refresh);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
       }
     };
   }
@@ -4773,7 +6814,10 @@ body.pff-chart-app .pff-app {
             : (
                 options.year ||
                 'numeric'
-              )
+              ),
+        timeZone:
+          options.timeZone ||
+          undefined
       }
     ).format(date);
   }
@@ -4825,6 +6869,9 @@ body.pff-chart-app .pff-app {
 
               minRows:
                 options.minRows,
+
+              forceCached:
+                options.forceCached,
 
               onLiveError:
                 options.onLiveError,
@@ -4895,6 +6942,12 @@ body.pff-chart-app .pff-app {
       defaults:
         DEFAULTS,
 
+      stateColours:
+        STATE_COLOURS,
+
+      mmmColours:
+        MMM_COLOURS,
+
       cssVar,
       clamp,
       rgba,
@@ -4903,13 +6956,23 @@ body.pff-chart-app .pff-app {
       smallLayout,
       deepMerge,
       cleanText,
+      normaliseText,
+      toNumber,
+      cellValue,
+      parseDateUtc,
+      normaliseMMM,
+      normaliseState,
 
       formatInteger,
       formatOneDecimal,
+      formatNumber,
+      formatCompactNumber,
       formatPercent,
       formatCurrency,
       formatHours,
       formatDate,
+      formatQuarterTick,
+      formatExperienceBand,
 
       showLoadingState,
       hideLoadingState,
@@ -4922,11 +6985,21 @@ body.pff-chart-app .pff-app {
       setupMenu,
       setupStepper,
       animateHeading,
+      animateTextChange,
       initialiseApp
     });
 
   global.PFF =
     universalAPI;
+
+  global.PFFStats =
+    Object.freeze({
+      percentile,
+      calculateStatistics,
+      calculateTwoSidedTTestPValue,
+      calculateRegression,
+      formatPValue
+    });
 
   global.PFFCharts =
     Object.freeze({
@@ -4939,6 +7012,14 @@ body.pff-chart-app .pff-app {
       easeInOutCubic,
       easeOutCubic,
       chartAnimationDuration,
+      createAnimationController,
+
+      parseCssColour,
+      interpolateCssColour,
+      fadeCssColour,
+      resolveScriptableValue,
+      isLineDataset,
+      runViewMorph,
 
       formatAxisValue,
       formatTrendValue,
@@ -4972,6 +7053,7 @@ body.pff-chart-app .pff-app {
 
       seriesVisibilityTransitionOptions,
       setupLegend,
+      setupDisplayLegend,
       setupChartInteractions,
 
       copyScale,
@@ -4990,4 +7072,4 @@ body.pff-chart-app .pff-app {
 
       setMetricSwitchIndex
     });
-})(window);                            
+})(window);
