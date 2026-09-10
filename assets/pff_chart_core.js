@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.1.0
+ * PFF Core v1.1.1
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -476,6 +476,179 @@ body.pff-chart-app .pff-app {
   flex: 0 0 auto;
   align-items: flex-start;
   gap: 4px;
+}
+
+.state-control {
+  position: relative;
+  z-index: 45;
+  flex: 0 0 auto;
+}
+
+.state-button {
+  display: grid;
+  grid-template-columns: max-content minmax(30px, 1fr) 8px;
+  min-width: 84px;
+  min-height: 27px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+  color: var(--pff-ink);
+  background: var(--pff-white);
+  border: 1px solid var(--pff-track);
+  border-radius: 4px;
+  box-shadow: none;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.state-button:hover,
+.state-button[aria-expanded='true'] {
+  border-color: var(--pff-ink);
+  box-shadow: inset 0 0 0 1px rgba(21, 21, 21, 0.12);
+}
+
+.state-button:focus-visible {
+  outline: 2px solid rgba(102, 0, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.state-button-value {
+  display: inline-block;
+  min-width: 30px;
+  flex: 0 0 auto;
+  color: var(--pff-purple);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-align: right;
+  white-space: nowrap;
+  will-change: opacity;
+}
+
+.menu-arrow {
+  width: 0;
+  height: 0;
+  flex: 0 0 auto;
+  border-top: 4px solid var(--pff-muted);
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  transition: transform 140ms ease;
+}
+
+.state-button[aria-expanded='true'] .menu-arrow {
+  transform: rotate(180deg);
+}
+
+.state-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 70;
+  display: none;
+  min-width: 164px;
+  padding: 5px 0;
+  overflow: visible;
+  color: var(--pff-ink);
+  background: var(--pff-white);
+  border: 1px solid var(--pff-track);
+  border-radius: 3px;
+  box-shadow: 0 6px 18px rgba(21, 21, 21, 0.12);
+  text-align: left;
+}
+
+.state-menu.is-open {
+  display: block;
+}
+
+.state-menu-title {
+  margin: 0;
+  padding: 6px 10px 7px;
+  color: var(--pff-muted);
+  border-bottom: 1px solid var(--pff-track);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.state-option {
+  position: relative;
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  color: var(--pff-ink);
+  background: var(--pff-white);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  cursor: pointer;
+  user-select: none;
+}
+
+.state-option:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.state-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.state-option-box {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  border: 1px solid var(--pff-muted);
+  border-radius: 2px;
+  background: var(--pff-white);
+}
+
+.state-option input:checked + .state-option-box {
+  border-color: var(--pff-purple);
+  background: var(--pff-purple);
+}
+
+.state-option input:checked + .state-option-box::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  width: 4px;
+  height: 7px;
+  border-right: 2px solid var(--pff-white);
+  border-bottom: 2px solid var(--pff-white);
+  transform: rotate(45deg);
+}
+
+.state-option input:focus-visible + .state-option-box {
+  outline: 2px solid rgba(102, 0, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.state-option-all {
+  border-bottom: 1px solid var(--pff-track);
+  font-weight: 700;
+}
+
+.state-code,
+.state-option-code {
+  min-width: 30px;
+  font-weight: 700;
 }
 
 .yoy-trend-toggle {
@@ -1104,6 +1277,7 @@ body.pff-chart-app .pff-app {
   .chart-heading-row { height: 29px; min-height: 29px; gap: 4px; }
   .chart-heading { padding-top: 4px; font-size: 14px; line-height: 21px; }
   .heading-controls { gap: 3px; }
+  .state-button { min-width: 80px; padding-right: 4px; padding-left: 4px; font-size: 9px; }
   .yoy-trend-toggle {
     width: 61px;
     flex-basis: 61px;
