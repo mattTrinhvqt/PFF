@@ -3,37 +3,70 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PFF Australia and State Population Coverage Trends</title>
+  <title>PFF Permanent Salary Data</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
 
   <style>
     :root {
-      --pff-saturated: #ff00ff;
-      --pff-sufficient: #20c9d7;
+      --pff-trend-yellow: #f1c232;
     }
 
-    .module-title {
-      position: relative;
-      min-height: 29px;
-      margin: 0;
-      padding: 0 9px 6px;
-      color: var(--pff-purple);
-      font-size: 13px;
-      font-weight: 700;
+    .chart-heading-detail {
+      margin-left: 0.28em;
+    }
+
+    .reaggregate-button {
+      display: inline-flex;
+      min-height: 27px;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 0 6px;
+      color: var(--pff-muted);
+      background: var(--pff-white);
+      border: 1px solid var(--pff-track);
+      border-radius: 4px;
+      box-shadow: none;
+      font-size: 11px;
       line-height: 1;
       white-space: nowrap;
+      cursor: pointer;
+      transition:
+        color 140ms ease,
+        border-color 140ms ease,
+        box-shadow 140ms ease,
+        opacity 140ms ease;
     }
 
-    .module-title::after {
-      content: '';
-      position: absolute;
-      right: 0;
-      bottom: 0;
-      left: 0;
-      height: 2px;
-      background: var(--pff-purple);
+    .reaggregate-button:hover:not(:disabled) {
+      color: var(--pff-ink);
+      border-color: var(--pff-ink);
+      box-shadow: inset 0 0 0 1px rgba(21, 21, 21, 0.12);
+    }
+
+    .reaggregate-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
+    }
+
+    .reaggregate-button:disabled {
+      opacity: 0.48;
+      cursor: default;
+    }
+
+    .reaggregate-button.is-hidden {
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .reset-icon {
+      display: inline-block;
+      color: var(--pff-purple);
+      font-size: 15px;
+      line-height: 1;
     }
 
     .chart-options-row {
@@ -46,61 +79,43 @@
       padding: 0 0 2px;
     }
 
-    .chart-shell {
-      margin: -3px 0 0;
-    }
-
-    .benchmark-legend {
+    .chart-note {
       position: absolute;
-      top: 8px;
+      top: 5px;
       right: 5px;
-      z-index: 5;
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 3px;
-      padding: 4px 6px;
+      z-index: 4;
+      max-width: min(230px, calc(100% - 80px));
+      padding: 5px 7px;
       color: var(--pff-muted);
-      background: rgba(255, 255, 255, 0.90);
-      border: 1px solid rgba(105, 113, 138, 0.14);
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid rgba(105, 113, 138, 0.16);
       border-radius: 4px;
       font-size: 8.5px;
-      font-weight: 700;
-      line-height: 1;
+      line-height: 1.3;
       pointer-events: none;
     }
 
-    .benchmark-legend-item {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      white-space: nowrap;
-    }
-
-    .benchmark-legend-line {
-      width: 17px;
-      height: 0;
-      flex: 0 0 17px;
-      border-top: 2px dotted var(--pff-saturated);
-    }
-
-    .benchmark-legend-line.is-sufficient {
-      border-top-color: var(--pff-sufficient);
-    }
-
-    .benchmark-legend-line.is-saturated {
-      border-top-color: var(--pff-saturated);
+    .chart-note.is-hidden {
+      display: none;
     }
 
     @media (max-width: 430px) {
-      .module-title {
-        font-size: 12px;
+      .reaggregate-button {
+        min-height: 26px;
+        padding-right: 5px;
+        padding-left: 5px;
+        font-size: 10px;
       }
 
-      .benchmark-legend {
-        top: 7px;
-        right: 3px;
+      .chart-note {
+        max-width: min(205px, calc(100% - 68px));
         font-size: 8px;
+      }
+    }
+
+    @media (max-width: 350px) {
+      .reaggregate-button {
+        font-size: 9px;
       }
     }
   </style>
@@ -110,29 +125,57 @@
   <div id="fit">
     <main id="app" class="is-loading" aria-busy="true">
       <div
+        id="loadingState"
         class="app-loading"
         role="status"
-        aria-live="polite"
-        aria-label="Loading Australia and state population coverage data"
+        aria-label="Loading permanent salary data"
       >
-        <div class="cone-loader" aria-hidden="true">
-          <span class="cone blue"></span>
-          <span class="cone green"></span>
-          <span class="cone red"></span>
+        <div class="cone-loader">
+          <div class="cone blue" aria-hidden="true"></div>
+          <div class="cone green" aria-hidden="true"></div>
+          <div class="cone red" aria-hidden="true"></div>
         </div>
-        <p class="loader-text">Loading population coverage data…</p>
+
+        <div class="loader-text">Loading permanent salary data…</div>
       </div>
 
       <div class="module-top">
-        <h1 class="module-title">Population coverage</h1>
+        <div class="tab-scroll-shell">
+          <button
+            id="tabScrollLeft"
+            class="tab-scroll-button tab-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll salary tabs left"
+          >‹</button>
 
-        <div id="liveData" class="live-data" aria-label="Live data" aria-live="polite">
+          <div
+            id="tabList"
+            class="tab-list"
+            role="tablist"
+            aria-label="Permanent salary views"
+          >
+            <button class="chart-tab is-active" type="button" role="tab" data-view="experience" aria-selected="true">Experience</button>
+            <button class="chart-tab" type="button" role="tab" data-view="rurality" aria-selected="false">Rurality</button>
+            <button class="chart-tab" type="button" role="tab" data-view="state" aria-selected="false">State</button>
+            <button class="chart-tab" type="button" role="tab" data-view="employer" aria-selected="false">Employer</button>
+            <button class="chart-tab" type="button" role="tab" data-view="date" aria-selected="false">Time</button>
+          </div>
+
+          <button
+            id="tabScrollRight"
+            class="tab-scroll-button tab-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll salary tabs right"
+          >›</button>
+        </div>
+
+        <div id="dataSourceIndicator" class="live-data" aria-label="Live data">
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span id="liveDataText">LIVE data</span>
+          <span id="dataSourceText">LIVE data</span>
         </div>
       </div>
 
-      <div id="status" role="status" aria-live="polite"></div>
+      <div id="status" role="alert" aria-live="polite"></div>
 
       <div class="chart-heading-row">
         <div id="headingScrollShell" class="heading-scroll-shell">
@@ -144,7 +187,9 @@
           >‹</button>
 
           <div id="headingScrollViewport" class="heading-scroll-viewport">
-            <h2 id="chartHeading" class="chart-heading">Population coverage trends</h2>
+            <h2 class="chart-heading">
+              <span class="chart-heading-fixed">FTE salaries</span><span id="chartHeadingDetail" class="chart-heading-detail">by experience</span>
+            </h2>
           </div>
 
           <button
@@ -157,14 +202,14 @@
 
         <div class="heading-controls">
           <button
-            id="yoyTrendToggle"
-            class="yoy-trend-toggle is-on"
+            id="reaggregateButton"
+            class="reaggregate-button is-hidden"
             type="button"
-            aria-pressed="true"
-            aria-label="3-year trend"
+            aria-hidden="true"
+            tabindex="-1"
           >
-            <span class="yoy-binary-indicator" aria-hidden="true"></span>
-            <span class="yoy-toggle-label">3yr Trend</span>
+            <span>Re-aggregate</span>
+            <span class="reset-icon" aria-hidden="true">↻</span>
           </button>
         </div>
       </div>
@@ -176,14 +221,10 @@
             class="legend-scroll-button legend-scroll-left is-hidden"
             type="button"
             aria-label="Scroll legend left"
-          >‹</button>
+          >&#8249;</button>
 
           <div id="legendViewport" class="legend-viewport">
-            <div
-              id="chartLegend"
-              class="chart-legend"
-              aria-label="Population coverage chart legend"
-            ></div>
+            <div id="chartLegend" class="chart-legend" aria-label="Chart legend"></div>
           </div>
 
           <button
@@ -191,27 +232,16 @@
             class="legend-scroll-button legend-scroll-right is-hidden"
             type="button"
             aria-label="Scroll legend right"
-          >›</button>
+          >&#8250;</button>
         </div>
       </div>
 
       <div id="chartShell" class="chart-shell">
-        <div class="benchmark-legend" aria-label="Coverage benchmarks">
-          <span class="benchmark-legend-item">
-            <span class="benchmark-legend-line is-sufficient" aria-hidden="true"></span>
-            <span>Sufficient · 1 / 10k</span>
-          </span>
-
-          <span class="benchmark-legend-item">
-            <span class="benchmark-legend-line is-saturated" aria-hidden="true"></span>
-            <span>Saturated · 1 / 5k</span>
-          </span>
-        </div>
+        <aside id="chartNote" class="chart-note is-hidden" role="note"></aside>
 
         <canvas
-          id="coverageChart"
-          aria-label="Australia and state people per FTE clinician trends over time"
-          role="img"
+          id="permanentSalaryChart"
+          aria-label="Permanent FTE salary chart"
           tabindex="-1"
         ></canvas>
       </div>
@@ -219,130 +249,267 @@
   </div>
 
   <script>
-    'use strict';
 
-    const CONFIG = Object.freeze({
-      sheetId:
-        '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+    const CONFIG = {
+      sheetId: '1D4EoCMnH_RbwbuzFtw92NOwnvR_r9zQV7dAaXtfnnd0',
+      sheetName: 'Data',
+      range: 'A:W',
+      fetchTimeoutMs: 20000,
+      localCacheKey: 'pff-permanent-salary-graph-v1',
 
-      clinicianSheet:
-        'OptomsbyPHN',
+      transitionMs: 1500,
+      splitAnimationMs: 820,
+      mergeAnimationMs: 820,
+      doubleActivationMs: 420,
 
-      clinicianRange:
-        'A30:CQ',
+      pointRadius: 2.7,
+      pointHoverRadius: 4.4,
+      regressionWidth: 3.6,
 
-      populationSheet:
-        'Auspopnbystate',
+      pointOpacity: 0.20,
+      pointHoverOpacity: 0.68,
+      categoryPointOpacity: 0.20,
+      categoryPointHoverOpacity: 0.68,
 
-      populationRange:
-        'A30:J',
+      aggregateOpacity: 0.91,
+      aggregateHoverOpacity: 0.98,
+      dimmedAggregateOpacity: 0.48,
+      dimmedAggregateHoverOpacity: 0.60,
+      rawPointRadius: 4,
 
-      localCacheKey:
-        'pff-australia-state-population-coverage-trends-fte-phn-v4'
-    });
+      minimumSalary: 30000,
+      maximumSalary: 500000
+    };
 
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
 
-    const CLINICIAN_CACHE_APP_KEY =
-      'pff-phn-population-coverage-trends-v1';
+    const CACHE_APP_KEY =
+      'permanent-salary-data';
 
-    const POPULATION_CACHE_APP_KEY =
-      'pff-australian-population-trends';
-
-    const LIVE_CLINICIAN_FIRST_INDEX =
-      64; // BM
-
-    const REMOTE_CLINICIAN_FIRST_INDEX =
-      1;
-
-    const PHN_SERIES_COUNT =
-      31;
-
-    const SATURATED_BENCHMARK =
-      5000;
-
-    const SUFFICIENT_BENCHMARK =
+    const CACHE_FETCH_TIMEOUT_MS =
       10000;
 
-    const SATURATED_COLOUR =
-      '#ff00ff';
+    /*
+     * Testing switch only.
+     * Leave false in normal use.
+     * Set true temporarily to verify the cached-data fallback.
+     */
+    const FORCE_CACHED_DATA =
+      false;
 
-    const SUFFICIENT_COLOUR =
-      '#20c9d7';
-
-    const AUSTRALIA_COLOUR =
-      '#0b5d1e';
-
-    const STATE_COLOURS = {
-      NSW: '#2db7f5',
-      VIC: '#2d3a8c',
-      QLD: '#7a0036',
-      SA: '#f03a47',
-      WA: '#000000',
-      TAS: '#22a36b',
-      NT: '#c25e00',
-      ACT: '#7b61ff'
+    const VIEW_CONFIG = {
+      experience: 'by experience',
+      rurality: 'by rurality',
+      state: 'by state',
+      employer: 'by employer',
+      date: 'over time'
     };
 
-    const FTE_STATE_CODES = [
-      'NSW', 'NSW', 'NSW', 'NSW', 'NSW',
-      'NSW', 'NSW', 'NSW', 'NSW', 'NSW',
-      'VIC', 'VIC', 'VIC', 'VIC', 'VIC', 'VIC',
-      'QLD', 'QLD', 'QLD', 'QLD', 'QLD', 'QLD', 'QLD',
-      'SA', 'SA',
-      'WA', 'WA', 'WA',
-      'TAS',
-      'NT',
-      'ACT'
-    ];
-
-    const STATE_CODES = [
+    const STATE_ORDER = [
       'NSW',
-      'VIC',
       'QLD',
+      'VIC',
+      'ACT',
       'SA',
-      'WA',
-      'TAS',
       'NT',
-      'ACT'
+      'WA',
+      'TAS'
     ];
 
-    const SERIES = [
+    const STATE_COLOURS =
+      PFF.stateColours;
+
+    const RURALITY_ORDER = [
+      'MM1',
+      'MM2',
+      'MM3',
+      'MM4',
+      'MM5',
+      'MM6',
+      'MM7'
+    ];
+
+    const RURALITY_COLOURS =
+      PFF.mmmColours;
+
+    const EMPLOYERS = [
       {
-        code:
-          'AUS',
-        label:
-          'Australia',
-        colour:
-          AUSTRALIA_COLOUR,
-        width:
-          3
+        key: 'toss',
+        label: 'TOSS',
+        fullName: 'The Optical Super Store',
+        colour: '#ff2401',
+        aliases: ['TOSS', 'The Optical Superstore', 'The Optical Super Store']
       },
-      ...STATE_CODES.map(
-        code => ({
-          code,
-          label:
-            code,
-          colour:
-            STATE_COLOURS[code],
-          width:
-            3
-        })
-      )
+      {
+        key: 'th',
+        label: 'TH',
+        fullName: 'Teachers Health',
+        colour: '#007781',
+        aliases: [
+          'TH',
+          'THF',
+          'Teachers Health',
+          'Teachers Health Fund',
+          "Teacher's Health",
+          "Teacher's Health Fund",
+          'Teacher’s Health',
+          'Teacher’s Health Fund'
+        ]
+      },
+      {
+        key: 'costco',
+        label: 'Costco',
+        fullName: 'Costco Optical',
+        colour: '#e32a36',
+        aliases: ['Costco', 'Costco Optical']
+      },
+      {
+        key: 'ow',
+        label: 'OW',
+        fullName: 'Oscar Wylee',
+        colour: '#f16c20',
+        aliases: ['OW', 'Oscar Wylee']
+      },
+      {
+        key: 'bn',
+        label: 'BN',
+        fullName: 'Bailey Nelson',
+        colour: '#002e5a',
+        aliases: ['BN', 'Bailey Nelson']
+      },
+      {
+        key: '1001',
+        label: '1001',
+        fullName: '1001 Optometry',
+        colour: '#000000',
+        aliases: ['1001', '1001 Optometry']
+      },
+      {
+        key: 'cw',
+        label: 'CW',
+        fullName: 'Chemist Warehouse Optometry',
+        colour: '#ea0f0f',
+        aliases: [
+          'CW',
+          'Chemist Warehouse',
+          'Chemist Warehouse Optometry',
+          'Chemist/Optometrist Warehouse'
+        ]
+      },
+      {
+        key: 'indie',
+        label: 'Indie',
+        fullName: 'Independent',
+        colour: '#5a3be7',
+        aliases: ['Indie', 'Independent']
+      },
+      {
+        key: 'hcf',
+        label: 'HCF',
+        fullName: 'HCF Eyecare',
+        colour: '#da1c5c',
+        aliases: ['HCF', 'HCF Eyecare']
+      },
+      {
+        key: 'ophthal',
+        label: 'Ophthal',
+        fullName: 'Ophthalmologist',
+        colour: '#ffb000',
+        aliases: ['Ophthal', 'Ophthalmologist', 'Ophthal practice']
+      },
+      {
+        key: 'toc',
+        label: 'TOC',
+        fullName: 'The Optical Company',
+        colour: '#13543c',
+        aliases: [
+          'NIB',
+          'TOC',
+          'The Optical Company',
+          'The Optical Company (incl. NIB)',
+          'NIB (incl. the Optical Company)'
+        ]
+      },
+      {
+        key: 'ss',
+        label: 'SS',
+        fullName: 'Specsavers',
+        colour: '#009552',
+        aliases: ['SS', 'Specsavers']
+      },
+      {
+        key: 'bupa',
+        label: 'Bupa',
+        fullName: 'Bupa Optical',
+        colour: '#0075c2',
+        aliases: ['Bupa', 'Bupa Optical']
+      },
+      {
+        key: 'other',
+        label: 'Other',
+        fullName: 'Other',
+        colour: '#bfc3c7',
+        aliases: [
+          'Other',
+          'Other (e.g., uni, not-for-profit)',
+          'Other (e.g., uni, hospital, govt, not-for-profit)'
+        ]
+      },
+      {
+        key: 'opsm',
+        label: 'OPSM',
+        fullName: 'OPSM',
+        colour: '#6fb0d4',
+        aliases: ['OPSM', 'OPSM (incl. L&P, EyeQ)']
+      },
+      {
+        key: 'dresden',
+        label: 'Dresden',
+        fullName: 'Dresden Vision',
+        colour: '#999999',
+        aliases: ['Dresden', 'Dresden Vision']
+      },
+      {
+        key: 'obnp',
+        label: 'ObNP',
+        fullName: 'Optical by National Pharmacies',
+        colour: '#2cb4a6',
+        aliases: ['ObNP', 'Optical by National Pharmacies']
+      },
+      {
+        key: 'gm',
+        label: 'G&M',
+        fullName: 'George & Matilda Eyecare',
+        colour: '#000000',
+        aliases: ['G&M', 'George & Matilda', 'George & Matilda Eyecare']
+      }
     ];
 
-    const app =
-      document.getElementById('app');
+    const EMPLOYER_BY_KEY = new Map(
+      EMPLOYERS.map(employer => [employer.key, employer])
+    );
 
-    const statusEl =
-      document.getElementById('status');
+    const DAY_MS = 86400000;
+    const YEAR_MS = 365.2425 * DAY_MS;
 
-    const liveData =
-      document.getElementById('liveData');
+    const app = document.getElementById('app');
+    const statusElement = document.getElementById('status');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
+    const chartHeadingDetail = document.getElementById('chartHeadingDetail');
+    const reaggregateButton = document.getElementById('reaggregateButton');
+    const tabList = document.getElementById('tabList');
+    const tabScrollLeft = document.getElementById('tabScrollLeft');
+    const tabScrollRight = document.getElementById('tabScrollRight');
+    const chartTabs = [...document.querySelectorAll('.chart-tab')];
 
-    const liveDataText =
-      document.getElementById('liveDataText');
+
+    const chartLegend = document.getElementById('chartLegend');
+    const legendScrollLeft = document.getElementById('legendScrollLeft');
+    const legendScrollRight = document.getElementById('legendScrollRight');
+    const chartNote = document.getElementById('chartNote');
+    const chartShell = document.getElementById('chartShell');
 
     const headingScrollViewport =
       document.getElementById('headingScrollViewport');
@@ -352,1907 +519,5165 @@
 
     const headingScrollRight =
       document.getElementById('headingScrollRight');
+    const chartCanvas = document.getElementById('permanentSalaryChart');
 
-    const yoyTrendToggle =
-      document.getElementById('yoyTrendToggle');
+    let rows = [];
+    let chart = null;
+    let activeView = 'experience';
+    let interactionLocked = false;
+    let viewMorphInProgress = false;
+    let currentXAxisOptions = null;
+    let tabsController = null;
+    let headingScroller = null;
+    let legendController = null;
+    let responsiveController = null;
+    let interactionsController = null;
 
-    const chartLegend =
-      document.getElementById('chartLegend');
+    const animationController =
+      PFFCharts.createAnimationController();
 
-    const legendScrollLeft =
-      document.getElementById('legendScrollLeft');
+    let lastBubbleClick = '';
+    let lastBubbleClickAt = 0;
 
-    const legendScrollRight =
-      document.getElementById('legendScrollRight');
+    const yAxisModel = {
+      minimum: 60000,
+      maximum: 180000,
+      majorStep: 20000,
+      minorStep: 10000
+    };
 
-    const chartShell =
-      document.getElementById('chartShell');
+    const cleanText =
+      PFF.cleanText;
 
-    const chartCanvas =
-      document.getElementById('coverageChart');
+    const normaliseText =
+      PFF.normaliseText;
 
-    const state = {
-      rows: [],
-      clinicianByYear: {},
-      populationByYear: {},
-      years: [],
-      hiddenSeries: new Set(),
-      scale: {
-        min: 0,
-        max: 12000,
-        step: 2000,
-        intervals: 6
+    const clamp =
+      PFF.clamp;
+
+    const toNumber =
+      PFF.toNumber;
+
+    const getCellValue =
+      PFF.cellValue;
+
+    const parseDate =
+      PFF.parseDateUtc;
+
+    const normaliseRurality =
+      PFF.normaliseMMM;
+
+    const normaliseState =
+      PFF.normaliseState;
+
+    const calculateStatistics =
+      PFFStats.calculateStatistics;
+
+    const formatNumber =
+      PFF.formatNumber;
+
+    const formatExperienceBand =
+      PFF.formatExperienceBand;
+
+    const formatQuarterTick =
+      PFF.formatQuarterTick;
+
+    const calculateRegression =
+      PFFStats.calculateRegression;
+
+    const formatPValue =
+      PFFStats.formatPValue;
+
+    const rgba =
+      PFF.rgba;
+
+    const parseCssColour =
+      PFFCharts.parseCssColour;
+
+    const interpolateCssColour =
+      PFFCharts.interpolateCssColour;
+
+    const fadeCssColour =
+      PFFCharts.fadeCssColour;
+
+    const resolveScriptableValue =
+      PFFCharts.resolveScriptableValue;
+
+    const isLineDataset =
+      PFFCharts.isLineDataset;
+
+    const easeOutCubic =
+      PFFCharts.easeOutCubic;
+
+    const easeInOutCubic =
+      PFFCharts.easeInOutCubic;
+
+    const xAxisFade = {
+      active: false,
+      progress: 1,
+      from: null,
+      changes: {
+        ticks: false,
+        labels: false,
+        title: false,
+        border: false
       }
     };
 
-    let chart =
-      null;
-
-    let chartSummary =
-      null;
-
-    let headingScroller =
-      null;
-
-    let legendController =
-      null;
-
-    let trendController =
-      null;
-
-    let interactionsController =
-      null;
-
-    let responsiveController =
-      null;
-
-    let unifiedYAxis =
-      null;
-
-    function dataNumber(value) {
-      if (
-        value &&
-        typeof value === 'object' &&
-        (
-          Object.prototype.hasOwnProperty.call(value, 'v') ||
-          Object.prototype.hasOwnProperty.call(value, 'f')
-        )
-      ) {
-        const direct =
-          PFFCharts.numericCell(value);
-
-        return Number.isFinite(direct)
-          ? direct
-          : null;
-      }
+    function normaliseEmployer(value) {
+      const text = normaliseText(value);
 
       if (
-        value === null ||
-        value === undefined ||
-        (
-          typeof value === 'string' &&
-          !value.trim()
-        )
+        !text ||
+        text === 'x' ||
+        text === 'xxx'
       ) {
         return null;
       }
 
-      const cleaned =
-        PFF.cleanText(value)
-          .replace(/,/g, '')
-          .replace(/[^0-9.+-]/g, '');
-
-      if (
-        !cleaned ||
-        !/\d/.test(cleaned)
-      ) {
-        return null;
-      }
-
-      const number =
-        Number(cleaned);
-
-      return Number.isFinite(number)
-        ? number
-        : null;
-    }
-
-    function yearValue(value) {
-      const numeric =
-        dataNumber(value);
-
-      if (!Number.isFinite(numeric)) {
-        return null;
-      }
-
-      const year =
-        Math.round(numeric);
-
-      return year >= 1900 && year <= 2200
-        ? year
-        : null;
-    }
-
-    function normaliseMetricObject(values) {
-      if (
-        !values ||
-        typeof values !== 'object'
-      ) {
-        return null;
-      }
-
-      const normalised = {};
-
-      SERIES.forEach(
-        item => {
-          const raw =
-            values[item.code];
-
-          if (
-            raw === null ||
-            raw === undefined ||
-            (
-              typeof raw === 'string' &&
-              !raw.trim()
-            )
-          ) {
-            normalised[item.code] =
-              null;
-
-            return;
-          }
-
-          const number =
-            Number(raw);
-
-          normalised[item.code] =
-            Number.isFinite(number)
-              ? number
-              : null;
-        }
-      );
-
-      return Object.values(
-        normalised
-      ).some(Number.isFinite)
-        ? normalised
-        : null;
-    }
-
-    function aggregateClinicianValues(
-      values
-    ) {
-      const expectedByState =
-        FTE_STATE_CODES.reduce(
-          (counts, code) => {
-            counts[code] =
-              (counts[code] || 0) + 1;
-
-            return counts;
-          },
-          {}
-        );
-
-      const totals =
-        Object.fromEntries(
-          STATE_CODES.map(
-            code => [code, 0]
-          )
-        );
-
-      const validCounts =
-        Object.fromEntries(
-          STATE_CODES.map(
-            code => [code, 0]
-          )
-        );
-
-      let nationalTotal =
-        0;
-
-      let nationalValid =
-        0;
-
-      FTE_STATE_CODES.forEach(
-        (code, index) => {
-          const value =
-            dataNumber(
-              values?.[index]
-            );
-
-          if (
-            !Number.isFinite(value) ||
-            value < 0
-          ) {
-            return;
-          }
-
-          totals[code] +=
-            value;
-
-          validCounts[code] +=
-            1;
-
-          nationalTotal +=
-            value;
-
-          nationalValid +=
-            1;
-        }
-      );
-
-      const result = {};
-
-      STATE_CODES.forEach(
-        code => {
-          result[code] =
-            validCounts[code] ===
-              expectedByState[code]
-              ? totals[code]
-              : null;
-        }
-      );
-
-      result.AUS =
-        nationalValid ===
-          PHN_SERIES_COUNT
-          ? nationalTotal
-          : null;
-
-      return result;
-    }
-
-    function parseLiveClinicianTable(
-      table
-    ) {
-      const result = {};
-
-      (table?.rows || []).forEach(
-        sourceRow => {
-          const cells =
-            sourceRow?.c || [];
-
-          const year =
-            yearValue(
-              cells[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          const values =
-            Array.from(
-              {
-                length:
-                  PHN_SERIES_COUNT
-              },
-              (_, index) =>
-                dataNumber(
-                  cells[
-                    LIVE_CLINICIAN_FIRST_INDEX +
-                      index
-                  ]
-                )
-            );
-
-          const aggregated =
-            aggregateClinicianValues(
-              values
-            );
-
-          if (
-            Object.values(
-              aggregated
-            ).some(Number.isFinite)
-          ) {
-            result[year] =
-              aggregated;
-          }
-        }
-      );
-
-      return result;
-    }
-
-    function parseRemoteClinicianRows(
-      sourceRows
-    ) {
-      const result = {};
-
-      (
-        Array.isArray(sourceRows)
-          ? sourceRows
-          : []
-      ).forEach(
-        row => {
-          const year =
-            yearValue(
-              row?.[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          const values =
-            Array.from(
-              {
-                length:
-                  PHN_SERIES_COUNT
-              },
-              (_, index) =>
-                dataNumber(
-                  row?.[
-                    REMOTE_CLINICIAN_FIRST_INDEX +
-                      index
-                  ]
-                )
-            );
-
-          const aggregated =
-            aggregateClinicianValues(
-              values
-            );
-
-          if (
-            Object.values(
-              aggregated
-            ).some(Number.isFinite)
-          ) {
-            result[year] =
-              aggregated;
-          }
-        }
-      );
-
-      return result;
-    }
-
-    function parseLivePopulationTable(
-      table
-    ) {
-      const result = {};
-
-      (table?.rows || []).forEach(
-        sourceRow => {
-          const cells =
-            sourceRow?.c || [];
-
-          const year =
-            yearValue(
-              cells[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          const values = {
-            NSW:
-              dataNumber(cells[1]),
-            VIC:
-              dataNumber(cells[2]),
-            QLD:
-              dataNumber(cells[3]),
-            SA:
-              dataNumber(cells[4]),
-            WA:
-              dataNumber(cells[5]),
-            TAS:
-              dataNumber(cells[6]),
-            NT:
-              dataNumber(cells[7]),
-            ACT:
-              dataNumber(cells[8]),
-            AUS:
-              dataNumber(cells[9])
-          };
-
-          if (
-            Object.values(
-              values
-            ).some(Number.isFinite)
-          ) {
-            result[year] =
-              values;
-          }
-        }
-      );
-
-      return result;
-    }
-
-    function parseRemotePopulationSnapshot(
-      snapshot
-    ) {
-      const result = {};
-
-      (
-        Array.isArray(
-          snapshot?.data?.stateRows
-        )
-          ? snapshot.data.stateRows
-          : []
-      ).forEach(
-        row => {
-          const year =
-            yearValue(
-              row?.[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          result[year] = {
-            NSW:
-              dataNumber(row?.[1]),
-            VIC:
-              dataNumber(row?.[2]),
-            QLD:
-              dataNumber(row?.[3]),
-            SA:
-              dataNumber(row?.[4]),
-            WA:
-              dataNumber(row?.[5]),
-            TAS:
-              dataNumber(row?.[6]),
-            NT:
-              dataNumber(row?.[7]),
-            ACT:
-              dataNumber(row?.[8]),
-            AUS:
-              null
-          };
-        }
-      );
-
-      (
-        Array.isArray(
-          snapshot?.data?.rows
-        )
-          ? snapshot.data.rows
-          : []
-      ).forEach(
-        row => {
-          const year =
-            yearValue(
-              row?.[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          result[year] =
-            result[year] || {
-              NSW: null,
-              VIC: null,
-              QLD: null,
-              SA: null,
-              WA: null,
-              TAS: null,
-              NT: null,
-              ACT: null,
-              AUS: null
-            };
-
-          result[year].AUS =
-            dataNumber(
-              row?.[1]
-            );
-        }
-      );
-
-      return result;
-    }
-
-    function combineYearMaps(
-      clinicianByYear,
-      populationByYear
-    ) {
-      const years =
-        Array.from(
-          new Set([
-            ...Object.keys(
-              clinicianByYear || {}
-            ).map(Number),
-
-            ...Object.keys(
-              populationByYear || {}
-            ).map(Number)
-          ])
-        )
-          .filter(Number.isFinite)
-          .sort(
-            (first, second) =>
-              first - second
-          );
-
-      return years.map(
-        year => ({
-          year,
-          clinician:
-            normaliseMetricObject(
-              clinicianByYear?.[
-                year
-              ]
-            ),
-          population:
-            normaliseMetricObject(
-              populationByYear?.[
-                year
-              ]
-            )
-        })
-      );
-    }
-
-    function validateCombinedRows(
-      sourceRows
-    ) {
-      const rows =
-        (
-          Array.isArray(sourceRows)
-            ? sourceRows
-            : []
-        )
-          .map(
-            row => {
-              const year =
-                Number(
-                  row?.year
-                );
-
-              if (
-                !Number.isFinite(year) ||
-                year < 1900 ||
-                year > 2200
-              ) {
-                return null;
-              }
-
-              const clinician =
-                normaliseMetricObject(
-                  row?.clinician
-                );
-
-              const population =
-                normaliseMetricObject(
-                  row?.population
-                );
-
-              if (
-                !clinician &&
-                !population
-              ) {
-                return null;
-              }
-
-              return {
-                year:
-                  Math.round(year),
-                clinician,
-                population
-              };
-            }
-          )
-          .filter(Boolean)
-          .sort(
-            (first, second) =>
-              first.year -
-              second.year
-          );
-
-      if (
-        !rows.some(
-          row => row.clinician
-        ) ||
-        !rows.some(
-          row => row.population
-        ) ||
-        !rows.some(
-          row =>
-            row.clinician &&
-            row.population
-        )
-      ) {
-        throw new Error(
-          'Australia/state population coverage data were incomplete.'
-        );
-      }
-
-      return rows;
-    }
-
-    function parseLiveData(
-      raw
-    ) {
-      return validateCombinedRows(
-        combineYearMaps(
-          parseLiveClinicianTable(
-            raw?.clinicianTable
-          ),
-          parseLivePopulationTable(
-            raw?.populationTable
-          )
+      const employer = EMPLOYERS.find(item =>
+        [
+          item.key,
+          item.label,
+          item.fullName,
+          ...item.aliases
+        ].some(candidate =>
+          normaliseText(candidate) === text
         )
       );
+
+      return employer?.key || null;
     }
 
-    function parseRemoteCache(
-      raw
+
+
+    function formatCurrency(
+      value,
+      maximumFractionDigits = 0
     ) {
-      return validateCombinedRows(
-        combineYearMaps(
-          parseRemoteClinicianRows(
-            raw?.clinicianSnapshot
-              ?.data
-              ?.clinicianRows
-          ),
-          parseRemotePopulationSnapshot(
-            raw?.populationSnapshot
-          )
-        )
+      return PFF.formatCurrency(
+        value,
+        {
+          maximumFractionDigits
+        }
       );
     }
 
-    function applyLoadedRows(
-      sourceRows
-    ) {
-      const rows =
-        validateCombinedRows(
-          sourceRows
-        );
-
-      state.rows =
-        rows;
-
-      state.clinicianByYear = {};
-      state.populationByYear = {};
-
-      rows.forEach(
-        row => {
-          if (row.clinician) {
-            state.clinicianByYear[
-              row.year
-            ] = {
-              ...row.clinician
-            };
-          }
-
-          if (row.population) {
-            state.populationByYear[
-              row.year
-            ] = {
-              ...row.population
-            };
-          }
-        }
-      );
-
-      state.years =
-        commonYears();
-
-      if (!state.years.length) {
-        throw new Error(
-          'No annual years were common to OptomsbyPHN and Auspopnbystate.'
-        );
-      }
-
-      state.scale =
-        deriveScale();
-    }
-
-    function migrateLegacyLocalCache() {
-      try {
-        const raw =
-          localStorage.getItem(
-            CONFIG.localCacheKey
-          );
-
-        if (!raw) {
-          return;
-        }
-
-        const parsed =
-          JSON.parse(
-            raw
-          );
-
-        if (
-          Array.isArray(
-            parsed?.rows
-          )
-        ) {
-          return;
-        }
-
-        if (
-          parsed?.clinicianByYear &&
-          parsed?.populationByYear
-        ) {
-          PFFCharts.saveLocalCache(
-            CONFIG.localCacheKey,
-            validateCombinedRows(
-              combineYearMaps(
-                parsed.clinicianByYear,
-                parsed.populationByYear
-              )
-            )
-          );
-        }
-      } catch (_) {
-        // Browser cache is optional.
-      }
-    }
-
-    function sortedYears(
-      object
-    ) {
-      return Object.keys(
-        object || {}
-      )
-        .map(Number)
-        .filter(Number.isFinite)
-        .sort(
-          (first, second) =>
-            first - second
-        );
-    }
-
-    function commonYears() {
-      const clinicianYears =
-        new Set(
-          sortedYears(
-            state.clinicianByYear
-          )
-        );
-
-      return sortedYears(
-        state.populationByYear
-      ).filter(
-        year =>
-          clinicianYears.has(
-            year
-          )
-      );
-    }
-
-    function safeNumber(
+    function formatCompactSalary(
       value
     ) {
-      if (
-        value === null ||
-        value === undefined ||
-        (
-          typeof value === 'string' &&
-          !value.trim()
-        )
-      ) {
-        return null;
-      }
-
-      const number =
-        Number(
-          value
-        );
-
-      return Number.isFinite(number)
-        ? number
-        : null;
+      return PFF.formatCompactNumber(
+        value,
+        {
+          thousandThreshold: 1,
+          thousandDecimals: 1,
+          millionDecimals: 1,
+          invalid: ''
+        }
+      );
     }
 
-    function coverageFor(
-      year,
-      code
+    function formatDate(
+      timestamp
     ) {
-      const population =
-        safeNumber(
-          state.populationByYear?.[
-            year
-          ]?.[
-            code
-          ]
-        );
-
-      const clinicians =
-        safeNumber(
-          state.clinicianByYear?.[
-            year
-          ]?.[
-            code
-          ]
-        );
-
-      if (
-        population === null ||
-        clinicians === null ||
-        population <= 0 ||
-        clinicians <= 0
-      ) {
-        return null;
-      }
-
-      const coverage =
-        population /
-        clinicians;
-
-      return Number.isFinite(coverage) &&
-        coverage > 0
-          ? coverage
-          : null;
-    }
-
-    function latestTrendFor(
-      code
-    ) {
-      const windowSize =
-        trendController?.windowSize ||
-        0;
-
-      if (windowSize < 2) {
-        return NaN;
-      }
-
-      const trendRows =
-        state.years.map(
-          year => ({
-            year
-          })
-        );
-
-      return PFFCharts.latestConsecutiveTrend(
-        trendRows,
-        row =>
-          coverageFor(
-            row.year,
-            code
-          ),
-        windowSize
+      return PFF.formatDate(
+        timestamp,
+        {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          timeZone: 'UTC'
+        }
       );
     }
 
-    function niceStep(
-      rawStep
-    ) {
-      if (
-        !Number.isFinite(rawStep) ||
-        rawStep <= 0
-      ) {
-        return 1;
+    function formatMedianIqr(statistics) {
+      if (!statistics) {
+        return '—';
       }
 
-      const exponent =
-        Math.floor(
-          Math.log10(
-            rawStep
-          )
-        );
-
-      const magnitude =
-        Math.pow(
-          10,
-          exponent
-        );
-
-      const fraction =
-        rawStep /
-        magnitude;
-
-      let niceFraction;
-
-      if (fraction <= 1) {
-        niceFraction =
-          1;
-      } else if (fraction <= 2) {
-        niceFraction =
-          2;
-      } else if (fraction <= 2.5) {
-        niceFraction =
-          2.5;
-      } else if (fraction <= 5) {
-        niceFraction =
-          5;
-      } else {
-        niceFraction =
-          10;
-      }
-
-      return niceFraction *
-        magnitude;
-    }
-
-    function nextNiceStep(
-      step
-    ) {
-      const value =
-        Math.max(
-          1e-9,
-          Number(step) || 1
-        );
-
-      const exponent =
-        Math.floor(
-          Math.log10(
-            value
-          )
-        );
-
-      const magnitude =
-        Math.pow(
-          10,
-          exponent
-        );
-
-      const fraction =
-        value /
-        magnitude;
-
-      if (fraction < 1.5) {
-        return 2 *
-          magnitude;
-      }
-
-      if (fraction < 2.25) {
-        return 2.5 *
-          magnitude;
-      }
-
-      if (fraction < 3.75) {
-        return 5 *
-          magnitude;
-      }
-
-      if (fraction < 7.5) {
-        return 10 *
-          magnitude;
-      }
-
-      return 20 *
-        magnitude;
-    }
-
-    function deriveScale() {
-      const values = [
-        SATURATED_BENCHMARK,
-        SUFFICIENT_BENCHMARK
-      ];
-
-      SERIES.forEach(
-        item => {
-          state.years.forEach(
-            year => {
-              const value =
-                coverageFor(
-                  year,
-                  item.code
-                );
-
-              if (
-                Number.isFinite(value)
-              ) {
-                values.push(
-                  value
-                );
-              }
-            }
-          );
-        }
-      );
-
-      const finite =
-        values.filter(
-          value =>
-            Number.isFinite(value) &&
-            value >= 0
-        );
-
-      if (!finite.length) {
-        return {
-          min:
-            0,
-          max:
-            12000,
-          step:
-            2000,
-          intervals:
-            6
-        };
-      }
-
-      const highest =
-        Math.max(
-          ...finite
-        );
-
-      let step =
-        niceStep(
-          Math.max(
-            1,
-            highest / 6
-          )
-        );
-
-      let maximum =
-        Math.ceil(
-          highest /
-            step
-        ) *
-        step;
-
-      if (
-        maximum -
-          highest <
-        step * 0.35
-      ) {
-        maximum +=
-          step;
-      }
-
-      let intervals =
-        Math.round(
-          maximum /
-            step
-        );
-
-      while (
-        intervals > 8
-      ) {
-        step =
-          nextNiceStep(
-            step
-          );
-
-        maximum =
-          Math.ceil(
-            highest /
-              step
-          ) *
-          step;
-
-        if (
-          maximum -
-            highest <
-          step * 0.35
-        ) {
-          maximum +=
-            step;
-        }
-
-        intervals =
-          Math.round(
-            maximum /
-              step
-          );
-      }
-
-      return {
-        min:
-          0,
-        max:
-          maximum,
-        step,
-        intervals:
-          Math.max(
-            1,
-            intervals
-          )
-      };
-    }
-
-    function datasetFor(
-      item
-    ) {
-      const hidden =
-        state.hiddenSeries.has(
-          item.code
-        );
-
-      return PFFCharts.lineDataset({
-        label:
-          item.label,
-
-        data:
-          state.years.map(
-            year =>
-              coverageFor(
-                year,
-                item.code
-              )
-          ),
-
-        borderColor:
-          item.colour,
-
-        backgroundColor:
-          item.colour,
-
-        pointBackgroundColor:
-          item.colour,
-
-        pointBorderColor:
-          '#ffffff',
-
-        pointBorderWidth:
-          1,
-
-        borderWidth:
-          item.width,
-
-        borderCapStyle:
-          'round',
-
-        borderJoinStyle:
-          'round',
-
-        pointHitRadius:
-          5,
-
-        cubicInterpolationMode:
-          'monotone',
-
-        hidden,
-
-        _code:
-          item.code,
-
-        _seriesLabel:
-          item.label,
-
-        _activeSeries:
-          !hidden
-      });
-    }
-
-    function buildDatasets() {
-      return SERIES.map(
-        datasetFor
+      return (
+        `${formatCurrency(statistics.median, 0)} ` +
+        `[${formatNumber(statistics.q1, 0)}, ${formatNumber(statistics.q3, 0)}]`
       );
     }
 
-    const coverageBenchmarksPlugin = {
-      id:
-        'australiaStateCoverageBenchmarks',
+    function buildIndividualDetailLines(raw) {
+      const lines = [];
 
-      beforeDatasetsDraw(
-        chartInstance
-      ) {
-        const {
-          ctx,
-          chartArea,
-          scales
-        } =
-          chartInstance;
-
-        if (
-          !chartArea ||
-          !scales?.y
-        ) {
-          return;
-        }
-
-        const benchmarks = [
-          {
-            value:
-              SUFFICIENT_BENCHMARK,
-            colour:
-              SUFFICIENT_COLOUR
-          },
-          {
-            value:
-              SATURATED_BENCHMARK,
-            colour:
-              SATURATED_COLOUR
-          }
-        ];
-
-        ctx.save();
-        ctx.lineCap =
-          'round';
-        ctx.lineWidth =
-          2.2;
-        ctx.setLineDash(
-          [1, 4]
-        );
-
-        benchmarks.forEach(
-          benchmark => {
-            const y =
-              scales.y
-                .getPixelForValue(
-                  benchmark.value
-                );
-
-            if (
-              !Number.isFinite(y) ||
-              y < chartArea.top - 1 ||
-              y > chartArea.bottom + 1
-            ) {
-              return;
-            }
-
-            ctx.strokeStyle =
-              benchmark.colour;
-
-            ctx.beginPath();
-            ctx.moveTo(
-              chartArea.left,
-              y
-            );
-            ctx.lineTo(
-              chartArea.right,
-              y
-            );
-            ctx.stroke();
-          }
-        );
-
-        ctx.restore();
-      }
-    };
-
-    const yearTickMarksPlugin =
-      PFFCharts.createYearTickMarksPlugin({
-        id:
-          'australiaStateCoverageYearTicks'
-      });
-
-    const coverageTrendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
-        id:
-          'australiaStateCoverageTrendLabels',
-
-        enabled() {
-          return (
-            trendController?.mode !==
-            'off'
-          );
-        },
-
-        isActive({
-          chart:
-            chartInstance,
-          dataset,
-          datasetIndex,
-          meta
-        }) {
-          return (
-            dataset._activeSeries !==
-              false &&
-            !meta?.hidden &&
-            (
-              chartInstance
-                .isDatasetVisible
-                ? chartInstance
-                    .isDatasetVisible(
-                      datasetIndex
-                    )
-                : true
-            )
-          );
-        },
-
-        getTrendValue({
-          dataset
-        }) {
-          return latestTrendFor(
-            dataset._code
-          );
-        },
-
-        getSeriesColour({
-          dataset
-        }) {
-          return (
-            dataset.borderColor ||
-            '#69718a'
-          );
-        }
-      });
-
-    function tooltipLabel(
-      context
-    ) {
-      const code =
-        context.dataset._code;
-
-      const year =
-        Number(
-          state.years[
-            context.dataIndex
-          ]
-        );
-
-      const population =
-        safeNumber(
-          state.populationByYear?.[
-            year
-          ]?.[
-            code
-          ]
-        );
-
-      const clinicians =
-        safeNumber(
-          state.clinicianByYear?.[
-            year
-          ]?.[
-            code
-          ]
-        );
-
-      const coverage =
-        coverageFor(
-          year,
-          code
-        );
-
-      const label =
-        code === 'AUS'
-          ? 'Australia'
-          : code;
-
-      const lines = [
-        `${label}: ${PFF.formatInteger(coverage)} people per FTE clinician`
-      ];
-
-      if (
-        clinicians !== null &&
-        population !== null
-      ) {
+      if (activeView === 'experience') {
         lines.push(
-          `${PFF.formatOneDecimal(clinicians)} active FTE clinicians · ${PFF.formatInteger(population)} people`
+          Number.isFinite(
+            raw?.experience
+          )
+            ? `Experience: ${formatNumber(raw.experience, 1)} years`
+            : 'Experience: Unspecified'
+        );
+
+        return lines;
+      }
+
+      if (activeView === 'rurality') {
+        lines.push(
+          `Rurality: ${
+            raw?.rurality ||
+            'Unspecified'
+          }`
         );
       }
 
-      const windowSize =
-        trendController?.windowSize ||
-        0;
-
-      if (windowSize >= 2) {
-        const trend =
-          latestTrendFor(
-            code
-          );
-
-        if (
-          Number.isFinite(trend)
-        ) {
-          const arrow =
-            trend > 0.05
-              ? '↑'
-              : trend < -0.05
-                ? '↓'
-                : '';
-
-          lines.push(
-            `Latest ${windowSize}-year trend: ${arrow}${PFFCharts.formatTrendValue(trend)}`
-          );
-        }
+      if (activeView === 'state') {
+        lines.push(
+          `State: ${
+            raw?.state ||
+            'Unspecified'
+          }`
+        );
       }
+
+      if (activeView === 'employer') {
+        lines.push(
+          `Employer: ${
+            EMPLOYER_BY_KEY.get(
+              raw?.employerKey
+            )?.fullName ||
+            'Unspecified'
+          }`
+        );
+      }
+
+      if (activeView === 'date') {
+        lines.push(
+          Number.isFinite(
+            raw?.date
+          )
+            ? `Date: ${formatDate(raw.date)}`
+            : 'Date: Unspecified'
+        );
+      }
+
+      lines.push(
+        `Experience: ${
+          formatExperienceBand(
+            raw?.experience
+          )
+        }`
+      );
 
       return lines;
     }
 
-    function chartOptions() {
-      const scale =
-        state.scale;
+    function normaliseRows(sourceRows) {
+      return sourceRows
+        .map((sourceRow, sourceIndex) => {
+          const cells = sourceRow?.c || [];
 
-      const duration =
-        PFF.reducedMotion()
-          ? 0
-          : 1500;
+          return {
+            sourceIndex,
 
-      return PFFCharts.baseChartOptions({
-        normalized:
-          true,
+            date:
+              parseDate(cells[0]?.v) ??
+              parseDate(cells[0]?.f),
 
-        animation: {
-          duration,
-          easing:
-            'easeInOutCubic'
-        },
+            experience:
+              toNumber(
+                getCellValue(cells[2])
+              ),
 
-        animations: {
-          x: {
-            duration:
-              0
-          },
+            rurality:
+              normaliseRurality(
+                getCellValue(cells[4])
+              ),
 
-          y: {
-            duration,
-            easing:
-              'easeInOutCubic'
-          },
+            state:
+              normaliseState(
+                getCellValue(cells[8])
+              ),
 
-          colors: {
-            duration:
-              0
+            employerKey:
+              normaliseEmployer(
+                getCellValue(cells[9])
+              ),
+
+            fteSalary:
+              toNumber(
+                getCellValue(cells[22])
+              )
+          };
+        })
+        .filter(row =>
+          Number.isFinite(row.fteSalary) &&
+          row.fteSalary >= CONFIG.minimumSalary &&
+          row.fteSalary <= CONFIG.maximumSalary
+        )
+        .map(row => ({
+          ...row,
+
+          experience:
+            Number.isFinite(row.experience)
+              ? row.experience
+              : null
+        }));
+    }
+
+    function fixedXAxis(options) {
+      const originalAfterFit = options?.afterFit;
+      const ticks = options?.ticks || {};
+      const title = options?.title || {};
+
+      return {
+        ...options,
+
+        ticks: {
+          ...ticks,
+          padding: 3,
+
+          font: {
+            ...(ticks.font || {}),
+            lineHeight: '12px'
           }
         },
 
-        transitions:
-          PFFCharts.seriesVisibilityTransitionOptions(
-            260
+        title: {
+          ...title,
+
+          padding: {
+            top: 7,
+            bottom: 2
+          },
+
+          font: {
+            ...(title.font || {}),
+            lineHeight: '16px'
+          }
+        },
+
+        afterFit(scale) {
+          if (
+            typeof originalAfterFit === 'function'
+          ) {
+            originalAfterFit(scale);
+          }
+
+          scale.height = 46;
+        }
+      };
+    }
+
+    function getXAxisChangeMap(
+      previousOptions,
+      nextOptions
+    ) {
+      const previousView =
+        previousOptions?.pffTickView || '';
+
+      const nextView =
+        nextOptions?.pffTickView || '';
+
+      const previousAxisVisible =
+        previousOptions?.display !== false;
+
+      const nextAxisVisible =
+        nextOptions?.display !== false;
+
+      const previousTicksVisible =
+        previousAxisVisible &&
+        previousOptions?.grid?.drawTicks !== false &&
+        previousView !== 'hidden';
+
+      const nextTicksVisible =
+        nextAxisVisible &&
+        nextOptions?.grid?.drawTicks !== false &&
+        nextView !== 'hidden';
+
+      const previousLabelsVisible =
+        previousAxisVisible &&
+        previousOptions?.ticks?.display !== false &&
+        previousView !== 'hidden';
+
+      const nextLabelsVisible =
+        nextAxisVisible &&
+        nextOptions?.ticks?.display !== false &&
+        nextView !== 'hidden';
+
+      const previousTitleText =
+        previousOptions?.title?.text;
+
+      const nextTitleText =
+        nextOptions?.title?.text;
+
+      const previousTitleHasText =
+        Array.isArray(previousTitleText)
+          ? previousTitleText.some(Boolean)
+          : Boolean(previousTitleText);
+
+      const nextTitleHasText =
+        Array.isArray(nextTitleText)
+          ? nextTitleText.some(Boolean)
+          : Boolean(nextTitleText);
+
+      const previousTitleVisible =
+        previousAxisVisible &&
+        previousOptions?.title?.display !== false &&
+        previousTitleHasText;
+
+      const nextTitleVisible =
+        nextAxisVisible &&
+        nextOptions?.title?.display !== false &&
+        nextTitleHasText;
+
+      const previousBorderVisible =
+        previousAxisVisible &&
+        previousOptions?.border?.display !== false;
+
+      const nextBorderVisible =
+        nextAxisVisible &&
+        nextOptions?.border?.display !== false;
+
+      const previousTickSignature = JSON.stringify({
+        view: previousView,
+        minimum: previousOptions?.min,
+        maximum: previousOptions?.max,
+        tickLength: previousOptions?.grid?.tickLength
+      });
+
+      const nextTickSignature = JSON.stringify({
+        view: nextView,
+        minimum: nextOptions?.min,
+        maximum: nextOptions?.max,
+        tickLength: nextOptions?.grid?.tickLength
+      });
+
+      const previousLabelSignature = JSON.stringify({
+        view: previousView,
+        minimum: previousOptions?.min,
+        maximum: previousOptions?.max,
+        colour: previousOptions?.ticks?.color,
+        font: previousOptions?.ticks?.font || {}
+      });
+
+      const nextLabelSignature = JSON.stringify({
+        view: nextView,
+        minimum: nextOptions?.min,
+        maximum: nextOptions?.max,
+        colour: nextOptions?.ticks?.color,
+        font: nextOptions?.ticks?.font || {}
+      });
+
+      const previousTitleSignature = JSON.stringify({
+        text: previousTitleText,
+        colour: previousOptions?.title?.color,
+        font: previousOptions?.title?.font || {},
+        padding: previousOptions?.title?.padding || {}
+      });
+
+      const nextTitleSignature = JSON.stringify({
+        text: nextTitleText,
+        colour: nextOptions?.title?.color,
+        font: nextOptions?.title?.font || {},
+        padding: nextOptions?.title?.padding || {}
+      });
+
+      const previousBorderSignature = JSON.stringify({
+        colour: previousOptions?.border?.color,
+        width: previousOptions?.border?.width
+      });
+
+      const nextBorderSignature = JSON.stringify({
+        colour: nextOptions?.border?.color,
+        width: nextOptions?.border?.width
+      });
+
+      return {
+        ticks:
+          previousTicksVisible !== nextTicksVisible ||
+          (
+            previousTicksVisible &&
+            nextTicksVisible &&
+            previousTickSignature !== nextTickSignature
           ),
 
-        interaction: {
-          mode:
-            'nearest',
-          intersect:
-            true,
-          axis:
-            'xy'
-        },
+        labels:
+          previousLabelsVisible !== nextLabelsVisible ||
+          (
+            previousLabelsVisible &&
+            nextLabelsVisible &&
+            previousLabelSignature !== nextLabelSignature
+          ),
 
-        layout: {
-          autoPadding:
-            false,
-          padding: {
-            top:
-              PFF.mobileLayout()
-                ? 8
-                : 9,
-            right:
-              5,
-            bottom:
-              0,
-            left:
-              0
+        title:
+          previousTitleVisible !== nextTitleVisible ||
+          (
+            previousTitleVisible &&
+            nextTitleVisible &&
+            previousTitleSignature !== nextTitleSignature
+          ),
+
+        border:
+          previousBorderVisible !== nextBorderVisible ||
+          (
+            previousBorderVisible &&
+            nextBorderVisible &&
+            previousBorderSignature !== nextBorderSignature
+          )
+      };
+    }
+
+    function resolveAxisValue(
+      value,
+      context,
+      fallback
+    ) {
+      try {
+        return typeof value === 'function'
+          ? value(context)
+          : value ?? fallback;
+      } catch (_) {
+        return fallback;
+      }
+    }
+
+    function normaliseAxisPadding(value) {
+      const numericValue =
+        typeof value === 'number' ||
+        typeof value === 'string'
+          ? Number(value)
+          : NaN;
+
+      if (Number.isFinite(numericValue)) {
+        return {
+          top: numericValue,
+          right: numericValue,
+          bottom: numericValue,
+          left: numericValue
+        };
+      }
+
+      return {
+        top: Number(value?.top) || 0,
+        right: Number(value?.right) || 0,
+        bottom: Number(value?.bottom) || 0,
+        left: Number(value?.left) || 0
+      };
+    }
+
+    function getAxisFont(
+      fontOptions,
+      fallbackSize = 10,
+      fallbackWeight = '400'
+    ) {
+      const family =
+        fontOptions?.family ||
+        Chart.defaults.font.family ||
+        "'Lato', sans-serif";
+
+      const size =
+        Number(fontOptions?.size) ||
+        fallbackSize;
+
+      const weight =
+        fontOptions?.weight ||
+        fallbackWeight;
+
+      const style =
+        fontOptions?.style
+          ? `${fontOptions.style} `
+          : '';
+
+      const configuredLineHeight =
+        fontOptions?.lineHeight;
+
+      let lineHeight = size * 1.2;
+
+      if (typeof configuredLineHeight === 'string') {
+        const lineHeightText =
+          configuredLineHeight.trim();
+
+        const numericLineHeight =
+          parseFloat(lineHeightText);
+
+        if (Number.isFinite(numericLineHeight)) {
+          if (lineHeightText.endsWith('px')) {
+            lineHeight = numericLineHeight;
+          } else if (lineHeightText.endsWith('%')) {
+            lineHeight =
+              size *
+              numericLineHeight /
+              100;
+          } else {
+            lineHeight =
+              size *
+              numericLineHeight;
           }
-        },
+        }
+      } else if (
+        Number.isFinite(
+          Number(configuredLineHeight)
+        )
+      ) {
+        lineHeight =
+          size *
+          Number(configuredLineHeight);
+      }
 
-        plugins: {
-          tooltip: {
-            callbacks: {
-              title(items) {
-                return items?.length
-                  ? String(
-                      items[0].label
-                    )
-                  : '';
-              },
+      return {
+        css:
+          `${style}${weight} ${size}px ${family}`,
 
-              label:
-                tooltipLabel
+        lineHeight
+      };
+    }
+
+    function captureXAxisSnapshot(
+      scale,
+      styleOptions = scale?.options
+    ) {
+      if (!scale || !styleOptions) {
+        return null;
+      }
+
+      const tickOptions =
+        styleOptions.ticks || {};
+
+      const gridOptions =
+        styleOptions.grid || {};
+
+      const titleOptions =
+        styleOptions.title || {};
+
+      const borderOptions =
+        styleOptions.border || {};
+
+      const tickPadding =
+        Number(tickOptions.padding) || 0;
+
+      const ticks =
+        (scale.ticks || []).map(
+          (tick, index) => {
+            const context =
+              typeof scale.getContext === 'function'
+                ? scale.getContext(index)
+                : {
+                    chart,
+                    scale,
+                    tick,
+                    index,
+                    type: 'tick'
+                  };
+
+            let label = tick.label;
+
+            if (
+              label === undefined &&
+              typeof tickOptions.callback === 'function'
+            ) {
+              try {
+                label = tickOptions.callback.call(
+                  scale,
+                  tick.value,
+                  index,
+                  scale.ticks
+                );
+              } catch (_) {
+                label = tick.value;
+              }
             }
-          }
-        },
 
-        scales: {
+            const labelLines =
+              Array.isArray(label)
+                ? label.map(
+                    line => String(line ?? '')
+                  )
+                : [String(label ?? '')];
+
+            const fontOptions =
+              resolveAxisValue(
+                tickOptions.font,
+                context,
+                tickOptions.font || {}
+              );
+
+            const font =
+              getAxisFont(
+                fontOptions,
+                10,
+                '400'
+              );
+
+            const tickValue =
+              Number(tick.value);
+
+            const isMajor =
+              isMajorXAxisTick(
+                tickValue,
+                styleOptions.pffTickView
+              );
+
+            const tickLength =
+              isMajor
+                ? 6
+                : 2;
+
+            const tickWidth =
+              isMajor
+                ? 1.1
+                : 0.7;
+
+            const configuredLayoutTickLength =
+              Number(gridOptions.tickLength);
+
+            const layoutTickLength =
+              Number.isFinite(
+                configuredLayoutTickLength
+              )
+                ? configuredLayoutTickLength
+                : tickLength;
+
+            return {
+              x:
+                scale.getPixelForTick(index),
+
+              axisY:
+                scale.top,
+
+              labelY:
+                scale.top +
+                layoutTickLength +
+                tickPadding +
+                font.lineHeight / 2,
+
+              labelLines,
+              font,
+              tickLength,
+              tickWidth,
+
+              showTick:
+                styleOptions.display !== false &&
+                gridOptions.drawTicks !== false,
+
+              showLabel:
+                styleOptions.display !== false &&
+                tickOptions.display !== false,
+
+              tickColour:
+                '#151515',
+
+              labelColour:
+                resolveAxisValue(
+                  tickOptions.color,
+                  context,
+                  '#151515'
+                )
+            };
+          }
+        );
+
+      const titlePadding =
+        normaliseAxisPadding(
+          titleOptions.padding
+        );
+
+      const titleContext = {
+        chart,
+        scale,
+        type: 'scale'
+      };
+
+      const titleFontOptions =
+        resolveAxisValue(
+          titleOptions.font,
+          titleContext,
+          titleOptions.font || {}
+        );
+
+      const titleFont =
+        getAxisFont(
+          titleFontOptions,
+          13,
+          '700'
+        );
+
+      const titleLines =
+        Array.isArray(titleOptions.text)
+          ? titleOptions.text.map(
+              line => String(line ?? '')
+            )
+          : [String(titleOptions.text ?? '')];
+
+      const borderContext = {
+        chart,
+        scale,
+        type: 'scale'
+      };
+
+      const resolvedBorderWidth =
+        Number(
+          resolveAxisValue(
+            borderOptions.width,
+            borderContext,
+            1
+          )
+        );
+
+      return {
+        ticks,
+
+        title: {
+          show:
+            styleOptions.display !== false &&
+            titleOptions.display !== false &&
+            titleLines.some(Boolean),
+
           x:
-            PFFCharts.xYearScaleOptions(),
+            (scale.left + scale.right) / 2,
 
           y:
-            PFFCharts.yScaleOptions(
-              scale,
-              {
-                ticks: {
-                  display:
-                    false,
-                  stepSize:
-                    scale.step
-                },
-                title: {
-                  display:
-                    false
-                }
-              }
+            scale.bottom -
+            titlePadding.bottom -
+            titleFont.lineHeight / 2,
+
+          lines:
+            titleLines,
+
+          font:
+            titleFont,
+
+          colour:
+            resolveAxisValue(
+              titleOptions.color,
+              titleContext,
+              '#151515'
             )
+        },
+
+        border: {
+          show:
+            styleOptions.display !== false &&
+            borderOptions.display !== false,
+
+          left:
+            scale.left,
+
+          right:
+            scale.right,
+
+          y:
+            scale.top,
+
+          colour:
+            resolveAxisValue(
+              borderOptions.color,
+              borderContext,
+              '#151515'
+            ),
+
+          width:
+            Number.isFinite(resolvedBorderWidth)
+              ? resolvedBorderWidth
+              : 1
+        }
+      };
+    }
+
+    function safeCaptureXAxisSnapshot(
+      scale,
+      styleOptions
+    ) {
+      try {
+        return captureXAxisSnapshot(
+          scale,
+          styleOptions
+        );
+      } catch (error) {
+        console.warn(
+          'Could not animate the x-axis',
+          error
+        );
+
+        return null;
+      }
+    }
+
+    function drawXAxisSnapshot(
+      context,
+      snapshot,
+      opacities,
+      offsetX = 0
+    ) {
+      if (!snapshot) {
+        return;
+      }
+
+      const tickOpacity = clamp(
+        Number(opacities?.ticks) || 0,
+        0,
+        1
+      );
+
+      const labelOpacity = clamp(
+        Number(opacities?.labels) || 0,
+        0,
+        1
+      );
+
+      const titleOpacity = clamp(
+        Number(opacities?.title) || 0,
+        0,
+        1
+      );
+
+      const borderOpacity = clamp(
+        Number(opacities?.border) || 0,
+        0,
+        1
+      );
+
+      if (
+        tickOpacity <= 0.001 &&
+        labelOpacity <= 0.001 &&
+        titleOpacity <= 0.001 &&
+        borderOpacity <= 0.001
+      ) {
+        return;
+      }
+
+      context.save();
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.lineCap = 'butt';
+
+      if (
+        snapshot.border?.show &&
+        borderOpacity > 0.001
+      ) {
+        context.globalAlpha =
+          borderOpacity;
+
+        context.beginPath();
+        context.strokeStyle =
+          snapshot.border.colour;
+
+        context.lineWidth =
+          snapshot.border.width;
+
+        context.moveTo(
+          snapshot.border.left + offsetX,
+          snapshot.border.y
+        );
+
+        context.lineTo(
+          snapshot.border.right + offsetX,
+          snapshot.border.y
+        );
+
+        context.stroke();
+      }
+
+      snapshot.ticks.forEach(tick => {
+        const x = tick.x + offsetX;
+
+        if (
+          tick.showTick &&
+          tick.tickLength > 0 &&
+          tickOpacity > 0.001
+        ) {
+          context.globalAlpha =
+            tickOpacity;
+
+          context.beginPath();
+          context.strokeStyle =
+            tick.tickColour;
+
+          context.lineWidth =
+            tick.tickWidth;
+
+          context.moveTo(
+            x,
+            tick.axisY
+          );
+
+          context.lineTo(
+            x,
+            tick.axisY + tick.tickLength
+          );
+
+          context.stroke();
+        }
+
+        if (
+          !tick.showLabel ||
+          !tick.labelLines.some(Boolean) ||
+          labelOpacity <= 0.001
+        ) {
+          return;
+        }
+
+        context.globalAlpha =
+          labelOpacity;
+
+        context.font =
+          tick.font.css;
+
+        context.fillStyle =
+          tick.labelColour;
+
+        const firstLineY =
+          tick.labelY -
+          (
+            tick.labelLines.length - 1
+          ) *
+          tick.font.lineHeight / 2;
+
+        tick.labelLines.forEach(
+          (line, lineIndex) => {
+            if (!line) {
+              return;
+            }
+
+            context.fillText(
+              line,
+              x,
+              firstLineY +
+              lineIndex * tick.font.lineHeight
+            );
+          }
+        );
+      });
+
+      if (
+        snapshot.title.show &&
+        titleOpacity > 0.001
+      ) {
+        context.globalAlpha =
+          titleOpacity;
+
+        context.font =
+          snapshot.title.font.css;
+
+        context.fillStyle =
+          snapshot.title.colour;
+
+        const firstLineY =
+          snapshot.title.y -
+          (
+            snapshot.title.lines.length - 1
+          ) *
+          snapshot.title.font.lineHeight / 2;
+
+        snapshot.title.lines.forEach(
+          (line, lineIndex) => {
+            if (!line) {
+              return;
+            }
+
+            context.fillText(
+              line,
+              snapshot.title.x + offsetX,
+              firstLineY +
+              lineIndex *
+              snapshot.title.font.lineHeight
+            );
+          }
+        );
+      }
+
+      context.restore();
+    }
+
+    function getIncomingXAxisOpacity(part) {
+      if (
+        !xAxisFade.active ||
+        xAxisFade.changes?.[part] === false
+      ) {
+        return 1;
+      }
+
+      return clamp(
+        xAxisFade.progress,
+        0,
+        1
+      );
+    }
+
+    function createFadingXAxisOptions(options) {
+      const tickOptions =
+        options?.ticks || {};
+
+      const gridOptions =
+        options?.grid || {};
+
+      const titleOptions =
+        options?.title || {};
+
+      const borderOptions =
+        options?.border || {};
+
+      return {
+        ...options,
+
+        ticks: {
+          ...tickOptions,
+
+          color(context) {
+            const colour =
+              resolveAxisValue(
+                tickOptions.color,
+                context,
+                '#151515'
+              );
+
+            return fadeCssColour(
+              colour,
+              getIncomingXAxisOpacity('labels')
+            );
+          }
+        },
+
+        grid: {
+          ...gridOptions,
+
+          tickColor(context) {
+            const colour =
+              resolveAxisValue(
+                gridOptions.tickColor,
+                context,
+                'rgba(21, 21, 21, 0)'
+              );
+
+            return fadeCssColour(
+              colour,
+              getIncomingXAxisOpacity('ticks')
+            );
+          }
+        },
+
+        title: {
+          ...titleOptions,
+
+          color(context) {
+            const colour =
+              resolveAxisValue(
+                titleOptions.color,
+                context,
+                '#151515'
+              );
+
+            return fadeCssColour(
+              colour,
+              getIncomingXAxisOpacity('title')
+            );
+          }
+        },
+
+        border: {
+          ...borderOptions,
+
+          color(context) {
+            const colour =
+              resolveAxisValue(
+                borderOptions.color,
+                context,
+                '#151515'
+              );
+
+            return fadeCssColour(
+              colour,
+              getIncomingXAxisOpacity('border')
+            );
+          }
+        }
+      };
+    }
+
+    const xAxisFadePlugin = {
+      id: 'xAxisFadePlugin',
+
+      afterDatasetsDraw(activeChart) {
+        if (!xAxisFade.active) {
+          return;
+        }
+
+        const progress = clamp(
+          xAxisFade.progress,
+          0,
+          1
+        );
+
+        const outgoingOpacity = clamp(
+          1 - progress,
+          0,
+          1
+        );
+
+        drawXAxisSnapshot(
+          activeChart.ctx,
+          xAxisFade.from,
+          {
+            ticks:
+              xAxisFade.changes.ticks
+                ? outgoingOpacity
+                : 0,
+
+            labels:
+              xAxisFade.changes.labels
+                ? outgoingOpacity
+                : 0,
+
+            title:
+              xAxisFade.changes.title
+                ? outgoingOpacity
+                : 0,
+
+            border:
+              xAxisFade.changes.border
+                ? outgoingOpacity
+                : 0
+          },
+          0
+        );
+      }
+    };
+
+    function isMajorYAxisTick(value) {
+      if (!Number.isFinite(value)) {
+        return false;
+      }
+
+      const quotient =
+        (
+          value -
+          yAxisModel.minimum
+        ) /
+        yAxisModel.majorStep;
+
+      return (
+        Math.abs(
+          quotient -
+          Math.round(quotient)
+        ) <
+        1e-8
+      );
+    }
+
+    function isMajorXAxisTick(value, view) {
+      if (!Number.isFinite(value)) {
+        return false;
+      }
+
+      if (view === 'experience') {
+        return value % 5 === 0;
+      }
+
+      if (view === 'date') {
+        const month =
+          new Date(value).getUTCMonth();
+
+        return [0, 3, 6, 9].includes(
+          month
+        );
+      }
+
+      return false;
+    }
+
+    function drawVariableAxisTicks(
+      context,
+      scale,
+      axis,
+      view
+    ) {
+      if (!scale) {
+        return;
+      }
+
+      const ticks =
+        scale.ticks || [];
+
+      if (!ticks.length) {
+        return;
+      }
+
+      const tickColour =
+        axis === 'x'
+          ? fadeCssColour(
+              '#151515',
+              getIncomingXAxisOpacity('ticks')
+            )
+          : '#151515';
+
+      context.save();
+      context.lineCap = 'butt';
+      context.strokeStyle = tickColour;
+
+      ticks.forEach((tick, index) => {
+        const value =
+          Number(tick.value);
+
+        const pixel =
+          scale.getPixelForTick(index);
+
+        if (!Number.isFinite(pixel)) {
+          return;
+        }
+
+        const isMajor =
+          axis === 'x'
+            ? isMajorXAxisTick(
+                value,
+                view
+              )
+            : isMajorYAxisTick(
+                value
+              );
+
+        const tickLength =
+          axis === 'x'
+            ? isMajor
+              ? 6
+              : 2
+            : isMajor
+              ? 5
+              : 2;
+
+        const tickWidth =
+          isMajor
+            ? 1.1
+            : 0.7;
+
+        context.beginPath();
+        context.lineWidth = tickWidth;
+
+        if (axis === 'x') {
+          context.moveTo(
+            pixel,
+            scale.top
+          );
+
+          context.lineTo(
+            pixel,
+            scale.top +
+            tickLength
+          );
+        } else {
+          context.moveTo(
+            scale.right,
+            pixel
+          );
+
+          context.lineTo(
+            scale.right -
+            tickLength,
+            pixel
+          );
+        }
+
+        context.stroke();
+      });
+
+      context.restore();
+    }
+
+    const variableAxisTickPlugin = {
+      id: 'variableAxisTickPlugin',
+
+      afterDatasetsDraw(activeChart) {
+        if (
+          [
+            'experience',
+            'date',
+            'rurality'
+          ].includes(activeView)
+        ) {
+          drawVariableAxisTicks(
+            activeChart.ctx,
+            activeChart.scales.x,
+            'x',
+            activeView
+          );
+        }
+
+        drawVariableAxisTicks(
+          activeChart.ctx,
+          activeChart.scales.y,
+          'y',
+          activeView
+        );
+      }
+    };
+
+    function createYAxisOptions() {
+      return {
+        min: yAxisModel.minimum,
+        max: yAxisModel.maximum,
+
+        afterFit(scale) {
+          scale.width = window.matchMedia(
+            '(max-width: 430px)'
+          ).matches
+            ? 64
+            : 70;
+        },
+
+        afterBuildTicks(scale) {
+          const count =
+            Math.round(
+              (
+                yAxisModel.maximum -
+                yAxisModel.minimum
+              ) /
+              yAxisModel.minorStep
+            ) +
+            1;
+
+          scale.ticks = Array.from(
+            {
+              length: count
+            },
+            (_, index) => ({
+              value:
+                yAxisModel.minimum +
+                index *
+                yAxisModel.minorStep
+            })
+          );
+        },
+
+        title: {
+          display: true,
+          text: 'FTE salary ($)',
+          color: '#151515',
+
+          font: {
+            family: 'Lato',
+            size: 13,
+            weight: '700'
+          }
+        },
+
+        ticks: {
+          color: '#151515',
+          autoSkip: false,
+          padding: 3,
+
+          font: {
+            family: 'Lato',
+            size: 12,
+            weight: '400'
+          },
+
+          callback(value) {
+            return isMajorYAxisTick(Number(value))
+              ? formatCompactSalary(Number(value))
+              : '';
+          }
+        },
+
+        grid: {
+          color(context) {
+            return isMajorYAxisTick(
+              Number(context.tick?.value)
+            )
+              ? 'rgba(105, 113, 138, 0.075)'
+              : 'rgba(105, 113, 138, 0.035)';
+          },
+
+          lineWidth(context) {
+            return isMajorYAxisTick(
+              Number(context.tick?.value)
+            )
+              ? 1
+              : 0.7;
+          },
+
+          drawTicks: true,
+          tickLength: 5,
+          tickColor: 'rgba(21, 21, 21, 0)',
+          tickWidth: 0
+        },
+
+        border: {
+          display: true,
+          color: '#151515',
+          width: 1.1
+        }
+      };
+    }
+
+    function buildLegendItem(
+      colour,
+      label,
+      markerType = 'square'
+    ) {
+      return {
+        colour,
+        label,
+        markerType
+      };
+    }
+
+    function buildContinuousView({
+      sourceRows,
+      xAccessor,
+      xScale,
+      regressionType = 'linear',
+      slopeLabel,
+      slopeMultiplier = 1
+    }) {
+      const points = sourceRows
+        .map(row => ({
+          x: xAccessor(row),
+          y: row.fteSalary,
+          kind: 'continuousPoint',
+          ...row
+        }))
+        .filter(point =>
+          Number.isFinite(point.x)
+        );
+
+      const transformX =
+        regressionType === 'logarithmic'
+          ? value =>
+              Math.log1p(
+                Math.max(0, value)
+              )
+          : value => value;
+
+      const fitted = calculateRegression(
+        points,
+        transformX
+      );
+
+      const datasets = [
+        {
+          type: 'scatter',
+          datasetRole: 'continuousPoints',
+          label: 'FTE salary ($)',
+          data: points,
+          parsing: false,
+          showLine: false,
+          clip: false,
+
+          pointStyle: 'rect',
+          pointRadius: CONFIG.pointRadius,
+          pointHoverRadius: CONFIG.pointHoverRadius,
+          pointHitRadius: 4,
+
+          pointBackgroundColor: rgba(
+            '#6600ff',
+            CONFIG.pointOpacity
+          ),
+
+          pointHoverBackgroundColor: rgba(
+            '#6600ff',
+            CONFIG.pointHoverOpacity
+          ),
+
+          pointBorderColor: rgba(
+            '#6600ff',
+            0.34
+          ),
+
+          pointHoverBorderColor: '#6600ff',
+          pointBorderWidth: 0.45,
+          pointHoverBorderWidth: 1
+        }
+      ];
+
+      if (fitted) {
+        const count = 96;
+
+        const span =
+          fitted.maximumX -
+          fitted.minimumX;
+
+        datasets.push({
+          type: 'line',
+          datasetRole: 'regression',
+          order: -10,
+
+          label:
+            regressionType === 'logarithmic'
+              ? 'Logarithmic regression'
+              : 'Linear regression',
+
+          data: Array.from(
+            {
+              length: count
+            },
+            (_, index) => {
+              const proportion =
+                count === 1
+                  ? 0
+                  : index /
+                    (count - 1);
+
+              const x =
+                fitted.minimumX +
+                span *
+                proportion;
+
+              return {
+                x,
+                y: fitted.predict(x)
+              };
+            }
+          ),
+
+          parsing: false,
+          showLine: true,
+          clip: false,
+          fill: false,
+
+          borderColor: '#f1c232',
+          backgroundColor: '#f1c232',
+          borderWidth: CONFIG.regressionWidth,
+          borderCapStyle: 'round',
+          borderJoinStyle: 'round',
+
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 7,
+
+          tension:
+            regressionType === 'logarithmic'
+              ? 0.12
+              : 0,
+
+          metadata: {
+            regressionType,
+            slope: fitted.slope,
+            pValue: fitted.pValue,
+            slopeLabel,
+            slopeMultiplier
+          }
+        });
+      }
+
+      return {
+        datasets,
+
+        xScale: fixedXAxis(
+          xScale
+        ),
+
+        legendItems: [
+          buildLegendItem(
+            rgba(
+              '#6600ff',
+              CONFIG.pointOpacity
+            ),
+            'FTE salary ($)',
+            'square'
+          ),
+
+          buildLegendItem(
+            '#f1c232',
+            regressionType === 'logarithmic'
+              ? 'Logarithmic regression'
+              : 'Linear regression',
+            'line'
+          )
+        ],
+
+        note: ''
+      };
+    }
+    function buildExperienceView() {
+      const availableRows = rows.filter(row =>
+        Number.isFinite(row.experience) &&
+        row.experience >= 0 &&
+        row.experience <= 45
+      );
+
+      return buildContinuousView({
+        sourceRows: availableRows,
+        xAccessor: row => row.experience,
+        regressionType: 'logarithmic',
+        slopeLabel: ' per ln(years + 1)',
+
+        xScale: {
+          type: 'linear',
+          pffTickView: 'experience',
+          min: 0,
+          max: 45,
+
+          afterBuildTicks(scale) {
+            scale.ticks = Array.from(
+              {
+                length: 46
+              },
+              (_, value) => ({
+                value
+              })
+            );
+          },
+
+          title: {
+            display: true,
+            text: 'Experience (years)',
+            color: '#151515',
+
+            font: {
+              family: 'Lato',
+              size: 13,
+              weight: '700'
+            }
+          },
+
+          ticks: {
+            color: '#151515',
+            autoSkip: false,
+            maxRotation: 0,
+            minRotation: 0,
+
+            font: {
+              family: 'Lato',
+              size: 10,
+              weight: '400'
+            },
+
+            callback(value) {
+              return Number(value) % 5 === 0
+                ? String(value)
+                : '';
+            }
+          },
+
+          grid: {
+            drawOnChartArea: false,
+            drawTicks: true,
+            tickLength: 6,
+            tickColor: 'rgba(21, 21, 21, 0)',
+            tickWidth: 0
+          },
+
+          border: {
+            display: true,
+            color: '#151515',
+            width: 1.1
+          }
+        }
+      });
+    }
+
+    function startOfUtcMonth(timestamp) {
+      const date = new Date(timestamp);
+
+      return Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        1
+      );
+    }
+
+    function addUtcMonths(
+      timestamp,
+      months
+    ) {
+      const date = new Date(timestamp);
+
+      return Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth() +
+          months,
+        1
+      );
+    }
+
+    function buildDateView() {
+      const availableRows = rows.filter(row =>
+        Number.isFinite(row.date)
+      );
+
+      if (!availableRows.length) {
+        return {
+          datasets: [],
+          xScale: fixedXAxis({
+            type: 'linear',
+            pffTickView: 'date',
+            min: 0,
+            max: 1,
+
+            title: {
+              display: true,
+              text: 'Date submitted',
+              color: '#151515',
+
+              font: {
+                family: 'Lato',
+                size: 13,
+                weight: '700'
+              }
+            },
+
+            ticks: {
+              display: false
+            },
+
+            grid: {
+              drawOnChartArea: false,
+              drawTicks: false
+            },
+
+            border: {
+              display: true,
+              color: '#151515',
+              width: 1.1
+            }
+          }),
+
+          legendItems: [],
+          note: 'No valid submission dates are available'
+        };
+      }
+
+      const values = availableRows.map(
+        row => row.date
+      );
+
+      const minimum = Math.min(...values);
+      const maximum = Math.max(...values);
+      const firstMonth =
+        startOfUtcMonth(minimum);
+      const finalMonth =
+        startOfUtcMonth(maximum);
+      const monthAfterLast =
+        addUtcMonths(
+          finalMonth,
+          1
+        );
+
+      const tickValues = [];
+
+      for (
+        let month = firstMonth;
+        month <= finalMonth;
+        month = addUtcMonths(month, 1)
+      ) {
+        tickValues.push(month);
+      }
+
+      return buildContinuousView({
+        sourceRows: availableRows,
+        xAccessor: row => row.date,
+        regressionType: 'linear',
+        slopeLabel: '/year',
+        slopeMultiplier: YEAR_MS,
+
+        xScale: {
+          type: 'linear',
+          pffTickView: 'date',
+          min: firstMonth,
+          max: monthAfterLast,
+
+          afterBuildTicks(scale) {
+            scale.ticks = tickValues.map(
+              value => ({
+                value
+              })
+            );
+          },
+
+          title: {
+            display: true,
+            text: 'Date submitted',
+            color: '#151515',
+
+            font: {
+              family: 'Lato',
+              size: 13,
+              weight: '700'
+            }
+          },
+
+          ticks: {
+            color: '#151515',
+            autoSkip: false,
+            maxRotation: 0,
+            minRotation: 0,
+
+            font: {
+              family: 'Lato',
+
+              size: window.matchMedia(
+                '(max-width: 430px)'
+              ).matches
+                ? 9
+                : 10,
+
+              weight: '400'
+            },
+
+            callback(value) {
+              return formatQuarterTick(
+                Number(value)
+              );
+            }
+          },
+
+          grid: {
+            drawOnChartArea: false,
+            drawTicks: true,
+            tickLength: 6,
+            tickColor: 'rgba(21, 21, 21, 0)',
+            tickWidth: 0
+          },
+
+          border: {
+            display: true,
+            color: '#151515',
+            width: 1.1
+          }
+        }
+      });
+    }
+
+    function deterministicJitter(index) {
+      const sequence = [
+        0,
+        -0.18,
+        0.18,
+        -0.09,
+        0.09,
+        -0.27,
+        0.27
+      ];
+
+      return sequence[
+        index %
+        sequence.length
+      ];
+    }
+
+    function buildRuralityView() {
+      const categories = RURALITY_ORDER.filter(
+        category =>
+          rows.some(
+            row =>
+              row.rurality === category
+          )
+      );
+
+      const datasets = [];
+      const legendItems = [];
+
+      categories.forEach(
+        (
+          category,
+          categoryIndex
+        ) => {
+          const categoryRows = rows.filter(
+            row =>
+              row.rurality === category
+          );
+
+          const colour =
+            RURALITY_COLOURS[
+              category
+            ];
+
+          const statistics =
+            calculateStatistics(
+              categoryRows.map(
+                row => row.fteSalary
+              )
+            );
+
+          datasets.push({
+            type: 'scatter',
+            datasetRole: 'categoryPoints',
+            label: category,
+
+            data: categoryRows.map(
+              (
+                row,
+                pointIndex
+              ) => ({
+                x:
+                  categoryIndex +
+                  deterministicJitter(
+                    pointIndex
+                  ),
+
+                y: row.fteSalary,
+                category,
+                ...row
+              })
+            ),
+
+            parsing: false,
+            showLine: false,
+            clip: false,
+
+            pointStyle: 'rect',
+            pointRadius: CONFIG.pointRadius,
+            pointHoverRadius: CONFIG.pointHoverRadius,
+            pointHitRadius: 4,
+
+            pointBackgroundColor: rgba(
+              colour,
+              CONFIG.categoryPointOpacity
+            ),
+
+            pointHoverBackgroundColor: rgba(
+              colour,
+              CONFIG.categoryPointHoverOpacity
+            ),
+
+            pointBorderColor: rgba(
+              colour,
+              0.34
+            ),
+
+            pointHoverBorderColor: colour,
+            pointBorderWidth: 0.45,
+            pointHoverBorderWidth: 1
+          });
+
+          datasets.push({
+            type: 'line',
+            datasetRole: 'categoryMedian',
+            order: -10,
+            label: `${category} median`,
+
+            data: [
+              {
+                x: categoryIndex - 0.27,
+                y: statistics.median
+              },
+
+              {
+                x: categoryIndex + 0.27,
+                y: statistics.median
+              }
+            ],
+
+            parsing: false,
+            showLine: true,
+            clip: false,
+            fill: false,
+
+            borderColor: colour,
+            backgroundColor: colour,
+            borderWidth: 6,
+            borderCapStyle: 'round',
+
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            pointHitRadius: 5,
+
+            metadata: {
+              category,
+              statistics
+            }
+          });
+
+          legendItems.push(
+            buildLegendItem(
+              colour,
+              category,
+              'square'
+            )
+          );
+        }
+      );
+
+      return {
+        datasets,
+
+        xScale: fixedXAxis({
+          type: 'linear',
+          pffTickView: 'rurality',
+          min: -0.55,
+
+          max: Math.max(
+            0.55,
+            categories.length -
+              0.45
+          ),
+
+          afterBuildTicks(scale) {
+            scale.ticks = categories.map(
+              (
+                _,
+                index
+              ) => ({
+                value: index
+              })
+            );
+          },
+
+          title: {
+            display: true,
+            text:
+              'Rurality (MM1 = metro; MM7 = very remote)',
+            color: '#151515',
+
+            font: {
+              family: 'Lato',
+              size: 13,
+              weight: '700'
+            }
+          },
+
+          ticks: {
+            color: '#151515',
+            autoSkip: false,
+            maxRotation: 0,
+            minRotation: 0,
+
+            font: {
+              family: 'Lato',
+              size: 10,
+              weight: '400'
+            },
+
+            callback(value) {
+              return (
+                categories[
+                  Number(value)
+                ] ||
+                ''
+              );
+            }
+          },
+
+          grid: {
+            drawOnChartArea: false,
+            drawTicks: true,
+            tickLength: 6,
+            tickColor: 'rgba(21, 21, 21, 0)',
+            tickWidth: 0
+          },
+
+          border: {
+            display: true,
+            color: '#151515',
+            width: 1.1
+          }
+        }),
+
+        legendItems,
+
+        note:
+          'Horizontal bars show the median FTE salary'
+      };
+    }
+
+    function createBubbleStore() {
+      return {
+        categories: [],
+        aggregates: [],
+        rowsByKey: new Map(),
+        rawPoints: [],
+        splitKeys: new Set(),
+        splitProgress: new Map(),
+        mergingKeys: new Set(),
+        mergeProgress: 0,
+        dimProgress: 0
+      };
+    }
+
+    const bubbleStores = {
+      state: createBubbleStore(),
+      employer: createBubbleStore()
+    };
+
+    function bubbleConfig(view) {
+      if (view === 'employer') {
+        return {
+          order: EMPLOYERS
+            .slice()
+            .sort(
+              (
+                first,
+                second
+              ) =>
+                first.label.localeCompare(
+                  second.label,
+                  'en-AU',
+                  {
+                    sensitivity: 'base',
+                    numeric: true
+                  }
+                )
+            )
+            .map(
+              employer =>
+                employer.key
+            ),
+          accessor:
+            row =>
+              row.employerKey,
+
+          label:
+            key =>
+              EMPLOYER_BY_KEY.get(
+                key
+              )?.label ||
+              key,
+
+          fullName:
+            key =>
+              EMPLOYER_BY_KEY.get(
+                key
+              )?.fullName ||
+              key,
+
+          colour:
+            key =>
+              EMPLOYER_BY_KEY.get(
+                key
+              )?.colour ||
+              '#777777'
+        };
+      }
+
+      return {
+        order: STATE_ORDER,
+        accessor: row => row.state,
+        label: key => key,
+        fullName: key => key,
+
+        colour:
+          key =>
+            STATE_COLOURS[
+              key
+            ] ||
+            '#777777'
+      };
+    }
+
+    function bubbleRadius(respondents) {
+      return clamp(
+        11 +
+        Math.pow(
+          respondents,
+          0.78
+        ) *
+        3.15,
+        18,
+        66
+      );
+    }
+
+    function bubblePositions(items) {
+      const sorted = items
+        .slice()
+        .sort(
+          (
+            first,
+            second
+          ) =>
+            first.y -
+              second.y ||
+            second.statistics.count -
+              first.statistics.count ||
+            first.label.localeCompare(
+              second.label
+            )
+        );
+
+      const laneLast = [];
+      const laneByKey = new Map();
+
+      sorted.forEach(item => {
+        let lane = laneLast.findIndex(
+          last =>
+            item.y -
+              last >
+            yAxisModel.majorStep *
+              0.42
+        );
+
+        if (lane === -1) {
+          lane = laneLast.length;
+          laneLast.push(item.y);
+        } else {
+          laneLast[lane] = item.y;
+        }
+
+        laneByKey.set(
+          item.categoryKey,
+          lane
+        );
+      });
+
+      const count = Math.max(
+        5,
+        laneLast.length
+      );
+
+      return new Map(
+        [...laneByKey.entries()].map(
+          (
+            [
+              key,
+              lane
+            ]
+          ) => [
+            key,
+
+            21 +
+            lane /
+            Math.max(
+              1,
+              count - 1
+            ) *
+            63
+          ]
+        )
+      );
+    }
+
+    function rebuildBubbleStore(view) {
+      const store =
+        bubbleStores[view];
+
+      const config =
+        bubbleConfig(view);
+
+      store.categories =
+        config.order.filter(
+          key =>
+            rows.some(
+              row =>
+                config.accessor(row) ===
+                key
+            )
+        );
+
+      store.rowsByKey = new Map();
+
+      const aggregates =
+        store.categories.map(
+          categoryKey => {
+            const categoryRows = rows.filter(
+              row =>
+                config.accessor(row) ===
+                categoryKey
+            );
+
+            const statistics =
+              calculateStatistics(
+                categoryRows.map(
+                  row => row.fteSalary
+                )
+              );
+
+            store.rowsByKey.set(
+              categoryKey,
+              categoryRows
+            );
+
+            return {
+              x: 21,
+              y: statistics.median,
+              bubbleView: view,
+              categoryKey,
+              label: config.label(categoryKey),
+              fullName: config.fullName(categoryKey),
+              colour: config.colour(categoryKey),
+              baseRadius: bubbleRadius(
+                statistics.count
+              ),
+              statistics
+            };
+          }
+        );
+
+      const positions =
+        bubblePositions(
+          aggregates
+        );
+
+      store.aggregates = aggregates
+        .map(item => ({
+          ...item,
+
+          x:
+            positions.get(
+              item.categoryKey
+            ) ??
+            21
+        }))
+        .sort(
+          (
+            first,
+            second
+          ) =>
+            second.y -
+              first.y ||
+            second.baseRadius -
+              first.baseRadius
+        );
+
+      store.rawPoints = [];
+      store.splitKeys.clear();
+      store.splitProgress.clear();
+      store.mergingKeys.clear();
+      store.mergeProgress = 0;
+      store.dimProgress = 0;
+    }
+
+    function bubbleVisibility(raw) {
+      const store =
+        bubbleStores[
+          raw.bubbleView
+        ];
+
+      if (
+        store.splitProgress.has(
+          raw.categoryKey
+        )
+      ) {
+        return (
+          1 -
+          store.splitProgress.get(
+            raw.categoryKey
+          )
+        );
+      }
+
+      if (
+        store.mergingKeys.has(
+          raw.categoryKey
+        )
+      ) {
+        return store.mergeProgress;
+      }
+
+      return store.splitKeys.has(
+        raw.categoryKey
+      )
+        ? 0
+        : 1;
+    }
+
+    function displayedBubbleRadius(context) {
+      const raw = context.raw;
+
+      if (!raw) {
+        return 0;
+      }
+
+      const visibility =
+        bubbleVisibility(raw);
+
+      if (visibility <= 0.001) {
+        return 0;
+      }
+
+      const scale = Math.min(
+        clamp(
+          (
+            context.chart.width ||
+            520
+          ) /
+          520,
+          0.78,
+          1.05
+        ),
+
+        clamp(
+          (
+            context.chart.height ||
+            585
+          ) /
+          585,
+          0.68,
+          1.04
+        )
+      );
+
+      return raw.baseRadius * scale;
+    }
+
+    function buildBubbleView(view) {
+      const store =
+        bubbleStores[view];
+
+      const config =
+        bubbleConfig(view);
+
+      return {
+        datasets: [
+          {
+            type: 'scatter',
+            datasetRole: 'bubbleAggregate',
+            data: store.aggregates,
+            parsing: false,
+            showLine: false,
+            clip: false,
+            order: 10,
+
+            pointRadius:
+              displayedBubbleRadius,
+
+            pointHoverRadius(context) {
+              const radius =
+                displayedBubbleRadius(
+                  context
+                );
+
+              return (
+                interactionLocked ||
+                radius <= 0
+              )
+                ? radius
+                : radius + 0.8;
+            },
+
+            pointHitRadius: 0,
+
+            pointBackgroundColor(context) {
+              const raw = context.raw;
+
+              const opacity =
+                CONFIG.aggregateOpacity +
+                (
+                  CONFIG.dimmedAggregateOpacity -
+                  CONFIG.aggregateOpacity
+                ) *
+                bubbleStores[
+                  raw.bubbleView
+                ].dimProgress;
+
+              return rgba(
+                raw.colour,
+                opacity *
+                bubbleVisibility(raw)
+              );
+            },
+
+            pointHoverBackgroundColor(context) {
+              const raw = context.raw;
+
+              const opacity =
+                CONFIG.aggregateHoverOpacity +
+                (
+                  CONFIG.dimmedAggregateHoverOpacity -
+                  CONFIG.aggregateHoverOpacity
+                ) *
+                bubbleStores[
+                  raw.bubbleView
+                ].dimProgress;
+
+              return rgba(
+                raw.colour,
+                opacity *
+                bubbleVisibility(raw)
+              );
+            },
+
+            pointBorderWidth: 0,
+            pointHoverBorderWidth: 0,
+            pointBorderColor: 'rgba(0, 0, 0, 0)',
+            pointHoverBorderColor: 'rgba(0, 0, 0, 0)'
+          },
+
+          {
+            type: 'scatter',
+            datasetRole: 'bubbleRaw',
+            data: store.rawPoints,
+            parsing: false,
+            showLine: false,
+            clip: false,
+            order: -10,
+
+            pointRadius: CONFIG.rawPointRadius,
+
+            pointHoverRadius:
+              CONFIG.rawPointRadius +
+              0.8,
+
+            pointHitRadius: 2,
+
+            pointBackgroundColor(context) {
+              return rgba(
+                context.raw?.colour ||
+                '#777777',
+                CONFIG.aggregateOpacity
+              );
+            },
+
+            pointHoverBackgroundColor(context) {
+              return rgba(
+                context.raw?.colour ||
+                '#777777',
+                CONFIG.aggregateHoverOpacity
+              );
+            },
+
+            pointBorderWidth: 0,
+            pointHoverBorderWidth: 0,
+            pointBorderColor: 'rgba(0, 0, 0, 0)',
+            pointHoverBorderColor: 'rgba(0, 0, 0, 0)'
+          }
+        ],
+
+        xScale: fixedXAxis({
+          type: 'linear',
+          pffTickView: 'hidden',
+          min: 0,
+          max: 100,
+
+          title: {
+            display: false
+          },
+
+          ticks: {
+            display: false
+          },
+
+          grid: {
+            drawOnChartArea: false,
+            drawTicks: false
+          },
+
+          border: {
+            display: false
+          }
+        }),
+
+        legendItems:
+          store.categories.map(
+            key =>
+              buildLegendItem(
+                config.colour(key),
+                config.label(key),
+                'bubble'
+              )
+          ),
+
+        note: ''
+      };
+    }
+
+    function buildViewModel(view) {
+      if (view === 'rurality') {
+        return buildRuralityView();
+      }
+
+      if (
+        view === 'state' ||
+        view === 'employer'
+      ) {
+        return buildBubbleView(view);
+      }
+
+      if (view === 'date') {
+        return buildDateView();
+      }
+
+      return buildExperienceView();
+    }
+
+    const bubbleLabelPlugin = {
+      id: 'bubbleLabelPlugin',
+
+      afterDatasetDraw(
+        activeChart,
+        args
+      ) {
+        if (
+          ![
+            'state',
+            'employer'
+          ].includes(activeView) ||
+          viewMorphInProgress ||
+          args.index !== 0 ||
+          activeChart
+            .data
+            .datasets[0]
+            ?.datasetRole !==
+            'bubbleAggregate'
+        ) {
+          return;
+        }
+
+        const context =
+          activeChart.ctx;
+
+        const dataset =
+          activeChart
+            .data
+            .datasets[0];
+
+        const elements =
+          activeChart
+            .getDatasetMeta(0)
+            .data;
+
+        elements.forEach(
+          (
+            element,
+            index
+          ) => {
+            const raw =
+              dataset.data[index];
+
+            const visibility =
+              bubbleVisibility(raw);
+
+            if (visibility <= 0.02) {
+              return;
+            }
+
+            context.save();
+
+            context.globalAlpha =
+              visibility *
+              (
+                1 -
+                bubbleStores[
+                  raw.bubbleView
+                ].dimProgress *
+                0.43
+              );
+
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+
+            context.font =
+              `700 ${
+                raw.bubbleView === 'employer'
+                  ? 11
+                  : 13
+              }px Lato, sans-serif`;
+
+            context.lineJoin = 'round';
+            context.lineWidth = 1.7;
+            context.strokeStyle =
+              'rgba(255, 255, 255, 0.94)';
+            context.fillStyle = '#151515';
+
+            context.strokeText(
+              raw.label,
+              element.x,
+              element.y
+            );
+
+            context.fillText(
+              raw.label,
+              element.x,
+              element.y
+            );
+
+            context.restore();
+          }
+        );
+      }
+    };
+
+    function tooltipTitle(item) {
+      const role =
+        item?.dataset?.datasetRole;
+
+      const raw = item?.raw;
+
+      if (
+        role === 'bubbleAggregate' ||
+        role === 'bubbleRaw'
+      ) {
+        return (
+          raw?.fullName ||
+          raw?.label ||
+          ''
+        );
+      }
+
+      if (
+        role === 'categoryPoints' ||
+        role === 'categoryMedian'
+      ) {
+        return (
+          raw?.category ||
+          item
+            ?.dataset
+            ?.metadata
+            ?.category ||
+          ''
+        );
+      }
+
+      if (role === 'regression') {
+        return (
+          item
+            ?.dataset
+            ?.metadata
+            ?.regressionType ===
+          'logarithmic'
+            ? 'Logarithmic regression'
+            : 'Linear regression'
+        );
+      }
+
+      return 'FTE salary';
+    }
+
+    function tooltipLabel(item) {
+      const role =
+        item.dataset.datasetRole;
+
+      const raw = item.raw;
+      const metadata =
+        item.dataset.metadata || {};
+
+      if (role === 'regression') {
+        const displayedSlope =
+          Number(metadata.slope) *
+          Number(
+            metadata.slopeMultiplier ||
+            1
+          );
+
+        return [
+          `Slope: ${formatCurrency(
+            displayedSlope,
+            0
+          )}${metadata.slopeLabel || ''}`,
+
+          formatPValue(
+            Number(metadata.pValue)
+          )
+        ];
+      }
+
+      if (role === 'categoryMedian') {
+        return [
+          `Median [IQR]: ${formatMedianIqr(
+            metadata.statistics
+          )}`,
+
+          `Respondents: ${formatNumber(
+            metadata.statistics?.count,
+            0
+          )}`
+        ];
+      }
+
+      if (role === 'bubbleAggregate') {
+        return [
+          `Median [IQR]: ${formatMedianIqr(
+            raw.statistics
+          )}`,
+
+          `Respondents: ${formatNumber(
+            raw.statistics?.count,
+            0
+          )}`,
+
+          'Double-tap for raw salaries'
+        ];
+      }
+
+      if (role === 'bubbleRaw') {
+        return [
+          `FTE salary: ${formatCurrency(
+            raw?.fteSalary,
+            0
+          )}`,
+
+          ...buildIndividualDetailLines(
+            raw
+          )
+        ];
+      }
+
+      if (
+        role === 'categoryPoints' ||
+        role === 'continuousPoints'
+      ) {
+        return [
+          `FTE salary: ${formatCurrency(
+            raw?.fteSalary,
+            0
+          )}`,
+
+          ...buildIndividualDetailLines(
+            raw
+          )
+        ];
+      }
+
+      return '';
+    }
+
+    function getInteractiveElement(elements) {
+      return elements.find(element => {
+        const role =
+          chart
+            ?.data
+            ?.datasets
+            ?.[
+              element.datasetIndex
+            ]
+            ?.datasetRole;
+
+        return (
+          role === 'continuousPoints' ||
+          role === 'regression' ||
+          role === 'categoryPoints' ||
+          role === 'categoryMedian' ||
+          role === 'bubbleAggregate' ||
+          role === 'bubbleRaw'
+        );
+      });
+    }
+
+    function distanceToSegment(
+      px,
+      py,
+      ax,
+      ay,
+      bx,
+      by
+    ) {
+      const dx = bx - ax;
+      const dy = by - ay;
+
+      if (dx === 0 && dy === 0) {
+        return Math.hypot(
+          px - ax,
+          py - ay
+        );
+      }
+
+      const proportion = clamp(
+        (
+          (px - ax) * dx +
+          (py - ay) * dy
+        ) /
+        (
+          dx * dx +
+          dy * dy
+        ),
+        0,
+        1
+      );
+
+      const closestX =
+        ax +
+        proportion * dx;
+
+      const closestY =
+        ay +
+        proportion * dy;
+
+      return Math.hypot(
+        px - closestX,
+        py - closestY
+      );
+    }
+
+    function findNearestInteractiveLine(
+      event,
+      maximumDistance = 10
+    ) {
+      if (!chart?.chartArea) {
+        return null;
+      }
+
+      const x = Number(event?.x);
+      const y = Number(event?.y);
+      const area = chart.chartArea;
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        x < area.left ||
+        x > area.right ||
+        y < area.top ||
+        y > area.bottom
+      ) {
+        return null;
+      }
+
+      let bestMatch = null;
+
+      chart.data.datasets.forEach(
+        (
+          dataset,
+          datasetIndex
+        ) => {
+          if (
+            dataset.datasetRole !==
+              'regression' &&
+            dataset.datasetRole !==
+              'categoryMedian'
+          ) {
+            return;
+          }
+
+          const renderedPoints =
+            chart
+              .getDatasetMeta(
+                datasetIndex
+              )
+              ?.data ||
+            [];
+
+          for (
+            let index = 0;
+            index <
+              renderedPoints.length - 1;
+            index += 1
+          ) {
+            const first =
+              renderedPoints[index];
+
+            const second =
+              renderedPoints[index + 1];
+
+            if (
+              !Number.isFinite(first?.x) ||
+              !Number.isFinite(first?.y) ||
+              !Number.isFinite(second?.x) ||
+              !Number.isFinite(second?.y)
+            ) {
+              continue;
+            }
+
+            const distance =
+              distanceToSegment(
+                x,
+                y,
+                first.x,
+                first.y,
+                second.x,
+                second.y
+              );
+
+            if (distance > maximumDistance) {
+              continue;
+            }
+
+            const firstDistance =
+              Math.hypot(
+                x - first.x,
+                y - first.y
+              );
+
+            const secondDistance =
+              Math.hypot(
+                x - second.x,
+                y - second.y
+              );
+
+            const nearestIndex =
+              firstDistance <= secondDistance
+                ? index
+                : index + 1;
+
+            if (
+              !bestMatch ||
+              distance < bestMatch.distance
+            ) {
+              bestMatch = {
+                datasetIndex,
+                index: nearestIndex,
+                distance
+              };
+            }
+          }
+        }
+      );
+
+      return bestMatch;
+    }
+    function findRawBubbleElement(event) {
+      if (!chart?.chartArea) {
+        return null;
+      }
+
+      const x =
+        Number(event?.x);
+
+      const y =
+        Number(event?.y);
+
+      const area =
+        chart.chartArea;
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        x < area.left ||
+        x > area.right ||
+        y < area.top ||
+        y > area.bottom
+      ) {
+        return null;
+      }
+
+      let nearestRawPoint =
+        null;
+
+      chart.data.datasets.forEach(
+        (dataset, datasetIndex) => {
+          if (
+            dataset.datasetRole !==
+              'bubbleRaw'
+          ) {
+            return;
+          }
+
+          const renderedPoints =
+            chart
+              .getDatasetMeta(
+                datasetIndex
+              )
+              ?.data || [];
+
+          renderedPoints.forEach(
+            (element, index) => {
+              if (
+                !element ||
+                typeof element.inRange !==
+                  'function' ||
+                !element.inRange(
+                  x,
+                  y,
+                  true
+                )
+              ) {
+                return;
+              }
+
+              const distance =
+                Math.hypot(
+                  x - element.x,
+                  y - element.y
+                );
+
+              if (
+                !nearestRawPoint ||
+                distance <
+                  nearestRawPoint.distance
+              ) {
+                nearestRawPoint = {
+                  datasetIndex,
+                  index,
+                  distance
+                };
+              }
+            }
+          );
+        }
+      );
+
+      return nearestRawPoint;
+    }
+
+    function findPrioritySummaryElement(event) {
+      if (!chart?.chartArea) {
+        return null;
+      }
+
+      const x =
+        Number(event?.x);
+
+      const y =
+        Number(event?.y);
+
+      const area =
+        chart.chartArea;
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        x < area.left ||
+        x > area.right ||
+        y < area.top ||
+        y > area.bottom
+      ) {
+        return null;
+      }
+
+      let nearestAggregate =
+        null;
+
+      chart.data.datasets.forEach(
+        (dataset, datasetIndex) => {
+          if (
+            dataset.datasetRole !==
+              'bubbleAggregate'
+          ) {
+            return;
+          }
+
+          const renderedPoints =
+            chart
+              .getDatasetMeta(
+                datasetIndex
+              )
+              ?.data || [];
+
+          renderedPoints.forEach(
+            (element, index) => {
+              if (
+                !element ||
+                typeof element.inRange !==
+                  'function' ||
+                !element.inRange(
+                  x,
+                  y,
+                  true
+                )
+              ) {
+                return;
+              }
+
+              const distance =
+                Math.hypot(
+                  x - element.x,
+                  y - element.y
+                );
+
+              if (
+                !nearestAggregate ||
+                distance <
+                  nearestAggregate.distance
+              ) {
+                nearestAggregate = {
+                  datasetIndex,
+                  index,
+                  distance
+                };
+              }
+            }
+          );
+        }
+      );
+
+      if (nearestAggregate) {
+        return nearestAggregate;
+      }
+
+      return findNearestInteractiveLine(
+        event
+      );
+    }
+
+    function showSelectedTooltip(
+      event,
+      selectedElement
+    ) {
+      const renderedElement =
+        chart
+          .getDatasetMeta(
+            selectedElement.datasetIndex
+          )
+          ?.data
+          ?.[
+            selectedElement.index
+          ];
+
+      chart.tooltip.setActiveElements(
+        [
+          {
+            datasetIndex:
+              selectedElement.datasetIndex,
+
+            index:
+              selectedElement.index
+          }
+        ],
+        {
+          x:
+            Number.isFinite(event?.x)
+              ? event.x
+              : renderedElement?.x ?? 0,
+
+          y:
+            Number.isFinite(event?.y)
+              ? event.y
+              : renderedElement?.y ?? 0
+        }
+      );
+
+      chart.update('none');
+    }
+
+    function showHoveredLineTooltip(
+      event,
+      selectedElement
+    ) {
+      if (
+        !selectedElement ||
+        !chart
+      ) {
+        return;
+      }
+
+      const dataset =
+        chart.data.datasets[
+          selectedElement.datasetIndex
+        ];
+
+      if (
+        dataset?.datasetRole !==
+          'regression' &&
+        dataset?.datasetRole !==
+          'categoryMedian' &&
+        dataset?.datasetRole !==
+          'bubbleAggregate' &&
+        dataset?.datasetRole !==
+          'bubbleRaw'
+      ) {
+        return;
+      }
+
+      const currentActive =
+        chart.tooltip
+          ?.getActiveElements
+          ?.()
+          ?.[0];
+
+      if (
+        currentActive?.datasetIndex ===
+          selectedElement.datasetIndex &&
+        currentActive?.index ===
+          selectedElement.index
+      ) {
+        return;
+      }
+
+      showSelectedTooltip(
+        event,
+        selectedElement
+      );
+    }
+
+    function handleChartHover(
+      event,
+      elements
+    ) {
+      if (
+        !chart ||
+        interactionLocked
+      ) {
+        if (chart) {
+          chart.canvas.style.cursor =
+            'default';
+        }
+
+        return;
+      }
+
+      const selectedElement =
+        findRawBubbleElement(event) ||
+        findPrioritySummaryElement(event) ||
+        getInteractiveElement(elements);
+
+      const dataset = selectedElement
+        ? chart.data.datasets[
+            selectedElement.datasetIndex
+          ]
+        : null;
+
+      const raw = selectedElement
+        ? dataset?.data?.[
+            selectedElement.index
+          ]
+        : null;
+
+      chart.canvas.style.cursor =
+        dataset?.datasetRole ===
+          'bubbleAggregate' &&
+        raw &&
+        !bubbleStores[
+          raw.bubbleView
+        ].splitKeys.has(
+          raw.categoryKey
+        )
+          ? 'pointer'
+          : selectedElement
+            ? 'pointer'
+            : 'default';
+
+      if (
+        selectedElement &&
+        (
+          dataset?.datasetRole ===
+            'regression' ||
+          dataset?.datasetRole ===
+            'categoryMedian' ||
+          dataset?.datasetRole ===
+            'bubbleAggregate' ||
+          dataset?.datasetRole ===
+            'bubbleRaw'
+        )
+      ) {
+        showHoveredLineTooltip(
+          event,
+          selectedElement
+        );
+      }
+    }
+
+    function handleChartClick(
+      event,
+      elements
+    ) {
+      if (
+        !chart ||
+        interactionLocked
+      ) {
+        return;
+      }
+
+      event?.native?.preventDefault?.();
+
+      const selectedElement =
+        findRawBubbleElement(event) ||
+        findPrioritySummaryElement(event) ||
+        getInteractiveElement(elements);
+
+      if (!selectedElement) {
+        chart.tooltip.setActiveElements(
+          [],
+          {
+            x: 0,
+            y: 0
+          }
+        );
+
+        chart.update('none');
+        return;
+      }
+
+      showSelectedTooltip(
+        event,
+        selectedElement
+      );
+
+      const dataset =
+        chart.data.datasets[
+          selectedElement.datasetIndex
+        ];
+
+      const raw =
+        dataset?.data?.[
+          selectedElement.index
+        ];
+
+      if (
+        dataset?.datasetRole !==
+          'bubbleAggregate' ||
+        !raw ||
+        bubbleStores[
+          raw.bubbleView
+        ].splitKeys.has(
+          raw.categoryKey
+        )
+      ) {
+        lastBubbleClick = '';
+        lastBubbleClickAt = 0;
+        return;
+      }
+
+      const clickedAt =
+        performance.now();
+
+      const key =
+        `${raw.bubbleView}:${raw.categoryKey}`;
+
+      const isSecondActivation =
+        lastBubbleClick === key &&
+        clickedAt -
+          lastBubbleClickAt <=
+          CONFIG.doubleActivationMs;
+
+      if (isSecondActivation) {
+        lastBubbleClick = '';
+        lastBubbleClickAt = 0;
+
+        chart.tooltip.setActiveElements(
+          [],
+          {
+            x: 0,
+            y: 0
+          }
+        );
+
+        chart.update('none');
+
+        splitBubble(
+          raw.bubbleView,
+          raw.categoryKey
+        );
+
+        return;
+      }
+
+      lastBubbleClick = key;
+      lastBubbleClickAt = clickedAt;
+    }
+
+    function getTargetPointStyle(
+      dataset,
+      raw,
+      index
+    ) {
+      const context = {
+        chart,
+        raw,
+        dataIndex: index,
+        dataset,
+        datasetIndex: 0,
+        type: 'data'
+      };
+
+      const backgroundColour =
+        resolveScriptableValue(
+          dataset.pointBackgroundColor,
+          context,
+          raw?.colour
+            ? rgba(
+                raw.colour,
+                CONFIG.aggregateOpacity
+              )
+            : 'rgba(102, 0, 255, 0.20)'
+        );
+
+      const borderColour =
+        resolveScriptableValue(
+          dataset.pointBorderColor,
+          context,
+          backgroundColour
+        );
+
+      const radius = Number(
+        resolveScriptableValue(
+          dataset.pointRadius,
+          context,
+          CONFIG.pointRadius
+        )
+      );
+
+      return {
+        backgroundColour,
+        borderColour,
+
+        radius:
+          Number.isFinite(radius)
+            ? radius
+            : CONFIG.pointRadius,
+
+        pointStyle:
+          resolveScriptableValue(
+            dataset.pointStyle,
+            context,
+            'circle'
+          )
+      };
+    }
+
+    function captureRenderedGeometry() {
+      const pointPixels = [];
+      const lineGroups = [];
+
+      if (!chart) {
+        return {
+          pointPixels,
+          lineGroups
+        };
+      }
+
+      chart.data.datasets.forEach(
+        (dataset, datasetIndex) => {
+          const metadata =
+            chart.getDatasetMeta(
+              datasetIndex
+            );
+
+          const renderedElements =
+            metadata?.data || [];
+
+          const data =
+            dataset.data || [];
+
+          const pixels =
+            renderedElements
+              .map((element, index) => {
+                if (
+                  !Number.isFinite(element?.x) ||
+                  !Number.isFinite(element?.y)
+                ) {
+                  return null;
+                }
+
+                return {
+                  x: element.x,
+                  y: element.y,
+                  raw: data[index] || {},
+                  role: dataset.datasetRole,
+                  datasetMetadata:
+                    dataset.metadata || {},
+
+                  style: {
+                    backgroundColour:
+                      element.options
+                        ?.backgroundColor ||
+                      element.options
+                        ?.borderColor ||
+                      'rgba(119, 119, 119, 0.35)',
+
+                    borderColour:
+                      element.options
+                        ?.borderColor ||
+                      element.options
+                        ?.backgroundColor ||
+                      'rgba(119, 119, 119, 0.35)',
+
+                    radius:
+                      Number(
+                        element.options?.radius
+                      ) ||
+                      CONFIG.pointRadius,
+
+                    pointStyle:
+                      element.options
+                        ?.pointStyle ||
+                      'circle'
+                  }
+                };
+              })
+              .filter(Boolean);
+
+          if (!pixels.length) {
+            return;
+          }
+
+          if (
+            isLineDataset(dataset) &&
+            pixels.length > 1
+          ) {
+            lineGroups.push({
+              role:
+                dataset.datasetRole,
+
+              pixels,
+
+              metadata:
+                dataset.metadata || {},
+
+              style: {
+                borderColour:
+                  metadata
+                    ?.dataset
+                    ?.options
+                    ?.borderColor ||
+                  dataset.borderColor ||
+                  '#777777',
+
+                borderWidth:
+                  Number(
+                    metadata
+                      ?.dataset
+                      ?.options
+                      ?.borderWidth
+                  ) ||
+                  Number(
+                    dataset.borderWidth
+                  ) ||
+                  1
+              }
+            });
+          } else {
+            pointPixels.push(
+              ...pixels
+            );
+          }
+        }
+      );
+
+      return {
+        pointPixels,
+        lineGroups
+      };
+    }
+
+    function samplePixel(
+      sourcePixels,
+      index,
+      targetLength
+    ) {
+      if (!sourcePixels.length) {
+        return null;
+      }
+
+      if (targetLength <= 1) {
+        return sourcePixels[0];
+      }
+
+      const sourceIndex = Math.round(
+        index *
+        (
+          sourcePixels.length - 1
+        ) /
+        Math.max(
+          1,
+          targetLength - 1
+        )
+      );
+
+      return sourcePixels[
+        sourceIndex
+      ];
+    }
+
+    function findNearestPixel(
+      targetPixel,
+      candidates
+    ) {
+      if (!candidates.length) {
+        return null;
+      }
+
+      let nearest =
+        candidates[0];
+
+      let nearestDistance =
+        Infinity;
+
+      candidates.forEach(candidate => {
+        const distance = Math.hypot(
+          targetPixel.x - candidate.x,
+          targetPixel.y - candidate.y
+        );
+
+        if (distance < nearestDistance) {
+          nearest = candidate;
+          nearestDistance = distance;
+        }
+      });
+
+      return nearest;
+    }
+
+    function choosePointStartPixel(
+      targetRaw,
+      targetPixel,
+      geometry
+    ) {
+      const allPointPixels =
+        geometry.pointPixels;
+
+      if (!allPointPixels.length) {
+        return findNearestPixel(
+          targetPixel,
+          geometry.lineGroups.flatMap(
+            group => group.pixels
+          )
+        );
+      }
+
+      if (
+        Number.isInteger(
+          targetRaw?.sourceIndex
+        )
+      ) {
+        const exactSource =
+          allPointPixels.find(
+            pixel =>
+              pixel.raw?.sourceIndex ===
+              targetRaw.sourceIndex
+          );
+
+        if (exactSource) {
+          return exactSource;
+        }
+      }
+
+      if (
+        targetRaw?.bubbleView &&
+        targetRaw?.categoryKey
+      ) {
+        const sameBubble =
+          allPointPixels.filter(
+            pixel =>
+              pixel.raw?.bubbleView ===
+                targetRaw.bubbleView &&
+              pixel.raw?.categoryKey ===
+                targetRaw.categoryKey
+          );
+
+        if (sameBubble.length) {
+          return findNearestPixel(
+            targetPixel,
+            sameBubble
+          );
+        }
+      }
+
+      if (targetRaw?.state) {
+        const sameState =
+          allPointPixels.filter(
+            pixel =>
+              pixel.raw?.state ===
+              targetRaw.state
+          );
+
+        if (sameState.length) {
+          return findNearestPixel(
+            targetPixel,
+            sameState
+          );
+        }
+      }
+
+      if (targetRaw?.employerKey) {
+        const sameEmployer =
+          allPointPixels.filter(
+            pixel =>
+              pixel.raw?.employerKey ===
+              targetRaw.employerKey
+          );
+
+        if (sameEmployer.length) {
+          return findNearestPixel(
+            targetPixel,
+            sameEmployer
+          );
+        }
+      }
+
+      if (targetRaw?.rurality) {
+        const sameRurality =
+          allPointPixels.filter(
+            pixel =>
+              pixel.raw?.rurality ===
+              targetRaw.rurality
+          );
+
+        if (sameRurality.length) {
+          return findNearestPixel(
+            targetPixel,
+            sameRurality
+          );
+        }
+      }
+
+      if (targetRaw?.category) {
+        const sameCategory =
+          allPointPixels.filter(
+            pixel =>
+              pixel.raw?.category ===
+              targetRaw.category
+          );
+
+        if (sameCategory.length) {
+          return findNearestPixel(
+            targetPixel,
+            sameCategory
+          );
+        }
+      }
+
+      return findNearestPixel(
+        targetPixel,
+        allPointPixels
+      );
+    }
+
+    function chooseLineSourceGroup(
+      targetDataset,
+      geometry
+    ) {
+      const sameRoleGroups =
+        geometry.lineGroups.filter(
+          group =>
+            group.role ===
+            targetDataset.datasetRole
+        );
+
+      if (sameRoleGroups.length) {
+        const targetCategory =
+          targetDataset
+            .metadata
+            ?.category;
+
+        const exactCategory =
+          sameRoleGroups.find(
+            group =>
+              targetCategory &&
+              group.metadata?.category ===
+              targetCategory
+          );
+
+        if (exactCategory) {
+          return exactCategory;
+        }
+
+        const targetMedian = Number(
+          targetDataset
+            .metadata
+            ?.statistics
+            ?.median
+        );
+
+        if (Number.isFinite(targetMedian)) {
+          return sameRoleGroups
+            .slice()
+            .sort(
+              (first, second) =>
+                Math.abs(
+                  Number(
+                    first
+                      .metadata
+                      ?.statistics
+                      ?.median
+                  ) -
+                  targetMedian
+                ) -
+                Math.abs(
+                  Number(
+                    second
+                      .metadata
+                      ?.statistics
+                      ?.median
+                  ) -
+                  targetMedian
+                )
+            )[0];
+        }
+
+        return sameRoleGroups[0];
+      }
+
+      return {
+        role: 'points',
+        pixels: geometry.pointPixels,
+        metadata: {},
+
+        style: {
+          borderColour:
+            'rgba(119, 119, 119, 0)',
+
+          borderWidth: 0
+        }
+      };
+    }
+
+    function createTransitionPlans(
+      targetDatasets,
+      geometry
+    ) {
+      const xScale =
+        chart.scales.x;
+
+      const yScale =
+        chart.scales.y;
+
+      return targetDatasets.map(
+        targetDataset => {
+          const targetData =
+            (
+              targetDataset.data || []
+            ).map(point => ({
+              ...point
+            }));
+
+          const targetIsLine =
+            isLineDataset(
+              targetDataset
+            );
+
+          const lineSourceGroup =
+            targetIsLine
+              ? chooseLineSourceGroup(
+                  targetDataset,
+                  geometry
+                )
+              : null;
+
+          const sourcePixels = [];
+
+          const startData =
+            targetData.map(
+              (targetPoint, index) => {
+                const targetPixel = {
+                  x:
+                    xScale.getPixelForValue(
+                      targetPoint.x
+                    ),
+
+                  y:
+                    yScale.getPixelForValue(
+                      targetPoint.y
+                    )
+                };
+
+                const sourcePixel =
+                  targetIsLine
+                    ? samplePixel(
+                        lineSourceGroup
+                          ?.pixels || [],
+                        index,
+                        targetData.length
+                      )
+                    : choosePointStartPixel(
+                        targetPoint,
+                        targetPixel,
+                        geometry
+                      );
+
+                sourcePixels.push(
+                  sourcePixel
+                );
+
+                if (!sourcePixel) {
+                  return {
+                    ...targetPoint
+                  };
+                }
+
+                return {
+                  ...targetPoint,
+
+                  x:
+                    xScale.getValueForPixel(
+                      sourcePixel.x
+                    ),
+
+                  y:
+                    yScale.getValueForPixel(
+                      sourcePixel.y
+                    )
+                };
+              }
+            );
+
+          if (targetIsLine) {
+            const targetColour =
+              String(
+                targetDataset.borderColor ||
+                '#777777'
+              );
+
+            const targetWidth =
+              Number(
+                targetDataset.borderWidth
+              ) ||
+              1;
+
+            const startColour =
+              lineSourceGroup
+                ?.style
+                ?.borderColour ||
+              fadeCssColour(
+                targetColour,
+                0
+              );
+
+            const startWidth =
+              Number(
+                lineSourceGroup
+                  ?.style
+                  ?.borderWidth
+              ) ||
+              0;
+
+            return {
+              kind: 'line',
+
+              transitionDataset: {
+                ...targetDataset,
+                data: startData,
+                borderColor: startColour,
+                backgroundColor: startColour,
+                borderWidth: startWidth,
+                pointHitRadius: 0
+              },
+
+              targetDataset,
+              startData,
+              targetData,
+              startColour,
+              targetColour,
+              startWidth,
+              targetWidth
+            };
+          }
+
+          const targetStyles =
+            targetData.map(
+              (point, index) =>
+                getTargetPointStyle(
+                  targetDataset,
+                  point,
+                  index
+                )
+            );
+
+          const startStyles =
+            targetStyles.map(
+              (targetStyle, index) => {
+                const sourceStyle =
+                  sourcePixels[index]?.style;
+
+                if (sourceStyle) {
+                  return sourceStyle;
+                }
+
+                return {
+                  backgroundColour:
+                    fadeCssColour(
+                      targetStyle
+                        .backgroundColour,
+                      0
+                    ),
+
+                  borderColour:
+                    fadeCssColour(
+                      targetStyle
+                        .borderColour,
+                      0
+                    ),
+
+                  radius: 0,
+
+                  pointStyle:
+                    targetStyle.pointStyle
+                };
+              }
+            );
+
+          return {
+            kind: 'point',
+
+            transitionDataset: {
+              ...targetDataset,
+              data: startData,
+
+              pointBackgroundColor:
+                startStyles.map(
+                  style =>
+                    style.backgroundColour
+                ),
+
+              pointHoverBackgroundColor:
+                startStyles.map(
+                  style =>
+                    style.backgroundColour
+                ),
+
+              pointBorderColor:
+                startStyles.map(
+                  style =>
+                    style.borderColour
+                ),
+
+              pointHoverBorderColor:
+                startStyles.map(
+                  style =>
+                    style.borderColour
+                ),
+
+              pointRadius:
+                startStyles.map(
+                  style =>
+                    style.radius
+                ),
+
+              pointHoverRadius:
+                startStyles.map(
+                  style =>
+                    style.radius
+                ),
+
+              pointHitRadius: 0,
+
+              pointStyle:
+                targetDataset.pointStyle ||
+                'circle'
+            },
+
+            targetDataset,
+            startData,
+            targetData,
+            startStyles,
+            targetStyles
+          };
+        }
+      );
+    }
+
+    function createDepartingLinePlans(
+      geometry,
+      targetDatasets
+    ) {
+      const targetRoles =
+        new Set(
+          targetDatasets
+            .filter(
+              isLineDataset
+            )
+            .map(
+              dataset =>
+                dataset.datasetRole
+            )
+        );
+
+      const xScale =
+        chart.scales.x;
+
+      const yScale =
+        chart.scales.y;
+
+      return geometry.lineGroups
+        .filter(
+          group =>
+            !targetRoles.has(
+              group.role
+            )
+        )
+        .map(group => {
+          const data =
+            group.pixels.map(
+              pixel => ({
+                x:
+                  xScale.getValueForPixel(
+                    pixel.x
+                  ),
+
+                y:
+                  yScale.getValueForPixel(
+                    pixel.y
+                  )
+              })
+            );
+
+          const colour =
+            group.style.borderColour ||
+            '#777777';
+
+          const width =
+            Number(
+              group.style.borderWidth
+            ) ||
+            1;
+
+          return {
+            dataset: {
+              type: 'line',
+              datasetRole: 'transitionGhost',
+              data,
+              parsing: false,
+              showLine: true,
+              clip: false,
+              fill: false,
+              order: 20,
+              borderColor: colour,
+              backgroundColor: colour,
+              borderWidth: width,
+              borderCapStyle: 'round',
+              borderJoinStyle: 'round',
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              pointHitRadius: 0,
+              tension: 0
+            },
+
+            colour,
+            width
+          };
+        });
+    }
+
+    function animateViewMorph(
+      model,
+      duration
+    ) {
+      PFFCharts.runViewMorph({
+        chart,
+        model,
+        duration,
+        xAxisFade,
+        currentXAxisOptions,
+        captureRenderedGeometry,
+        captureXAxisSnapshot:
+          safeCaptureXAxisSnapshot,
+        getXAxisChangeMap,
+        createFadingXAxisOptions,
+        createYAxisOptions,
+        createTransitionPlans,
+        createDepartingLinePlans,
+        animationController,
+        setCurrentXAxisOptions(value) {
+          currentXAxisOptions =
+            value;
+        },
+        setInteractionLocked(value) {
+          interactionLocked =
+            value;
+        },
+        setViewMorphInProgress(value) {
+          viewMorphInProgress =
+            value;
+        },
+        onComplete() {
+          updateReaggregateButton();
         }
       });
     }
 
     function createChart() {
-      unifiedYAxis =
-        PFFCharts.createUnifiedYAxis({
-          id:
-            'australiaStateCoverageUnifiedYAxis',
-
-          getChart() {
-            return chart;
-          },
-
-          getScale() {
-            return state.scale;
-          },
-
-          getDecimals() {
-            return 0;
-          },
-
-          getTitle() {
-            return 'People per FTE clinician';
-          },
-
-          formatValue(
-            value
-          ) {
-            return PFF.formatInteger(
-              value
-            );
-          }
-        });
-
-      chart =
-        new Chart(
-          chartCanvas.getContext(
-            '2d'
-          ),
-          {
-            type:
-              'line',
-
-            data: {
-              labels:
-                state.years,
-              datasets:
-                buildDatasets()
-            },
-
-            options:
-              chartOptions(),
-
-            plugins: [
-              unifiedYAxis.plugin,
-              coverageBenchmarksPlugin,
-              yearTickMarksPlugin,
-              coverageTrendLabelsPlugin
-            ]
-          }
+      const model =
+        buildViewModel(
+          activeView
         );
 
-      unifiedYAxis.setImmediately(
-        state.scale,
-        0
+      currentXAxisOptions =
+        model.xScale;
+
+      chart = new Chart(
+        chartCanvas.getContext('2d'),
+        {
+          type: 'scatter',
+
+          data: {
+            datasets: model.datasets
+          },
+
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            resizeDelay: 0,
+
+            devicePixelRatio: Math.min(
+              window.devicePixelRatio || 1,
+              3
+            ),
+
+            animation: {
+              duration: 0
+            },
+
+            transitions: {
+              resize: {
+                animation: {
+                  duration: 0
+                }
+              },
+
+              active: {
+                animation: {
+                  duration: 170,
+                  easing: 'easeOutCubic'
+                }
+              }
+            },
+
+            layout: {
+              autoPadding: false,
+
+              padding: {
+                top: 4,
+                right: 4,
+                bottom: 0,
+                left: 0
+              }
+            },
+
+            interaction: {
+              mode: 'nearest',
+              axis: 'xy',
+              intersect: true,
+              includeInvisible: false
+            },
+
+            onHover:
+              handleChartHover,
+
+            onClick:
+              handleChartClick,
+
+            plugins: {
+              legend: {
+                display: false
+              },
+
+              tooltip:
+                PFFCharts.tooltipOptions({
+                  filter() {
+                    return !interactionLocked;
+                  },
+
+                  callbacks: {
+                    title(items) {
+                      return tooltipTitle(
+                        items?.[0]
+                      );
+                    },
+
+                    label(item) {
+                      return tooltipLabel(
+                        item
+                      );
+                    }
+                  }
+                })
+            },
+
+            scales: {
+              x: model.xScale,
+              y: createYAxisOptions()
+            }
+          },
+
+          plugins: [
+            xAxisFadePlugin,
+            variableAxisTickPlugin,
+            bubbleLabelPlugin
+          ]
+        }
+      );
+
+      updateLegend(
+        model.legendItems,
+        false
+      );
+
+      updateChartNote(
+        model.note
       );
     }
 
-    function updateAccessibleSummary() {
-      if (!chartSummary) {
+    function applyView(
+      nextView,
+      animate = true
+    ) {
+      if (
+        !chart ||
+        !VIEW_CONFIG[nextView]
+      ) {
         return;
       }
 
-      const visible =
-        SERIES
-          .filter(
-            item =>
-              !state.hiddenSeries.has(
-                item.code
-              )
-          )
-          .map(
-            item =>
-              item.label
-          );
+      activeView = nextView;
+      lastBubbleClick = '';
+      lastBubbleClickAt = 0;
 
-      const trendText =
-        trendController?.mode !== 'off'
-          ? ` ${trendController.windowSize}-year trend labels are on.`
-          : ' Trend labels are off.';
+      const model =
+        buildViewModel(
+          activeView
+        );
 
-      PFFCharts.updateChartSummary(
-        `Australia and state population coverage trends from ${state.years[0] ?? 'unavailable'} to ${state.years[state.years.length - 1] ?? 'unavailable'}. Visible series: ${visible.length ? visible.join(', ') : 'none'}.${trendText}`,
-        chartSummary
+      PFF.animateTextChange(
+        chartHeadingDetail,
+        VIEW_CONFIG[
+          activeView
+        ]
+      );
+
+      tabsController?.set(
+        activeView,
+        {
+          notify: false
+        }
+      );
+
+      updateLegend(
+        model.legendItems,
+        animate
+      );
+
+      updateChartNote(
+        model.note
+      );
+
+      updateReaggregateButton();
+
+      if (!animate) {
+        currentXAxisOptions =
+          model.xScale;
+
+        chart.options.animation.duration = 0;
+
+        chart.data.datasets =
+          model.datasets;
+
+        chart.options.scales.x =
+          model.xScale;
+
+        chart.options.scales.y =
+          createYAxisOptions();
+
+        chart.update('none');
+        return;
+      }
+
+      animateViewMorph(
+        model,
+        CONFIG.transitionMs
       );
     }
 
-    function setupControls() {
-      headingScroller =
-        PFF.setupScrollableRegion({
-          scroller:
-            headingScrollViewport,
-          leftButton:
-            headingScrollLeft,
-          rightButton:
-            headingScrollRight
+    function requestViewSwitch(nextView) {
+      if (
+        nextView === activeView ||
+        interactionLocked ||
+        !VIEW_CONFIG[nextView]
+      ) {
+        return;
+      }
+
+      const currentStore =
+        bubbleStores[
+          activeView
+        ];
+
+      if (
+        currentStore?.splitKeys.size
+      ) {
+        reaggregate(() => {
+          applyView(
+            nextView,
+            true
+          );
         });
 
-      trendController =
-        PFFCharts.setupTrendToggle({
-          button:
-            yoyTrendToggle,
-          initialMode:
-            '3yr',
-          onChange() {
-            chart?.draw();
-            updateAccessibleSummary();
+        return;
+      }
+
+      applyView(
+        nextView,
+        true
+      );
+    }
+
+    function updateLegend(
+      items,
+      animate = true
+    ) {
+      legendController?.update(
+        items,
+        animate
+      );
+    }
+
+    function updateChartNote(note) {
+      chartNote.textContent =
+        note || '';
+
+      chartNote.classList.toggle(
+        'is-hidden',
+        !note
+      );
+    }
+
+    function updateReaggregateButton() {
+      const store =
+        bubbleStores[
+          activeView
+        ];
+
+      const shouldShow = Boolean(
+        store &&
+        (
+          store.splitKeys.size ||
+          store.mergingKeys.size
+        )
+      );
+
+      reaggregateButton.classList.toggle(
+        'is-hidden',
+        !shouldShow
+      );
+
+      reaggregateButton.setAttribute(
+        'aria-hidden',
+        String(!shouldShow)
+      );
+
+      reaggregateButton.tabIndex =
+        shouldShow
+          ? 0
+          : -1;
+
+      reaggregateButton.disabled =
+        interactionLocked;
+    }
+
+    function rawBubblePoints(
+      view,
+      categoryKey
+    ) {
+      const store =
+        bubbleStores[view];
+
+      const aggregate =
+        store.aggregates.find(
+          item =>
+            item.categoryKey ===
+            categoryKey
+        );
+
+      const categoryRows =
+        store.rowsByKey.get(
+          categoryKey
+        ) ||
+        [];
+
+      if (
+        !aggregate ||
+        !categoryRows.length
+      ) {
+        return [];
+      }
+
+      const grouped =
+        new Map();
+
+      categoryRows.forEach(row => {
+        const key =
+          String(row.fteSalary);
+
+        if (!grouped.has(key)) {
+          grouped.set(
+            key,
+            []
+          );
+        }
+
+        grouped.get(key).push(
+          row
+        );
+      });
+
+      const points = [];
+
+      grouped.forEach(groupRows => {
+        const count =
+          groupRows.length;
+
+        const halfSpan = Math.min(
+          9,
+
+          Math.max(
+            0,
+            (count - 1) *
+              0.8
+          ),
+
+          Math.max(
+            0,
+
+            Math.min(
+              aggregate.x - 5,
+              95 - aggregate.x
+            )
+          )
+        );
+
+        groupRows.forEach(
+          (
+            row,
+            index
+          ) => {
+            const targetX =
+              count === 1
+                ? aggregate.x
+                : aggregate.x -
+                  halfSpan +
+                  index /
+                  (count - 1) *
+                  halfSpan *
+                  2;
+
+            points.push({
+              x: aggregate.x,
+              y: aggregate.y,
+              targetX,
+              targetY: row.fteSalary,
+              bubbleView: view,
+              categoryKey,
+              label: aggregate.label,
+              fullName: aggregate.fullName,
+              colour: aggregate.colour,
+              statistics: aggregate.statistics,
+              ...row
+            });
           }
-        });
+        );
+      });
 
-      legendController =
-        PFFCharts.setupLegend({
-          legend:
-            chartLegend,
+      return points;
+    }
 
-          leftButton:
-            legendScrollLeft,
+    function splitBubble(
+      view,
+      categoryKey
+    ) {
+      const store =
+        bubbleStores[view];
 
-          rightButton:
-            legendScrollRight,
+      if (
+        !chart ||
+        activeView !== view ||
+        interactionLocked ||
+        store.splitKeys.has(
+          categoryKey
+        )
+      ) {
+        return;
+      }
 
-          getChart() {
-            return chart;
-          },
+      const points =
+        rawBubblePoints(
+          view,
+          categoryKey
+        );
 
-          getItems() {
-            return SERIES.map(
+      if (!points.length) {
+        return;
+      }
+
+      const shouldDim =
+        store.splitKeys.size ===
+        0;
+
+      interactionLocked = true;
+
+      store.splitKeys.add(
+        categoryKey
+      );
+
+      store.splitProgress.set(
+        categoryKey,
+        0
+      );
+
+      points.forEach(point => {
+        point.startX = point.x;
+        point.startY = point.y;
+      });
+
+      store.rawPoints.push(
+        ...points
+      );
+
+      chart.data.datasets[1].data =
+        store.rawPoints;
+
+      chart.update('none');
+      updateReaggregateButton();
+
+      animationController.run({
+        duration:
+          CONFIG.splitAnimationMs,
+
+        easing:
+          easeOutCubic,
+
+        onFrame(progress) {
+          store.splitProgress.set(
+            categoryKey,
+            progress
+          );
+
+          if (shouldDim) {
+            store.dimProgress =
+              progress;
+          }
+
+          points.forEach(point => {
+            point.x =
+              point.startX +
               (
-                item,
-                datasetIndex
-              ) => ({
-                datasetIndex,
-                label:
-                  item.label,
-                colour:
-                  item.colour,
-                active:
-                  !state.hiddenSeries.has(
-                    item.code
-                  ),
-                code:
-                  item.code
-              })
-            );
-          },
+                point.targetX -
+                point.startX
+              ) *
+              progress;
 
-          onToggle({
-            dataset,
-            visible,
-            item
-          }) {
-            const code =
-              item.code ||
-              dataset?._code;
-
-            if (code) {
-              if (visible) {
-                state.hiddenSeries.delete(
-                  code
-                );
-              } else {
-                state.hiddenSeries.add(
-                  code
-                );
-              }
-            }
-
-            if (dataset) {
-              dataset._activeSeries =
-                visible;
-            }
-
-            updateAccessibleSummary();
-          }
-        });
-    }
-
-    function setupResponsiveBehaviour() {
-      responsiveController =
-        PFFCharts.createResponsiveController({
-          getChart() {
-            return chart;
-          },
-
-          observe: [
-            app,
-            chartShell,
-            chartLegend
-          ],
-
-          beforeResize(
-            chartInstance
-          ) {
-            chartInstance.options.interaction = {
-              mode:
-                'nearest',
-              intersect:
-                true,
-              axis:
-                'xy'
-            };
-
-            chartInstance.data.datasets.forEach(
-              dataset => {
-                dataset.pointHitRadius =
-                  5;
-              }
-            );
-          },
-
-          afterResize() {
-            unifiedYAxis
-              ?.setImmediately(
-                state.scale,
-                0
-              );
-
-            chart?.draw();
-          },
-
-          onRefresh() {
-            headingScroller?.update();
-            legendController?.update();
-          }
-        });
-    }
-
-    migrateLegacyLocalCache();
-    setupControls();
-
-    PFF.initialiseApp({
-      app,
-      status:
-        statusEl,
-
-      async loadLive() {
-        const [
-          clinicianTable,
-          populationTable
-        ] =
-          await Promise.all([
-            PFFCharts.loadGVizSheet({
-              sheetId:
-                CONFIG.sheetId,
-              sheetName:
-                CONFIG.clinicianSheet,
-              range:
-                CONFIG.clinicianRange,
-              headers:
-                '1'
-            }),
-
-            PFFCharts.loadGVizSheet({
-              sheetId:
-                CONFIG.sheetId,
-              sheetName:
-                CONFIG.populationSheet,
-              range:
-                CONFIG.populationRange,
-              headers:
-                '1'
-            })
-          ]);
-
-        return {
-          clinicianTable,
-          populationTable
-        };
-      },
-
-      parseLive:
-        parseLiveData,
-
-      async loadRemoteCache() {
-        const [
-          clinicianSnapshot,
-          populationSnapshot
-        ] =
-          await Promise.all([
-            PFFCharts.loadAppsScriptCache({
-              url:
-                CACHE_WEB_APP_URL,
-              appKey:
-                CLINICIAN_CACHE_APP_KEY
-            }),
-
-            PFFCharts.loadAppsScriptCache({
-              url:
-                CACHE_WEB_APP_URL,
-              appKey:
-                POPULATION_CACHE_APP_KEY
-            })
-          ]);
-
-        return {
-          clinicianSnapshot,
-          populationSnapshot,
-          cachedAt:
-            clinicianSnapshot?.cachedAt ||
-            populationSnapshot?.cachedAt ||
-            null
-        };
-      },
-
-      parseRemoteCache,
-
-      cacheKey:
-        CONFIG.localCacheKey,
-
-      minRows:
-        1,
-
-      onLiveError(
-        error
-      ) {
-        console.warn(
-          'Live Australia/state population coverage data unavailable; trying Apps Script caches.',
-          error
-        );
-      },
-
-      onRemoteCacheError(
-        error
-      ) {
-        console.warn(
-          'Apps Script Australia/state population coverage caches unavailable; trying browser cache.',
-          error
-        );
-      },
-
-      dataSourceOptions: {
-        indicator:
-          liveData,
-        text:
-          liveDataText
-      },
-
-      render(
-        loaded
-      ) {
-        applyLoadedRows(
-          loaded.rows
-        );
-
-        createChart();
-
-        chartSummary =
-          PFFCharts.ensureChartSummary({
-            id:
-              'australiaStateCoverageChartSummary',
-            parent:
-              app
+            point.y =
+              point.startY +
+              (
+                point.targetY -
+                point.startY
+              ) *
+              progress;
           });
 
-        chartCanvas.setAttribute(
-          'aria-describedby',
-          chartSummary.id
-        );
+          chart.update('none');
+        },
 
-        updateAccessibleSummary();
-
-        interactionsController =
-          PFFCharts.setupChartInteractions({
-            canvas:
-              chartCanvas,
-
-            getChart() {
-              return chart;
-            }
+        onComplete() {
+          points.forEach(point => {
+            point.x = point.targetX;
+            point.y = point.targetY;
           });
 
-        setupResponsiveBehaviour();
+          store.splitProgress.delete(
+            categoryKey
+          );
 
-        legendController?.update();
-        headingScroller?.update();
-
-        requestAnimationFrame(
-          () => {
-            unifiedYAxis
-              ?.setImmediately(
-                state.scale,
-                0
-              );
-
-            chart?.draw();
-            legendController?.update();
-            headingScroller?.update();
+          if (shouldDim) {
+            store.dimProgress = 1;
           }
-        );
 
-        return chart;
-      },
+          interactionLocked = false;
+          chart.update('none');
+          updateReaggregateButton();
+        }
+      });
+    }
 
-      onError() {
-        liveData.style.visibility =
-          'hidden';
-      },
+    function reaggregate(
+      callback = null
+    ) {
+      const store =
+        bubbleStores[
+          activeView
+        ];
 
-      errorMessage:
-        'Australia and state population coverage data unavailable.'
-    });
+      if (
+        !store ||
+        !store.splitKeys.size ||
+        interactionLocked ||
+        !chart
+      ) {
+        return;
+      }
+
+      interactionLocked = true;
+      store.mergeProgress = 0;
+
+      store.splitKeys.forEach(
+        key =>
+          store.mergingKeys.add(
+            key
+          )
+      );
+
+      store.rawPoints.forEach(point => {
+        const aggregate =
+          store.aggregates.find(
+            item =>
+              item.categoryKey ===
+              point.categoryKey
+          );
+
+        point.startX = point.x;
+        point.startY = point.y;
+
+        point.endX =
+          aggregate?.x ??
+          point.x;
+
+        point.endY =
+          aggregate?.y ??
+          point.y;
+      });
+
+      chart.update('none');
+      updateReaggregateButton();
+
+      animationController.run({
+        duration:
+          CONFIG.mergeAnimationMs,
+
+        easing:
+          easeInOutCubic,
+
+        onFrame(progress) {
+          store.mergeProgress =
+            progress;
+
+          store.dimProgress =
+            1 - progress;
+
+          store.rawPoints.forEach(point => {
+            point.x =
+              point.startX +
+              (
+                point.endX -
+                point.startX
+              ) *
+              progress;
+
+            point.y =
+              point.startY +
+              (
+                point.endY -
+                point.startY
+              ) *
+              progress;
+          });
+
+          chart.update('none');
+        },
+
+        onComplete() {
+          store.rawPoints = [];
+
+          chart.data.datasets[1].data =
+            store.rawPoints;
+
+          store.splitKeys.clear();
+          store.splitProgress.clear();
+          store.mergingKeys.clear();
+          store.mergeProgress = 0;
+          store.dimProgress = 0;
+
+          interactionLocked = false;
+          chart.update('none');
+          updateReaggregateButton();
+
+          callback?.();
+        }
+      });
+    }
+
+    reaggregateButton.addEventListener(
+      'click',
+      () => {
+        reaggregate();
+      }
+    );
+
+    tabsController =
+      PFF.setupTabs({
+        tabList,
+        tabs:
+          chartTabs,
+        scroller:
+          tabList,
+        leftButton:
+          tabScrollLeft,
+        rightButton:
+          tabScrollRight,
+        valueAttribute:
+          'view',
+        initialValue:
+          activeView,
+        controlled:
+          true,
+        onRequest(nextView) {
+          requestViewSwitch(
+            nextView
+          );
+        }
+      });
+
+    headingScroller =
+      PFF.setupScrollableRegion({
+        scroller:
+          headingScrollViewport,
+        leftButton:
+          headingScrollLeft,
+        rightButton:
+          headingScrollRight
+      });
+
+    legendController =
+      PFFCharts.setupDisplayLegend({
+        legend:
+          chartLegend,
+        leftButton:
+          legendScrollLeft,
+        rightButton:
+          legendScrollRight
+      });
+
+    interactionsController =
+      PFFCharts.setupChartInteractions({
+        canvas:
+          chartCanvas,
+        getChart() {
+          return chart;
+        }
+      });
+
+    responsiveController =
+      PFFCharts.createResponsiveController({
+        getChart() {
+          return chart;
+        },
+        observe: [
+          app,
+          chartShell
+        ],
+        applyResponsiveChartOptions:
+          false,
+        onRefresh() {
+          tabsController?.update();
+          headingScroller?.update();
+          legendController?.refresh();
+        }
+      });
+
+    async function loadDashboard() {
+      await PFF.initialiseApp({
+        app,
+        status:
+          statusElement,
+        forceCached:
+          FORCE_CACHED_DATA,
+        cacheKey:
+          CONFIG.localCacheKey,
+        minRows:
+          1,
+        dataSourceOptions: {
+          indicator:
+            dataSourceIndicator,
+          text:
+            dataSourceText
+        },
+        loadLive() {
+          return PFFCharts.loadGVizSheet({
+            sheetId:
+              CONFIG.sheetId,
+            sheetName:
+              CONFIG.sheetName,
+            range:
+              CONFIG.range,
+            headers:
+              '1',
+            query:
+              'select *',
+            timeoutMs:
+              CONFIG.fetchTimeoutMs
+          });
+        },
+        parseLive(table) {
+          const parsedRows =
+            normaliseRows(
+              table?.rows || []
+            );
+
+          if (!parsedRows.length) {
+            throw new Error(
+              'No valid FTE salary rows were found in columns A to W'
+            );
+          }
+
+          return parsedRows;
+        },
+        loadRemoteCache() {
+          return PFFCharts.loadAppsScriptCache({
+            url:
+              CACHE_WEB_APP_URL,
+            appKey:
+              CACHE_APP_KEY,
+            timeoutMs:
+              CACHE_FETCH_TIMEOUT_MS
+          });
+        },
+        parseRemoteCache(response) {
+          const sourceRows =
+            Array.isArray(
+              response?.data?.rows
+            )
+              ? response.data.rows
+              : [];
+
+          const parsedRows =
+            sourceRows
+              .map(
+                (row, sourceIndex) => ({
+                  sourceIndex,
+                  date:
+                    parseDate(row?.[0]),
+                  experience:
+                    toNumber(row?.[1]),
+                  rurality:
+                    normaliseRurality(
+                      row?.[2]
+                    ),
+                  state:
+                    normaliseState(
+                      row?.[3]
+                    ),
+                  employerKey:
+                    normaliseEmployer(
+                      row?.[4]
+                    ),
+                  fteSalary:
+                    toNumber(row?.[5])
+                })
+              )
+              .filter(
+                row =>
+                  Number.isFinite(
+                    row.fteSalary
+                  ) &&
+                  row.fteSalary >=
+                    CONFIG.minimumSalary &&
+                  row.fteSalary <=
+                    CONFIG.maximumSalary
+              )
+              .map(row => ({
+                ...row,
+                experience:
+                  Number.isFinite(
+                    row.experience
+                  )
+                    ? row.experience
+                    : null
+              }));
+
+          if (!parsedRows.length) {
+            throw new Error(
+              'No valid cached FTE salary rows were found'
+            );
+          }
+
+          return parsedRows;
+        },
+        onLiveError(error) {
+          console.warn(
+            'Live Google Sheets permanent salary data could not be used',
+            error
+          );
+        },
+        onRemoteCacheError(error) {
+          console.warn(
+            'Backend 1 permanent salary cache could not be used',
+            error
+          );
+        },
+        render(loaded) {
+          rows =
+            loaded.rows;
+
+          rebuildBubbleStore(
+            'state'
+          );
+
+          rebuildBubbleStore(
+            'employer'
+          );
+
+          createChart();
+
+          tabsController?.set(
+            activeView,
+            {
+              animate: false,
+              notify: false
+            }
+          );
+
+          return chart;
+        },
+        onReady() {
+          responsiveController?.refresh();
+        },
+        onError() {
+          dataSourceIndicator.style.display =
+            'none';
+        },
+        errorMessage:
+          'Live, Backend 1 cached and browser-cached permanent salary data are currently unavailable'
+      });
+    }
+
+    loadDashboard();
   </script>
 </body>
 </html>
