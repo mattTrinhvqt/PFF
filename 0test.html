@@ -844,7 +844,7 @@ role="note"
 <ul class="repeat-info-note-list">
 <li><strong>Count:</strong> repeat ads in the rolling year</li>
 <li><strong>Proportion:</strong> each employer’s share of repeat ads in the rolling year</li>
-<li><strong>Median days advertised:</strong> repeat-series duration from first ad; live series count to today</li>
+<li><strong>Median days advertised:</strong> median Days Available for completed repeat series</li>
 <li><strong>Repeat ad:</strong> same employer, suburb and employment type re-advertised within 180 days; ±14-day duplicates excluded</li>
 <li>Non-corporates are grouped by employer type</li>
 </ul>
@@ -919,7 +919,7 @@ ruralityWorkforceRange: 'A30:J',
 fetchTimeoutMs: 20000,
 fetchAttempts: 2,
 retryDelayMs: 1200,
-jobCacheKey: 'pff-job-ads-rows-v13',
+jobCacheKey: 'pff-job-ads-rows-v14',
 workforceCacheKey: 'pff-optom-workforce-v2',
 yMin: 60000,
 yMax: 180000,
@@ -1184,7 +1184,11 @@ medianDays: 'Median days advertised'
 };
 
 function hasRepeatDurationData() {
-return allJobRows.some(row => row?.isRepeat);
+return allJobRows.some(row =>
+row?.isRepeat &&
+Number.isFinite(Number(row?.daysAvailable)) &&
+Number(row.daysAvailable) >= 0
+);
 }
 
 function getRepeatTickView(measure = repeatAxisDisplayMeasure) {
@@ -1235,12 +1239,9 @@ minorStep: 5
 const repeatMeasureAnimationController =
 PFFCharts.createAnimationController();
 
-let repeatMeasureUnlockTimer = null;
-let repeatSeriesGroupsCache = null;
 let repeatEmployerSummaryCache = null;
 
 function invalidateRepeatSummaryCache() {
-repeatSeriesGroupsCache = null;
 repeatEmployerSummaryCache = null;
 }
 
@@ -1377,19 +1378,12 @@ repeatMeasureValue.textContent =
 REPEAT_MEASURE_LABELS[selectedRepeatMeasure];
 
 repeatMeasureOptions.forEach(option => {
-const available =
-option.value !== 'medianDays' ||
-hasRepeatDurationData();
-
-option.disabled = !repeatTabActive || !available;
+option.disabled = !repeatTabActive;
 option.checked = option.value === selectedRepeatMeasure;
 
 option
 .closest('.measure-option')
-?.classList.toggle(
-'is-disabled',
-!available
-);
+?.classList.remove('is-disabled');
 });
 
 repeatMeasureButton.disabled = !repeatTabActive;
@@ -1609,201 +1603,6 @@ values.day || 1
 );
 }
 
-function getRepeatSeriesFallbackGroupKey(row) {
-const firstSuburb = cleanText(row?.suburb)
-.split(';')[0]
-.trim();
-
-let location = normaliseText(firstSuburb);
-
-if (!location || location === 'xxx') {
-location = normaliseText(row?.stateText);
-}
-
-if (!location) {
-location = `unknown-${cleanText(row?.jobId) || Number(row?.x) || 'row'}`;
-}
-
-return [
-normaliseText(row?.employer),
-location,
-normaliseText(row?.stateText),
-normaliseText(row?.employmentType)
-].join('|');
-}
-
-function buildRepeatSeriesGroups() {
-if (repeatSeriesGroupsCache) {
-return repeatSeriesGroupsCache;
-}
-
-const bySeriesId = new Map();
-let hasSeriesId = false;
-
-/*
- * Prefer the tracker-assigned Repeat Series ID whenever it is present.
- * Older mirror/backend snapshots may not contain AA, so reconstruct the
- * same clustering rule rather than disabling Median days advertised.
- */
-allJobRows.forEach(row => {
-const seriesId = cleanText(row?.seriesId);
-if (!seriesId) return;
-
-hasSeriesId = true;
-
-if (!bySeriesId.has(seriesId)) {
-bySeriesId.set(seriesId, []);
-}
-
-bySeriesId.get(seriesId).push(row);
-});
-
-if (hasSeriesId) {
-repeatSeriesGroupsCache = [...bySeriesId.values()];
-return repeatSeriesGroupsCache;
-}
-
-const byGroup = new Map();
-
-allJobRows.forEach(row => {
-if (!Number.isFinite(Number(row?.x))) return;
-
-const groupKey = getRepeatSeriesFallbackGroupKey(row);
-
-if (!byGroup.has(groupKey)) {
-byGroup.set(groupKey, []);
-}
-
-byGroup.get(groupKey).push(row);
-});
-
-const clusters = [];
-
-byGroup.forEach(groupRows => {
-const sorted = groupRows
-.slice()
-.sort((first, second) => first.x - second.x);
-
-let currentCluster = [];
-
-sorted.forEach(row => {
-if (!currentCluster.length) {
-currentCluster.push(row);
-return;
-}
-
-const previous = currentCluster[currentCluster.length - 1];
-const gapDays = Math.floor(
-(Number(row.x) - Number(previous.x)) / 86400000
-);
-
-if (gapDays <= 180) {
-currentCluster.push(row);
-} else {
-clusters.push(currentCluster);
-currentCluster = [row];
-}
-});
-
-if (currentCluster.length) {
-clusters.push(currentCluster);
-}
-});
-
-repeatSeriesGroupsCache = clusters;
-return repeatSeriesGroupsCache;
-}
-
-function createRepeatDurationContext() {
-let latestDatasetDate = NaN;
-let trackerMetadataPresent = false;
-
-allJobRows.forEach(row => {
-const timestamp = Number(row?.x);
-
-if (
-Number.isFinite(timestamp) &&
-(!Number.isFinite(latestDatasetDate) || timestamp > latestDatasetDate)
-) {
-latestDatasetDate = timestamp;
-}
-
-if (
-!trackerMetadataPresent &&
-(
-cleanText(row?.seriesId) ||
-Number.isFinite(Number(row?.unavailableX)) ||
-Number.isFinite(Number(row?.daysAvailable))
-)
-) {
-trackerMetadataPresent = true;
-}
-});
-
-return {
-todayUtc: getSydneyTodayUtc(),
-latestDatasetDate,
-trackerMetadataPresent
-};
-}
-
-function getRepeatSeriesDuration(
-seriesRows,
-durationContext
-) {
-const sorted = (seriesRows || [])
-.filter(row => Number.isFinite(Number(row?.x)))
-.slice()
-.sort((first, second) => first.x - second.x);
-
-if (!sorted.length) return NaN;
-
-const first = sorted[0];
-const latest = sorted[sorted.length - 1];
-const storedDays = Number(latest.daysAvailable);
-
-if (Number.isFinite(storedDays) && storedDays >= 0) {
-return storedDays;
-}
-
-const unavailableX = Number(latest.unavailableX);
-if (
-Number.isFinite(unavailableX) &&
-unavailableX >= first.x
-) {
-return Math.max(
-0,
-Math.floor((unavailableX - first.x) / 86400000) - 1
-);
-}
-
-const context =
-durationContext ||
-createRepeatDurationContext();
-
-/*
- * With tracker metadata present, a blank AB/AC on the latest series row
- * means the ad is still live, so count through today. For an older cached
- * schema with no tracker metadata at all, only treat a recently active
- * series as live; this avoids turning clearly historical vacancies into
- * multi-year durations.
- */
-if (!context.trackerMetadataPresent) {
-if (
-Number.isFinite(context.latestDatasetDate) &&
-context.latestDatasetDate - Number(latest.x) > 180 * 86400000
-) {
-return NaN;
-}
-}
-
-const today = Math.max(context.todayUtc, first.x);
-return Math.max(
-0,
-Math.floor((today - first.x) / 86400000)
-);
-}
-
 function buildRepeatEmployerSummary() {
 if (repeatEmployerSummaryCache) {
 return repeatEmployerSummaryCache;
@@ -1823,10 +1622,12 @@ windowEnd - YEAR_MS;
 const grouped = new Map();
 
 allJobRows.forEach(row => {
+const timestamp = Number(row?.x);
+
 if (
-!Number.isFinite(Number(row?.x)) ||
-Number(row.x) <= windowStart ||
-Number(row.x) > windowEnd
+!Number.isFinite(timestamp) ||
+timestamp <= windowStart ||
+timestamp > windowEnd
 ) {
 return;
 }
@@ -1844,38 +1645,26 @@ durationValues: []
 });
 }
 
-if (row.isRepeat) {
-grouped.get(label).repeatAds += 1;
+if (!row.isRepeat) {
+return;
 }
-});
 
-const repeatSeries = buildRepeatSeriesGroups();
-const durationContext = createRepeatDurationContext();
-
-repeatSeries.forEach(seriesRows => {
-const sorted = seriesRows
-.slice()
-.sort((first, second) => first.x - second.x);
-
-const hasRepeatInWindow = sorted.some(row =>
-row.isRepeat &&
-Number(row.x) > windowStart &&
-Number(row.x) <= windowEnd
-);
-
-if (!hasRepeatInWindow) return;
-
-const latest = sorted[sorted.length - 1];
-const label = getRepeatEmployerLabel(latest);
 const group = grouped.get(label);
-if (!group) return;
+group.repeatAds += 1;
 
-const duration = getRepeatSeriesDuration(
-sorted,
-durationContext
-);
-if (Number.isFinite(duration)) {
-group.durationValues.push(duration);
+/*
+ * Days Available (AC) is produced by the tracker Apps Script and is
+ * already attached only to the latest ad row for a completed series.
+ * Use that output directly: do not reconstruct series or durations in
+ * the browser.
+ */
+const daysAvailable = Number(row?.daysAvailable);
+
+if (
+Number.isFinite(daysAvailable) &&
+daysAvailable >= 0
+) {
+group.durationValues.push(daysAvailable);
 }
 });
 
@@ -5449,9 +5238,7 @@ selectedRepeatMeasure
 };
 }
 
-function applyRepeatChartMeasure(
-animate = true
-) {
+function applyRepeatChartMeasure() {
 if (
 !chart ||
 selectedTab !== 'repeat'
@@ -5460,6 +5247,7 @@ return;
 }
 
 repeatMeasureAnimationController.cancel();
+interactionLocked = false;
 
 const model =
 getRepeatChartModel();
@@ -5468,16 +5256,8 @@ const dataset =
 chart.data.datasets?.[0];
 
 if (!dataset) {
-interactionLocked = false;
 return;
 }
-
-const targetValues =
-model.values.map(value =>
-Number.isFinite(Number(value))
-? Number(value)
-: 0
-);
 
 chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
 
@@ -5488,7 +5268,11 @@ dataset.label =
 model.legendLabel;
 
 dataset.data =
-targetValues;
+model.values.map(value =>
+Number.isFinite(Number(value))
+? Number(value)
+: 0
+);
 
 dataset.backgroundColor =
 model.rows.map(row => row.colour);
@@ -5523,66 +5307,30 @@ xScale.pffTickView =
 getRepeatTickView(selectedRepeatMeasure);
 
 xScale.title.text =
-model.axisTitle || getRepeatAxisTitle(selectedRepeatMeasure);
+model.axisTitle ||
+getRepeatAxisTitle(selectedRepeatMeasure);
 
-const reduceMotion =
-PFF.reducedMotion();
-
-interactionLocked =
-Boolean(
-animate &&
-!reduceMotion &&
-CONFIG.transitionMs > 0
-);
-
-const previousAnimation =
-chart.options.animation;
-
-function finishRepeatMeasureChange() {
-if (repeatMeasureUnlockTimer !== null) {
-window.clearTimeout(repeatMeasureUnlockTimer);
-repeatMeasureUnlockTimer = null;
-}
-
-interactionLocked = false;
-chart.options.animation = previousAnimation;
-}
-
-chart.options.animation = {
-duration:
-interactionLocked
-? CONFIG.transitionMs
-: 0,
-
-easing:
-'easeInOutCubic',
-
-onComplete:
-finishRepeatMeasureChange
-};
-
-if (interactionLocked) {
-repeatMeasureUnlockTimer = window.setTimeout(
-finishRepeatMeasureChange,
-CONFIG.transitionMs + 120
-);
-}
-
-try {
-if (interactionLocked) {
-chart.update();
-} else {
+/*
+ * Repeat values are already aggregated from spreadsheet outputs.
+ * A single non-animated Chart.js update avoids re-entrant layout
+ * callbacks that previously caused Count/Median switching to freeze.
+ */
 chart.update('none');
-finishRepeatMeasureChange();
-}
-} catch (error) {
-console.error(
-'Could not animate repeat measure change',
-error
-);
 
-finishRepeatMeasureChange();
-chart.update('none');
+if (
+!PFF.reducedMotion() &&
+chartCanvas.animate
+) {
+chartCanvas.animate(
+[
+{ opacity: 0.72 },
+{ opacity: 1 }
+],
+{
+duration: 180,
+easing: 'ease-out'
+}
+);
 }
 }
 function createRepeatChart(
@@ -6069,10 +5817,6 @@ return Object.values(copy).every(Number.isFinite)
 function resetChartTypeTransitionVisuals() {
 repeatMeasureAnimationController.cancel();
 
-if (repeatMeasureUnlockTimer !== null) {
-window.clearTimeout(repeatMeasureUnlockTimer);
-repeatMeasureUnlockTimer = null;
-}
 
 chart?.stop?.();
 interactionLocked = false;
@@ -6842,9 +6586,7 @@ setRepeatMeasureMenuOpen(false);
  * repeat measures, so keep them visible and animate only the bars
  * and numeric value axis.
  */
-applyRepeatChartMeasure(
-true
-);
+applyRepeatChartMeasure();
 });
 });
 
@@ -7023,23 +6765,6 @@ xTransition.progress = 1;
 
 createChart();
 updateLegend(activeView, currentGroup, false);
-
-const warmRepeatSummary = () => {
-try {
-buildRepeatEmployerSummary();
-} catch (error) {
-console.warn('Could not precompute repeat-ad summary', error);
-}
-};
-
-if ('requestIdleCallback' in window) {
-window.requestIdleCallback(
-warmRepeatSummary,
-{ timeout: 1200 }
-);
-} else {
-window.setTimeout(warmRepeatSummary, 120);
-}
 }
 
 syncActiveView();
