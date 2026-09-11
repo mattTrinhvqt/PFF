@@ -1236,6 +1236,13 @@ const repeatMeasureAnimationController =
 PFFCharts.createAnimationController();
 
 let repeatMeasureUnlockTimer = null;
+let repeatSeriesGroupsCache = null;
+let repeatEmployerSummaryCache = null;
+
+function invalidateRepeatSummaryCache() {
+repeatSeriesGroupsCache = null;
+repeatEmployerSummaryCache = null;
+}
 
 function createEmptyWorkforce() {
 return {
@@ -1626,21 +1633,23 @@ normaliseText(row?.employmentType)
 }
 
 function buildRepeatSeriesGroups() {
-const rowsWithSeriesId = allJobRows.filter(row =>
-cleanText(row?.seriesId)
-);
+if (repeatSeriesGroupsCache) {
+return repeatSeriesGroupsCache;
+}
+
+const bySeriesId = new Map();
+let hasSeriesId = false;
 
 /*
  * Prefer the tracker-assigned Repeat Series ID whenever it is present.
  * Older mirror/backend snapshots may not contain AA, so reconstruct the
  * same clustering rule rather than disabling Median days advertised.
  */
-if (rowsWithSeriesId.length) {
-const bySeriesId = new Map();
-
 allJobRows.forEach(row => {
 const seriesId = cleanText(row?.seriesId);
 if (!seriesId) return;
+
+hasSeriesId = true;
 
 if (!bySeriesId.has(seriesId)) {
 bySeriesId.set(seriesId, []);
@@ -1649,7 +1658,9 @@ bySeriesId.set(seriesId, []);
 bySeriesId.get(seriesId).push(row);
 });
 
-return [...bySeriesId.values()];
+if (hasSeriesId) {
+repeatSeriesGroupsCache = [...bySeriesId.values()];
+return repeatSeriesGroupsCache;
 }
 
 const byGroup = new Map();
@@ -1699,10 +1710,47 @@ clusters.push(currentCluster);
 }
 });
 
-return clusters;
+repeatSeriesGroupsCache = clusters;
+return repeatSeriesGroupsCache;
 }
 
-function getRepeatSeriesDuration(seriesRows) {
+function createRepeatDurationContext() {
+let latestDatasetDate = NaN;
+let trackerMetadataPresent = false;
+
+allJobRows.forEach(row => {
+const timestamp = Number(row?.x);
+
+if (
+Number.isFinite(timestamp) &&
+(!Number.isFinite(latestDatasetDate) || timestamp > latestDatasetDate)
+) {
+latestDatasetDate = timestamp;
+}
+
+if (
+!trackerMetadataPresent &&
+(
+cleanText(row?.seriesId) ||
+Number.isFinite(Number(row?.unavailableX)) ||
+Number.isFinite(Number(row?.daysAvailable))
+)
+) {
+trackerMetadataPresent = true;
+}
+});
+
+return {
+todayUtc: getSydneyTodayUtc(),
+latestDatasetDate,
+trackerMetadataPresent
+};
+}
+
+function getRepeatSeriesDuration(
+seriesRows,
+durationContext
+) {
 const sorted = (seriesRows || [])
 .filter(row => Number.isFinite(Number(row?.x)))
 .slice()
@@ -1729,11 +1777,9 @@ Math.floor((unavailableX - first.x) / 86400000) - 1
 );
 }
 
-const trackerMetadataPresent = allJobRows.some(row =>
-cleanText(row?.seriesId) ||
-Number.isFinite(Number(row?.unavailableX)) ||
-Number.isFinite(Number(row?.daysAvailable))
-);
+const context =
+durationContext ||
+createRepeatDurationContext();
 
 /*
  * With tracker metadata present, a blank AB/AC on the latest series row
@@ -1742,22 +1788,16 @@ Number.isFinite(Number(row?.daysAvailable))
  * series as live; this avoids turning clearly historical vacancies into
  * multi-year durations.
  */
-if (!trackerMetadataPresent) {
-const latestDatasetDate = Math.max(
-...allJobRows
-.map(row => Number(row?.x))
-.filter(Number.isFinite)
-);
-
+if (!context.trackerMetadataPresent) {
 if (
-Number.isFinite(latestDatasetDate) &&
-latestDatasetDate - Number(latest.x) > 180 * 86400000
+Number.isFinite(context.latestDatasetDate) &&
+context.latestDatasetDate - Number(latest.x) > 180 * 86400000
 ) {
 return NaN;
 }
 }
 
-const today = Math.max(getSydneyTodayUtc(), first.x);
+const today = Math.max(context.todayUtc, first.x);
 return Math.max(
 0,
 Math.floor((today - first.x) / 86400000)
@@ -1765,6 +1805,10 @@ Math.floor((today - first.x) / 86400000)
 }
 
 function buildRepeatEmployerSummary() {
+if (repeatEmployerSummaryCache) {
+return repeatEmployerSummaryCache;
+}
+
 const timestamps = allJobRows
 .map(row => Number(row?.x))
 .filter(Number.isFinite);
@@ -1806,6 +1850,7 @@ grouped.get(label).repeatAds += 1;
 });
 
 const repeatSeries = buildRepeatSeriesGroups();
+const durationContext = createRepeatDurationContext();
 
 repeatSeries.forEach(seriesRows => {
 const sorted = seriesRows
@@ -1825,7 +1870,10 @@ const label = getRepeatEmployerLabel(latest);
 const group = grouped.get(label);
 if (!group) return;
 
-const duration = getRepeatSeriesDuration(sorted);
+const duration = getRepeatSeriesDuration(
+sorted,
+durationContext
+);
 if (Number.isFinite(duration)) {
 group.durationValues.push(duration);
 }
@@ -1839,7 +1887,7 @@ const totalRepeatAds = summaries.reduce(
 0
 );
 
-return summaries
+repeatEmployerSummaryCache = summaries
 .map(entry => {
 const durationStats =
 PFFStats.calculateStatistics(entry.durationValues);
@@ -1860,6 +1908,8 @@ windowEnd
 };
 })
 .filter(entry => entry.proportion >= 1);
+
+return repeatEmployerSummaryCache;
 }
 function getRepeatMetricValue(summary) {
 if (selectedRepeatMeasure === 'proportion') {
@@ -6915,6 +6965,7 @@ saveJsonCache(CONFIG.jobCacheKey, allJobRows);
 allJobRows = loadJobCache();
 }
 
+invalidateRepeatSummaryCache();
 rows = allJobRows.filter(row => !row.isRepeat);
 
 if (liveWorkforce) {
@@ -6972,6 +7023,23 @@ xTransition.progress = 1;
 
 createChart();
 updateLegend(activeView, currentGroup, false);
+
+const warmRepeatSummary = () => {
+try {
+buildRepeatEmployerSummary();
+} catch (error) {
+console.warn('Could not precompute repeat-ad summary', error);
+}
+};
+
+if ('requestIdleCallback' in window) {
+window.requestIdleCallback(
+warmRepeatSummary,
+{ timeout: 1200 }
+);
+} else {
+window.setTimeout(warmRepeatSummary, 120);
+}
 }
 
 syncActiveView();
