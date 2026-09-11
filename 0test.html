@@ -117,6 +117,10 @@
       flex: 1 1 auto;
     }
 
+    .live-data.is-unavailable .live-data-dot {
+      background: var(--pff-muted);
+    }
+
     .chart-note {
       position: absolute;
       top: 5px;
@@ -4139,28 +4143,63 @@
               ? response.data.rows
               : [];
 
+          if (!sourceRows.length) {
+            throw new Error(
+              'Cached casual rate data has no rows'
+            );
+          }
+
+          const cachedRows =
+            sourceRows.map(
+              (
+                row,
+                rowIndex
+              ) => {
+                if (
+                  !Array.isArray(row) ||
+                  row.length < 6
+                ) {
+                  throw new Error(
+                    `Cached casual rate row ${rowIndex + 1} is malformed`
+                  );
+                }
+
+                return row
+                  .slice(
+                    0,
+                    6
+                  )
+                  .map(value =>
+                    String(
+                      value ??
+                      ''
+                    ).trim()
+                  );
+              }
+            );
+
           const parsedRows =
-            sourceRows
+            cachedRows
               .map(
                 (row, sourceIndex) => ({
                   sourceIndex,
                   date:
-                    parseDate(row?.[0]),
+                    parseDate(row[0]),
                   hourlyRate:
-                    toNumber(row?.[1]),
+                    toNumber(row[1]),
                   experience:
-                    toNumber(row?.[2]),
+                    toNumber(row[2]),
                   rurality:
                     normaliseRurality(
-                      row?.[3]
+                      row[3]
                     ),
                   state:
                     normaliseState(
-                      row?.[4]
+                      row[4]
                     ),
                   employerKey:
                     normaliseEmployer(
-                      row?.[5]
+                      row[5]
                     )
                 })
               )
@@ -4231,12 +4270,42 @@
         onReady() {
           responsiveController?.refresh();
         },
-        onError() {
+        onError(error) {
           dataSourceIndicator.style.display =
-            'none';
-        },
-        errorMessage:
-          '⚠ Live, cached-backend and browser-cached casual rate data are currently unavailable'
+            '';
+
+          dataSourceIndicator.classList.remove(
+            'is-cached'
+          );
+
+          dataSourceIndicator.classList.add(
+            'is-unavailable'
+          );
+
+          dataSourceIndicator.setAttribute(
+            'aria-label',
+            'Data unavailable'
+          );
+
+          dataSourceText.textContent =
+            'DATA unavailable';
+
+          const message =
+            FORCE_CACHED_DATA &&
+            error?.message ===
+              'Live data was skipped because forceCached is enabled.'
+              ? 'Unable to load casual rate data'
+              : String(
+                  error?.message ||
+                  'Unable to load casual rate data'
+                );
+
+          PFF.setStatus(
+            '⚠ ' +
+            message,
+            statusElement
+          );
+        }
       });
     }
 
