@@ -372,8 +372,8 @@ rel="stylesheet"
 
     .repeat-threshold-note {
       position: absolute;
-      top: 5px;
       right: 5px;
+      bottom: 5px;
       z-index: 4;
       max-width: min(210px, calc(100% - 76px));
       padding: 5px 7px;
@@ -701,7 +701,6 @@ class="repeat-measure-option-input"
 type="radio"
 name="repeat-measure"
 value="proportion"
-checked
 >
 <span
 class="measure-option-box"
@@ -716,6 +715,7 @@ class="repeat-measure-option-input"
 type="radio"
 name="repeat-measure"
 value="medianDays"
+checked
 >
 <span
 class="measure-option-box"
@@ -1149,7 +1149,7 @@ const countAxisCache = new Map();
 let workforce = createEmptyWorkforce();
 let selectedTab = 'count';
 let selectedMeasure = 'per100';
-let selectedRepeatMeasure = 'proportion';
+let selectedRepeatMeasure = 'medianDays';
 const fteAdjusted = true;
 let activeView = 'per100';
 let currentGroup = 'state';
@@ -1184,7 +1184,7 @@ medianDays: 'Median days advertised'
 };
 
 function hasRepeatDurationData() {
-return allJobRows.some(row => cleanText(row?.seriesId));
+return allJobRows.some(row => row?.isRepeat);
 }
 
 function getRepeatTickView(measure = repeatAxisDisplayMeasure) {
@@ -1214,7 +1214,7 @@ progress: 1
 };
 
 let axisFadeOpacity = 1;
-let repeatAxisDisplayMeasure = 'proportion';
+let repeatAxisDisplayMeasure = 'medianDays';
 
 const axisFadeController =
 PFFCharts.createAnimationController();
@@ -1234,6 +1234,8 @@ minorStep: 5
 
 const repeatMeasureAnimationController =
 PFFCharts.createAnimationController();
+
+let repeatMeasureUnlockTimer = null;
 
 function createEmptyWorkforce() {
 return {
@@ -1600,6 +1602,106 @@ values.day || 1
 );
 }
 
+function getRepeatSeriesFallbackGroupKey(row) {
+const firstSuburb = cleanText(row?.suburb)
+.split(';')[0]
+.trim();
+
+let location = normaliseText(firstSuburb);
+
+if (!location || location === 'xxx') {
+location = normaliseText(row?.stateText);
+}
+
+if (!location) {
+location = `unknown-${cleanText(row?.jobId) || Number(row?.x) || 'row'}`;
+}
+
+return [
+normaliseText(row?.employer),
+location,
+normaliseText(row?.stateText),
+normaliseText(row?.employmentType)
+].join('|');
+}
+
+function buildRepeatSeriesGroups() {
+const rowsWithSeriesId = allJobRows.filter(row =>
+cleanText(row?.seriesId)
+);
+
+/*
+ * Prefer the tracker-assigned Repeat Series ID whenever it is present.
+ * Older mirror/backend snapshots may not contain AA, so reconstruct the
+ * same clustering rule rather than disabling Median days advertised.
+ */
+if (rowsWithSeriesId.length) {
+const bySeriesId = new Map();
+
+allJobRows.forEach(row => {
+const seriesId = cleanText(row?.seriesId);
+if (!seriesId) return;
+
+if (!bySeriesId.has(seriesId)) {
+bySeriesId.set(seriesId, []);
+}
+
+bySeriesId.get(seriesId).push(row);
+});
+
+return [...bySeriesId.values()];
+}
+
+const byGroup = new Map();
+
+allJobRows.forEach(row => {
+if (!Number.isFinite(Number(row?.x))) return;
+
+const groupKey = getRepeatSeriesFallbackGroupKey(row);
+
+if (!byGroup.has(groupKey)) {
+byGroup.set(groupKey, []);
+}
+
+byGroup.get(groupKey).push(row);
+});
+
+const clusters = [];
+
+byGroup.forEach(groupRows => {
+const sorted = groupRows
+.slice()
+.sort((first, second) => first.x - second.x);
+
+let currentCluster = [];
+
+sorted.forEach(row => {
+if (!currentCluster.length) {
+currentCluster.push(row);
+return;
+}
+
+const previous = currentCluster[currentCluster.length - 1];
+const gapDays = Math.floor(
+(Number(row.x) - Number(previous.x)) / 86400000
+);
+
+if (gapDays <= 180) {
+currentCluster.push(row);
+} else {
+clusters.push(currentCluster);
+currentCluster = [row];
+}
+});
+
+if (currentCluster.length) {
+clusters.push(currentCluster);
+}
+});
+
+return clusters;
+}
+
 function getRepeatSeriesDuration(seriesRows) {
 const sorted = (seriesRows || [])
 .filter(row => Number.isFinite(Number(row?.x)))
@@ -1627,6 +1729,34 @@ Math.floor((unavailableX - first.x) / 86400000) - 1
 );
 }
 
+const trackerMetadataPresent = allJobRows.some(row =>
+cleanText(row?.seriesId) ||
+Number.isFinite(Number(row?.unavailableX)) ||
+Number.isFinite(Number(row?.daysAvailable))
+);
+
+/*
+ * With tracker metadata present, a blank AB/AC on the latest series row
+ * means the ad is still live, so count through today. For an older cached
+ * schema with no tracker metadata at all, only treat a recently active
+ * series as live; this avoids turning clearly historical vacancies into
+ * multi-year durations.
+ */
+if (!trackerMetadataPresent) {
+const latestDatasetDate = Math.max(
+...allJobRows
+.map(row => Number(row?.x))
+.filter(Number.isFinite)
+);
+
+if (
+Number.isFinite(latestDatasetDate) &&
+latestDatasetDate - Number(latest.x) > 180 * 86400000
+) {
+return NaN;
+}
+}
+
 const today = Math.max(getSydneyTodayUtc(), first.x);
 return Math.max(
 0,
@@ -1647,7 +1777,6 @@ const windowStart =
 windowEnd - YEAR_MS;
 
 const grouped = new Map();
-const eligibleSeriesIds = new Set();
 
 allJobRows.forEach(row => {
 if (
@@ -1673,31 +1802,23 @@ durationValues: []
 
 if (row.isRepeat) {
 grouped.get(label).repeatAds += 1;
-
-const seriesId = cleanText(row.seriesId);
-if (seriesId) {
-eligibleSeriesIds.add(seriesId);
-}
 }
 });
 
-const rowsBySeries = new Map();
+const repeatSeries = buildRepeatSeriesGroups();
 
-allJobRows.forEach(row => {
-const seriesId = cleanText(row.seriesId);
-if (!seriesId || !eligibleSeriesIds.has(seriesId)) return;
-
-if (!rowsBySeries.has(seriesId)) {
-rowsBySeries.set(seriesId, []);
-}
-
-rowsBySeries.get(seriesId).push(row);
-});
-
-rowsBySeries.forEach(seriesRows => {
+repeatSeries.forEach(seriesRows => {
 const sorted = seriesRows
 .slice()
 .sort((first, second) => first.x - second.x);
+
+const hasRepeatInWindow = sorted.some(row =>
+row.isRepeat &&
+Number(row.x) > windowStart &&
+Number(row.x) <= windowEnd
+);
+
+if (!hasRepeatInWindow) return;
 
 const latest = sorted[sorted.length - 1];
 const label = getRepeatEmployerLabel(latest);
@@ -1740,7 +1861,6 @@ windowEnd
 })
 .filter(entry => entry.proportion >= 1);
 }
-
 function getRepeatMetricValue(summary) {
 if (selectedRepeatMeasure === 'proportion') {
 return summary.proportion;
@@ -1760,8 +1880,6 @@ selectedRepeatMeasure !== 'medianDays' ||
 Number.isFinite(summary.medianDays)
 )
 .sort((first, second) =>
-(Number(getRepeatMetricValue(second)) || 0) -
-(Number(getRepeatMetricValue(first)) || 0) ||
 second.repeatAds - first.repeatAds ||
 first.label.localeCompare(second.label, 'en-AU', {
 sensitivity: 'base',
@@ -5291,6 +5409,8 @@ selectedTab !== 'repeat'
 return;
 }
 
+repeatMeasureAnimationController.cancel();
+
 const model =
 getRepeatChartModel();
 
@@ -5298,39 +5418,27 @@ const dataset =
 chart.data.datasets?.[0];
 
 if (!dataset) {
+interactionLocked = false;
 return;
 }
 
-const startValues =
-(dataset.data || []).map(value =>
-Number(value) || 0
-);
-
 const targetValues =
 model.values.map(value =>
-Number(value) || 0
+Number.isFinite(Number(value))
+? Number(value)
+: 0
 );
 
-const startAxis = {
-maximum: repeatAxisState.maximum,
-majorStep: repeatAxisState.majorStep,
-minorStep: repeatAxisState.minorStep
-};
-
-const targetAxis =
-model.axisSpec;
-
-const startMeasure =
-repeatAxisDisplayMeasure;
-
-const targetMeasure =
-selectedRepeatMeasure;
+chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
 
 chart.data.labels =
 model.rows.map(row => row.label);
 
 dataset.label =
 model.legendLabel;
+
+dataset.data =
+targetValues;
 
 dataset.backgroundColor =
 model.rows.map(row => row.colour);
@@ -5347,101 +5455,86 @@ model.rows.map(() => '#151515');
 dataset.repeatSummaries =
 model.rows;
 
+updateRepeatAxisState(
+model.values,
+selectedRepeatMeasure
+);
+
+repeatAxisDisplayMeasure =
+selectedRepeatMeasure;
+
+const xScale =
+chart.options.scales.x;
+
+xScale.max =
+repeatAxisState.maximum;
+
+xScale.pffTickView =
+getRepeatTickView(selectedRepeatMeasure);
+
+xScale.title.text =
+model.axisTitle || getRepeatAxisTitle(selectedRepeatMeasure);
+
 const reduceMotion =
 PFF.reducedMotion();
 
-function finish() {
-dataset.data =
-targetValues.slice();
+interactionLocked =
+Boolean(
+animate &&
+!reduceMotion &&
+CONFIG.transitionMs > 0
+);
 
-repeatAxisState.maximum =
-targetAxis.maximum;
-repeatAxisState.majorStep =
-targetAxis.majorStep;
-repeatAxisState.minorStep =
-targetAxis.minorStep;
+const previousAnimation =
+chart.options.animation;
 
-repeatAxisDisplayMeasure =
-targetMeasure;
+function finishRepeatMeasureChange() {
+if (repeatMeasureUnlockTimer !== null) {
+window.clearTimeout(repeatMeasureUnlockTimer);
+repeatMeasureUnlockTimer = null;
+}
 
-chart.options.scales.x.max =
-repeatAxisState.maximum;
-
-chart.options.scales.x.pffTickView =
-getRepeatTickView(targetMeasure);
-
-chart.options.scales.x.title.text =
-model.axisTitle;
-
-chart.update('none');
 interactionLocked = false;
+chart.options.animation = previousAnimation;
 }
 
-if (
-!animate ||
-reduceMotion ||
-CONFIG.transitionMs <= 0
-) {
-finish();
-return;
-}
+chart.options.animation = {
+duration:
+interactionLocked
+? CONFIG.transitionMs
+: 0,
 
-interactionLocked = true;
-chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+easing:
+'easeInOutCubic',
 
-repeatMeasureAnimationController.run({
-duration: CONFIG.transitionMs,
-easing: easeInOutCubic,
-onFrame(progress) {
-const length = Math.max(
-startValues.length,
-targetValues.length
-);
+onComplete:
+finishRepeatMeasureChange
+};
 
-const animatedValues = [];
-
-for (let index = 0; index < length; index++) {
-const from = startValues[index] ?? 0;
-const to = targetValues[index] ?? 0;
-
-animatedValues.push(
-from + (to - from) * progress
+if (interactionLocked) {
+repeatMeasureUnlockTimer = window.setTimeout(
+finishRepeatMeasureChange,
+CONFIG.transitionMs + 120
 );
 }
 
-dataset.data = animatedValues;
-
-repeatAxisState.maximum =
-startAxis.maximum +
-(targetAxis.maximum - startAxis.maximum) * progress;
-
-repeatAxisState.majorStep =
-repeatAxisState.maximum / 5;
-
-repeatAxisState.minorStep =
-repeatAxisState.maximum / 10;
-
-repeatAxisDisplayMeasure =
-progress < 0.5
-? startMeasure
-: targetMeasure;
-
-chart.options.scales.x.max =
-repeatAxisState.maximum;
-
-chart.options.scales.x.title.text =
-progress < 0.5
-? (
-getRepeatAxisTitle(startMeasure)
-)
-: model.axisTitle;
-
+try {
+if (interactionLocked) {
+chart.update();
+} else {
 chart.update('none');
-},
-onComplete: finish
-});
+finishRepeatMeasureChange();
 }
+} catch (error) {
+console.error(
+'Could not animate repeat measure change',
+error
+);
 
+finishRepeatMeasureChange();
+chart.update('none');
+}
+}
 function createRepeatChart(
 animate = true
 ) {
@@ -5674,9 +5767,10 @@ items?.[0]
 
 label(item) {
 const summary =
-model.rows[
+item.dataset?.repeatSummaries?.[
 item.dataIndex
-];
+] ||
+null;
 
 if (!summary) {
 return '';
@@ -5923,6 +6017,16 @@ return Object.values(copy).every(Number.isFinite)
 }
 
 function resetChartTypeTransitionVisuals() {
+repeatMeasureAnimationController.cancel();
+
+if (repeatMeasureUnlockTimer !== null) {
+window.clearTimeout(repeatMeasureUnlockTimer);
+repeatMeasureUnlockTimer = null;
+}
+
+chart?.stop?.();
+interactionLocked = false;
+
 chartCanvas
 ?.getAnimations?.()
 .forEach(animation => {
@@ -6455,8 +6559,11 @@ repeatMeasureMenuController?.closeMenu();
     function switchView(nextView) {
 if (
 nextView === selectedTab ||
-interactionLocked ||
-viewFadeLocked
+viewFadeLocked ||
+(
+interactionLocked &&
+selectedTab !== 'repeat'
+)
 ) {
 return;
 }
