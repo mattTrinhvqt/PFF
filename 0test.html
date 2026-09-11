@@ -394,6 +394,16 @@ rel="stylesheet"
       pointer-events: none;
     }
 
+    .chart-transition-snapshot {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: block;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
     @media (max-width: 430px) {
       .group-button {
         min-width: 132px;
@@ -628,7 +638,7 @@ aria-controls="repeatMeasureMenu"
 <span
 id="repeatMeasureValue"
 class="measure-value"
->Count</span>
+>Proportion</span>
 <span
 class="menu-arrow"
 aria-hidden="true"
@@ -649,7 +659,6 @@ class="repeat-measure-option-input"
 type="radio"
 name="repeat-measure"
 value="count"
-checked
 >
 <span
 class="measure-option-box"
@@ -664,6 +673,7 @@ class="repeat-measure-option-input"
 type="radio"
 name="repeat-measure"
 value="proportion"
+checked
 >
 <span
 class="measure-option-box"
@@ -790,9 +800,9 @@ role="note"
 >
 <p class="repeat-info-note-title">How to read this</p>
 <ul class="repeat-info-note-list">
-<li><strong>Count:</strong> number of ads flagged as re-advertised</li>
-<li><strong>Proportion:</strong> each employer’s share of all repeat ads</li>
-<li>Up to 12 employers shown; non-corporates are grouped by type</li>
+<li><strong>Proportion:</strong> each employer’s share of repeat ads in the rolling year</li>
+<li><strong>Count:</strong> repeat ads in the rolling year</li>
+<li>Non-corporates are grouped by employer type</li>
 </ul>
 </aside>
 
@@ -877,7 +887,6 @@ minimumGroupSize: 20,
 maxGroups: 8,
 trailingWeeks: 13,
 transitionMs: PFF.defaults.viewTransitionMs,
-repeatMaxEmployers: 12,
 columns: {
 repeatFlag: 0,
 date: 2,
@@ -1084,7 +1093,7 @@ const countAxisCache = new Map();
 let workforce = createEmptyWorkforce();
 let selectedTab = 'count';
 let selectedMeasure = 'per100';
-let selectedRepeatMeasure = 'count';
+let selectedRepeatMeasure = 'proportion';
 const fteAdjusted = true;
 let activeView = 'per100';
 let currentGroup = 'state';
@@ -1132,6 +1141,7 @@ progress: 1
 };
 
 let axisFadeOpacity = 1;
+let repeatAxisDisplayMeasure = 'proportion';
 
 const axisFadeController =
 PFFCharts.createAnimationController();
@@ -1144,10 +1154,13 @@ rightPadding: 45
 };
 
 const repeatAxisState = {
-maximum: 10,
-majorStep: 2,
-minorStep: 1
+maximum: 60,
+majorStep: 10,
+minorStep: 5
 };
+
+const repeatMeasureAnimationController =
+PFFCharts.createAnimationController();
 
 function createEmptyWorkforce() {
 return {
@@ -1190,7 +1203,7 @@ return activeView;
 
 function getHeadingText(view) {
 if (view === 'pay') return 'Advertised pay over time';
-if (view === 'repeat') return 'Repeat ads by employer';
+if (view === 'repeat') return 'Repeat ads (rolling year)';
 if (view === 'proportion') {
 return fteAdjusted
 ? 'FTE job ad proportions'
@@ -1461,9 +1474,28 @@ EMPLOYER_TYPE_COLOURS.Other;
 }
 
 function buildRepeatEmployerSummary() {
+const timestamps = allJobRows
+.map(row => Number(row?.x))
+.filter(Number.isFinite);
+
+const windowEnd = timestamps.length
+? Math.max(...timestamps)
+: Date.now();
+
+const windowStart =
+windowEnd - YEAR_MS;
+
 const grouped = new Map();
 
 allJobRows.forEach(row => {
+if (
+!Number.isFinite(Number(row?.x)) ||
+Number(row.x) <= windowStart ||
+Number(row.x) > windowEnd
+) {
+return;
+}
+
 const label = getRepeatEmployerLabel(row);
 if (!label) return;
 
@@ -1495,7 +1527,9 @@ proportion:
 totalRepeatAds > 0
 ? entry.repeatAds / totalRepeatAds * 100
 : 0,
-totalRepeatAds
+totalRepeatAds,
+windowStart,
+windowEnd
 }));
 }
 
@@ -1513,8 +1547,7 @@ first.label.localeCompare(second.label, 'en-AU', {
 sensitivity: 'base',
 numeric: true
 })
-)
-.slice(0, CONFIG.repeatMaxEmployers);
+);
 }
 
 function parseColour(value, fallback = '#777777') {
@@ -4601,68 +4634,67 @@ scale.height =
 REPEAT_CHART_GEOMETRY.xAxisHeight;
 }
 
-function getRepeatAxisSpec(values) {
+function getRepeatAxisSpec(
+values,
+measure = selectedRepeatMeasure
+) {
 const maximumObserved = Math.max(
 0,
 ...values.filter(Number.isFinite)
 );
 
-if (selectedRepeatMeasure === 'proportion') {
+if (measure === 'proportion') {
 const majorStep =
-maximumObserved <= 20
+maximumObserved <= 25
 ? 5
 : maximumObserved <= 50
 ? 10
 : 20;
 
 return {
-maximum: Math.min(
-100,
-Math.max(
-majorStep * 2,
-Math.ceil(maximumObserved / majorStep) * majorStep
-)
-),
+maximum: majorStep * 5,
 majorStep,
 minorStep: majorStep / 2
 };
 }
 
-let majorStep = 1;
+const rawStep =
+Math.max(1, maximumObserved) / 5;
 
-if (maximumObserved > 6) {
-majorStep = 2;
-}
+const magnitude =
+Math.pow(10, Math.floor(Math.log10(rawStep)));
 
-if (maximumObserved > 12) {
-majorStep = 5;
-}
+const normalised =
+rawStep / magnitude;
 
-if (maximumObserved > 30) {
-majorStep = 10;
-}
+const niceNormalised =
+normalised <= 1
+? 1
+: normalised <= 2
+? 2
+: normalised <= 5
+? 5
+: 10;
 
-if (maximumObserved > 60) {
-majorStep = 20;
-}
-
-if (maximumObserved > 120) {
-majorStep = 50;
-}
+const majorStep =
+niceNormalised * magnitude;
 
 return {
-maximum: Math.max(
-majorStep * 2,
-Math.ceil(maximumObserved / majorStep) * majorStep
-),
+maximum: majorStep * 5,
 majorStep,
-minorStep: majorStep
+minorStep: majorStep / 2
 };
 }
 
-function updateRepeatAxisState(values) {
+function updateRepeatAxisState(
+values,
+measure = selectedRepeatMeasure
+) {
 const nextState =
-getRepeatAxisSpec(values);
+getRepeatAxisSpec(
+values,
+measure
+);
 
 repeatAxisState.maximum =
 nextState.maximum;
@@ -4693,19 +4725,15 @@ Math.round(quotient)
 }
 
 function buildRepeatTicks() {
-const ticks = [];
-
-for (
-let value = 0;
-value <= repeatAxisState.maximum + 1e-7;
-value += repeatAxisState.minorStep
-) {
-ticks.push({
-value: Number(value.toFixed(10))
-});
-}
-
-return ticks;
+return Array.from(
+{ length: 11 },
+(_, index) => ({
+value:
+repeatAxisState.maximum *
+index /
+10
+})
+);
 }
 
 function formatRepeatMetricValue(summary) {
@@ -4713,7 +4741,7 @@ if (!summary) {
 return '—';
 }
 
-if (selectedRepeatMeasure === 'proportion') {
+if (repeatAxisDisplayMeasure === 'proportion') {
 return `${Number(summary.proportion).toFixed(1)}%`;
 }
 
@@ -4909,9 +4937,15 @@ if (!summary) {
 return;
 }
 
+const currentValue =
+Number(dataset.data[index]);
+
 const label =
-formatRepeatMetricValue(
-summary
+repeatAxisDisplayMeasure === 'proportion'
+? `${Number.isFinite(currentValue) ? currentValue.toFixed(1) : '—'}%`
+: formatNumber(
+currentValue,
+Number.isInteger(currentValue) ? 0 : 1
 );
 
 const textWidth =
@@ -4971,21 +5005,23 @@ repeatChartRows.map(
 getRepeatMetricValue
 );
 
-updateRepeatAxisState(
-values
-);
-
 return {
 rows:
 repeatChartRows,
 
 values,
 
+axisSpec:
+getRepeatAxisSpec(
+values,
+selectedRepeatMeasure
+),
+
 axisTitle:
 selectedRepeatMeasure ===
 'proportion'
 ? '% of repeat ads'
-: 'Repeat ads',
+: 'Repeat ads/year',
 
 legendLabel:
 REPEAT_MEASURE_LABELS[
@@ -5014,77 +5050,149 @@ if (!dataset) {
 return;
 }
 
-interactionLocked =
-animate &&
-!PFF.reducedMotion();
+const startValues =
+(dataset.data || []).map(value =>
+Number(value) || 0
+);
+
+const targetValues =
+model.values.map(value =>
+Number(value) || 0
+);
+
+const startAxis = {
+maximum: repeatAxisState.maximum,
+majorStep: repeatAxisState.majorStep,
+minorStep: repeatAxisState.minorStep
+};
+
+const targetAxis =
+model.axisSpec;
+
+const startMeasure =
+repeatAxisDisplayMeasure;
+
+const targetMeasure =
+selectedRepeatMeasure;
 
 chart.data.labels =
-model.rows.map(
-row =>
-row.label
-);
+model.rows.map(row => row.label);
 
 dataset.label =
 model.legendLabel;
 
-dataset.data =
-model.values;
-
 dataset.backgroundColor =
-model.rows.map(
-row =>
-rgba(
-row.colour,
-0.50
-)
-);
+model.rows.map(row => row.colour);
 
 dataset.hoverBackgroundColor =
-model.rows.map(
-row =>
-row.colour
-);
+model.rows.map(row => row.colour);
 
 dataset.borderColor =
-model.rows.map(
-row =>
-row.colour
-);
+model.rows.map(row => row.colour);
 
 dataset.hoverBorderColor =
-model.rows.map(
-row =>
-row.colour
-);
+model.rows.map(() => '#151515');
 
 dataset.repeatSummaries =
 model.rows;
+
+const reduceMotion =
+PFF.reducedMotion();
+
+function finish() {
+dataset.data =
+targetValues.slice();
+
+repeatAxisState.maximum =
+targetAxis.maximum;
+repeatAxisState.majorStep =
+targetAxis.majorStep;
+repeatAxisState.minorStep =
+targetAxis.minorStep;
+
+repeatAxisDisplayMeasure =
+targetMeasure;
 
 chart.options.scales.x.max =
 repeatAxisState.maximum;
 
 chart.options.scales.x.pffTickView =
-selectedRepeatMeasure ===
-'proportion'
+targetMeasure === 'proportion'
 ? 'repeatProportion'
 : 'repeatCount';
 
 chart.options.scales.x.title.text =
 model.axisTitle;
 
-chart.update(
-animate &&
-!PFF.reducedMotion()
-? undefined
-: 'none'
-);
+chart.update('none');
+interactionLocked = false;
+}
 
 if (
 !animate ||
-PFF.reducedMotion()
+reduceMotion ||
+CONFIG.transitionMs <= 0
 ) {
-interactionLocked = false;
+finish();
+return;
 }
+
+interactionLocked = true;
+chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+
+repeatMeasureAnimationController.run({
+duration: CONFIG.transitionMs,
+easing: easeInOutCubic,
+onFrame(progress) {
+const length = Math.max(
+startValues.length,
+targetValues.length
+);
+
+const animatedValues = [];
+
+for (let index = 0; index < length; index++) {
+const from = startValues[index] ?? 0;
+const to = targetValues[index] ?? 0;
+
+animatedValues.push(
+from + (to - from) * progress
+);
+}
+
+dataset.data = animatedValues;
+
+repeatAxisState.maximum =
+startAxis.maximum +
+(targetAxis.maximum - startAxis.maximum) * progress;
+
+repeatAxisState.majorStep =
+repeatAxisState.maximum / 5;
+
+repeatAxisState.minorStep =
+repeatAxisState.maximum / 10;
+
+repeatAxisDisplayMeasure =
+progress < 0.5
+? startMeasure
+: targetMeasure;
+
+chart.options.scales.x.max =
+repeatAxisState.maximum;
+
+chart.options.scales.x.title.text =
+progress < 0.5
+? (
+startMeasure === 'proportion'
+? '% of repeat ads'
+: 'Repeat ads/year'
+)
+: model.axisTitle;
+
+chart.update('none');
+},
+onComplete: finish
+});
 }
 
 function createRepeatChart(
@@ -5095,6 +5203,14 @@ chartCanvas.getContext('2d');
 
 const model =
 getRepeatChartModel();
+
+updateRepeatAxisState(
+model.values,
+selectedRepeatMeasure
+);
+
+repeatAxisDisplayMeasure =
+selectedRepeatMeasure;
 
 interactionLocked =
 animate &&
@@ -5127,10 +5243,7 @@ model.values,
 backgroundColor:
 model.rows.map(
 row =>
-rgba(
-row.colour,
-0.50
-)
+row.colour
 ),
 
 hoverBackgroundColor:
@@ -5147,8 +5260,8 @@ row.colour
 
 hoverBorderColor:
 model.rows.map(
-row =>
-row.colour
+() =>
+'#151515'
 ),
 
 borderWidth:
@@ -5323,8 +5436,10 @@ return '';
 }
 
 return [
-`Repeat ads: ${summary.repeatAds} of ${summary.totalRepeatAds}`,
-`Proportion: ${summary.proportion.toFixed(1)}%`
+`Repeat ads/year: ${summary.repeatAds} of ${summary.totalRepeatAds}`,
+`Proportion: ${summary.proportion.toFixed(1)}%`,
+`Rolling year: ${formatTooltipDate(summary.windowStart)}–${formatTooltipDate(summary.windowEnd)}`,
+'Repeat ad: a later ad judged to be the same vacancy.'
 ];
 }
 }
@@ -5422,15 +5537,16 @@ numericValue
 return '';
 }
 
-return selectedRepeatMeasure ===
+return repeatAxisDisplayMeasure ===
 'proportion'
 ? String(
 Math.round(
 numericValue
 )
 )
-: String(
-numericValue
+: formatNumber(
+numericValue,
+Number.isInteger(numericValue) ? 0 : 1
 );
 }
 },
@@ -5515,7 +5631,6 @@ false
 }
 },
 plugins: [
-axisScaleFadePlugin,
 repeatSpinePlugin,
 repeatAxisTickPlugin,
 repeatValueLabelPlugin
@@ -5537,6 +5652,110 @@ requestAnimationFrame(
 () =>
 legendScroller?.update()
 );
+}
+
+function captureChartSnapshot() {
+if (
+!chartCanvas ||
+!chartShell ||
+chartCanvas.width <= 0 ||
+chartCanvas.height <= 0
+) {
+return null;
+}
+
+const snapshot =
+document.createElement('canvas');
+
+snapshot.className =
+'chart-transition-snapshot';
+
+snapshot.width =
+chartCanvas.width;
+snapshot.height =
+chartCanvas.height;
+
+const context =
+snapshot.getContext('2d');
+
+if (!context) {
+return null;
+}
+
+context.drawImage(
+chartCanvas,
+0,
+0
+);
+
+chartShell.appendChild(
+snapshot
+);
+
+return snapshot;
+}
+
+function animateChartTypeCrossfade(
+snapshot,
+onComplete
+) {
+if (
+!snapshot ||
+PFF.reducedMotion() ||
+!snapshot.animate ||
+!chartCanvas.animate
+) {
+snapshot?.remove();
+chartCanvas.style.opacity = '';
+onComplete?.();
+return;
+}
+
+const duration = Math.min(
+PFF.defaults.viewTransitionMs,
+600
+);
+
+chartCanvas.style.opacity = '0';
+
+requestAnimationFrame(() => {
+const incoming =
+chartCanvas.animate(
+[
+{ opacity: 0, transform: 'scale(0.995)' },
+{ opacity: 1, transform: 'scale(1)' }
+],
+{
+duration,
+easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+fill: 'forwards'
+}
+);
+
+const outgoing =
+snapshot.animate(
+[
+{ opacity: 1, transform: 'scale(1)' },
+{ opacity: 0, transform: 'scale(1.005)' }
+],
+{
+duration,
+easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+fill: 'forwards'
+}
+);
+
+Promise.allSettled([
+incoming.finished,
+outgoing.finished
+]).then(() => {
+incoming.cancel();
+outgoing.cancel();
+chartCanvas.style.opacity = '';
+snapshot.remove();
+onComplete?.();
+});
+});
 }
 
 function recreateChartForSelectedView(
@@ -5853,7 +6072,6 @@ width: 1.1
 }
 },
 plugins: [
-axisScaleFadePlugin,
 sourceMilestonePlugin
 ]
 });
@@ -5935,106 +6153,103 @@ repeatMeasureMenuController?.closeMenu();
     }
 
     function switchView(nextView) {
-      if (
-        nextView === selectedTab ||
-        interactionLocked ||
-        viewFadeLocked
-      ) {
-        return;
-      }
+if (
+nextView === selectedTab ||
+interactionLocked ||
+viewFadeLocked
+) {
+return;
+}
 
-      const previousTab = selectedTab;
-      const reduceMotion = PFF.reducedMotion();
+const previousTab = selectedTab;
+const reduceMotion = PFF.reducedMotion();
+const crossesRepeatBoundary =
+previousTab === 'repeat' ||
+nextView === 'repeat';
 
-      viewFadeLocked = true;
-      setViewDependentControlsFaded(true);
+const snapshot =
+crossesRepeatBoundary &&
+!reduceMotion
+? captureChartSnapshot()
+: null;
 
-      function commitViewSwitch() {
-        selectedTab = nextView;
-        syncActiveView();
+viewFadeLocked = true;
+setViewDependentControlsFaded(true);
 
-        tabsController?.set(
-          selectedTab,
-          {
-            animate: true,
-            notify: false
-          }
-        );
+selectedTab = nextView;
+syncActiveView();
 
-        fadeTextChange(
-          chartHeading,
-          getHeadingText(activeView)
-        );
+tabsController?.set(
+selectedTab,
+{
+animate: true,
+notify: false
+}
+);
 
-        fadeTextChange(
-          groupMenuTitle,
-          getGroupMenuText()
-        );
+fadeTextChange(
+chartHeading,
+getHeadingText(activeView)
+);
 
-        updateCountControls();
+fadeTextChange(
+groupMenuTitle,
+getGroupMenuText()
+);
 
-        setGroupMenuOpen(false);
-        setMeasureMenuOpen(false);
-        setRepeatMeasureMenuOpen(false);
+updateCountControls();
+setGroupMenuOpen(false);
+setMeasureMenuOpen(false);
+setRepeatMeasureMenuOpen(false);
 
-        if (
-          selectedTab === 'repeat' ||
-          previousTab === 'repeat'
-        ) {
-          interactionLocked = false;
+function finishViewSwitch() {
+setViewDependentControlsFaded(false);
+viewFadeLocked = false;
+interactionLocked = false;
+}
 
-          recreateChartForSelectedView(
-            !reduceMotion
-          );
-        } else {
-          updateLegend(
-            activeView,
-            currentGroup,
-            true
-          );
+if (crossesRepeatBoundary) {
+axisFadeOpacity = 1;
 
-          animateToTargets(
-            buildTargetDescriptors(
-              activeView,
-              currentGroup
-            ),
-            activeView,
-            true,
-            false
-          );
-        }
+recreateChartForSelectedView(
+!reduceMotion
+);
 
-        animateAxisOpacity(
-          0,
-          1,
-          reduceMotion
-            ? 0
-            : 300,
-          () => {
-            setViewDependentControlsFaded(
-              false
-            );
+if (reduceMotion) {
+finishViewSwitch();
+return;
+}
 
-            viewFadeLocked =
-              false;
-          }
-        );
-      }
+animateChartTypeCrossfade(
+snapshot,
+finishViewSwitch
+);
+return;
+}
 
-      if (reduceMotion) {
-        axisFadeOpacity = 0;
+updateLegend(
+activeView,
+currentGroup,
+true
+);
 
-        commitViewSwitch();
-        return;
-      }
+animateToTargets(
+buildTargetDescriptors(
+activeView,
+currentGroup
+),
+activeView,
+true,
+false
+);
 
-      animateAxisOpacity(
-        axisFadeOpacity,
-        0,
-        170,
-        commitViewSwitch
-      );
-    }
+/*
+ * Job ads and Advertised pay share the same date axis.
+ * Keep it visible; the existing value-axis interpolation
+ * animates only the labels and scale that actually change.
+ */
+finishViewSwitch();
+}
 
 
 tabsController =
@@ -6142,49 +6357,13 @@ true;
 updateCountControls();
 setRepeatMeasureMenuOpen(false);
 
-const reduceMotion =
-PFF.reducedMotion();
-
-viewFadeLocked =
-true;
-
-setViewDependentControlsFaded(
-true
-);
-
-function commitRepeatMeasure() {
+/*
+ * Employer/category labels are unchanged between Count and
+ * Proportion, so keep them visible and animate only the bars
+ * and numeric value axis.
+ */
 applyRepeatChartMeasure(
-!reduceMotion
-);
-
-animateAxisOpacity(
-0,
-1,
-reduceMotion
-? 0
-: 300,
-() => {
-setViewDependentControlsFaded(
-false
-);
-
-viewFadeLocked =
-false;
-}
-);
-}
-
-if (reduceMotion) {
-axisFadeOpacity = 0;
-commitRepeatMeasure();
-return;
-}
-
-animateAxisOpacity(
-axisFadeOpacity,
-0,
-170,
-commitRepeatMeasure
+true
 );
 });
 });
