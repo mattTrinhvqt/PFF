@@ -666,7 +666,7 @@ aria-controls="repeatMeasureMenu"
 <span
 id="repeatMeasureValue"
 class="measure-value"
->Proportion</span>
+>Median days advertised</span>
 <span
 class="menu-arrow"
 aria-hidden="true"
@@ -844,7 +844,7 @@ role="note"
 <ul class="repeat-info-note-list">
 <li><strong>Count:</strong> repeat ads in the rolling year</li>
 <li><strong>Proportion:</strong> each employer’s share of repeat ads in the rolling year</li>
-<li><strong>Median days advertised:</strong> median Days Available for completed repeat series</li>
+<li><strong>Median days advertised:</strong> median Days Available written by the tracker</li>
 <li><strong>Repeat ad:</strong> same employer, suburb and employment type re-advertised within 180 days; ±14-day duplicates excluded</li>
 <li>Non-corporates are grouped by employer type</li>
 </ul>
@@ -919,7 +919,7 @@ ruralityWorkforceRange: 'A30:J',
 fetchTimeoutMs: 20000,
 fetchAttempts: 2,
 retryDelayMs: 1200,
-jobCacheKey: 'pff-job-ads-rows-v14',
+jobCacheKey: 'pff-job-ads-rows-v15',
 workforceCacheKey: 'pff-optom-workforce-v2',
 yMin: 60000,
 yMax: 180000,
@@ -947,10 +947,6 @@ state: 7,
 rurality: 9,
 fteDays: 11,
 salary: 20,
-employmentType: 10,
-jobId: 24,
-seriesId: 25,
-unavailableDate: 26,
 daysAvailable: 27
 }
 };
@@ -1183,26 +1179,6 @@ proportion: 'Proportion',
 medianDays: 'Median days advertised'
 };
 
-function hasRepeatDurationData() {
-return allJobRows.some(row =>
-row?.isRepeat &&
-Number.isFinite(Number(row?.daysAvailable)) &&
-Number(row.daysAvailable) >= 0
-);
-}
-
-function getRepeatTickView(measure = repeatAxisDisplayMeasure) {
-if (measure === 'proportion') return 'repeatProportion';
-if (measure === 'medianDays') return 'repeatMedianDays';
-return 'repeatCount';
-}
-
-function getRepeatAxisTitle(measure = repeatAxisDisplayMeasure) {
-if (measure === 'proportion') return '% of repeat ads';
-if (measure === 'medianDays') return 'Median days advertised';
-return 'Repeat ads/year';
-}
-
 const axisTransition = {
 fromView: 'per100FteState',
 toView: 'per100FteState',
@@ -1238,12 +1214,6 @@ minorStep: 5
 
 const repeatMeasureAnimationController =
 PFFCharts.createAnimationController();
-
-let repeatEmployerSummaryCache = null;
-
-function invalidateRepeatSummaryCache() {
-repeatEmployerSummaryCache = null;
-}
 
 function createEmptyWorkforce() {
 return {
@@ -1380,10 +1350,6 @@ REPEAT_MEASURE_LABELS[selectedRepeatMeasure];
 repeatMeasureOptions.forEach(option => {
 option.disabled = !repeatTabActive;
 option.checked = option.value === selectedRepeatMeasure;
-
-option
-.closest('.measure-option')
-?.classList.remove('is-disabled');
 });
 
 repeatMeasureButton.disabled = !repeatTabActive;
@@ -1470,6 +1436,22 @@ return values.reduce((total, number) => total + number, 0) /
 values.length;
 }
 
+function parseDaysAvailableValue(value) {
+if (typeof value === 'number' && Number.isFinite(value)) {
+return value >= 0 ? value : NaN;
+}
+
+const text = cleanText(value);
+if (!text || normaliseText(text) === 'xxx') {
+return NaN;
+}
+
+const number = Number(text.replace(/,/g, ''));
+return Number.isFinite(number) && number >= 0
+? number
+: NaN;
+}
+
 function parseEstimatedDaysPerWeek(value) {
 if (typeof value === 'number' && Number.isFinite(value)) {
 return clamp(value, 0, 5);
@@ -1493,20 +1475,6 @@ return clamp(estimate, 0, 5);
 function getRowWeight(row, useFte = fteAdjusted) {
 if (!useFte) return 1;
 return Number.isFinite(row?.fteWeight) ? row.fteWeight : 1;
-}
-
-function parseOptionalNumber(value) {
-if (typeof value === 'number' && Number.isFinite(value)) {
-return value;
-}
-
-const text = cleanText(value);
-if (!text || normaliseText(text) === 'xxx') {
-return NaN;
-}
-
-const number = Number(text.replace(/,/g, ''));
-return Number.isFinite(number) ? number : NaN;
 }
 
 function getStateGroup(value) {
@@ -1579,35 +1547,29 @@ return EMPLOYER_TYPE_COLOURS[row?.employerType] ||
 EMPLOYER_TYPE_COLOURS.Other;
 }
 
-function getSydneyTodayUtc() {
-const parts = new Intl.DateTimeFormat(
-'en-AU',
-{
-timeZone: 'Australia/Sydney',
-year: 'numeric',
-month: '2-digit',
-day: '2-digit'
+function medianFinite(values) {
+const sorted = (Array.isArray(values) ? values : [])
+.filter(Number.isFinite)
+.slice()
+.sort((first, second) => first - second);
+
+if (!sorted.length) {
+return NaN;
 }
-).formatToParts(new Date());
 
-const values = Object.fromEntries(
-parts
-.filter(part => part.type !== 'literal')
-.map(part => [part.type, Number(part.value)])
-);
+const middle = Math.floor(sorted.length / 2);
+return sorted.length % 2
+? sorted[middle]
+: (sorted[middle - 1] + sorted[middle]) / 2;
+}
 
-return Date.UTC(
-values.year,
-(values.month || 1) - 1,
-values.day || 1
-);
+function getRepeatAxisTitle(measure = selectedRepeatMeasure) {
+if (measure === 'proportion') return '% of repeat ads';
+if (measure === 'medianDays') return 'Median days advertised';
+return 'Repeat ads/year';
 }
 
 function buildRepeatEmployerSummary() {
-if (repeatEmployerSummaryCache) {
-return repeatEmployerSummaryCache;
-}
-
 const timestamps = allJobRows
 .map(row => Number(row?.x))
 .filter(Number.isFinite);
@@ -1622,12 +1584,10 @@ windowEnd - YEAR_MS;
 const grouped = new Map();
 
 allJobRows.forEach(row => {
-const timestamp = Number(row?.x);
-
 if (
-!Number.isFinite(timestamp) ||
-timestamp <= windowStart ||
-timestamp > windowEnd
+!Number.isFinite(Number(row?.x)) ||
+Number(row.x) <= windowStart ||
+Number(row.x) > windowEnd
 ) {
 return;
 }
@@ -1641,30 +1601,17 @@ label,
 employerType: row.employerType || 'Other',
 colour: getRepeatEmployerColour(row),
 repeatAds: 0,
-durationValues: []
+daysAvailableValues: []
 });
 }
 
-if (!row.isRepeat) {
-return;
+if (row.isRepeat) {
+const entry = grouped.get(label);
+entry.repeatAds += 1;
+
+if (Number.isFinite(row.daysAvailable)) {
+entry.daysAvailableValues.push(row.daysAvailable);
 }
-
-const group = grouped.get(label);
-group.repeatAds += 1;
-
-/*
- * Days Available (AC) is produced by the tracker Apps Script and is
- * already attached only to the latest ad row for a completed series.
- * Use that output directly: do not reconstruct series or durations in
- * the browser.
- */
-const daysAvailable = Number(row?.daysAvailable);
-
-if (
-Number.isFinite(daysAvailable) &&
-daysAvailable >= 0
-) {
-group.durationValues.push(daysAvailable);
 }
 });
 
@@ -1676,30 +1623,22 @@ const totalRepeatAds = summaries.reduce(
 0
 );
 
-repeatEmployerSummaryCache = summaries
-.map(entry => {
-const durationStats =
-PFFStats.calculateStatistics(entry.durationValues);
-
-return {
+return summaries
+.map(entry => ({
 ...entry,
 proportion:
 totalRepeatAds > 0
 ? entry.repeatAds / totalRepeatAds * 100
 : 0,
 totalRepeatAds,
-medianDays: durationStats.median,
-q1Days: durationStats.q1,
-q3Days: durationStats.q3,
-durationSeriesCount: durationStats.count,
+medianDays: medianFinite(entry.daysAvailableValues),
+daysAvailableCount: entry.daysAvailableValues.length,
 windowStart,
 windowEnd
-};
-})
+}))
 .filter(entry => entry.proportion >= 1);
-
-return repeatEmployerSummaryCache;
 }
+
 function getRepeatMetricValue(summary) {
 if (selectedRepeatMeasure === 'proportion') {
 return summary.proportion;
@@ -1713,11 +1652,7 @@ return summary.repeatAds;
 }
 
 function getRepeatChartRows() {
-return buildRepeatEmployerSummary()
-.filter(summary =>
-selectedRepeatMeasure !== 'medianDays' ||
-Number.isFinite(summary.medianDays)
-)
+const summaries = buildRepeatEmployerSummary()
 .sort((first, second) =>
 second.repeatAds - first.repeatAds ||
 first.label.localeCompare(second.label, 'en-AU', {
@@ -1725,6 +1660,10 @@ sensitivity: 'base',
 numeric: true
 })
 );
+
+return selectedRepeatMeasure === 'medianDays'
+? summaries.filter(entry => Number.isFinite(entry.medianDays))
+: summaries;
 }
 
 function parseColour(value, fallback = '#777777') {
@@ -2130,6 +2069,11 @@ const salary = parseSalaryValue(
 salaryCell?.v ?? salaryCell?.f ?? ''
 );
 
+const daysAvailableCell = cells[CONFIG.columns.daysAvailable];
+const daysAvailable = parseDaysAvailableValue(
+daysAvailableCell?.v ?? daysAvailableCell?.f ?? ''
+);
+
 const employer = getCellText(cells[CONFIG.columns.employer]);
 const suburb = getCellText(cells[CONFIG.columns.suburb]);
 const stateText = getCellText(cells[CONFIG.columns.state]);
@@ -2142,41 +2086,16 @@ const fteDays = parseEstimatedDaysPerWeek(
 fteCell?.v ?? fteCell?.f ?? ''
 );
 
-const employmentType = getCellText(
-cells[CONFIG.columns.employmentType]
-);
-
-const jobId = getCellText(
-cells[CONFIG.columns.jobId]
-);
-
-const seriesId = getCellText(
-cells[CONFIG.columns.seriesId]
-);
-
-const unavailableDate = parseDateCell(
-cells[CONFIG.columns.unavailableDate]
-);
-
-const daysCell = cells[CONFIG.columns.daysAvailable];
-const daysAvailable = parseOptionalNumber(
-daysCell?.v ?? daysCell?.f ?? ''
-);
-
 result.push({
 x: date.getTime(),
 repeatFlag,
 isRepeat,
 salary,
+daysAvailable,
 fteDays,
 fteWeight: fteDays / 5,
 employer,
 suburb,
-employmentType,
-jobId,
-seriesId,
-unavailableX: unavailableDate?.getTime?.() ?? NaN,
-daysAvailable,
 stateText,
 state: getStateGroup(stateText),
 rurality: getRuralityGroup(ruralityText),
@@ -4949,8 +4868,8 @@ return `${Number(summary.proportion).toFixed(1)}%`;
 }
 
 if (repeatAxisDisplayMeasure === 'medianDays') {
-return Number.isFinite(Number(summary.medianDays))
-? `${formatNumber(summary.medianDays, 1)} days`
+return Number.isFinite(summary.medianDays)
+? `${formatNumber(summary.medianDays, Number.isInteger(summary.medianDays) ? 0 : 1)} days`
 : '—';
 }
 
@@ -5152,8 +5071,6 @@ Number(dataset.data[index]);
 const label =
 repeatAxisDisplayMeasure === 'proportion'
 ? `${Number.isFinite(currentValue) ? currentValue.toFixed(1) : '—'}%`
-: repeatAxisDisplayMeasure === 'medianDays'
-? `${formatNumber(currentValue, Number.isInteger(currentValue) ? 0 : 1)} d`
 : formatNumber(
 currentValue,
 Number.isInteger(currentValue) ? 0 : 1
@@ -5229,7 +5146,9 @@ selectedRepeatMeasure
 ),
 
 axisTitle:
-getRepeatAxisTitle(selectedRepeatMeasure),
+getRepeatAxisTitle(
+selectedRepeatMeasure
+),
 
 legendLabel:
 REPEAT_MEASURE_LABELS[
@@ -5238,16 +5157,15 @@ selectedRepeatMeasure
 };
 }
 
-function applyRepeatChartMeasure() {
+function applyRepeatChartMeasure(
+animate = true
+) {
 if (
 !chart ||
 selectedTab !== 'repeat'
 ) {
 return;
 }
-
-repeatMeasureAnimationController.cancel();
-interactionLocked = false;
 
 const model =
 getRepeatChartModel();
@@ -5259,20 +5177,36 @@ if (!dataset) {
 return;
 }
 
-chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+const startValues =
+(dataset.data || []).map(value =>
+Number(value) || 0
+);
+
+const targetValues =
+model.values.map(value =>
+Number(value) || 0
+);
+
+const startAxis = {
+maximum: repeatAxisState.maximum,
+majorStep: repeatAxisState.majorStep,
+minorStep: repeatAxisState.minorStep
+};
+
+const targetAxis =
+model.axisSpec;
+
+const startMeasure =
+repeatAxisDisplayMeasure;
+
+const targetMeasure =
+selectedRepeatMeasure;
 
 chart.data.labels =
 model.rows.map(row => row.label);
 
 dataset.label =
 model.legendLabel;
-
-dataset.data =
-model.values.map(value =>
-Number.isFinite(Number(value))
-? Number(value)
-: 0
-);
 
 dataset.backgroundColor =
 model.rows.map(row => row.colour);
@@ -5289,50 +5223,101 @@ model.rows.map(() => '#151515');
 dataset.repeatSummaries =
 model.rows;
 
-updateRepeatAxisState(
-model.values,
-selectedRepeatMeasure
-);
+const reduceMotion =
+PFF.reducedMotion();
+
+function finish() {
+dataset.data =
+targetValues.slice();
+
+repeatAxisState.maximum =
+targetAxis.maximum;
+repeatAxisState.majorStep =
+targetAxis.majorStep;
+repeatAxisState.minorStep =
+targetAxis.minorStep;
 
 repeatAxisDisplayMeasure =
-selectedRepeatMeasure;
+targetMeasure;
 
-const xScale =
-chart.options.scales.x;
-
-xScale.max =
+chart.options.scales.x.max =
 repeatAxisState.maximum;
 
-xScale.pffTickView =
-getRepeatTickView(selectedRepeatMeasure);
+chart.options.scales.x.pffTickView =
+targetMeasure === 'proportion'
+? 'repeatProportion'
+: 'repeatCount';
 
-xScale.title.text =
-model.axisTitle ||
-getRepeatAxisTitle(selectedRepeatMeasure);
+chart.options.scales.x.title.text =
+model.axisTitle;
 
-/*
- * Repeat values are already aggregated from spreadsheet outputs.
- * A single non-animated Chart.js update avoids re-entrant layout
- * callbacks that previously caused Count/Median switching to freeze.
- */
 chart.update('none');
+interactionLocked = false;
+}
 
 if (
-!PFF.reducedMotion() &&
-chartCanvas.animate
+!animate ||
+reduceMotion ||
+CONFIG.transitionMs <= 0
 ) {
-chartCanvas.animate(
-[
-{ opacity: 0.72 },
-{ opacity: 1 }
-],
-{
-duration: 180,
-easing: 'ease-out'
+finish();
+return;
 }
+
+interactionLocked = true;
+chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+
+repeatMeasureAnimationController.run({
+duration: CONFIG.transitionMs,
+easing: easeInOutCubic,
+onFrame(progress) {
+const length = Math.max(
+startValues.length,
+targetValues.length
+);
+
+const animatedValues = [];
+
+for (let index = 0; index < length; index++) {
+const from = startValues[index] ?? 0;
+const to = targetValues[index] ?? 0;
+
+animatedValues.push(
+from + (to - from) * progress
 );
 }
+
+dataset.data = animatedValues;
+
+repeatAxisState.maximum =
+startAxis.maximum +
+(targetAxis.maximum - startAxis.maximum) * progress;
+
+repeatAxisState.majorStep =
+repeatAxisState.maximum / 5;
+
+repeatAxisState.minorStep =
+repeatAxisState.maximum / 10;
+
+repeatAxisDisplayMeasure =
+progress < 0.5
+? startMeasure
+: targetMeasure;
+
+chart.options.scales.x.max =
+repeatAxisState.maximum;
+
+chart.options.scales.x.title.text =
+progress < 0.5
+? getRepeatAxisTitle(startMeasure)
+: model.axisTitle;
+
+chart.update('none');
+},
+onComplete: finish
+});
 }
+
 function createRepeatChart(
 animate = true
 ) {
@@ -5565,28 +5550,31 @@ items?.[0]
 
 label(item) {
 const summary =
-item.dataset?.repeatSummaries?.[
+model.rows[
 item.dataIndex
-] ||
-null;
+];
 
 if (!summary) {
 return '';
 }
 
-if (selectedRepeatMeasure === 'medianDays') {
-return [
-`Median [IQR]: ${formatNumber(summary.medianDays, 1)} [${formatNumber(summary.q1Days, 1)}, ${formatNumber(summary.q3Days, 1)}] days`,
-`Repeat series: n = ${summary.durationSeriesCount}`,
-`Rolling year: ${formatTooltipDate(summary.windowStart)}–${formatTooltipDate(summary.windowEnd)}`
+const lines = [
+`Repeat ads/year: ${summary.repeatAds} of ${summary.totalRepeatAds}`,
+`Proportion: ${summary.proportion.toFixed(1)}%`
 ];
+
+if (Number.isFinite(summary.medianDays)) {
+lines.push(
+`Median days advertised: ${formatNumber(summary.medianDays, Number.isInteger(summary.medianDays) ? 0 : 1)}`,
+`Completed repeat series: ${summary.daysAvailableCount}`
+);
 }
 
-return [
-`Repeat ads/year: ${summary.repeatAds} of ${summary.totalRepeatAds}`,
-`Proportion: ${summary.proportion.toFixed(1)}%`,
+lines.push(
 `Rolling year: ${formatTooltipDate(summary.windowStart)}–${formatTooltipDate(summary.windowEnd)}`
-];
+);
+
+return lines;
 }
 }
 })
@@ -5598,7 +5586,10 @@ type:
 'linear',
 
 pffTickView:
-getRepeatTickView(selectedRepeatMeasure),
+selectedRepeatMeasure ===
+'proportion'
+? 'repeatProportion'
+: 'repeatCount',
 
 afterFit:
 fixedRepeatXAxisHeight,
@@ -5815,12 +5806,6 @@ return Object.values(copy).every(Number.isFinite)
 }
 
 function resetChartTypeTransitionVisuals() {
-repeatMeasureAnimationController.cancel();
-
-
-chart?.stop?.();
-interactionLocked = false;
-
 chartCanvas
 ?.getAnimations?.()
 .forEach(animation => {
@@ -6353,11 +6338,8 @@ repeatMeasureMenuController?.closeMenu();
     function switchView(nextView) {
 if (
 nextView === selectedTab ||
-viewFadeLocked ||
-(
-interactionLocked &&
-selectedTab !== 'repeat'
-)
+interactionLocked ||
+viewFadeLocked
 ) {
 return;
 }
@@ -6572,6 +6554,9 @@ viewFadeLocked
 return;
 }
 
+const previousRepeatMeasure =
+selectedRepeatMeasure;
+
 selectedRepeatMeasure =
 option.value;
 
@@ -6582,11 +6567,15 @@ updateCountControls();
 setRepeatMeasureMenuOpen(false);
 
 /*
- * Employer/category labels stay in the same axis role between
- * repeat measures, so keep them visible and animate only the bars
- * and numeric value axis.
+ * Preserve the original stable Count ↔ Proportion animation.
+ * Median days can have fewer employers because AC is blank for
+ * unfinished series, so switch to/from Median without interpolating
+ * mismatched category arrays.
  */
-applyRepeatChartMeasure();
+applyRepeatChartMeasure(
+previousRepeatMeasure !== 'medianDays' &&
+selectedRepeatMeasure !== 'medianDays'
+);
 });
 });
 
@@ -6707,7 +6696,6 @@ saveJsonCache(CONFIG.jobCacheKey, allJobRows);
 allJobRows = loadJobCache();
 }
 
-invalidateRepeatSummaryCache();
 rows = allJobRows.filter(row => !row.isRepeat);
 
 if (liveWorkforce) {
