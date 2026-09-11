@@ -504,16 +504,7 @@ role="tab"
 data-view="count"
 aria-selected="true"
 >
-Job ad count
-</button>
-<button
-class="chart-tab"
-type="button"
-role="tab"
-data-view="pay"
-aria-selected="false"
->
-Advertised pay
+Job ads
 </button>
 <button
 class="chart-tab"
@@ -523,6 +514,15 @@ data-view="repeat"
 aria-selected="false"
 >
 Repeat ads
+</button>
+<button
+class="chart-tab"
+type="button"
+role="tab"
+data-view="pay"
+aria-selected="false"
+>
+Advertised pay
 </button>
 </div>
 
@@ -628,7 +628,7 @@ aria-controls="repeatMeasureMenu"
 <span
 id="repeatMeasureValue"
 class="measure-value"
->Repeat ads</span>
+>Count</span>
 <span
 class="menu-arrow"
 aria-hidden="true"
@@ -641,21 +641,21 @@ class="measure-menu"
 role="group"
 aria-label="Select repeat-ad measure"
 >
-<p class="measure-menu-title">Show repeat advertising as</p>
+<p class="measure-menu-title">Show repeat ads as</p>
 
 <label class="measure-option">
 <input
 class="repeat-measure-option-input"
 type="radio"
 name="repeat-measure"
-value="repeatAds"
+value="count"
 checked
 >
 <span
 class="measure-option-box"
 aria-hidden="true"
 ></span>
-<span>Repeat ads (count)</span>
+<span>Count</span>
 </label>
 
 <label class="measure-option">
@@ -663,13 +663,13 @@ aria-hidden="true"
 class="repeat-measure-option-input"
 type="radio"
 name="repeat-measure"
-value="repeatRate"
+value="proportion"
 >
 <span
 class="measure-option-box"
 aria-hidden="true"
 ></span>
-<span>Repeat rate (%)</span>
+<span>Proportion</span>
 </label>
 </div>
 </div>
@@ -790,8 +790,9 @@ role="note"
 >
 <p class="repeat-info-note-title">How to read this</p>
 <ul class="repeat-info-note-list">
-<li><strong>Repeat ads:</strong> ads flagged as re-advertised in the tracker</li>
-<li><strong>Repeat rate:</strong> repeat ads as a % of all ads for that employer</li>
+<li><strong>Count:</strong> number of ads flagged as re-advertised</li>
+<li><strong>Proportion:</strong> each employer’s share of all repeat ads</li>
+<li>Up to 12 employers shown; non-corporates are grouped by type</li>
 </ul>
 </aside>
 
@@ -1083,7 +1084,7 @@ const countAxisCache = new Map();
 let workforce = createEmptyWorkforce();
 let selectedTab = 'count';
 let selectedMeasure = 'per100';
-let selectedRepeatMeasure = 'repeatAds';
+let selectedRepeatMeasure = 'count';
 const fteAdjusted = true;
 let activeView = 'per100';
 let currentGroup = 'state';
@@ -1112,8 +1113,8 @@ per100: 'Per 100 optoms'
 };
 
 const REPEAT_MEASURE_LABELS = {
-repeatAds: 'Repeat ads',
-repeatRate: 'Repeat rate'
+count: 'Count',
+proportion: 'Proportion'
 };
 
 const axisTransition = {
@@ -1128,6 +1129,24 @@ toMin: 0,
 fromMax: 0,
 toMax: 0,
 progress: 1
+};
+
+let axisFadeOpacity = 1;
+
+const axisFadeController =
+PFFCharts.createAnimationController();
+
+const REPEAT_CHART_GEOMETRY = {
+yAxisWidthDesktop: 154,
+yAxisWidthMobile: 138,
+xAxisHeight: 46,
+rightPadding: 45
+};
+
+const repeatAxisState = {
+maximum: 10,
+majorStep: 2,
+minorStep: 1
 };
 
 function createEmptyWorkforce() {
@@ -1171,7 +1190,7 @@ return activeView;
 
 function getHeadingText(view) {
 if (view === 'pay') return 'Advertised pay over time';
-if (view === 'repeat') return 'Repeat job ads by employer';
+if (view === 'repeat') return 'Repeat ads by employer';
 if (view === 'proportion') {
 return fteAdjusted
 ? 'FTE job ad proportions'
@@ -1293,6 +1312,9 @@ PFF.rgba;
 
 const easeInOutCubic =
 PFFCharts.easeInOutCubic;
+
+const easeOutCubic =
+PFFCharts.easeOutCubic;
 
 function displayText(value) {
 const text = cleanText(value);
@@ -1450,43 +1472,42 @@ grouped.set(label, {
 label,
 employerType: row.employerType || 'Other',
 colour: getRepeatEmployerColour(row),
-allAds: 0,
 repeatAds: 0
 });
 }
 
-const entry = grouped.get(label);
-entry.allAds += 1;
-
 if (row.isRepeat) {
-entry.repeatAds += 1;
+grouped.get(label).repeatAds += 1;
 }
 });
 
-return [...grouped.values()]
-.map(entry => ({
-label: entry.label,
-employerType: entry.employerType,
-colour: entry.colour,
-allAds: entry.allAds,
-repeatAds: entry.repeatAds,
-repeatRate: entry.allAds > 0
-? entry.repeatAds / entry.allAds * 100
-: 0
-}))
+const summaries = [...grouped.values()]
 .filter(entry => entry.repeatAds > 0);
+
+const totalRepeatAds = summaries.reduce(
+(total, entry) => total + entry.repeatAds,
+0
+);
+
+return summaries.map(entry => ({
+...entry,
+proportion:
+totalRepeatAds > 0
+? entry.repeatAds / totalRepeatAds * 100
+: 0,
+totalRepeatAds
+}));
 }
 
 function getRepeatMetricValue(summary) {
-return selectedRepeatMeasure === 'repeatRate'
-? summary.repeatRate
+return selectedRepeatMeasure === 'proportion'
+? summary.proportion
 : summary.repeatAds;
 }
 
 function getRepeatChartRows() {
 return buildRepeatEmployerSummary()
 .sort((first, second) =>
-getRepeatMetricValue(second) - getRepeatMetricValue(first) ||
 second.repeatAds - first.repeatAds ||
 first.label.localeCompare(second.label, 'en-AU', {
 sensitivity: 'base',
@@ -3556,7 +3577,12 @@ maximum: Number.isFinite(currentMaximum)
 };
 }
 
-function animateToTargets(targets, nextView, animate = true) {
+function animateToTargets(
+targets,
+nextView,
+animate = true,
+animateAxisTitle = true
+) {
 if (!chart) return;
 
 if (activeAnimationFrame) {
@@ -3869,16 +3895,37 @@ plan.dataset.tension = 0.16;
 }
 });
 
-const isViewChange = previousView !== nextAxisMode;
-const axisTitleOpacity = isViewChange
-? Math.abs(progress * 2 - 1)
+const isViewChange =
+animateAxisTitle &&
+previousView !==
+nextAxisMode;
+
+const axisTitleOpacity =
+isViewChange
+? Math.abs(
+progress * 2 - 1
+)
 : 1;
 
-chart.options.scales.y.title.text = progress < 0.5
-? getAxisTitle(previousView)
-: getAxisTitle(nextAxisMode);
+chart.options.scales.y.title.text =
+isViewChange
+? (
+progress < 0.5
+? getAxisTitle(
+previousView
+)
+: getAxisTitle(
+nextAxisMode
+)
+)
+: getAxisTitle(
+nextAxisMode
+);
+
 chart.options.scales.y.title.color =
-`rgba(21, 21, 21, ${axisTitleOpacity})`;
+isViewChange
+? `rgba(21, 21, 21, ${axisTitleOpacity})`
+: '#151515';
 chart.update('none');
 
 if (rawProgress < 1) {
@@ -4486,177 +4533,1041 @@ drawPer100Definition(context, area);
 };
 
 
-function createRepeatChart() {
-const context = chartCanvas.getContext('2d');
-const repeatChartRows = getRepeatChartRows();
-const values = repeatChartRows.map(getRepeatMetricValue);
-const maximum = Math.max(1, ...values);
-const isRate = selectedRepeatMeasure === 'repeatRate';
-const xMaximum = isRate
-? Math.min(100, Math.max(10, Math.ceil(maximum / 10) * 10))
-: Math.max(1, Math.ceil(maximum * 1.12));
+function animateAxisOpacity(
+from,
+to,
+duration,
+onComplete
+) {
+axisFadeController.run({
+duration,
+easing: easeOutCubic,
+onFrame(progress) {
+axisFadeOpacity =
+from +
+(to - from) *
+progress;
 
-chart = new Chart(context, {
-type: 'bar',
-data: {
-labels: repeatChartRows.map(row => row.label),
-datasets: [{
-label: REPEAT_MEASURE_LABELS[selectedRepeatMeasure],
-data: values,
-backgroundColor: repeatChartRows.map(row =>
-rgba(row.colour, 0.91)
-),
-hoverBackgroundColor: repeatChartRows.map(row =>
-rgba(row.colour, 0.98)
-),
-borderWidth: 0,
-hoverBorderWidth: 0,
-borderRadius: 3,
-borderSkipped: false,
-barPercentage: 0.68,
-categoryPercentage: 0.84,
-repeatSummaries: repeatChartRows
-}]
+chart?.draw();
 },
+onComplete() {
+axisFadeOpacity = to;
+chart?.draw();
+onComplete?.();
+}
+});
+}
+
+const axisScaleFadePlugin = {
+id: 'axisScaleFadePlugin',
+
+beforeDraw(activeChart) {
+activeChart.ctx.save();
+activeChart.ctx.globalAlpha = clamp(
+axisFadeOpacity,
+0,
+1
+);
+activeChart.$axisScaleFadeContextSaved = true;
+},
+
+beforeDatasetsDraw(activeChart) {
+if (!activeChart.$axisScaleFadeContextSaved) {
+return;
+}
+
+activeChart.ctx.restore();
+activeChart.$axisScaleFadeContextSaved = false;
+},
+
+afterDraw(activeChart) {
+if (!activeChart.$axisScaleFadeContextSaved) {
+return;
+}
+
+activeChart.ctx.restore();
+activeChart.$axisScaleFadeContextSaved = false;
+}
+};
+
+function fixedRepeatYAxisWidth(scale) {
+scale.width = PFF.mobileLayout()
+? REPEAT_CHART_GEOMETRY.yAxisWidthMobile
+: REPEAT_CHART_GEOMETRY.yAxisWidthDesktop;
+}
+
+function fixedRepeatXAxisHeight(scale) {
+scale.height =
+REPEAT_CHART_GEOMETRY.xAxisHeight;
+}
+
+function getRepeatAxisSpec(values) {
+const maximumObserved = Math.max(
+0,
+...values.filter(Number.isFinite)
+);
+
+if (selectedRepeatMeasure === 'proportion') {
+const majorStep =
+maximumObserved <= 20
+? 5
+: maximumObserved <= 50
+? 10
+: 20;
+
+return {
+maximum: Math.min(
+100,
+Math.max(
+majorStep * 2,
+Math.ceil(maximumObserved / majorStep) * majorStep
+)
+),
+majorStep,
+minorStep: majorStep / 2
+};
+}
+
+let majorStep = 1;
+
+if (maximumObserved > 6) {
+majorStep = 2;
+}
+
+if (maximumObserved > 12) {
+majorStep = 5;
+}
+
+if (maximumObserved > 30) {
+majorStep = 10;
+}
+
+if (maximumObserved > 60) {
+majorStep = 20;
+}
+
+if (maximumObserved > 120) {
+majorStep = 50;
+}
+
+return {
+maximum: Math.max(
+majorStep * 2,
+Math.ceil(maximumObserved / majorStep) * majorStep
+),
+majorStep,
+minorStep: majorStep
+};
+}
+
+function updateRepeatAxisState(values) {
+const nextState =
+getRepeatAxisSpec(values);
+
+repeatAxisState.maximum =
+nextState.maximum;
+
+repeatAxisState.majorStep =
+nextState.majorStep;
+
+repeatAxisState.minorStep =
+nextState.minorStep;
+}
+
+function isRepeatMajorTick(value) {
+const numericValue =
+Number(value);
+
+if (!Number.isFinite(numericValue)) {
+return false;
+}
+
+const quotient =
+numericValue /
+repeatAxisState.majorStep;
+
+return Math.abs(
+quotient -
+Math.round(quotient)
+) < 1e-7;
+}
+
+function buildRepeatTicks() {
+const ticks = [];
+
+for (
+let value = 0;
+value <= repeatAxisState.maximum + 1e-7;
+value += repeatAxisState.minorStep
+) {
+ticks.push({
+value: Number(value.toFixed(10))
+});
+}
+
+return ticks;
+}
+
+function formatRepeatMetricValue(summary) {
+if (!summary) {
+return '—';
+}
+
+if (selectedRepeatMeasure === 'proportion') {
+return `${Number(summary.proportion).toFixed(1)}%`;
+}
+
+return String(
+Math.round(
+Number(summary.repeatAds) || 0
+)
+);
+}
+
+function drawRepeatAxisTicks(
+context,
+scale
+) {
+if (!scale) {
+return;
+}
+
+const ticks =
+scale.ticks ||
+[];
+
+if (!ticks.length) {
+return;
+}
+
+context.save();
+context.globalAlpha =
+clamp(
+axisFadeOpacity,
+0,
+1
+);
+context.lineCap = 'butt';
+context.strokeStyle = '#151515';
+
+ticks.forEach((tick, index) => {
+const value =
+Number(tick.value);
+
+const pixel =
+scale.getPixelForTick(index);
+
+if (
+!Number.isFinite(value) ||
+!Number.isFinite(pixel)
+) {
+return;
+}
+
+const major =
+isRepeatMajorTick(value);
+
+const tickLength =
+major
+? 6
+: 2;
+
+context.beginPath();
+context.lineWidth =
+major
+? 1
+: 0.7;
+
+context.moveTo(
+pixel,
+scale.top
+);
+
+context.lineTo(
+pixel,
+scale.top + tickLength
+);
+
+context.stroke();
+});
+
+context.restore();
+}
+
+const repeatSpinePlugin = {
+id: 'repeatSpinePlugin',
+
+afterDatasetsDraw(activeChart) {
+if (selectedTab !== 'repeat') {
+return;
+}
+
+const area =
+activeChart.chartArea;
+
+if (!area) {
+return;
+}
+
+const context =
+activeChart.ctx;
+
+context.save();
+context.strokeStyle = '#151515';
+context.lineWidth = 1;
+context.lineCap = 'butt';
+
+context.beginPath();
+context.moveTo(
+area.left,
+area.bottom
+);
+context.lineTo(
+area.right,
+area.bottom
+);
+context.stroke();
+
+context.beginPath();
+context.moveTo(
+area.left,
+area.top
+);
+context.lineTo(
+area.left,
+area.bottom
+);
+context.stroke();
+
+context.restore();
+}
+};
+
+const repeatAxisTickPlugin = {
+id: 'repeatAxisTickPlugin',
+
+afterDatasetsDraw(activeChart) {
+if (selectedTab !== 'repeat') {
+return;
+}
+
+drawRepeatAxisTicks(
+activeChart.ctx,
+activeChart.scales.x
+);
+}
+};
+
+const repeatValueLabelPlugin = {
+id: 'repeatValueLabelPlugin',
+
+afterDatasetsDraw(activeChart) {
+if (selectedTab !== 'repeat') {
+return;
+}
+
+const dataset =
+activeChart.data.datasets?.[0];
+
+const metadata =
+activeChart.getDatasetMeta(0);
+
+const area =
+activeChart.chartArea;
+
+if (
+!dataset ||
+!metadata ||
+!area
+) {
+return;
+}
+
+const summaries =
+dataset.repeatSummaries ||
+[];
+
+const context =
+activeChart.ctx;
+
+context.save();
+context.font =
+'700 10px Lato, sans-serif';
+
+context.textBaseline =
+'middle';
+
+metadata.data.forEach(
+(
+element,
+index
+) => {
+const summary =
+summaries[index];
+
+if (!summary) {
+return;
+}
+
+const label =
+formatRepeatMetricValue(
+summary
+);
+
+const textWidth =
+context.measureText(
+label
+).width;
+
+const preferredX =
+element.x +
+5;
+
+const fitsOutside =
+preferredX +
+textWidth <=
+area.right +
+40;
+
+if (fitsOutside) {
+context.textAlign =
+'left';
+
+context.fillStyle =
+'#151515';
+
+context.fillText(
+label,
+preferredX,
+element.y
+);
+} else {
+context.textAlign =
+'right';
+
+context.fillStyle =
+'#ffffff';
+
+context.fillText(
+label,
+element.x -
+5,
+element.y
+);
+}
+}
+);
+
+context.restore();
+}
+};
+
+function getRepeatChartModel() {
+const repeatChartRows =
+getRepeatChartRows();
+
+const values =
+repeatChartRows.map(
+getRepeatMetricValue
+);
+
+updateRepeatAxisState(
+values
+);
+
+return {
+rows:
+repeatChartRows,
+
+values,
+
+axisTitle:
+selectedRepeatMeasure ===
+'proportion'
+? '% of repeat ads'
+: 'Repeat ads',
+
+legendLabel:
+REPEAT_MEASURE_LABELS[
+selectedRepeatMeasure
+]
+};
+}
+
+function applyRepeatChartMeasure(
+animate = true
+) {
+if (
+!chart ||
+selectedTab !== 'repeat'
+) {
+return;
+}
+
+const model =
+getRepeatChartModel();
+
+const dataset =
+chart.data.datasets?.[0];
+
+if (!dataset) {
+return;
+}
+
+interactionLocked =
+animate &&
+!PFF.reducedMotion();
+
+chart.data.labels =
+model.rows.map(
+row =>
+row.label
+);
+
+dataset.label =
+model.legendLabel;
+
+dataset.data =
+model.values;
+
+dataset.backgroundColor =
+model.rows.map(
+row =>
+rgba(
+row.colour,
+0.50
+)
+);
+
+dataset.hoverBackgroundColor =
+model.rows.map(
+row =>
+row.colour
+);
+
+dataset.borderColor =
+model.rows.map(
+row =>
+row.colour
+);
+
+dataset.hoverBorderColor =
+model.rows.map(
+row =>
+row.colour
+);
+
+dataset.repeatSummaries =
+model.rows;
+
+chart.options.scales.x.max =
+repeatAxisState.maximum;
+
+chart.options.scales.x.pffTickView =
+selectedRepeatMeasure ===
+'proportion'
+? 'repeatProportion'
+: 'repeatCount';
+
+chart.options.scales.x.title.text =
+model.axisTitle;
+
+chart.update(
+animate &&
+!PFF.reducedMotion()
+? undefined
+: 'none'
+);
+
+if (
+!animate ||
+PFF.reducedMotion()
+) {
+interactionLocked = false;
+}
+}
+
+function createRepeatChart(
+animate = true
+) {
+const context =
+chartCanvas.getContext('2d');
+
+const model =
+getRepeatChartModel();
+
+interactionLocked =
+animate &&
+!PFF.reducedMotion();
+
+chart = new Chart(
+context,
+{
+type:
+'bar',
+
+data: {
+labels:
+model.rows.map(
+row =>
+row.label
+),
+
+datasets: [
+{
+datasetRole:
+'repeatBars',
+
+label:
+model.legendLabel,
+
+data:
+model.values,
+
+backgroundColor:
+model.rows.map(
+row =>
+rgba(
+row.colour,
+0.50
+)
+),
+
+hoverBackgroundColor:
+model.rows.map(
+row =>
+row.colour
+),
+
+borderColor:
+model.rows.map(
+row =>
+row.colour
+),
+
+hoverBorderColor:
+model.rows.map(
+row =>
+row.colour
+),
+
+borderWidth:
+0.7,
+
+hoverBorderWidth:
+0.7,
+
+borderRadius:
+2,
+
+borderSkipped:
+false,
+
+barPercentage:
+0.74,
+
+categoryPercentage:
+0.82,
+
+repeatSummaries:
+model.rows
+}
+]
+},
+
 options: {
-indexAxis: 'y',
-responsive: true,
-maintainAspectRatio: false,
-devicePixelRatio: Math.min(
-window.devicePixelRatio || 1,
+indexAxis:
+'y',
+
+responsive:
+true,
+
+maintainAspectRatio:
+false,
+
+resizeDelay:
+0,
+
+devicePixelRatio:
+Math.min(
+window.devicePixelRatio ||
+1,
 PFF.defaults.maxDevicePixelRatio
 ),
+
 animation: {
-duration: PFF.reducedMotion()
-? 0
-: PFF.defaults.viewTransitionMs,
-easing: 'easeOutCubic'
-},
-layout: {
-autoPadding: true,
-padding: {
-top: 4,
-right: 8,
-bottom: 2,
-left: 0
+duration:
+animate &&
+!PFF.reducedMotion()
+? CONFIG.transitionMs
+: 0,
+
+easing:
+'easeOutCubic',
+
+onComplete() {
+interactionLocked = false;
 }
 },
-interaction: {
-mode: 'nearest',
-axis: 'y',
-intersect: true
+
+transitions: {
+resize: {
+animation: {
+duration: 0
+}
 },
-onHover(event, elements) {
-chart.canvas.style.cursor = elements.length
+
+active: {
+animation: {
+duration:
+PFF.defaults.hoverAnimationMs,
+
+easing:
+'easeOutCubic'
+}
+}
+},
+
+layout: {
+autoPadding:
+false,
+
+padding: {
+top:
+8,
+
+right:
+REPEAT_CHART_GEOMETRY
+.rightPadding,
+
+bottom:
+0,
+
+left:
+0
+}
+},
+
+interaction: {
+mode:
+'nearest',
+
+axis:
+'y',
+
+intersect:
+true,
+
+includeInvisible:
+false
+},
+
+onHover(
+event,
+elements
+) {
+if (interactionLocked) {
+chart.canvas.style.cursor =
+'default';
+
+return;
+}
+
+chart.canvas.style.cursor =
+elements.length
 ? 'pointer'
 : 'default';
 
-if (elements.length && !repeatInfoNoteDismissed) {
-repeatInfoNoteDismissed = true;
-repeatInfoNote.classList.add('is-hidden');
+if (
+elements.length &&
+!repeatInfoNoteDismissed
+) {
+repeatInfoNoteDismissed =
+true;
+
+repeatInfoNote.classList.add(
+'is-hidden'
+);
 }
 },
+
 plugins: {
 legend: {
-display: false
+display:
+false
 },
-tooltip: PFFCharts.tooltipOptions({
+
+tooltip:
+PFFCharts.tooltipOptions({
+filter() {
+return !interactionLocked;
+},
+
 callbacks: {
 title(items) {
-return items?.[0]?.label || '';
+return (
+items?.[0]
+?.label ||
+''
+);
 },
+
 label(item) {
-const summary = repeatChartRows[item.dataIndex];
-if (!summary) return '';
+const summary =
+model.rows[
+item.dataIndex
+];
+
+if (!summary) {
+return '';
+}
 
 return [
-`Repeat ads: ${summary.repeatAds}`,
-`All ads: ${summary.allAds}`,
-`Repeat rate: ${summary.repeatRate.toFixed(1)}%`
+`Repeat ads: ${summary.repeatAds} of ${summary.totalRepeatAds}`,
+`Proportion: ${summary.proportion.toFixed(1)}%`
 ];
 }
 }
-}),
+})
 },
+
 scales: {
 x: {
-beginAtZero: true,
-min: 0,
-max: xMaximum,
+type:
+'linear',
+
+pffTickView:
+selectedRepeatMeasure ===
+'proportion'
+? 'repeatProportion'
+: 'repeatCount',
+
+afterFit:
+fixedRepeatXAxisHeight,
+
+beginAtZero:
+true,
+
+min:
+0,
+
+max:
+repeatAxisState.maximum,
+
+afterBuildTicks(scale) {
+scale.ticks =
+buildRepeatTicks();
+},
+
 title: {
-display: true,
-text: isRate ? 'Repeat rate (%)' : 'Repeat ads (count)',
-color: '#151515',
+display:
+true,
+
+text:
+model.axisTitle,
+
+color:
+'#151515',
+
 font: {
-family: 'Lato',
-size: 13,
-weight: '700'
+family:
+'Lato',
+
+size:
+13,
+
+weight:
+'700'
+},
+
+padding: {
+top:
+7,
+
+bottom:
+2
 }
 },
+
 ticks: {
-color: '#151515',
-precision: isRate ? undefined : 0,
+color:
+'#151515',
+
+autoSkip:
+false,
+
+padding:
+3,
+
+font: {
+family:
+'Lato',
+
+size:
+12,
+
+weight:
+'400'
+},
+
 callback(value) {
-return isRate
-? `${value}%`
-: String(value);
+const numericValue =
+Number(value);
+
+if (
+!isRepeatMajorTick(
+numericValue
+)
+) {
+return '';
+}
+
+return selectedRepeatMeasure ===
+'proportion'
+? String(
+Math.round(
+numericValue
+)
+)
+: String(
+numericValue
+);
 }
 },
+
 grid: {
-color: 'rgba(105, 113, 138, 0.08)',
-drawTicks: true
+color(context) {
+return isRepeatMajorTick(
+context.tick?.value
+)
+? 'rgba(105, 113, 138, 0.075)'
+: 'rgba(105, 113, 138, 0.035)';
 },
+
+lineWidth(context) {
+return isRepeatMajorTick(
+context.tick?.value
+)
+? 1
+: 0.7;
+},
+
+drawTicks:
+true,
+
+tickLength:
+6,
+
+tickColor:
+'rgba(21, 21, 21, 0)',
+
+tickWidth:
+0
+},
+
 border: {
-display: true,
-color: '#151515',
-width: 1.1
+display:
+false
 }
 },
+
 y: {
+afterFit:
+fixedRepeatYAxisWidth,
+
 ticks: {
-color: '#151515',
-autoSkip: false,
+color:
+'#151515',
+
+autoSkip:
+false,
+
+padding:
+5,
+
 font: {
-family: 'Lato',
-size: PFF.mobileLayout()
+family:
+'Lato',
+
+size:
+PFF.mobileLayout()
 ? 9
 : 10,
-weight: '700'
+
+weight:
+'400'
 }
 },
+
 grid: {
-display: false
+drawOnChartArea:
+false,
+
+drawTicks:
+false
 },
+
 border: {
-display: false
+display:
+false
 }
 }
 }
+},
+plugins: [
+axisScaleFadePlugin,
+repeatSpinePlugin,
+repeatAxisTickPlugin,
+repeatValueLabelPlugin
+]
 }
-});
+);
 
-updateLegendNote('');
-currentLegendSignature = 'repeat';
-chartLegend.textContent = '';
-requestAnimationFrame(() => legendScroller?.update());
+updateLegendNote(
+''
+);
+
+currentLegendSignature =
+'repeat';
+
+chartLegend.textContent =
+'';
+
+requestAnimationFrame(
+() =>
+legendScroller?.update()
+);
 }
 
-function recreateChartForSelectedView() {
+function recreateChartForSelectedView(
+animate = true
+) {
 if (chart) {
 chart.destroy();
 chart = null;
 }
 
 if (selectedTab === 'repeat') {
-createRepeatChart();
+createRepeatChart(
+animate
+);
 return;
 }
 
-createChart();
-updateLegend(activeView, currentGroup, false);
+createChart(
+animate
+);
+
+updateLegend(
+activeView,
+currentGroup,
+false
+);
 }
 
-function createChart() {
+function createChart(
+animateInitial = false
+) {
 const context = chartCanvas.getContext('2d');
 const datasets = [
 ...Array.from(
@@ -4941,7 +5852,10 @@ width: 1.1
 }
 }
 },
-plugins: [sourceMilestonePlugin]
+plugins: [
+axisScaleFadePlugin,
+sourceMilestonePlugin
+]
 });
 
 const initialTargets = buildTargetDescriptors(
@@ -4962,11 +5876,22 @@ xTransition.progress = 1;
 chart.options.scales.x.min = initialXBounds.minimum;
 chart.options.scales.x.max = initialXBounds.maximum;
 
+if (animateInitial) {
+chart.update('none');
+
+animateToTargets(
+initialTargets,
+activeView,
+true,
+false
+);
+} else {
 chart.data.datasets.forEach((dataset, index) => {
 applyDescriptor(dataset, initialTargets[index]);
 });
 
 chart.update('none');
+}
 }
 
 const fadeTextChange =
@@ -5019,13 +5944,12 @@ repeatMeasureMenuController?.closeMenu();
       }
 
       const previousTab = selectedTab;
+      const reduceMotion = PFF.reducedMotion();
 
       viewFadeLocked = true;
       setViewDependentControlsFaded(true);
 
-      const reduceMotion = PFF.reducedMotion();
-
-      window.setTimeout(() => {
+      function commitViewSwitch() {
         selectedTab = nextView;
         syncActiveView();
 
@@ -5058,7 +5982,10 @@ repeatMeasureMenuController?.closeMenu();
           previousTab === 'repeat'
         ) {
           interactionLocked = false;
-          recreateChartForSelectedView();
+
+          recreateChartForSelectedView(
+            !reduceMotion
+          );
         } else {
           updateLegend(
             activeView,
@@ -5072,19 +5999,42 @@ repeatMeasureMenuController?.closeMenu();
               currentGroup
             ),
             activeView,
-            true
+            true,
+            false
           );
         }
 
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            setViewDependentControlsFaded(false);
-            viewFadeLocked = false;
-          });
-        });
-      }, reduceMotion ? 0 : 180);
-    }
+        animateAxisOpacity(
+          0,
+          1,
+          reduceMotion
+            ? 0
+            : 300,
+          () => {
+            setViewDependentControlsFaded(
+              false
+            );
 
+            viewFadeLocked =
+              false;
+          }
+        );
+      }
+
+      if (reduceMotion) {
+        axisFadeOpacity = 0;
+
+        commitViewSwitch();
+        return;
+      }
+
+      animateAxisOpacity(
+        axisFadeOpacity,
+        0,
+        170,
+        commitViewSwitch
+      );
+    }
 
 
 tabsController =
@@ -5173,15 +6123,69 @@ true
 
 repeatMeasureOptions.forEach(option => {
 option.addEventListener('change', () => {
-if (!option.checked || option.disabled || selectedTab !== 'repeat') {
+if (
+!option.checked ||
+option.disabled ||
+selectedTab !== 'repeat' ||
+interactionLocked ||
+viewFadeLocked
+) {
 return;
 }
 
-selectedRepeatMeasure = option.value;
-repeatInfoNoteDismissed = true;
+selectedRepeatMeasure =
+option.value;
+
+repeatInfoNoteDismissed =
+true;
+
 updateCountControls();
 setRepeatMeasureMenuOpen(false);
-recreateChartForSelectedView();
+
+const reduceMotion =
+PFF.reducedMotion();
+
+viewFadeLocked =
+true;
+
+setViewDependentControlsFaded(
+true
+);
+
+function commitRepeatMeasure() {
+applyRepeatChartMeasure(
+!reduceMotion
+);
+
+animateAxisOpacity(
+0,
+1,
+reduceMotion
+? 0
+: 300,
+() => {
+setViewDependentControlsFaded(
+false
+);
+
+viewFadeLocked =
+false;
+}
+);
+}
+
+if (reduceMotion) {
+axisFadeOpacity = 0;
+commitRepeatMeasure();
+return;
+}
+
+animateAxisOpacity(
+axisFadeOpacity,
+0,
+170,
+commitRepeatMeasure
+);
 });
 });
 
