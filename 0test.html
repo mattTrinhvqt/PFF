@@ -9,7 +9,7 @@ href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap"
 rel="stylesheet"
 >
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <script src="./assets/pff_chart_core.js?v=1.2.1-20260912"></script>
+  <script src="./assets/pff_chart_core.js?v=1.2.0-20260910c"></script>
 
 <style>
     /* Job Ads-specific components only. Shared PFF chart styling lives in pff_chart_core.js. */
@@ -248,12 +248,12 @@ rel="stylesheet"
       display: none;
     }
 
-    .chart-options-row.is-repeat-view .count-only-control {
-      display: none;
+    .chart-heading-row.is-repeat-view .repeat-only-control {
+      display: block;
     }
 
-    .chart-options-row.is-repeat-view .repeat-only-control {
-      display: block;
+    .chart-options-row.is-repeat-view {
+      display: none;
     }
 
     .measure-control {
@@ -372,8 +372,8 @@ rel="stylesheet"
 
     .repeat-threshold-note {
       position: absolute;
+      top: 5px;
       right: 5px;
-      bottom: 5px;
       z-index: 4;
       max-width: min(210px, calc(100% - 76px));
       padding: 5px 7px;
@@ -653,7 +653,64 @@ value="employerType"
 </div>
 </div>
 
+<div id="repeatMeasureControl" class="measure-control repeat-only-control">
+<button
+id="repeatMeasureButton"
+class="measure-button"
+type="button"
+aria-haspopup="true"
+aria-expanded="false"
+aria-controls="repeatMeasureMenu"
+>
+<span>Measure:</span>
+<span
+id="repeatMeasureValue"
+class="measure-value"
+>Proportion</span>
+<span
+class="menu-arrow"
+aria-hidden="true"
+></span>
+</button>
 
+<div
+id="repeatMeasureMenu"
+class="measure-menu"
+role="group"
+aria-label="Select repeat-ad measure"
+>
+<p class="measure-menu-title">Show repeat ads as</p>
+
+<label class="measure-option">
+<input
+class="repeat-measure-option-input"
+type="radio"
+name="repeat-measure"
+value="count"
+>
+<span
+class="measure-option-box"
+aria-hidden="true"
+></span>
+<span>Count</span>
+</label>
+
+<label class="measure-option">
+<input
+class="repeat-measure-option-input"
+type="radio"
+name="repeat-measure"
+value="proportion"
+checked
+>
+<span
+class="measure-option-box"
+aria-hidden="true"
+></span>
+<span>Proportion</span>
+</label>
+</div>
+</div>
 </div>
 </div>
 
@@ -736,66 +793,6 @@ aria-hidden="true"
 </div>
 </div>
 
-<div id="repeatMeasureControl" class="measure-control repeat-only-control">
-<button
-id="repeatMeasureButton"
-class="measure-button"
-type="button"
-aria-haspopup="true"
-aria-expanded="false"
-aria-controls="repeatMeasureMenu"
->
-<span>Measure:</span>
-<span
-id="repeatMeasureValue"
-class="measure-value"
->Count</span>
-<span
-class="menu-arrow"
-aria-hidden="true"
-></span>
-</button>
-
-<div
-id="repeatMeasureMenu"
-class="measure-menu"
-role="group"
-aria-label="Select repeat-ad measure"
->
-<p class="measure-menu-title">Show repeat ads as</p>
-
-<label class="measure-option">
-<input
-class="repeat-measure-option-input"
-type="radio"
-name="repeat-measure"
-value="count"
-checked
->
-<span
-class="measure-option-box"
-aria-hidden="true"
-></span>
-<span>Count</span>
-</label>
-
-<label class="measure-option">
-<input
-class="repeat-measure-option-input"
-type="radio"
-name="repeat-measure"
-value="proportion"
->
-<span
-class="measure-option-box"
-aria-hidden="true"
-></span>
-<span>Proportion</span>
-</label>
-
-</div>
-</div>
-
 <div id="legendNav" class="legend-nav">
 <button
 id="legendScrollLeft"
@@ -824,6 +821,19 @@ aria-label="Scroll legend right"
 </div>
 
 <div class="chart-shell">
+<aside
+id="repeatInfoNote"
+class="repeat-info-note is-hidden"
+role="note"
+>
+<p class="repeat-info-note-title">How to read this</p>
+<ul class="repeat-info-note-list">
+<li><strong>Proportion:</strong> each employer’s share of repeat ads in the rolling year</li>
+<li><strong>Count:</strong> repeat ads in the rolling year</li>
+<li>Non-corporates are grouped by employer type</li>
+</ul>
+</aside>
+
 <aside
   id="repeatThresholdNote"
   class="repeat-threshold-note is-hidden"
@@ -931,19 +941,6 @@ const CACHE_APP_KEY = 'pff-job-ads-data';
 const CACHE_FETCH_TIMEOUT_MS = 10000;
 
 /*
- * Duration data is read separately from the tracker sheet that the
- * supplied Google Apps Script writes to. The stable B:V job-ad feed
- * above remains unchanged.
- */
-const TRACKER_META_SOURCE = {
-  sheetId: '1gdLoeP2VKwv6ctpLsmXKZiMWybCgc987ucFgTIU4jEc',
-  gid: 0,
-  range: 'B3:AC',
-  timeoutMs: 8000,
-  cacheKey: 'pff-job-days-available-v1'
-};
-
-/*
  * Testing switch only.
  * Leave false in normal use.
  * Set true temporarily to verify the central cached-data fallback.
@@ -972,11 +969,101 @@ Ophthal: '#ffb000',
 Other: '#bfc3c7'
 };
 
-const getEmployerAppearance = employerName =>
-PFF.getEmployerAppearance(
-  employerName,
-  { fallbackColour: '#777777' }
+const EMPLOYERS = [
+{ key: 'toss', label: 'TOSS', fullName: 'The Optical Super Store', colour: '#ff2401', aliases: ['TOSS', 'The Optical Superstore', 'The Optical Super Store'] },
+{ key: 'th', label: 'TH', fullName: "Teacher's Health", colour: '#007781', aliases: ['TH', 'THF', 'Teachers Health', 'Teachers Health Fund', "Teacher's Health", "Teacher's Health Fund", 'Teacher’s Health Fund'] },
+{ key: 'costco', label: 'Costco', fullName: 'Costco Optical', colour: '#e32a36', aliases: ['Costco', 'Costco Optical'] },
+{ key: 'ow', label: 'OW', fullName: 'Oscar Wylee', colour: '#f16c20', aliases: ['OW', 'Oscar Wylee'] },
+{ key: 'bn', label: 'BN', fullName: 'Bailey Nelson', colour: '#002e5a', aliases: ['BN', 'Bailey Nelson'] },
+{ key: '1001', label: '1001', fullName: '1001 Optometry', colour: '#000000', aliases: ['1001', '1001 Optometry'] },
+{ key: 'cw', label: 'CW', fullName: 'Chemist Warehouse Optometry', colour: '#ea0f0f', aliases: ['CW', 'Chemist Warehouse', 'Chemist Warehouse Optometry', 'Chemist/Optometrist Warehouse'] },
+{ key: 'indie', label: 'Indie', fullName: 'Independent', colour: '#5a3be7', aliases: ['Indie', 'Independent'] },
+{ key: 'hcf', label: 'HCF', fullName: 'HCF Eyecare', colour: '#da1c5c', aliases: ['HCF', 'HCF Eyecare'] },
+{ key: 'ophthal', label: 'Ophthal', fullName: 'Ophthalmologist', colour: '#ffb000', aliases: ['Ophthal', 'Ophthalmologist'] },
+{ key: 'toc', label: 'TOC', fullName: 'The Optical Company', colour: '#13543c', aliases: ['NIB', 'TOC', 'The Optical Company', 'The Optical Company (incl. NIB)', 'NIB (incl. the Optical Company)'] },
+{ key: 'ss', label: 'SS', fullName: 'Specsavers', colour: '#009552', aliases: ['SS', 'Specsavers'] },
+{ key: 'bupa', label: 'Bupa', fullName: 'Bupa Optical', colour: '#0075c2', aliases: ['Bupa', 'Bupa Optical'] },
+{ key: 'other', label: 'Other', fullName: 'Other', colour: '#bfc3c7', aliases: ['Other', 'Other (e.g., uni, hospital, govt, not-for-profit)'] },
+{ key: 'opsm', label: 'OPSM', fullName: 'OPSM', colour: '#6fb0d4', aliases: ['OPSM', 'OPSM (incl. L&P, EyeQ)', 'Luxottica', 'EssilorLuxottica'] },
+{ key: 'dresden', label: 'Dresden', fullName: 'Dresden Vision', colour: '#999999', aliases: ['Dresden', 'Dresden Vision'] },
+{ key: 'obnp', label: 'ObNP', fullName: 'Optical by National Pharmacies', colour: '#2cb4a6', aliases: ['ObNP', 'Optical by National Pharmacies', 'National Pharmacies'] },
+{ key: 'gm', label: 'G&M', fullName: 'George & Matilda Eyecare', colour: '#000000', aliases: ['G&M', 'George & Matilda', 'George & Matilda Eyecare'] },
+{ key: 'eyeconcepts', label: 'Eye Concepts', fullName: 'Eye Concepts', colour: '#434343', aliases: ['Eye Concepts', 'EyeConcepts'] },
+{ key: 'icontact', label: 'iContact', fullName: 'iContact', colour: '#f78a22', aliases: ['iContact', 'IContact', 'i Contact'] }
+];
+
+function normaliseEmployerName(value) {
+return String(value || '')
+.toLowerCase()
+.normalize('NFKD')
+.replace(/[’‘]/g, "'")
+.replace(/&/g, ' and ')
+.replace(/[^a-z0-9]+/g, ' ')
+.trim()
+.replace(/\s+/g, ' ');
+}
+
+const EMPLOYER_BY_KEY = new Map(
+EMPLOYERS.map(employer => [employer.key, employer])
 );
+
+const EMPLOYER_ALIAS_MAP = new Map();
+
+EMPLOYERS.forEach(employer => {
+[
+employer.label,
+employer.fullName,
+...employer.aliases
+].forEach(alias => {
+EMPLOYER_ALIAS_MAP.set(
+normaliseEmployerName(alias),
+employer
+);
+});
+});
+
+const CORPORATE_EMPLOYER_RULES = [
+{ key: 'ss', terms: ['specsavers'] },
+{ key: 'opsm', terms: ['opsm', 'luxottica', 'essilor luxottica'] },
+{ key: 'ow', terms: ['oscar wylee'] },
+{ key: 'bn', terms: ['bailey nelson'] },
+{ key: 'bupa', terms: ['bupa'] },
+{ key: 'costco', terms: ['costco'] },
+{ key: 'cw', terms: ['chemist warehouse'] },
+{ key: 'hcf', terms: ['hcf'] },
+{ key: '1001', terms: ['1001'] },
+{ key: 'gm', terms: ['george and matilda'] },
+{ key: 'toc', terms: ['the optical company', 'nib optical'] },
+{ key: 'toss', terms: ['optical super store', 'optical superstore', 'toss'] },
+{ key: 'dresden', terms: ['dresden'] },
+{ key: 'obnp', terms: ['national pharmacies'] },
+{ key: 'th', terms: ['teachers health', "teacher's health"] },
+{ key: 'eyeconcepts', terms: ['eye concepts', 'eyeconcepts'] },
+{ key: 'icontact', terms: ['icontact', 'i contact'] }
+];
+
+function getEmployerAppearance(employerName) {
+const original = String(employerName || '').trim();
+const normalised = normaliseEmployerName(original);
+
+const exact = EMPLOYER_ALIAS_MAP.get(normalised);
+if (exact) return exact;
+
+const rule = CORPORATE_EMPLOYER_RULES.find(item =>
+item.terms.some(term => normalised.includes(normaliseEmployerName(term)))
+);
+
+if (rule) {
+return EMPLOYER_BY_KEY.get(rule.key);
+}
+
+return {
+key: normalised || `unknown-${original}`,
+label: original || '—',
+fullName: original || 'Unknown employer',
+colour: '#777777'
+};
+}
 
 const GROUP_ORDER = {
 state: ['NSW', 'QLD', 'VIC', 'ACT', 'SA', 'NT', 'WA', 'TAS'],
@@ -1025,6 +1112,7 @@ const legendScrollLeft = document.getElementById('legendScrollLeft');
 const legendScrollRight = document.getElementById('legendScrollRight');
 const legendNote = document.getElementById('legendNote');
 const smallNumbersNote = document.getElementById('smallNumbersNote');
+const repeatInfoNote = document.getElementById('repeatInfoNote');
 const repeatThresholdNote = document.getElementById('repeatThresholdNote');
 const chartShell = document.querySelector('.chart-shell');
 const chartCanvas = document.getElementById('jobChart');
@@ -1033,8 +1121,6 @@ const dataSourceText = document.getElementById('dataSourceText');
 
 let chart = null;
 let allJobRows = [];
-let trackerDurationRows = [];
-let trackerDurationLoadFinished = false;
 let rows = [];
 let salaryRows = [];
 let axisBounds = null;
@@ -1042,7 +1128,7 @@ const countAxisCache = new Map();
 let workforce = createEmptyWorkforce();
 let selectedTab = 'count';
 let selectedMeasure = 'per100';
-let selectedRepeatMeasure = 'count';
+let selectedRepeatMeasure = 'proportion';
 const fteAdjusted = true;
 let activeView = 'per100';
 let currentGroup = 'state';
@@ -1051,6 +1137,7 @@ let payGroup = 'none';
 let interactionLocked = false;
 let viewFadeLocked = false;
 let smallNumbersNoteDismissed = false;
+let repeatInfoNoteDismissed = false;
 let activeAnimationFrame = null;
 let currentLegendSignature = '';
 let legendAnimationToken = 0;
@@ -1089,7 +1176,7 @@ progress: 1
 };
 
 let axisFadeOpacity = 1;
-let repeatAxisDisplayMeasure = 'count';
+let repeatAxisDisplayMeasure = 'proportion';
 
 const axisFadeController =
 PFFCharts.createAnimationController();
@@ -1198,6 +1285,15 @@ currentGroup === 'state' &&
 smallNumbersNote.classList.toggle(
 'is-hidden',
 !showSmallNumbersNote
+);
+
+const showRepeatInfoNote =
+repeatTabActive &&
+!repeatInfoNoteDismissed;
+
+repeatInfoNote.classList.toggle(
+'is-hidden',
+!showRepeatInfoNote
 );
 
 repeatThresholdNote.classList.toggle(
@@ -1322,22 +1418,6 @@ return values.reduce((total, number) => total + number, 0) /
 values.length;
 }
 
-function parseDaysAvailableValue(value) {
-if (typeof value === 'number' && Number.isFinite(value)) {
-return value >= 0 ? value : NaN;
-}
-
-const text = cleanText(value);
-if (!text || normaliseText(text) === 'xxx') {
-return NaN;
-}
-
-const number = Number(text.replace(/,/g, ''));
-return Number.isFinite(number) && number >= 0
-? number
-: NaN;
-}
-
 function parseEstimatedDaysPerWeek(value) {
 if (typeof value === 'number' && Number.isFinite(value)) {
 return clamp(value, 0, 5);
@@ -1433,59 +1513,6 @@ return EMPLOYER_TYPE_COLOURS[row?.employerType] ||
 EMPLOYER_TYPE_COLOURS.Other;
 }
 
-function medianFinite(values) {
-const sorted = (Array.isArray(values) ? values : [])
-.filter(Number.isFinite)
-.slice()
-.sort((first, second) => first - second);
-
-if (!sorted.length) {
-return NaN;
-}
-
-const middle = Math.floor(sorted.length / 2);
-return sorted.length % 2
-? sorted[middle]
-: (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-function getRepeatAxisTitle(measure = selectedRepeatMeasure) {
-if (measure === 'proportion') return '% of repeat ads';
-return 'Repeat ads/year';
-}
-
-function getRepeatTickView(measure = selectedRepeatMeasure) {
-if (measure === 'proportion') return 'repeatProportion';
-return 'repeatCount';
-}
-
-function buildTrackerDurationMap(windowStart, windowEnd) {
-const grouped = new Map();
-
-trackerDurationRows.forEach(row => {
-if (
-!row?.isRepeat ||
-!Number.isFinite(row.x) ||
-row.x <= windowStart ||
-row.x > windowEnd ||
-!Number.isFinite(row.daysAvailable)
-) {
-return;
-}
-
-const label = getRepeatEmployerLabel(row);
-if (!label) return;
-
-if (!grouped.has(label)) {
-grouped.set(label, []);
-}
-
-grouped.get(label).push(row.daysAvailable);
-});
-
-return grouped;
-}
-
 function buildRepeatEmployerSummary() {
 const timestamps = allJobRows
 .map(row => Number(row?.x))
@@ -1526,11 +1553,6 @@ grouped.get(label).repeatAds += 1;
 }
 });
 
-const durationMap = buildTrackerDurationMap(
-windowStart,
-windowEnd
-);
-
 const summaries = [...grouped.values()]
 .filter(entry => entry.repeatAds > 0);
 
@@ -1547,12 +1569,6 @@ totalRepeatAds > 0
 ? entry.repeatAds / totalRepeatAds * 100
 : 0,
 totalRepeatAds,
-medianDays: medianFinite(
-durationMap.get(entry.label) || []
-),
-daysAvailableCount: (
-durationMap.get(entry.label) || []
-).length,
 windowStart,
 windowEnd
 }))
@@ -1560,12 +1576,9 @@ windowEnd
 }
 
 function getRepeatMetricValue(summary) {
-if (selectedRepeatMeasure === 'proportion') {
-return summary.proportion;
-}
-
-
-return summary.repeatAds;
+return selectedRepeatMeasure === 'proportion'
+? summary.proportion
+: summary.repeatAds;
 }
 
 function getRepeatChartRows() {
@@ -1942,170 +1955,6 @@ return {
 rows: cachedRows,
 workforce: cachedWorkforce
 };
-}
-
-function loadTrackerSheetByGid() {
-const source = TRACKER_META_SOURCE;
-
-return new Promise((resolve, reject) => {
-const callbackName =
-`__pff_tracker_gviz_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
-const script = document.createElement('script');
-let completed = false;
-
-const cleanup = () => {
-script.remove();
-try {
-delete window[callbackName];
-} catch (_) {
-window[callbackName] = undefined;
-}
-};
-
-const finish = callback => value => {
-if (completed) return;
-completed = true;
-window.clearTimeout(timer);
-cleanup();
-callback(value);
-};
-
-const timer = window.setTimeout(
-() => finish(reject)(new Error('Timed out loading Days Available data')),
-source.timeoutMs
-);
-
-window[callbackName] = response => {
-if (
-!response ||
-response.status === 'error'
-) {
-const message =
-response?.errors?.[0]?.detailed_message ||
-response?.errors?.[0]?.message ||
-'Could not load Days Available data';
-
-finish(reject)(new Error(message));
-return;
-}
-
-finish(resolve)(response.table?.rows || []);
-};
-
-script.onerror = () =>
-finish(reject)(new Error('Could not connect to Days Available data'));
-
-const params = new URLSearchParams({
-gid: String(source.gid),
-range: source.range,
-headers: '0',
-tq: 'select *',
-tqx: `responseHandler:${callbackName}`,
-_: String(Date.now())
-});
-
-script.src =
-`https://docs.google.com/spreadsheets/d/${encodeURIComponent(source.sheetId)}/gviz/tq?${params.toString()}`;
-script.async = true;
-document.body.appendChild(script);
-});
-}
-
-function normaliseTrackerDurationRows(sourceRows) {
-const result = [];
-
-(Array.isArray(sourceRows) ? sourceRows : []).forEach(sourceRow => {
-const cells = sourceRow?.c || [];
-
-/* B:AC indexes: B=0, D=2, F=4, G=5, H=6, I=7, L=10, AC=27 */
-const repeatFlag = normaliseText(
-getCellText(cells[0])
-);
-
-const isRepeat = [
-'yes',
-'repeat',
-'true',
-'1'
-].includes(repeatFlag);
-
-if (!isRepeat) return;
-
-const date = parseDateCell(cells[2]);
-if (!date) return;
-
-const daysCell = cells[27];
-const daysAvailable = parseDaysAvailableValue(
-daysCell?.v ?? daysCell?.f ?? ''
-);
-
-if (!Number.isFinite(daysAvailable)) return;
-
-const employer = getCellText(cells[4]);
-const employerTypeText = getCellText(cells[5]);
-
-result.push({
-x: date.getTime(),
-isRepeat: true,
-employer,
-employerType: getEmployerTypeGroup(employerTypeText),
-daysAvailable
-});
-});
-
-return result;
-}
-
-function loadTrackerDurationCache() {
-const cached = loadJsonCache(
-TRACKER_META_SOURCE.cacheKey,
-[]
-);
-
-return Array.isArray(cached)
-? cached.filter(row =>
-Number.isFinite(row?.x) &&
-Number.isFinite(row?.daysAvailable)
-)
-: [];
-}
-
-function startTrackerDurationLoad() {
-trackerDurationRows = loadTrackerDurationCache();
-
-loadTrackerSheetByGid()
-.then(sourceRows => {
-const nextRows =
-normaliseTrackerDurationRows(sourceRows);
-
-if (nextRows.length) {
-trackerDurationRows = nextRows;
-saveJsonCache(
-TRACKER_META_SOURCE.cacheKey,
-trackerDurationRows
-);
-}
-
-trackerDurationLoadFinished = true;
-
-if (
-selectedTab === 'repeat' &&
-selectedRepeatMeasure === 'medianDays' &&
-chart &&
-!interactionLocked &&
-!viewFadeLocked
-) {
-applyRepeatChartMeasure(false);
-}
-})
-.catch(error => {
-trackerDurationLoadFinished = true;
-console.warn(
-'Days Available data could not be refreshed',
-error
-);
-});
 }
 
 function loadJobSheetRows() {
@@ -4938,7 +4787,6 @@ if (repeatAxisDisplayMeasure === 'proportion') {
 return `${Number(summary.proportion).toFixed(1)}%`;
 }
 
-
 return String(
 Math.round(
 Number(summary.repeatAds) || 0
@@ -4963,7 +4811,6 @@ return;
 }
 
 context.save();
-context.globalAlpha *= clamp(axisFadeOpacity, 0, 1);
 context.globalAlpha =
 clamp(
 axisFadeOpacity,
@@ -5036,7 +4883,6 @@ const context =
 activeChart.ctx;
 
 context.save();
-context.globalAlpha *= clamp(axisFadeOpacity, 0, 1);
 context.strokeStyle = '#151515';
 context.lineWidth = 1;
 context.lineCap = 'butt';
@@ -5133,28 +4979,16 @@ if (!summary) {
 return;
 }
 
-const rawValue =
-dataset.data[index];
-
 const currentValue =
-rawValue === null || rawValue === undefined
-? NaN
-: Number(rawValue);
+Number(dataset.data[index]);
 
-let label;
-
-if (repeatAxisDisplayMeasure === 'proportion') {
-label = Number.isFinite(currentValue)
-? `${currentValue.toFixed(1)}%`
-: '—';
-} else {
-label = Number.isFinite(currentValue)
-? formatNumber(
+const label =
+repeatAxisDisplayMeasure === 'proportion'
+? `${Number.isFinite(currentValue) ? currentValue.toFixed(1) : '—'}%`
+: formatNumber(
 currentValue,
 Number.isInteger(currentValue) ? 0 : 1
-)
-: '—';
-}
+);
 
 const textWidth =
 context.measureText(
@@ -5226,9 +5060,10 @@ selectedRepeatMeasure
 ),
 
 axisTitle:
-getRepeatAxisTitle(
-selectedRepeatMeasure
-),
+selectedRepeatMeasure ===
+'proportion'
+? '% of repeat ads'
+: 'Repeat ads/year',
 
 legendLabel:
 REPEAT_MEASURE_LABELS[
@@ -5324,7 +5159,9 @@ chart.options.scales.x.max =
 repeatAxisState.maximum;
 
 chart.options.scales.x.pffTickView =
-getRepeatTickView(targetMeasure);
+targetMeasure === 'proportion'
+? 'repeatProportion'
+: 'repeatCount';
 
 chart.options.scales.x.title.text =
 model.axisTitle;
@@ -5387,7 +5224,11 @@ repeatAxisState.maximum;
 
 chart.options.scales.x.title.text =
 progress < 0.5
-? getRepeatAxisTitle(startMeasure)
+? (
+startMeasure === 'proportion'
+? '% of repeat ads'
+: 'Repeat ads/year'
+)
 : model.axisTitle;
 
 chart.update('none');
@@ -5592,6 +5433,17 @@ elements.length
 ? 'pointer'
 : 'default';
 
+if (
+elements.length &&
+!repeatInfoNoteDismissed
+) {
+repeatInfoNoteDismissed =
+true;
+
+repeatInfoNote.classList.add(
+'is-hidden'
+);
+}
 },
 
 plugins: {
@@ -5625,17 +5477,12 @@ if (!summary) {
 return '';
 }
 
-const lines = [
+return [
 `Repeat ads/year: ${summary.repeatAds} of ${summary.totalRepeatAds}`,
-`Proportion: ${summary.proportion.toFixed(1)}%`
+`Proportion: ${summary.proportion.toFixed(1)}%`,
+`Rolling year: ${formatTooltipDate(summary.windowStart)}–${formatTooltipDate(summary.windowEnd)}`,
+'Repeat ad: same employer, suburb and employment type re-advertised within 180 days; ±14-day duplicates excluded'
 ];
-
-
-lines.push(
-`Rolling year: ${formatTooltipDate(summary.windowStart)}–${formatTooltipDate(summary.windowEnd)}`
-);
-
-return lines;
 }
 }
 })
@@ -5647,9 +5494,10 @@ type:
 'linear',
 
 pffTickView:
-getRepeatTickView(
-selectedRepeatMeasure
-),
+selectedRepeatMeasure ===
+'proportion'
+? 'repeatProportion'
+: 'repeatCount',
 
 afterFit:
 fixedRepeatXAxisHeight,
@@ -5825,7 +5673,6 @@ false
 }
 },
 plugins: [
-axisScaleFadePlugin,
 repeatSpinePlugin,
 repeatAxisTickPlugin,
 repeatValueLabelPlugin
@@ -5864,6 +5711,24 @@ bottom: Number(area.bottom)
 return Object.values(copy).every(Number.isFinite)
 ? copy
 : null;
+}
+
+function resetChartTypeTransitionVisuals() {
+chartCanvas
+?.getAnimations?.()
+.forEach(animation => {
+try {
+animation.cancel();
+} catch (_) {
+}
+});
+
+chartCanvas.style.opacity = '';
+chartCanvas.style.transform = '';
+
+chartShell
+?.querySelectorAll('.chart-transition-snapshot')
+.forEach(snapshot => snapshot.remove());
 }
 
 function captureChartSnapshot() {
@@ -5914,7 +5779,9 @@ onComplete
 ) {
 if (
 !snapshot ||
-PFF.reducedMotion()
+PFF.reducedMotion() ||
+!snapshot.animate ||
+!chartCanvas.animate
 ) {
 snapshot?.remove();
 chartCanvas.style.opacity = '';
@@ -5925,50 +5792,61 @@ return;
 
 const duration = Math.min(
 PFF.defaults.viewTransitionMs,
-650
+600
 );
 
+chartCanvas.style.opacity = '0';
+
+requestAnimationFrame(() => {
 const safeSlideDelta =
 Number.isFinite(axisSlideDelta)
 ? axisSlideDelta
 : 0;
 
-chartCanvas.style.opacity = '0';
-chartCanvas.style.transform =
-`translateX(${safeSlideDelta}px)`;
-
-const startedAt = performance.now();
-
-function frame(now) {
-const rawProgress = Math.min(
-(now - startedAt) / duration,
-1
+const incoming =
+chartCanvas.animate(
+[
+{
+opacity: 0,
+transform: `translateX(${safeSlideDelta}px)`
+},
+{
+opacity: 1,
+transform: 'translateX(0px)'
+}
+],
+{
+duration,
+easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+fill: 'forwards'
+}
 );
 
-const progress =
-easeInOutCubic(rawProgress);
-
-chartCanvas.style.opacity =
-String(progress);
-
-chartCanvas.style.transform =
-`translateX(${safeSlideDelta * (1 - progress)}px)`;
-
-snapshot.style.opacity =
-String(1 - progress);
-
-if (rawProgress < 1) {
-requestAnimationFrame(frame);
-return;
+const outgoing =
+snapshot.animate(
+[
+{ opacity: 1 },
+{ opacity: 0 }
+],
+{
+duration,
+easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+fill: 'forwards'
 }
+);
 
+Promise.allSettled([
+incoming.finished,
+outgoing.finished
+]).then(() => {
+incoming.cancel();
+outgoing.cancel();
 chartCanvas.style.opacity = '';
 chartCanvas.style.transform = '';
 snapshot.remove();
 onComplete?.();
-}
-
-requestAnimationFrame(frame);
+});
+});
 }
 
 function recreateChartForSelectedView(
@@ -6285,7 +6163,6 @@ width: 1.1
 }
 },
 plugins: [
-axisScaleFadePlugin,
 sourceMilestonePlugin
 ]
 });
@@ -6356,7 +6233,7 @@ repeatMeasureMenuController?.closeMenu();
     function setViewDependentControlsFaded(shouldFade) {
       document
         .querySelectorAll(
-          '.measure-button, .small-numbers-note, .repeat-threshold-note'
+          '.measure-button, .small-numbers-note, .repeat-info-note, .repeat-threshold-note'
         )
         .forEach(element => {
           element.classList.toggle(
@@ -6367,151 +6244,126 @@ repeatMeasureMenuController?.closeMenu();
     }
 
     function switchView(nextView) {
-      if (
-        nextView === selectedTab ||
-        interactionLocked ||
-        viewFadeLocked
-      ) {
-        return;
-      }
+if (
+nextView === selectedTab ||
+interactionLocked ||
+viewFadeLocked
+) {
+return;
+}
 
-      const previousTab = selectedTab;
-      const reduceMotion = PFF.reducedMotion();
-      const crossesRepeatBoundary =
-        previousTab === 'repeat' ||
-        nextView === 'repeat';
+resetChartTypeTransitionVisuals();
 
-      viewFadeLocked = true;
-      setViewDependentControlsFaded(true);
+const previousTab = selectedTab;
+const reduceMotion = PFF.reducedMotion();
+const crossesRepeatBoundary =
+previousTab === 'repeat' ||
+nextView === 'repeat';
 
-      function commitViewState() {
-        selectedTab = nextView;
-        syncActiveView();
+const previousChartArea =
+crossesRepeatBoundary
+? copyChartArea(chart?.chartArea)
+: null;
 
-        tabsController?.set(
-          selectedTab,
-          {
-            animate: true,
-            notify: false
-          }
-        );
+const snapshot =
+crossesRepeatBoundary &&
+!reduceMotion
+? captureChartSnapshot()
+: null;
 
-        fadeTextChange(
-          chartHeading,
-          getHeadingText(activeView)
-        );
+viewFadeLocked = true;
+setViewDependentControlsFaded(true);
 
-        fadeTextChange(
-          groupMenuTitle,
-          getGroupMenuText()
-        );
+selectedTab = nextView;
+syncActiveView();
 
-        updateCountControls();
-        setGroupMenuOpen(false);
-        setMeasureMenuOpen(false);
-        setRepeatMeasureMenuOpen(false);
-      }
+tabsController?.set(
+selectedTab,
+{
+animate: true,
+notify: false
+}
+);
 
-      function finishViewSwitch() {
-        axisFadeOpacity = 1;
-        chart?.draw();
-        setViewDependentControlsFaded(false);
-        viewFadeLocked = false;
-        interactionLocked = false;
-      }
+fadeTextChange(
+chartHeading,
+getHeadingText(activeView)
+);
 
-      if (crossesRepeatBoundary) {
-        interactionLocked = true;
+fadeTextChange(
+groupMenuTitle,
+getGroupMenuText()
+);
 
-        if (reduceMotion) {
-          commitViewState();
-          recreateChartForSelectedView(false);
-          finishViewSwitch();
-          return;
-        }
+updateCountControls();
+setGroupMenuOpen(false);
+setMeasureMenuOpen(false);
+setRepeatMeasureMenuOpen(false);
 
-        /*
-         * Match the supplied stable view-transition pattern: first
-         * fade the old axes, then commit the new chart and bring its
-         * axes/data in together. A short-lived snapshot lets the
-         * time-series chart and horizontal bars crossfade smoothly
-         * without forcing Chart.js to morph incompatible geometry.
-         */
-        animateAxisOpacity(
-          axisFadeOpacity,
-          0,
-          170,
-          () => {
-            const previousChartArea =
-              copyChartArea(chart?.chartArea);
+function finishViewSwitch() {
+setViewDependentControlsFaded(false);
+viewFadeLocked = false;
+interactionLocked = false;
+}
 
-            const snapshot =
-              captureChartSnapshot();
+if (crossesRepeatBoundary) {
+axisFadeOpacity = 1;
 
-            commitViewState();
+/*
+ * Cross-tab changes use the canvas/axis transition only. Building the
+ * incoming chart fully before the crossfade avoids overlapping Chart.js
+ * geometry animation with the canvas slide, which can leave bars or axes
+ * in a partial state after repeated tab switching.
+ */
+recreateChartForSelectedView(
+false
+);
 
-            axisFadeOpacity = 0;
-            recreateChartForSelectedView(true);
-            chart?.draw();
+const nextChartArea =
+copyChartArea(chart?.chartArea);
 
-            const nextChartArea =
-              copyChartArea(chart?.chartArea);
+const axisSlideDelta =
+previousChartArea &&
+nextChartArea
+? previousChartArea.left - nextChartArea.left
+: 0;
 
-            const axisSlideDelta =
-              previousChartArea &&
-              nextChartArea
-                ? previousChartArea.left -
-                  nextChartArea.left
-                : 0;
+if (reduceMotion) {
+finishViewSwitch();
+return;
+}
 
-            let completedAnimations = 0;
+animateChartTypeCrossfade(
+snapshot,
+axisSlideDelta,
+finishViewSwitch
+);
+return;
+}
 
-            function completePart() {
-              completedAnimations += 1;
+updateLegend(
+activeView,
+currentGroup,
+true
+);
 
-              if (completedAnimations >= 2) {
-                finishViewSwitch();
-              }
-            }
+animateToTargets(
+buildTargetDescriptors(
+activeView,
+currentGroup
+),
+activeView,
+true,
+false
+);
 
-            animateChartTypeCrossfade(
-              snapshot,
-              axisSlideDelta,
-              completePart
-            );
-
-            animateAxisOpacity(
-              0,
-              1,
-              300,
-              completePart
-            );
-          }
-        );
-
-        return;
-      }
-
-      commitViewState();
-
-      updateLegend(
-        activeView,
-        currentGroup,
-        true
-      );
-
-      animateToTargets(
-        buildTargetDescriptors(
-          activeView,
-          currentGroup
-        ),
-        activeView,
-        true,
-        false
-      );
-
-      finishViewSwitch();
-    }
+/*
+ * Job ads and Advertised pay share the same date axis.
+ * Keep it visible; the existing value-axis interpolation
+ * animates only the labels and scale that actually change.
+ */
+finishViewSwitch();
+}
 
 
 tabsController =
@@ -6613,9 +6465,20 @@ return;
 selectedRepeatMeasure =
 option.value;
 
+repeatInfoNoteDismissed =
+true;
+
 updateCountControls();
 setRepeatMeasureMenuOpen(false);
-applyRepeatChartMeasure(true);
+
+/*
+ * Employer/category labels are unchanged between Count and
+ * Proportion, so keep them visible and animate only the bars
+ * and numeric value axis.
+ */
+applyRepeatChartMeasure(
+true
+);
 });
 });
 
@@ -6636,6 +6499,14 @@ smallNumbersNoteDismissed = true;
 smallNumbersNote.classList.add('is-hidden');
 }
 
+if (
+!event.target.closest('.repeat-info-note') &&
+selectedTab === 'repeat' &&
+!repeatInfoNote.classList.contains('is-hidden')
+) {
+repeatInfoNoteDismissed = true;
+repeatInfoNote.classList.add('is-hidden');
+}
 });
 
 legendScroller =
@@ -6791,7 +6662,6 @@ syncActiveView();
 updateCountControls();
 updateLegend(activeView, currentGroup, false);
 tabsController?.update();
-
 
 responsiveController =
 PFFCharts.createResponsiveController({
