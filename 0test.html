@@ -828,9 +828,9 @@ role="note"
 >
 <p class="repeat-info-note-title">How to read this</p>
 <ul class="repeat-info-note-list">
-<li><strong>Proportion:</strong> each employer’s share of repeat ads in the rolling year</li>
-<li><strong>Count:</strong> repeat ads in the rolling year</li>
-<li>Non-corporates are grouped by employer type</li>
+<li><strong>Count:</strong> number of repeat ads from each employer in the latest 12 months</li>
+<li><strong>Proportion:</strong> each employer’s share of all repeat ads in the latest 12 months</li>
+<li><strong>Repeat ad:</strong> same employer, suburb and employment type re-advertised within 180 days; ±14-day duplicates excluded</li>
 </ul>
 </aside>
 
@@ -838,7 +838,7 @@ role="note"
   id="repeatThresholdNote"
   class="repeat-threshold-note is-hidden"
   role="note"
->Employers &lt;1% of repeat ads omitted</aside>
+>Employers with &lt;1% of repeat ads omitted</aside>
 
 <aside
 id="smallNumbersNote"
@@ -921,6 +921,7 @@ minimumGroupSize: 20,
 maxGroups: 8,
 trailingWeeks: 13,
 transitionMs: PFF.defaults.viewTransitionMs,
+spineTransitionMs: 220,
 columns: {
 repeatFlag: 0,
 date: 2,
@@ -1177,6 +1178,15 @@ progress: 1
 
 let axisFadeOpacity = 1;
 let repeatAxisDisplayMeasure = 'proportion';
+let spineTransitionFrame = null;
+
+const spineTransitionState = {
+active: false,
+left: NaN,
+right: NaN,
+top: NaN,
+bottom: NaN
+};
 
 const axisFadeController =
 PFFCharts.createAnimationController();
@@ -1238,7 +1248,7 @@ return activeView;
 
 function getHeadingText(view) {
 if (view === 'pay') return 'Advertised pay over time';
-if (view === 'repeat') return 'Repeat ads (rolling year)';
+if (view === 'repeat') return 'Repeat ads/year';
 if (view === 'proportion') {
 return fteAdjusted
 ? 'FTE job ad proportions'
@@ -4864,14 +4874,10 @@ context.stroke();
 context.restore();
 }
 
-const repeatSpinePlugin = {
-id: 'repeatSpinePlugin',
+const constantSpinePlugin = {
+id: 'constantSpinePlugin',
 
 afterDatasetsDraw(activeChart) {
-if (selectedTab !== 'repeat') {
-return;
-}
-
 const area =
 activeChart.chartArea;
 
@@ -4879,33 +4885,58 @@ if (!area) {
 return;
 }
 
+const left =
+spineTransitionState.active &&
+Number.isFinite(spineTransitionState.left)
+? spineTransitionState.left
+: area.left;
+
+const right =
+spineTransitionState.active &&
+Number.isFinite(spineTransitionState.right)
+? spineTransitionState.right
+: area.right;
+
+const top =
+spineTransitionState.active &&
+Number.isFinite(spineTransitionState.top)
+? spineTransitionState.top
+: area.top;
+
+const bottom =
+spineTransitionState.active &&
+Number.isFinite(spineTransitionState.bottom)
+? spineTransitionState.bottom
+: area.bottom;
+
 const context =
 activeChart.ctx;
 
 context.save();
+context.globalAlpha = 1;
 context.strokeStyle = '#151515';
 context.lineWidth = 1;
 context.lineCap = 'butt';
 
 context.beginPath();
 context.moveTo(
-area.left,
-area.bottom
+left,
+bottom
 );
 context.lineTo(
-area.right,
-area.bottom
+right,
+bottom
 );
 context.stroke();
 
 context.beginPath();
 context.moveTo(
-area.left,
-area.top
+left,
+top
 );
 context.lineTo(
-area.left,
-area.bottom
+left,
+bottom
 );
 context.stroke();
 
@@ -4985,7 +5016,7 @@ Number(dataset.data[index]);
 const label =
 repeatAxisDisplayMeasure === 'proportion'
 ? `${Number.isFinite(currentValue) ? currentValue.toFixed(1) : '—'}%`
-: formatNumber(
+: PFF.formatNumber(
 currentValue,
 Number.isInteger(currentValue) ? 0 : 1
 );
@@ -5586,7 +5617,7 @@ Math.round(
 numericValue
 )
 )
-: formatNumber(
+: PFF.formatNumber(
 numericValue,
 Number.isInteger(numericValue) ? 0 : 1
 );
@@ -5673,7 +5704,8 @@ false
 }
 },
 plugins: [
-repeatSpinePlugin,
+axisScaleFadePlugin,
+constantSpinePlugin,
 repeatAxisTickPlugin,
 repeatValueLabelPlugin
 ]
@@ -5711,6 +5743,132 @@ bottom: Number(area.bottom)
 return Object.values(copy).every(Number.isFinite)
 ? copy
 : null;
+}
+
+
+function setSpineGeometry(area) {
+const geometry =
+copyChartArea(area);
+
+if (!geometry) {
+return;
+}
+
+spineTransitionState.left =
+geometry.left;
+
+spineTransitionState.right =
+geometry.right;
+
+spineTransitionState.top =
+geometry.top;
+
+spineTransitionState.bottom =
+geometry.bottom;
+}
+
+function animateSpineGeometry(
+fromArea,
+toArea,
+duration,
+onComplete
+) {
+if (spineTransitionFrame !== null) {
+cancelAnimationFrame(
+spineTransitionFrame
+);
+
+spineTransitionFrame = null;
+}
+
+const from =
+copyChartArea(fromArea);
+
+const to =
+copyChartArea(toArea);
+
+if (!from || !to) {
+spineTransitionState.active = false;
+
+setSpineGeometry(
+to || from
+);
+
+chart?.draw();
+onComplete?.();
+return;
+}
+
+const reduceMotion =
+PFF.reducedMotion();
+
+spineTransitionState.active = true;
+setSpineGeometry(from);
+
+if (
+reduceMotion ||
+duration <= 0
+) {
+setSpineGeometry(to);
+spineTransitionState.active = false;
+chart?.draw();
+onComplete?.();
+return;
+}
+
+const startedAt =
+performance.now();
+
+function frame(now) {
+const progress =
+Math.min(
+(now - startedAt) / duration,
+1
+);
+
+const eased =
+easeInOutCubic(progress);
+
+spineTransitionState.left =
+from.left +
+(to.left - from.left) *
+eased;
+
+spineTransitionState.right =
+from.right +
+(to.right - from.right) *
+eased;
+
+spineTransitionState.top =
+from.top +
+(to.top - from.top) *
+eased;
+
+spineTransitionState.bottom =
+from.bottom +
+(to.bottom - from.bottom) *
+eased;
+
+chart?.draw();
+
+if (progress < 1) {
+spineTransitionFrame =
+requestAnimationFrame(
+frame
+);
+} else {
+spineTransitionFrame = null;
+setSpineGeometry(to);
+spineTransitionState.active = false;
+chart?.draw();
+onComplete?.();
+}
+}
+
+spineTransitionFrame =
+requestAnimationFrame(
+frame
+);
 }
 
 function resetChartTypeTransitionVisuals() {
@@ -5846,6 +6004,48 @@ chartCanvas.style.transform = '';
 snapshot.remove();
 onComplete?.();
 });
+});
+}
+
+
+function fadeOutChartSnapshot(
+snapshot,
+duration,
+onComplete
+) {
+if (
+!snapshot ||
+PFF.reducedMotion() ||
+!snapshot.animate
+) {
+snapshot?.remove();
+onComplete?.();
+return;
+}
+
+const animation =
+snapshot.animate(
+[
+{ opacity: 1 },
+{ opacity: 0 }
+],
+{
+duration,
+easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+fill: 'forwards'
+}
+);
+
+animation.finished
+.catch(() => {})
+.finally(() => {
+try {
+animation.cancel();
+} catch (_) {
+}
+
+snapshot.remove();
+onComplete?.();
 });
 }
 
@@ -6090,9 +6290,7 @@ return isQuarterTick(context.tick?.value) ? 6 : 2;
 tickColor: '#151515'
 },
 border: {
-display: true,
-color: '#151515',
-width: 1.1
+display: false
 }
 },
 y: {
@@ -6155,14 +6353,14 @@ tickColor: '#151515',
 tickWidth: 1.1
 },
 border: {
-display: true,
-color: '#151515',
-width: 1.1
+display: false
 }
 }
 }
 },
 plugins: [
+axisScaleFadePlugin,
+constantSpinePlugin,
 sourceMilestonePlugin
 ]
 });
@@ -6260,20 +6458,10 @@ const crossesRepeatBoundary =
 previousTab === 'repeat' ||
 nextView === 'repeat';
 
-const previousChartArea =
-crossesRepeatBoundary
-? copyChartArea(chart?.chartArea)
-: null;
-
-const snapshot =
-crossesRepeatBoundary &&
-!reduceMotion
-? captureChartSnapshot()
-: null;
-
 viewFadeLocked = true;
 setViewDependentControlsFaded(true);
 
+function commitSelectedView() {
 selectedTab = nextView;
 syncActiveView();
 
@@ -6299,6 +6487,7 @@ updateCountControls();
 setGroupMenuOpen(false);
 setMeasureMenuOpen(false);
 setRepeatMeasureMenuOpen(false);
+}
 
 function finishViewSwitch() {
 setViewDependentControlsFaded(false);
@@ -6307,39 +6496,99 @@ interactionLocked = false;
 }
 
 if (crossesRepeatBoundary) {
-axisFadeOpacity = 1;
+const previousChartArea =
+copyChartArea(
+chart?.chartArea
+);
 
-/*
- * Cross-tab changes use the canvas/axis transition only. Building the
- * incoming chart fully before the crossfade avoids overlapping Chart.js
- * geometry animation with the canvas slide, which can leave bars or axes
- * in a partial state after repeated tab switching.
- */
+if (
+reduceMotion ||
+!previousChartArea
+) {
+axisFadeOpacity = 1;
+spineTransitionState.active = false;
+
+commitSelectedView();
+
 recreateChartForSelectedView(
 false
 );
 
-const nextChartArea =
-copyChartArea(chart?.chartArea);
+setSpineGeometry(
+chart?.chartArea
+);
 
-const axisSlideDelta =
-previousChartArea &&
-nextChartArea
-? previousChartArea.left - nextChartArea.left
-: 0;
-
-if (reduceMotion) {
 finishViewSwitch();
 return;
 }
 
-animateChartTypeCrossfade(
-snapshot,
-axisSlideDelta,
-finishViewSwitch
+interactionLocked = true;
+spineTransitionState.active = true;
+
+setSpineGeometry(
+previousChartArea
 );
+
+/*
+ * Match the connected transition style used by the reference chart:
+ * fade labels/gridlines first, preserve the axis spine, then morph the
+ * spine geometry while the incoming axes fade back in.
+ */
+animateAxisOpacity(
+axisFadeOpacity,
+0,
+170,
+() => {
+const snapshot =
+captureChartSnapshot();
+
+commitSelectedView();
+
+recreateChartForSelectedView(
+true
+);
+
+const nextChartArea =
+copyChartArea(
+chart?.chartArea
+);
+
+let completedAnimations = 0;
+
+function completePart() {
+completedAnimations += 1;
+
+if (completedAnimations >= 3) {
+finishViewSwitch();
+}
+}
+
+fadeOutChartSnapshot(
+snapshot,
+300,
+completePart
+);
+
+animateSpineGeometry(
+previousChartArea,
+nextChartArea,
+CONFIG.spineTransitionMs,
+completePart
+);
+
+animateAxisOpacity(
+0,
+1,
+300,
+completePart
+);
+}
+);
+
 return;
 }
+
+commitSelectedView();
 
 updateLegend(
 activeView,
