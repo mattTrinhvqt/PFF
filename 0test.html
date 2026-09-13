@@ -56,11 +56,12 @@
      * styling. Only compact app-specific sizing and value emphasis live here.
      */
     .view-menu-button {
-      width: 138px;
-      min-width: 138px;
+      width: auto;
+      min-width: 0;
       min-height: 27px;
-      padding-right: 7px;
-      padding-left: 7px;
+      gap: 4px;
+      padding-right: 6px;
+      padding-left: 6px;
       font-weight: 400;
     }
 
@@ -72,7 +73,7 @@
 
     .view-menu-value {
       min-width: 0;
-      margin-left: auto;
+      margin-left: 0;
       color: var(--pff-purple);
       font-size: 10px;
       font-weight: 700;
@@ -107,8 +108,8 @@
     }
 
     #employerWorkChart {
-      opacity: 0;
-      transform: translate3d(0, 6px, 0) scale(0.994);
+      opacity: 1;
+      transform: translate3d(100%, 0, 0);
       pointer-events: none;
     }
 
@@ -120,11 +121,12 @@
       }
 
       .view-menu-button {
-        width: 132px;
-        min-width: 132px;
+        width: auto;
+        min-width: 0;
         min-height: 27px;
-        padding-right: 6px;
-        padding-left: 6px;
+        gap: 3px;
+        padding-right: 5px;
+        padding-left: 5px;
         font-size: 9px;
       }
 
@@ -3376,7 +3378,7 @@
         const context = chartInstance.ctx;
 
         context.save();
-        context.lineWidth = 2.6;
+        context.lineWidth = 0.9;
         context.lineJoin = 'round';
 
         employerModel.groups.forEach((group, index) => {
@@ -3417,18 +3419,18 @@
 
           if (typeof context.roundRect === 'function') {
             context.roundRect(
-              bounds.left + 1.3,
-              top + 1.3,
-              Math.max(0, width - 2.6),
-              Math.max(0, height - 2.6),
+              bounds.left + 0.45,
+              top + 0.45,
+              Math.max(0, width - 0.9),
+              Math.max(0, height - 0.9),
               radius
             );
           } else {
             context.rect(
-              bounds.left + 1.3,
-              top + 1.3,
-              Math.max(0, width - 2.6),
-              Math.max(0, height - 2.6)
+              bounds.left + 0.45,
+              top + 0.45,
+              Math.max(0, width - 0.9),
+              Math.max(0, height - 0.9)
             );
           }
 
@@ -4704,111 +4706,118 @@
     }
 
     function setChartFamilyVisibility(showEmployer, animate = true, onComplete) {
-      const fromEmployer =
-        employerCanvas
-          .classList
-          .contains(
-            'is-visible'
-          );
-
       const duration =
         animate &&
         !PFF.reducedMotion()
           ? CONFIG.chartFamilyFadeMs
           : 0;
 
+      const incomingCanvas =
+        showEmployer
+          ? employerCanvas
+          : chartCanvas;
+
+      const outgoingCanvas =
+        showEmployer
+          ? chartCanvas
+          : employerCanvas;
+
+      /*
+       * Slide the complete chart surface — data, axes, tick labels and
+       * axis titles — rather than fading one graph into the other.
+       * This mirrors the directional PFF view-change animation while
+       * preserving the normal in-place morphs when the scale/category
+       * structure itself has not changed.
+       *
+       * Entering By employer: employer slides in from the right.
+       * Leaving By employer: the standard graph slides in from the left.
+       */
+      const direction =
+        showEmployer
+          ? 1
+          : -1;
+
+      incomingCanvas.style.pointerEvents =
+        'none';
+
+      outgoingCanvas.style.pointerEvents =
+        'none';
+
+      incomingCanvas.style.opacity =
+        '1';
+
+      outgoingCanvas.style.opacity =
+        '1';
+
+      if (duration <= 0) {
+        employerCanvas
+          .classList
+          .toggle(
+            'is-visible',
+            showEmployer
+          );
+
+        chartCanvas
+          .classList
+          .toggle(
+            'is-hidden-family',
+            showEmployer
+          );
+
+        employerCanvas.style.transform =
+          showEmployer
+            ? 'translate3d(0, 0, 0)'
+            : 'translate3d(100%, 0, 0)';
+
+        chartCanvas.style.transform =
+          showEmployer
+            ? 'translate3d(-100%, 0, 0)'
+            : 'translate3d(0, 0, 0)';
+
+        employerCanvas.style.pointerEvents =
+          showEmployer
+            ? 'auto'
+            : 'none';
+
+        chartCanvas.style.pointerEvents =
+          showEmployer
+            ? 'none'
+            : 'auto';
+
+        onComplete?.();
+        return;
+      }
+
+      incomingCanvas.style.transform =
+        `translate3d(${direction * 100}%, 0, 0)`;
+
+      outgoingCanvas.style.transform =
+        'translate3d(0, 0, 0)';
+
       chartFamilyAnimator.run({
         duration,
-
         easing:
-          easeOutCubic,
+          easeInOutCubic,
 
         onFrame(progress) {
-          /*
-           * Mirror the older PFF legacy-view transition:
-           * fade the outgoing axes/chart first, then let the
-           * incoming geometry and axes establish themselves.
-           */
-          const outgoing =
-            clamp(
-              progress / 0.46,
-              0,
-              1
-            );
+          const incomingX =
+            direction *
+            (1 - progress) *
+            100;
 
-          const incoming =
-            clamp(
-              (
-                progress -
-                0.16
-              ) /
-              0.84,
-              0,
-              1
-            );
+          const outgoingX =
+            -direction *
+            progress *
+            100;
 
-          const employerOpacity =
-            showEmployer
-              ? incoming
-              : 1 - outgoing;
+          incomingCanvas.style.transform =
+            `translate3d(${incomingX}%, 0, 0)`;
 
-          const standardOpacity =
-            showEmployer
-              ? 1 - outgoing
-              : incoming;
-
-          employerCanvas.style.opacity =
-            String(
-              employerOpacity
-            );
-
-          chartCanvas.style.opacity =
-            String(
-              standardOpacity
-            );
-
-          employerCanvas.style.transform =
-            `translate3d(0, ${
-              (1 - employerOpacity) *
-              8
-            }px, 0) scale(${
-              0.992 +
-              employerOpacity *
-              0.008
-            })`;
-
-          chartCanvas.style.transform =
-            `translate3d(0, ${
-              (1 - standardOpacity) *
-              -6
-            }px, 0) scale(${
-              0.992 +
-              standardOpacity *
-              0.008
-            })`;
+          outgoingCanvas.style.transform =
+            `translate3d(${outgoingX}%, 0, 0)`;
         },
 
         onComplete() {
-          employerCanvas.style.opacity =
-            showEmployer
-              ? '1'
-              : '0';
-
-          chartCanvas.style.opacity =
-            showEmployer
-              ? '0'
-              : '1';
-
-          employerCanvas.style.transform =
-            showEmployer
-              ? 'translate3d(0, 0, 0) scale(1)'
-              : 'translate3d(0, 8px, 0) scale(0.992)';
-
-          chartCanvas.style.transform =
-            showEmployer
-              ? 'translate3d(0, -6px, 0) scale(0.992)'
-              : 'translate3d(0, 0, 0) scale(1)';
-
           employerCanvas
             .classList
             .toggle(
@@ -4822,6 +4831,16 @@
               'is-hidden-family',
               showEmployer
             );
+
+          employerCanvas.style.transform =
+            showEmployer
+              ? 'translate3d(0, 0, 0)'
+              : 'translate3d(100%, 0, 0)';
+
+          chartCanvas.style.transform =
+            showEmployer
+              ? 'translate3d(-100%, 0, 0)'
+              : 'translate3d(0, 0, 0)';
 
           employerCanvas.style.pointerEvents =
             showEmployer
