@@ -50,11 +50,6 @@
       pointer-events: none;
     }
 
-    .chart-shell .pff-threshold-note {
-      right: 5px;
-      bottom: 5px;
-    }
-
     @media (max-width: 430px) {
       .chart-heading-row,
       .heading-scroll-shell {
@@ -93,9 +88,10 @@
 
           <div id="tabList" class="tab-list" role="tablist" aria-label="Work loss views">
             <button class="chart-tab is-active" type="button" role="tab" data-view="cost" aria-selected="true">$ loss</button>
-            <button class="chart-tab" type="button" role="tab" data-view="employer" aria-selected="false">By employer</button>
             <button class="chart-tab" type="button" role="tab" data-view="time" aria-selected="false">Time loss</button>
             <button class="chart-tab" type="button" role="tab" data-view="affected" aria-selected="false">% affected</button>
+            <button class="chart-tab" type="button" role="tab" data-view="employerCost" aria-selected="false">$ loss by employer</button>
+            <button class="chart-tab" type="button" role="tab" data-view="employerTime" aria-selected="false">Time loss by employer</button>
           </div>
 
           <button
@@ -189,12 +185,6 @@
       </div>
 
       <div class="chart-shell">
-        <aside
-          id="employerThresholdNote"
-          class="pff-threshold-note is-hidden"
-          role="note"
-        >Employers with n &lt; 10 excluded</aside>
-
         <canvas
           id="lossWorkChart"
           class="work-chart-canvas"
@@ -205,7 +195,7 @@
         <canvas
           id="employerWorkChart"
           class="work-chart-canvas"
-          aria-label="Estimated unpaid work value by employer"
+          aria-label="Work loss by employer"
           tabindex="-1"
         ></canvas>
       </div>
@@ -274,10 +264,17 @@
         totalYTitle: 'Total $ loss (FTE $/year)',
         affectedTotalYTitle: 'Total $ loss (FTE $/year)'
       },
-      employer: {
-        tabLabel: 'By employer',
+      employerCost: {
+        tabLabel: '$ loss by employer',
         kind: 'currency',
-        metric: 'employer',
+        metric: 'cost',
+        supportsTotal: true,
+        supportsAffected: false
+      },
+      employerTime: {
+        tabLabel: 'Time loss by employer',
+        kind: 'hours',
+        metric: 'hours',
         supportsTotal: true,
         supportsAffected: false
       },
@@ -361,7 +358,6 @@
     const chartShell = document.querySelector('.chart-shell');
     const chartCanvas = document.getElementById('lossWorkChart');
     const employerCanvas = document.getElementById('employerWorkChart');
-    const employerThresholdNote = document.getElementById('employerThresholdNote');
 
     let sourceRows = [];
     let rows = [];
@@ -399,8 +395,9 @@
 
     const totalModeByView = {
       cost: false,
-      employer: false,
-      time: false
+      time: false,
+      employerCost: false,
+      employerTime: false
     };
 
     const affectedOnlyByView = {
@@ -833,14 +830,27 @@
           ? appearance.key
           : PFF.normaliseText(rawLabel),
         label: appearance.fullName || rawLabel,
-        shortLabel: appearance.label || rawLabel
+        shortLabel: appearance.label || rawLabel,
+        colour: appearance.colour || '#777777'
       };
     }
 
-    function employerRowHasCalculatedCost(row) {
+    function isEmployerView(view = activeView) {
+      return view === 'employerCost' || view === 'employerTime';
+    }
+
+    function getEmployerMetric(view = activeView) {
+      return view === 'employerTime'
+        ? 'hours'
+        : 'cost';
+    }
+
+    function employerRowHasCalculatedMetric(row, view = activeView) {
+      const metric = getEmployerMetric(view);
+
       return CATEGORY_CONFIG.some(category =>
         Number.isFinite(
-          getCategoryValues(row, category.key).cost
+          getCategoryValues(row, category.key)[metric]
         )
       );
     }
@@ -873,13 +883,14 @@
       return lines;
     }
 
-    function buildEmployerModel() {
+    function buildEmployerModel(view = activeView) {
+      const metric = getEmployerMetric(view);
       const groups = new Map();
 
       rows.forEach(row => {
         const identity = getEmployerIdentity(row.employer);
 
-        if (!identity || !employerRowHasCalculatedCost(row)) {
+        if (!identity || !employerRowHasCalculatedMetric(row, view)) {
           return;
         }
 
@@ -898,7 +909,7 @@
 
         CATEGORY_CONFIG.forEach(category => {
           const values = group.rows
-            .map(row => getCategoryValues(row, category.key).cost)
+            .map(row => getCategoryValues(row, category.key)[metric])
             .filter(Number.isFinite);
 
           categoryStatistics[category.key] =
@@ -907,7 +918,7 @@
 
         const values = CATEGORY_CONFIG.map(category => {
           const statistics = categoryStatistics[category.key];
-          return isTotalMode('employer')
+          return isTotalMode(view)
             ? statistics.sum
             : statistics.median;
         });
@@ -939,6 +950,8 @@
         );
 
       return {
+        view,
+        metric,
         groups: includedGroups,
         excludedCount,
         labels: includedGroups.map(group => group.label),
@@ -948,11 +961,14 @@
           categoryKey: category.key,
           data: includedGroups.map(group => group.values[categoryIndex]),
           backgroundColor: category.colour,
-          borderColor: category.colour,
+          hoverBackgroundColor: category.colour,
+          borderColor: 'transparent',
+          hoverBorderColor: 'transparent',
           borderWidth: 0,
+          hoverBorderWidth: 0,
           borderSkipped: false,
-          borderRadius: 1,
-          barPercentage: 0.72,
+          borderRadius: 2,
+          barPercentage: 0.74,
           categoryPercentage: 0.82,
           employerStatistics: includedGroups.map(
             group => group.categoryStatistics[category.key]
@@ -960,7 +976,6 @@
         }))
       };
     }
-
 
     function getCategoryValues(row, categoryKey) {
       if (categoryKey === 'meal') {
@@ -2168,17 +2183,33 @@
         };
       }
 
-      if (view === 'employer') {
-        return isTotalMode('employer')
+      if (view === 'employerCost') {
+        return isTotalMode(view)
           ? {
-              lead: 'Total estimated unpaid work value',
-              shared: 'by employer',
-              tail: '',
+              lead: 'Total $',
+              shared: 'loss',
+              tail: 'by employer',
               year
             }
           : {
-              lead: 'Estimated unpaid work value',
-              shared: 'per optom',
+              lead: '$',
+              shared: 'loss per optom',
+              tail: 'by employer',
+              year
+            };
+      }
+
+      if (view === 'employerTime') {
+        return isTotalMode(view)
+          ? {
+              lead: 'Total time',
+              shared: 'loss',
+              tail: 'by employer',
+              year
+            }
+          : {
+              lead: 'Time',
+              shared: 'loss per optom',
               tail: 'by employer',
               year
             };
@@ -2571,6 +2602,150 @@
       }
     }
 
+    function getEmployerAxisTitle(view = activeView) {
+      if (view === 'employerTime') {
+        return isTotalMode(view)
+          ? 'Total time loss among respondents (hours/year)'
+          : 'Time loss per optom (hours/year)';
+      }
+
+      return isTotalMode(view)
+        ? 'Total $ loss among respondents (FTE $/year)'
+        : '$ loss per optom (FTE $/year)';
+    }
+
+    function formatEmployerMetric(value, view = activeView) {
+      if (!Number.isFinite(Number(value))) {
+        return '—';
+      }
+
+      return view === 'employerTime'
+        ? `${formatNumber(value, Math.abs(Number(value)) < 10 ? 1 : 0)} hrs`
+        : formatCurrency(value, 0);
+    }
+
+    function formatEmployerAxisTick(value, view = activeView) {
+      const compact = PFF.formatCompactNumber(value, {
+        millionDecimals: 1,
+        thousandDecimals: Math.abs(Number(value)) >= 10000 ? 0 : 1,
+        decimals:
+          Math.abs(Number(value)) < 10 &&
+          Math.abs(Number(value) - Math.round(Number(value))) > 0.001
+            ? 1
+            : 0,
+        invalid: ''
+      });
+
+      return view === 'employerTime'
+        ? compact
+        : compact
+          ? `$${compact}`
+          : '';
+    }
+
+    function getEmployerAxisSpec(values) {
+      const finiteValues = (values || [])
+        .map(Number)
+        .filter(value => Number.isFinite(value) && value >= 0);
+
+      const maximumValue = finiteValues.length
+        ? Math.max(...finiteValues)
+        : 0;
+
+      const majorStep = niceStep(
+        maximumValue > 0
+          ? maximumValue / 5
+          : 1
+      );
+
+      const maximum = Math.max(
+        majorStep * 5,
+        Math.ceil(maximumValue / majorStep) * majorStep
+      );
+
+      return {
+        maximum,
+        majorStep,
+        minorStep: majorStep / 2
+      };
+    }
+
+    function isEmployerMajorTick(value, axisSpec) {
+      const numeric = Number(value);
+      const step = Number(axisSpec?.majorStep);
+
+      if (!Number.isFinite(numeric) || !Number.isFinite(step) || step <= 0) {
+        return false;
+      }
+
+      const multiple = numeric / step;
+      return Math.abs(multiple - Math.round(multiple)) < 1e-6;
+    }
+
+    function fixedEmployerYAxisWidth(scale) {
+      scale.width = PFF.mobileLayout() ? 138 : 154;
+    }
+
+    function fixedEmployerXAxisHeight(scale) {
+      scale.height = 46;
+    }
+
+    const employerOutlinePlugin = {
+      id: 'pffEmployerOutlinePlugin',
+
+      afterDatasetsDraw(chartInstance) {
+        if (!employerModel?.groups?.length || !chartInstance.chartArea) {
+          return;
+        }
+
+        const context = chartInstance.ctx;
+        const xScale = chartInstance.scales.x;
+        const firstMeta = chartInstance.getDatasetMeta(0);
+
+        context.save();
+        context.lineWidth = 0.9;
+
+        employerModel.groups.forEach((group, index) => {
+          const element = firstMeta?.data?.[index];
+          const total = employerModel.totals[index];
+
+          if (!element || !Number.isFinite(total)) {
+            return;
+          }
+
+          const left = xScale.getPixelForValue(0);
+          const right = xScale.getPixelForValue(total);
+          const top = element.y - element.height / 2;
+          const width = Math.max(0, right - left);
+          const height = Math.max(0, element.height);
+          const radius = Math.min(2, height / 2);
+
+          context.beginPath();
+          if (typeof context.roundRect === 'function') {
+            context.roundRect(
+              left + 0.45,
+              top + 0.45,
+              Math.max(0, width - 0.9),
+              Math.max(0, height - 0.9),
+              radius
+            );
+          } else {
+            context.rect(
+              left + 0.45,
+              top + 0.45,
+              Math.max(0, width - 0.9),
+              Math.max(0, height - 0.9)
+            );
+          }
+
+          context.strokeStyle = group.colour || '#777777';
+          context.stroke();
+        });
+
+        context.restore();
+      }
+    };
+
     const employerTotalLabelsPlugin = {
       id: 'pffEmployerTotalLabels',
 
@@ -2581,48 +2756,149 @@
 
         const context = chartInstance.ctx;
         const xScale = chartInstance.scales.x;
-        const firstMeta = chartInstance.getDatasetMeta(0);
+        const lastDatasetIndex = chartInstance.data.datasets.length - 1;
+        const lastMeta = chartInstance.getDatasetMeta(lastDatasetIndex);
 
         context.save();
-        context.fillStyle = PFF.cssVar('--pff-muted', '#69718a');
-        context.font = `700 ${PFF.mobileLayout() ? 8 : 9}px Lato, sans-serif`;
+        context.fillStyle = '#151515';
+        context.font = '700 10px Lato, sans-serif';
         context.textAlign = 'left';
         context.textBaseline = 'middle';
 
         employerModel.totals.forEach((total, index) => {
-          const element = firstMeta?.data?.[index];
+          const element = lastMeta?.data?.[index];
 
           if (!element || !Number.isFinite(total)) {
             return;
           }
 
-          const x = xScale.getPixelForValue(total) + 5;
-          const label = isTotalMode('employer')
-            ? formatCurrency(total, 0)
-            : formatCurrency(total, 0);
+          const text = formatEmployerMetric(total, employerModel.view);
+          const textWidth = context.measureText(text).width;
+          const preferredX = xScale.getPixelForValue(total) + 5;
+          const fitsOutside =
+            preferredX + textWidth <= chartInstance.chartArea.right + 44;
 
-          context.fillText(
-            label,
-            Math.min(x, chartInstance.width - 4),
-            element.y
-          );
+          if (fitsOutside) {
+            context.textAlign = 'left';
+            context.fillStyle = '#151515';
+            context.fillText(text, preferredX, element.y);
+          } else {
+            context.textAlign = 'right';
+            context.fillStyle = '#151515';
+            context.fillText(
+              text,
+              Math.min(
+                chartInstance.chartArea.right + 42,
+                chartInstance.width - 4
+              ),
+              element.y
+            );
+          }
         });
 
         context.restore();
       }
     };
 
+    const employerAxisTickPlugin = {
+      id: 'pffEmployerAxisTickPlugin',
+
+      afterDatasetsDraw(chartInstance) {
+        if (!isEmployerView(activeView)) {
+          return;
+        }
+
+        const axisSpec = employerModel?.axisSpec;
+
+        drawVariableTicks(
+          chartInstance.ctx,
+          chartInstance.scales.x,
+          'x',
+          value => isEmployerMajorTick(value, axisSpec),
+          1
+        );
+
+        drawVariableTicks(
+          chartInstance.ctx,
+          chartInstance.scales.y,
+          'y',
+          () => true,
+          1
+        );
+      }
+    };
+
+    const employerThresholdNotePlugin = {
+      id: 'pffEmployerThresholdNotePlugin',
+
+      afterDraw(chartInstance) {
+        if (!isEmployerView(activeView) || !chartInstance.chartArea) {
+          return;
+        }
+
+        const context = chartInstance.ctx;
+        const area = chartInstance.chartArea;
+        const text = `Employers with n < ${CONFIG.minimumEmployerN} excluded`;
+        const fontSize = PFF.mobileLayout() ? 8 : 8.5;
+        const horizontalPadding = 7;
+        const verticalPadding = 5;
+        const radius = 4;
+
+        context.save();
+        context.font = `400 ${fontSize}px Lato, sans-serif`;
+        context.textBaseline = 'middle';
+        context.textAlign = 'left';
+
+        const textWidth = context.measureText(text).width;
+        const width = textWidth + horizontalPadding * 2;
+        const height = fontSize * 1.3 + verticalPadding * 2;
+        const x = area.right - width - 5;
+        const y = area.bottom - height - 5;
+
+        context.beginPath();
+        if (typeof context.roundRect === 'function') {
+          context.roundRect(x, y, width, height, radius);
+        } else {
+          context.moveTo(x + radius, y);
+          context.lineTo(x + width - radius, y);
+          context.quadraticCurveTo(x + width, y, x + width, y + radius);
+          context.lineTo(x + width, y + height - radius);
+          context.quadraticCurveTo(
+            x + width,
+            y + height,
+            x + width - radius,
+            y + height
+          );
+          context.lineTo(x + radius, y + height);
+          context.quadraticCurveTo(x, y + height, x, y + height - radius);
+          context.lineTo(x, y + radius);
+          context.quadraticCurveTo(x, y, x + radius, y);
+        }
+
+        context.fillStyle = 'rgba(255, 255, 255, 0.90)';
+        context.fill();
+        context.strokeStyle = 'rgba(105, 113, 138, 0.16)';
+        context.lineWidth = 1;
+        context.stroke();
+
+        context.fillStyle = PFF.cssVar('--pff-muted', '#69718a');
+        context.fillText(
+          text,
+          x + horizontalPadding,
+          y + height / 2
+        );
+        context.restore();
+      }
+    };
+
     function employerTooltipLabel(item) {
-      const statistics =
-        item.dataset.employerStatistics?.[item.dataIndex] || {};
-      const modeLabel = isTotalMode('employer')
+      const modeLabel = isTotalMode(employerModel?.view)
         ? 'Total'
         : 'Median per optom';
 
       return (
         `${item.dataset.label} — ${modeLabel}: ` +
-        `${formatCurrency(item.parsed.x, 0)}/year ` +
-        `(n=${formatNumber(statistics.count, 0)})`
+        `${formatEmployerMetric(item.parsed.x, employerModel?.view)}/year`
       );
     }
 
@@ -2634,15 +2910,19 @@
         return [];
       }
 
+      const totalLabel = isTotalMode(employerModel.view)
+        ? 'Total'
+        : 'Combined category medians';
+
       return [
-        `${isTotalMode('employer') ? 'Total' : 'Combined category medians'}: ` +
-          `${formatCurrency(group.displayTotal, 0)}/year`,
+        `${totalLabel}: ${formatEmployerMetric(group.displayTotal, employerModel.view)}/year`,
         `Respondents included: ${formatNumber(group.responseCount, 0)}`
       ];
     }
 
     function createEmployerChart() {
-      employerModel = buildEmployerModel();
+      employerModel = buildEmployerModel(activeView);
+      employerModel.axisSpec = getEmployerAxisSpec(employerModel.totals);
 
       employerChart = new Chart(
         employerCanvas.getContext('2d'),
@@ -2653,31 +2933,60 @@
             datasets: employerModel.datasets
           },
           options: {
+            indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
+            resizeDelay: 0,
+            devicePixelRatio: Math.min(
+              window.devicePixelRatio || 1,
+              PFF.defaults.maxDevicePixelRatio
+            ),
             animation: {
-              duration: CONFIG.transitionMs,
-              easing: 'easeInOutCubic'
+              duration: PFF.reducedMotion() ? 0 : CONFIG.transitionMs,
+              easing: 'easeOutCubic'
             },
-            indexAxis: 'y',
+            transitions: {
+              resize: {
+                animation: {
+                  duration: 0
+                }
+              },
+              active: {
+                animation: {
+                  duration: PFF.defaults.hoverAnimationMs,
+                  easing: 'easeOutCubic'
+                }
+              }
+            },
             layout: {
+              autoPadding: false,
               padding: {
                 top: 8,
-                right: PFF.mobileLayout() ? 48 : 58,
-                bottom: 28,
+                right: 48,
+                bottom: 0,
                 left: 0
               }
             },
             interaction: {
               mode: 'index',
-              intersect: false
+              axis: 'y',
+              intersect: false,
+              includeInvisible: false
+            },
+            onHover(event, elements) {
+              employerChart.canvas.style.cursor =
+                !interactionLocked && elements.length
+                  ? 'pointer'
+                  : 'default';
             },
             plugins: {
               legend: {
                 display: false
               },
-              tooltip: {
-                displayColors: true,
+              tooltip: PFFCharts.tooltipOptions({
+                filter() {
+                  return !interactionLocked;
+                },
                 callbacks: {
                   title(items) {
                     const index = items?.[0]?.dataIndex;
@@ -2686,80 +2995,129 @@
                   label: employerTooltipLabel,
                   footer: employerTooltipFooter
                 }
-              }
+              })
             },
             scales: {
               x: {
-                beginAtZero: true,
+                type: 'linear',
+                afterFit: fixedEmployerXAxisHeight,
                 stacked: true,
-                border: {
-                  display: false
-                },
-                grid: {
-                  color: 'rgba(105, 113, 138, 0.13)',
-                  drawTicks: false
-                },
-                ticks: {
-                  color: PFF.cssVar('--pff-muted', '#69718a'),
-                  font: {
-                    size: PFF.mobileLayout() ? 8 : 9,
-                    weight: '700'
-                  },
-                  padding: 5,
-                  callback(value) {
-                    return `$${PFF.formatCompactNumber(value, {
-                      millionDecimals: 1,
-                      thousandDecimals: 1,
-                      decimals: 0,
-                      invalid: ''
-                    })}`;
+                beginAtZero: true,
+                min: 0,
+                max: employerModel.axisSpec.maximum,
+                afterBuildTicks(scale) {
+                  const ticks = [];
+                  const step = employerModel.axisSpec.minorStep;
+
+                  for (
+                    let value = 0;
+                    value <= employerModel.axisSpec.maximum + step * 0.25;
+                    value += step
+                  ) {
+                    ticks.push({ value });
                   }
+
+                  scale.ticks = ticks;
                 },
                 title: {
                   display: true,
-                  color: PFF.cssVar('--pff-muted', '#69718a'),
+                  text: getEmployerAxisTitle(activeView),
+                  color: '#151515',
                   font: {
-                    size: PFF.mobileLayout() ? 9 : 10,
+                    family: 'Lato',
+                    size: 13,
                     weight: '700'
                   },
-                  text: isTotalMode('employer')
-                    ? 'Total $ loss among respondents (FTE $/year)'
-                    : '$ loss per optom (FTE $/year)'
+                  padding: {
+                    top: 7,
+                    bottom: 2
+                  }
+                },
+                ticks: {
+                  color: '#151515',
+                  autoSkip: false,
+                  padding: 3,
+                  font: {
+                    family: 'Lato',
+                    size: 12,
+                    weight: '400'
+                  },
+                  callback(value) {
+                    return isEmployerMajorTick(value, employerModel.axisSpec)
+                      ? formatEmployerAxisTick(value, employerModel.view)
+                      : '';
+                  }
+                },
+                grid: {
+                  color(context) {
+                    return isEmployerMajorTick(
+                      context.tick?.value,
+                      employerModel.axisSpec
+                    )
+                      ? 'rgba(105, 113, 138, 0.075)'
+                      : 'rgba(105, 113, 138, 0.035)';
+                  },
+                  lineWidth(context) {
+                    return isEmployerMajorTick(
+                      context.tick?.value,
+                      employerModel.axisSpec
+                    )
+                      ? 1
+                      : 0.7;
+                  },
+                  drawTicks: true,
+                  tickLength: 6,
+                  tickColor: 'rgba(21, 21, 21, 0)',
+                  tickWidth: 0
+                },
+                border: {
+                  display: false
                 }
               },
               y: {
+                afterFit: fixedEmployerYAxisWidth,
                 stacked: true,
-                border: {
-                  display: false
-                },
-                grid: {
-                  display: false,
-                  drawTicks: false
-                },
+                offset: true,
                 ticks: {
-                  color: PFF.cssVar('--pff-ink', '#151515'),
+                  color: '#151515',
+                  autoSkip: false,
+                  padding: 5,
                   font: {
-                    size: PFF.mobileLayout() ? 8 : 9,
-                    weight: '700'
+                    family: 'Lato',
+                    size: PFF.mobileLayout() ? 9 : 10,
+                    weight: '400'
                   },
-                  padding: 7,
                   callback(value) {
                     return wrapEmployerLabel(
                       this.getLabelForValue(value),
                       PFF.mobileLayout() ? 15 : 18
                     );
                   }
+                },
+                grid: {
+                  drawOnChartArea: false,
+                  drawTicks: false
+                },
+                border: {
+                  display: false
                 }
               }
             }
           },
-          plugins: [employerTotalLabelsPlugin]
+          plugins: [
+            constantSpinePlugin,
+            employerAxisTickPlugin,
+            employerOutlinePlugin,
+            employerTotalLabelsPlugin,
+            employerThresholdNotePlugin
+          ]
         }
       );
     }
 
     function updateEmployerChart(animate = true) {
-      employerModel = buildEmployerModel();
+      employerModel = buildEmployerModel(activeView);
+      employerModel.axisSpec = getEmployerAxisSpec(employerModel.totals);
 
       if (!employerChart) {
         createEmployerChart();
@@ -2768,17 +3126,11 @@
 
       employerChart.data.labels = employerModel.labels;
       employerChart.data.datasets = employerModel.datasets;
-      employerChart.options.scales.x.title.text = isTotalMode('employer')
-        ? 'Total $ loss among respondents (FTE $/year)'
-        : '$ loss per optom (FTE $/year)';
-      employerChart.options.layout.padding.right =
-        PFF.mobileLayout() ? 48 : 58;
+      employerChart.options.scales.x.max = employerModel.axisSpec.maximum;
+      employerChart.options.scales.x.title.text = getEmployerAxisTitle(activeView);
+      employerChart.options.layout.padding.right = 48;
 
       employerChart.update(animate ? undefined : 'none');
-    }
-
-    function setEmployerThresholdNoteVisible(visible) {
-      employerThresholdNote.classList.toggle('is-hidden', !visible);
     }
 
     function setChartFamilyVisibility(showEmployer, animate = true, onComplete) {
@@ -2814,11 +3166,30 @@
         return;
       }
 
-      const enteringEmployer = nextView === 'employer';
-      const leavingEmployer = activeView === 'employer' && !enteringEmployer;
+      const currentIsEmployer = isEmployerView(activeView);
+      const nextIsEmployer = isEmployerView(nextView);
 
-      if (!enteringEmployer && !leavingEmployer) {
+      if (!currentIsEmployer && !nextIsEmployer) {
         applyView(nextView, animate);
+        return;
+      }
+
+      if (currentIsEmployer && nextIsEmployer) {
+        viewSwitchLocked = true;
+        interactionLocked = true;
+        activeView = nextView;
+        updateHeading(true);
+        updateActiveTab();
+        updateLegend(CATEGORY_CONFIG, true);
+        updateViewToggles();
+        updateEmployerChart(animate);
+
+        window.setTimeout(() => {
+          viewSwitchLocked = false;
+          interactionLocked = false;
+          updateViewToggles();
+        }, animate && !PFF.reducedMotion() ? CONFIG.transitionMs + 40 : 0);
+
         return;
       }
 
@@ -2827,14 +3198,13 @@
       tooltipPinned = false;
       activeTooltipKey = '';
 
-      if (enteringEmployer) {
-        activeView = 'employer';
+      if (nextIsEmployer) {
+        activeView = nextView;
         updateEmployerChart(false);
         updateHeading(true);
         updateActiveTab();
         updateLegend(CATEGORY_CONFIG, true);
         updateViewToggles();
-        setEmployerThresholdNoteVisible(true);
 
         setChartFamilyVisibility(true, animate, () => {
           viewSwitchLocked = false;
@@ -2863,7 +3233,6 @@
       updateActiveTab();
       updateLegend(model.legendItems, true);
       updateViewToggles();
-      setEmployerThresholdNoteVisible(false);
 
       setChartFamilyVisibility(false, animate, () => {
         viewSwitchLocked = false;
@@ -2972,8 +3341,8 @@
 
       const nextTotalMode = !totalModeByView[activeView];
 
-      if (activeView === 'employer') {
-        totalModeByView.employer = nextTotalMode;
+      if (isEmployerView(activeView)) {
+        totalModeByView[activeView] = nextTotalMode;
         updateHeading(true);
         updateEmployerChart(true);
         updateViewToggles();
@@ -3038,7 +3407,7 @@
       responsiveLayoutFrame = requestAnimationFrame(() => {
         responsiveLayoutFrame = null;
 
-        if (activeView === 'employer') {
+        if (isEmployerView(activeView)) {
           updateEmployerChart(false);
           employerChart?.resize();
           employerChart?.update('none');
@@ -3068,7 +3437,7 @@
     }
 
     const responsiveController = PFFCharts.createResponsiveController({
-      getChart: () => activeView === 'employer' ? employerChart : chart,
+      getChart: () => isEmployerView(activeView) ? employerChart : chart,
       observe: [app, chartShell, headingViewport],
       applyResponsiveChartOptions: false,
       onRefresh: refreshResponsiveLayout
