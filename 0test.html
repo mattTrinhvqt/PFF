@@ -40,13 +40,57 @@
       display: none;
     }
 
+    .view-control {
+      position: relative;
+      z-index: 48;
+      flex: 0 0 auto;
+    }
+
+    .view-control.is-hidden {
+      display: none;
+    }
+
+    .view-menu-button {
+      min-width: 118px;
+      display: grid;
+      grid-template-columns: max-content minmax(48px, 1fr) 6px;
+      gap: 5px;
+      padding-right: 7px;
+      padding-left: 7px;
+      font-weight: 400;
+    }
+
+    .view-menu-prefix {
+      color: var(--pff-ink);
+      font-weight: 400;
+    }
+
+    .view-menu-value {
+      min-width: 48px;
+      color: var(--pff-purple);
+      font-size: 10px;
+      font-weight: 700;
+      text-align: right;
+      white-space: nowrap;
+      will-change: opacity;
+    }
+
+    .view-control .pff-menu-panel {
+      right: auto;
+      left: 0;
+      min-width: 158px;
+    }
+
     .work-chart-canvas {
       opacity: 1;
-      will-change: opacity;
+      transform: translate3d(0, 0, 0) scale(1);
+      transform-origin: 50% 50%;
+      will-change: opacity, transform;
     }
 
     #employerWorkChart {
       opacity: 0;
+      transform: translate3d(0, 6px, 0) scale(0.994);
       pointer-events: none;
     }
 
@@ -55,6 +99,20 @@
       .heading-scroll-shell {
         min-height: 29px;
         height: 29px;
+      }
+
+      .view-menu-button {
+        min-width: 108px;
+        min-height: 29px;
+        grid-template-columns: max-content minmax(43px, 1fr) 6px;
+        padding-right: 6px;
+        padding-left: 6px;
+        font-size: 9px;
+      }
+
+      .view-menu-value {
+        min-width: 43px;
+        font-size: 9px;
       }
     }
   </style>
@@ -90,8 +148,6 @@
             <button class="chart-tab is-active" type="button" role="tab" data-view="cost" aria-selected="true">$ loss</button>
             <button class="chart-tab" type="button" role="tab" data-view="time" aria-selected="false">Time loss</button>
             <button class="chart-tab" type="button" role="tab" data-view="affected" aria-selected="false">% affected</button>
-            <button class="chart-tab" type="button" role="tab" data-view="employerCost" aria-selected="false">$ loss by employer</button>
-            <button class="chart-tab" type="button" role="tab" data-view="employerTime" aria-selected="false">Time loss by employer</button>
           </div>
 
           <button
@@ -134,18 +190,50 @@
         </div>
 
         <div id="chartToggleGroup" class="pff-chart-toggle-group">
-          <button
-            id="affectedToggleButton"
-            class="pff-chart-toggle-button"
-            type="button"
-            role="switch"
-            aria-checked="false"
-            aria-label="Show affected optoms"
-          >
-            <span class="pff-chart-toggle-indicator" aria-hidden="true"></span>
-            <span class="pff-chart-toggle-label">Affected optoms</span>
-            <span class="pff-chart-toggle-value">OFF</span>
-          </button>
+          <div id="viewControl" class="pff-menu view-control">
+            <button
+              id="viewMenuButton"
+              class="pff-menu-button view-menu-button"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-label="Choose work loss view"
+            >
+              <span class="view-menu-prefix">View:</span>
+              <span id="viewMenuValue" class="view-menu-value">Overall</span>
+            </button>
+
+            <div
+              id="viewMenuPanel"
+              class="pff-menu-panel"
+              role="listbox"
+              aria-label="Work loss view"
+            >
+              <button
+                class="pff-menu-item view-menu-item is-selected"
+                type="button"
+                role="option"
+                data-view-mode="overall"
+                aria-selected="true"
+              >Overall</button>
+
+              <button
+                class="pff-menu-item view-menu-item"
+                type="button"
+                role="option"
+                data-view-mode="affected"
+                aria-selected="false"
+              >Affected optoms</button>
+
+              <button
+                class="pff-menu-item view-menu-item"
+                type="button"
+                role="option"
+                data-view-mode="employer"
+                aria-selected="false"
+              >By employer</button>
+            </div>
+          </div>
 
           <button
             id="totalToggleButton"
@@ -212,7 +300,7 @@
       transitionMs: 1500,
       axisFadeOutMs: 170,
       axisFadeInMs: 300,
-      chartFamilyFadeMs: 360,
+      chartFamilyFadeMs: 520,
 
       pointRadius: 2.7,
       pointHoverRadius: 4.4,
@@ -345,7 +433,11 @@
     const chartHeadingTail = document.getElementById('chartHeadingTail');
     const chartHeadingYear = document.getElementById('chartHeadingYear');
     const chartToggleGroup = document.getElementById('chartToggleGroup');
-    const affectedToggleButton = document.getElementById('affectedToggleButton');
+    const viewControl = document.getElementById('viewControl');
+    const viewMenuButton = document.getElementById('viewMenuButton');
+    const viewMenuPanel = document.getElementById('viewMenuPanel');
+    const viewMenuValue = document.getElementById('viewMenuValue');
+    const viewMenuItems = [...document.querySelectorAll('.view-menu-item')];
     const totalToggleButton = document.getElementById('totalToggleButton');
     const tabList = document.getElementById('tabList');
     const tabScrollLeft = document.getElementById('tabScrollLeft');
@@ -381,10 +473,14 @@
     const axisTitleAnimator = PFFCharts.createAnimationController();
     const axisNumberAnimator = PFFCharts.createAnimationController();
     const chartFamilyAnimator = PFFCharts.createAnimationController();
+    const employerMeasureAnimator = PFFCharts.createAnimationController();
+    const employerAxisTitleAnimator = PFFCharts.createAnimationController();
 
     let tabController = null;
     let headingScroller = null;
     let legendController = null;
+    let viewMenuController = null;
+    let viewMenuAnimationToken = 0;
 
     const axisTitleTransition = {
       active: false,
@@ -395,9 +491,7 @@
 
     const totalModeByView = {
       cost: false,
-      time: false,
-      employerCost: false,
-      employerTime: false
+      time: false
     };
 
     const affectedOnlyByView = {
@@ -405,11 +499,31 @@
       time: false
     };
 
+    const viewModeByMetric = {
+      cost: 'overall',
+      time: 'overall'
+    };
+
     const axisNumberTransition = {
       fromMaximum: 1,
       toMaximum: 1,
       progress: 1
     };
+
+    const employerAxisState = {
+      maximum: 1,
+      majorStep: 1,
+      minorStep: 0.5
+    };
+
+    const employerAxisTitleTransition = {
+      active: false,
+      progress: 1,
+      fromText: '',
+      toText: ''
+    };
+
+    let displayedEmployerAxisTitle = '';
 
     const cleanText = PFF.cleanText;
     const clamp = PFF.clamp;
@@ -839,8 +953,71 @@
       return view === 'employerCost' || view === 'employerTime';
     }
 
+    function getMetricTabView(view = activeView) {
+      if (view === 'employerCost') {
+        return 'cost';
+      }
+
+      if (view === 'employerTime') {
+        return 'time';
+      }
+
+      return view;
+    }
+
+    function getEmployerViewForMetric(view) {
+      return view === 'time'
+        ? 'employerTime'
+        : 'employerCost';
+    }
+
+    function resolveInternalViewForMetric(view) {
+      if (view === 'affected') {
+        return 'affected';
+      }
+
+      const mode =
+        viewModeByMetric[view] ||
+        'overall';
+
+      affectedOnlyByView[view] =
+        mode === 'affected';
+
+      return mode === 'employer'
+        ? getEmployerViewForMetric(view)
+        : view;
+    }
+
+    function getCurrentViewMode(view = activeView) {
+      const metricView = getMetricTabView(view);
+
+      if (metricView !== 'cost' && metricView !== 'time') {
+        return null;
+      }
+
+      if (isEmployerView(view)) {
+        return 'employer';
+      }
+
+      return affectedOnlyByView[metricView]
+        ? 'affected'
+        : 'overall';
+    }
+
+    function getViewModeLabel(mode) {
+      if (mode === 'affected') {
+        return 'Affected';
+      }
+
+      if (mode === 'employer') {
+        return 'By employer';
+      }
+
+      return 'Overall';
+    }
+
     function getEmployerMetric(view = activeView) {
-      return view === 'employerTime'
+      return getMetricTabView(view) === 'time'
         ? 'hours'
         : 'cost';
     }
@@ -883,7 +1060,7 @@
       return lines;
     }
 
-    function buildEmployerModel(view = activeView) {
+    function buildEmployerModel(view = activeView, preferredOrderKeys = null) {
       const metric = getEmployerMetric(view);
       const groups = new Map();
 
@@ -943,11 +1120,34 @@
       const includedGroups = allGroups
         .filter(group =>
           group.responseCount >= CONFIG.minimumEmployerN
-        )
-        .sort((first, second) =>
+        );
+
+      if (Array.isArray(preferredOrderKeys) && preferredOrderKeys.length) {
+        const order = new Map(
+          preferredOrderKeys.map((key, index) => [key, index])
+        );
+
+        includedGroups.sort((first, second) => {
+          const firstOrder = order.has(first.key)
+            ? order.get(first.key)
+            : Number.POSITIVE_INFINITY;
+
+          const secondOrder = order.has(second.key)
+            ? order.get(second.key)
+            : Number.POSITIVE_INFINITY;
+
+          return (
+            firstOrder - secondOrder ||
+            second.displayTotal - first.displayTotal ||
+            first.label.localeCompare(second.label)
+          );
+        });
+      } else {
+        includedGroups.sort((first, second) =>
           second.displayTotal - first.displayTotal ||
           first.label.localeCompare(second.label)
         );
+      }
 
       return {
         view,
@@ -1006,16 +1206,20 @@
     }
 
     function isTotalMode(view) {
+      const metricView = getMetricTabView(view);
+
       return Boolean(
         VIEW_CONFIG[view]?.supportsTotal &&
-        totalModeByView[view]
+        totalModeByView[metricView]
       );
     }
 
     function isAffectedOnly(view) {
+      const metricView = getMetricTabView(view);
+
       return Boolean(
         VIEW_CONFIG[view]?.supportsAffected &&
-        affectedOnlyByView[view]
+        affectedOnlyByView[metricView]
       );
     }
 
@@ -2166,7 +2370,7 @@
       );
 
       updateLegend(model.legendItems, false);
-      updateViewToggles();
+      updateViewControls();
     }
 
     function getHeadingParts(view) {
@@ -2319,46 +2523,177 @@
       );
     }
 
-    function updateViewToggles() {
-      const config = VIEW_CONFIG[activeView] || {};
-      const supportsControls = Boolean(
-        config.supportsAffected || config.supportsTotal
-      );
-      const affectedActive = isAffectedOnly(activeView);
-      const totalActive = isTotalMode(activeView);
+    function setViewMenuValue(mode, animate = true) {
+      const nextText = getViewModeLabel(mode);
 
-      chartToggleGroup.classList.toggle('is-hidden', !supportsControls);
-      affectedToggleButton.classList.toggle(
-        'is-hidden',
-        !config.supportsAffected
+      if (viewMenuValue.textContent === nextText) {
+        return;
+      }
+
+      const token = ++viewMenuAnimationToken;
+      const reduceMotion = PFF.reducedMotion();
+
+      function commit() {
+        if (token !== viewMenuAnimationToken) {
+          return;
+        }
+
+        viewMenuValue.textContent = nextText;
+      }
+
+      if (
+        !animate ||
+        reduceMotion ||
+        !viewMenuValue.animate
+      ) {
+        commit();
+        viewMenuValue.style.opacity = '';
+        return;
+      }
+
+      const fadeOut = viewMenuValue.animate(
+        [
+          { opacity: 1 },
+          { opacity: 0 }
+        ],
+        {
+          duration: 110,
+          easing: 'ease-out',
+          fill: 'forwards'
+        }
       );
+
+      fadeOut.finished
+        .then(() => {
+          if (token !== viewMenuAnimationToken) {
+            return;
+          }
+
+          fadeOut.cancel();
+          commit();
+
+          const fadeIn = viewMenuValue.animate(
+            [
+              { opacity: 0 },
+              { opacity: 1 }
+            ],
+            {
+              duration: 180,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+            }
+          );
+
+          fadeIn.finished
+            .then(() => fadeIn.cancel())
+            .catch(() => {});
+        })
+        .catch(() => {
+          if (token === viewMenuAnimationToken) {
+            commit();
+          }
+        });
+    }
+
+    function updateViewControls(animateViewLabel = true) {
+      const metricView = getMetricTabView(activeView);
+      const supportsViewSelector =
+        metricView === 'cost' ||
+        metricView === 'time';
+
+      const supportsTotal =
+        Boolean(
+          VIEW_CONFIG[activeView]?.supportsTotal
+        );
+
+      const supportsControls =
+        supportsViewSelector ||
+        supportsTotal;
+
+      const currentMode =
+        getCurrentViewMode(activeView) ||
+        'overall';
+
+      const totalActive =
+        isTotalMode(activeView);
+
+      chartToggleGroup.classList.toggle(
+        'is-hidden',
+        !supportsControls
+      );
+
+      chartToggleGroup.setAttribute(
+        'aria-hidden',
+        String(!supportsControls)
+      );
+
+      viewControl.classList.toggle(
+        'is-hidden',
+        !supportsViewSelector
+      );
+
+      viewMenuButton.disabled =
+        !supportsViewSelector ||
+        interactionLocked ||
+        viewSwitchLocked;
+
+      viewMenuButton.tabIndex =
+        supportsViewSelector
+          ? 0
+          : -1;
+
+      setViewMenuValue(
+        currentMode,
+        animateViewLabel
+      );
+
+      viewMenuItems.forEach(item => {
+        const selected =
+          item.dataset.viewMode ===
+          currentMode;
+
+        item.classList.toggle(
+          'is-selected',
+          selected
+        );
+
+        item.setAttribute(
+          'aria-selected',
+          String(selected)
+        );
+      });
+
       totalToggleButton.classList.toggle(
         'is-hidden',
-        !config.supportsTotal
-      );
-      chartToggleGroup.setAttribute('aria-hidden', String(!supportsControls));
-
-      affectedToggleButton.classList.toggle('is-active', affectedActive);
-      affectedToggleButton.setAttribute('aria-checked', String(affectedActive));
-      affectedToggleButton.querySelector('.pff-chart-toggle-value').textContent =
-        affectedActive ? 'ON' : 'OFF';
-      affectedToggleButton.tabIndex = config.supportsAffected ? 0 : -1;
-      affectedToggleButton.disabled =
-        !config.supportsAffected || interactionLocked || viewSwitchLocked;
-      affectedToggleButton.setAttribute(
-        'aria-label',
-        affectedActive
-          ? 'Show all optoms'
-          : 'Show affected optoms'
+        !supportsTotal
       );
 
-      totalToggleButton.classList.toggle('is-active', totalActive);
-      totalToggleButton.setAttribute('aria-checked', String(totalActive));
-      totalToggleButton.querySelector('.pff-chart-toggle-value').textContent =
-        totalActive ? 'ON' : 'OFF';
-      totalToggleButton.tabIndex = config.supportsTotal ? 0 : -1;
+      totalToggleButton.classList.toggle(
+        'is-active',
+        totalActive
+      );
+
+      totalToggleButton.setAttribute(
+        'aria-checked',
+        String(totalActive)
+      );
+
+      totalToggleButton
+        .querySelector('.pff-chart-toggle-value')
+        .textContent =
+          totalActive
+            ? 'ON'
+            : 'OFF';
+
+      totalToggleButton.tabIndex =
+        supportsTotal
+          ? 0
+          : -1;
+
       totalToggleButton.disabled =
-        !config.supportsTotal || interactionLocked || viewSwitchLocked;
+        !supportsTotal ||
+        interactionLocked ||
+        viewSwitchLocked;
+
       totalToggleButton.setAttribute(
         'aria-label',
         totalActive
@@ -2492,7 +2827,7 @@
         }
         updateLegend(nextModel.legendItems, false);
         applyModelToChart(nextModel, false);
-        updateViewToggles();
+        updateViewControls();
         return;
       }
 
@@ -2501,7 +2836,7 @@
       tooltipPinned = false;
       activeTooltipKey = '';
       chart.tooltip.setActiveElements([], { x: 0, y: 0 });
-      updateViewToggles();
+      updateViewControls();
 
       let pendingPreparations = 0;
 
@@ -2560,7 +2895,7 @@
           );
         }
 
-        updateViewToggles();
+        updateViewControls();
 
         if (viewUnlockTimer !== null) {
           window.clearTimeout(viewUnlockTimer);
@@ -2570,7 +2905,7 @@
           viewUnlockTimer = null;
           viewSwitchLocked = false;
           interactionLocked = false;
-          updateViewToggles();
+          updateViewControls();
           chart?.update('none');
         }, CONFIG.transitionMs + 40);
       }
@@ -2603,14 +2938,14 @@
     }
 
     function getEmployerAxisTitle(view = activeView) {
-      if (view === 'employerTime') {
+      if (getMetricTabView(view) === 'time') {
         return isTotalMode(view)
-          ? 'Total time loss among respondents (hours/year)'
+          ? 'Total time loss (hours/year)'
           : 'Time loss per optom (hours/year)';
       }
 
       return isTotalMode(view)
-        ? 'Total $ loss among respondents (FTE $/year)'
+        ? 'Total $ loss (FTE $/year)'
         : '$ loss per optom (FTE $/year)';
     }
 
@@ -2636,11 +2971,7 @@
         invalid: ''
       });
 
-      return view === 'employerTime'
-        ? compact
-        : compact
-          ? `$${compact}`
-          : '';
+      return compact;
     }
 
     function getEmployerAxisSpec(values) {
@@ -2670,7 +3001,7 @@
       };
     }
 
-    function isEmployerMajorTick(value, axisSpec) {
+    function isEmployerMajorTick(value, axisSpec = employerAxisState) {
       const numeric = Number(value);
       const step = Number(axisSpec?.majorStep);
 
@@ -2690,6 +3021,199 @@
       scale.height = 46;
     }
 
+    function getRenderedEmployerBarBounds(chartInstance, index) {
+      let left = Number.POSITIVE_INFINITY;
+      let right = Number.NEGATIVE_INFINITY;
+      let y = NaN;
+      let height = 0;
+
+      chartInstance.data.datasets.forEach((dataset, datasetIndex) => {
+        const element =
+          chartInstance
+            .getDatasetMeta(datasetIndex)
+            ?.data?.[index];
+
+        if (!element) {
+          return;
+        }
+
+        const elementX = Number(element.x);
+        const elementBase = Number(element.base);
+
+        if (
+          Number.isFinite(elementX) &&
+          Number.isFinite(elementBase)
+        ) {
+          left = Math.min(left, elementX, elementBase);
+          right = Math.max(right, elementX, elementBase);
+        }
+
+        if (!Number.isFinite(y) && Number.isFinite(element.y)) {
+          y = Number(element.y);
+        }
+
+        if (Number.isFinite(element.height)) {
+          height = Math.max(height, Number(element.height));
+        }
+      });
+
+      if (
+        !Number.isFinite(left) ||
+        !Number.isFinite(right) ||
+        !Number.isFinite(y)
+      ) {
+        return null;
+      }
+
+      return {
+        left,
+        right,
+        y,
+        height
+      };
+    }
+
+    function getRenderedEmployerTotal(chartInstance, index) {
+      return chartInstance.data.datasets.reduce(
+        (total, dataset) => {
+          const value = Number(dataset.data?.[index]);
+
+          return total + (
+            Number.isFinite(value)
+              ? value
+              : 0
+          );
+        },
+        0
+      );
+    }
+
+    function drawEmployerAxisTitleText(
+      context,
+      text,
+      opacity,
+      x,
+      y
+    ) {
+      if (!text || opacity <= 0.001) {
+        return;
+      }
+
+      context.save();
+      context.globalAlpha = clamp(opacity, 0, 1);
+      context.fillStyle = '#151515';
+      context.font = '700 13px Lato, sans-serif';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(text, x, y);
+      context.restore();
+    }
+
+    function animateEmployerAxisTitle(
+      fromText,
+      toText,
+      duration = 520
+    ) {
+      displayedEmployerAxisTitle = toText;
+
+      if (
+        PFF.reducedMotion() ||
+        duration <= 0 ||
+        fromText === toText
+      ) {
+        employerAxisTitleAnimator.cancel();
+        employerAxisTitleTransition.active = false;
+        employerAxisTitleTransition.progress = 1;
+        employerAxisTitleTransition.fromText = '';
+        employerAxisTitleTransition.toText = '';
+        employerChart?.draw();
+        return;
+      }
+
+      employerAxisTitleTransition.active = true;
+      employerAxisTitleTransition.progress = 0;
+      employerAxisTitleTransition.fromText = fromText;
+      employerAxisTitleTransition.toText = toText;
+
+      employerAxisTitleAnimator.run({
+        duration,
+        easing: value => value,
+
+        onFrame(progress) {
+          employerAxisTitleTransition.progress = progress;
+          employerChart?.draw();
+        },
+
+        onComplete() {
+          employerAxisTitleTransition.active = false;
+          employerAxisTitleTransition.progress = 1;
+          employerAxisTitleTransition.fromText = '';
+          employerAxisTitleTransition.toText = '';
+          employerChart?.draw();
+        }
+      });
+    }
+
+    const employerXAxisTitlePlugin = {
+      id: 'pffEmployerXAxisTitlePlugin',
+
+      afterDraw(chartInstance) {
+        if (!isEmployerView(activeView)) {
+          return;
+        }
+
+        const scale = chartInstance.scales.x;
+
+        if (!scale) {
+          return;
+        }
+
+        const x = (scale.left + scale.right) / 2;
+        const y = scale.bottom - 8;
+        const context = chartInstance.ctx;
+
+        if (!employerAxisTitleTransition.active) {
+          drawEmployerAxisTitleText(
+            context,
+            displayedEmployerAxisTitle ||
+              getEmployerAxisTitle(activeView),
+            1,
+            x,
+            y
+          );
+          return;
+        }
+
+        const progress = clamp(
+          employerAxisTitleTransition.progress,
+          0,
+          1
+        );
+
+        const oldOpacity =
+          1 - clamp(progress / 0.46, 0, 1);
+
+        const newOpacity =
+          clamp((progress - 0.36) / 0.64, 0, 1);
+
+        drawEmployerAxisTitleText(
+          context,
+          employerAxisTitleTransition.fromText,
+          oldOpacity,
+          x,
+          y
+        );
+
+        drawEmployerAxisTitleText(
+          context,
+          employerAxisTitleTransition.toText,
+          newOpacity,
+          x,
+          y
+        );
+      }
+    };
+
     const employerOutlinePlugin = {
       id: 'pffEmployerOutlinePlugin',
 
@@ -2699,31 +3223,49 @@
         }
 
         const context = chartInstance.ctx;
-        const xScale = chartInstance.scales.x;
-        const firstMeta = chartInstance.getDatasetMeta(0);
 
         context.save();
         context.lineWidth = 0.9;
 
         employerModel.groups.forEach((group, index) => {
-          const element = firstMeta?.data?.[index];
-          const total = employerModel.totals[index];
+          const bounds =
+            getRenderedEmployerBarBounds(
+              chartInstance,
+              index
+            );
 
-          if (!element || !Number.isFinite(total)) {
+          if (!bounds) {
             return;
           }
 
-          const left = xScale.getPixelForValue(0);
-          const right = xScale.getPixelForValue(total);
-          const top = element.y - element.height / 2;
-          const width = Math.max(0, right - left);
-          const height = Math.max(0, element.height);
-          const radius = Math.min(2, height / 2);
+          const top =
+            bounds.y -
+            bounds.height / 2;
+
+          const width =
+            Math.max(
+              0,
+              bounds.right -
+              bounds.left
+            );
+
+          const height =
+            Math.max(
+              0,
+              bounds.height
+            );
+
+          const radius =
+            Math.min(
+              2,
+              height / 2
+            );
 
           context.beginPath();
+
           if (typeof context.roundRect === 'function') {
             context.roundRect(
-              left + 0.45,
+              bounds.left + 0.45,
               top + 0.45,
               Math.max(0, width - 0.9),
               Math.max(0, height - 0.9),
@@ -2731,14 +3273,17 @@
             );
           } else {
             context.rect(
-              left + 0.45,
+              bounds.left + 0.45,
               top + 0.45,
               Math.max(0, width - 0.9),
               Math.max(0, height - 0.9)
             );
           }
 
-          context.strokeStyle = group.colour || '#777777';
+          context.strokeStyle =
+            group.colour ||
+            '#777777';
+
           context.stroke();
         });
 
@@ -2755,9 +3300,6 @@
         }
 
         const context = chartInstance.ctx;
-        const xScale = chartInstance.scales.x;
-        const lastDatasetIndex = chartInstance.data.datasets.length - 1;
-        const lastMeta = chartInstance.getDatasetMeta(lastDatasetIndex);
 
         context.save();
         context.fillStyle = '#151515';
@@ -2765,33 +3307,61 @@
         context.textAlign = 'left';
         context.textBaseline = 'middle';
 
-        employerModel.totals.forEach((total, index) => {
-          const element = lastMeta?.data?.[index];
+        employerModel.groups.forEach((group, index) => {
+          const bounds =
+            getRenderedEmployerBarBounds(
+              chartInstance,
+              index
+            );
 
-          if (!element || !Number.isFinite(total)) {
+          if (!bounds) {
             return;
           }
 
-          const text = formatEmployerMetric(total, employerModel.view);
-          const textWidth = context.measureText(text).width;
-          const preferredX = xScale.getPixelForValue(total) + 5;
+          const currentTotal =
+            getRenderedEmployerTotal(
+              chartInstance,
+              index
+            );
+
+          const label =
+            formatEmployerMetric(
+              currentTotal,
+              employerModel.view
+            );
+
+          const textWidth =
+            context.measureText(label).width;
+
+          const preferredX =
+            bounds.right + 5;
+
           const fitsOutside =
-            preferredX + textWidth <= chartInstance.chartArea.right + 44;
+            preferredX +
+            textWidth <=
+            chartInstance.chartArea.right +
+            44;
 
           if (fitsOutside) {
             context.textAlign = 'left';
             context.fillStyle = '#151515';
-            context.fillText(text, preferredX, element.y);
+
+            context.fillText(
+              label,
+              preferredX,
+              bounds.y
+            );
           } else {
             context.textAlign = 'right';
             context.fillStyle = '#151515';
+
             context.fillText(
-              text,
+              label,
               Math.min(
                 chartInstance.chartArea.right + 42,
                 chartInstance.width - 4
               ),
-              element.y
+              bounds.y
             );
           }
         });
@@ -2808,21 +3378,11 @@
           return;
         }
 
-        const axisSpec = employerModel?.axisSpec;
-
         drawVariableTicks(
           chartInstance.ctx,
           chartInstance.scales.x,
           'x',
-          value => isEmployerMajorTick(value, axisSpec),
-          1
-        );
-
-        drawVariableTicks(
-          chartInstance.ctx,
-          chartInstance.scales.y,
-          'y',
-          () => true,
+          value => isEmployerMajorTick(value, employerAxisState),
           1
         );
       }
@@ -2892,13 +3452,12 @@
     };
 
     function employerTooltipLabel(item) {
-      const modeLabel = isTotalMode(employerModel?.view)
-        ? 'Total'
-        : 'Median per optom';
-
       return (
-        `${item.dataset.label} — ${modeLabel}: ` +
-        `${formatEmployerMetric(item.parsed.x, employerModel?.view)}/year`
+        `${item.dataset.label}: ` +
+        `${formatEmployerMetric(
+          item.parsed.x,
+          employerModel?.view
+        )}/year`
       );
     }
 
@@ -2910,19 +3469,44 @@
         return [];
       }
 
-      const totalLabel = isTotalMode(employerModel.view)
-        ? 'Total'
-        : 'Combined category medians';
+      const totalLabel =
+        isTotalMode(employerModel.view)
+          ? 'Total'
+          : 'Combined';
 
       return [
-        `${totalLabel}: ${formatEmployerMetric(group.displayTotal, employerModel.view)}/year`,
-        `Respondents included: ${formatNumber(group.responseCount, 0)}`
+        `${totalLabel}: ${formatEmployerMetric(
+          group.displayTotal,
+          employerModel.view
+        )}/year`,
+
+        `Respondents: ${formatNumber(
+          group.responseCount,
+          0
+        )}`
       ];
     }
 
-    function createEmployerChart() {
-      employerModel = buildEmployerModel(activeView);
-      employerModel.axisSpec = getEmployerAxisSpec(employerModel.totals);
+    function createEmployerChart(initialModel = null, animateInitial = true) {
+      employerModel =
+        initialModel ||
+        buildEmployerModel(activeView);
+
+      employerModel.axisSpec =
+        employerModel.axisSpec ||
+        getEmployerAxisSpec(employerModel.totals);
+
+      employerAxisState.maximum =
+        employerModel.axisSpec.maximum;
+
+      employerAxisState.majorStep =
+        employerModel.axisSpec.majorStep;
+
+      employerAxisState.minorStep =
+        employerModel.axisSpec.minorStep;
+
+      displayedEmployerAxisTitle =
+        getEmployerAxisTitle(activeView);
 
       employerChart = new Chart(
         employerCanvas.getContext('2d'),
@@ -2942,7 +3526,11 @@
               PFF.defaults.maxDevicePixelRatio
             ),
             animation: {
-              duration: PFF.reducedMotion() ? 0 : CONFIG.transitionMs,
+              duration:
+                animateInitial &&
+                !PFF.reducedMotion()
+                  ? CONFIG.transitionMs
+                  : 0,
               easing: 'easeOutCubic'
             },
             transitions: {
@@ -2962,7 +3550,7 @@
               autoPadding: false,
               padding: {
                 top: 8,
-                right: 48,
+                right: 45,
                 bottom: 0,
                 left: 0
               }
@@ -2984,14 +3572,34 @@
                 display: false
               },
               tooltip: PFFCharts.tooltipOptions({
+                mode: 'index',
+                axis: 'y',
+                intersect: false,
+                position: 'nearest',
+                displayColors: true,
+                padding: 7,
+                boxWidth: 8,
+                boxHeight: 8,
+                boxPadding: 4,
+                titleMarginBottom: 4,
+                bodySpacing: 2,
+                footerMarginTop: 4,
+                footerFont: {
+                  family: 'Lato',
+                  size: 10,
+                  weight: '700'
+                },
+
                 filter() {
                   return !interactionLocked;
                 },
+
                 callbacks: {
                   title(items) {
                     const index = items?.[0]?.dataIndex;
                     return employerModel?.groups?.[index]?.label || '';
                   },
+
                   label: employerTooltipLabel,
                   footer: employerTooltipFooter
                 }
@@ -3004,34 +3612,22 @@
                 stacked: true,
                 beginAtZero: true,
                 min: 0,
-                max: employerModel.axisSpec.maximum,
+                max: employerAxisState.maximum,
+
                 afterBuildTicks(scale) {
-                  const ticks = [];
-                  const step = employerModel.axisSpec.minorStep;
-
-                  for (
-                    let value = 0;
-                    value <= employerModel.axisSpec.maximum + step * 0.25;
-                    value += step
-                  ) {
-                    ticks.push({ value });
-                  }
-
-                  scale.ticks = ticks;
+                  scale.ticks = Array.from(
+                    { length: 11 },
+                    (_, index) => ({
+                      value:
+                        employerAxisState.maximum *
+                        index /
+                        10
+                    })
+                  );
                 },
+
                 title: {
-                  display: true,
-                  text: getEmployerAxisTitle(activeView),
-                  color: '#151515',
-                  font: {
-                    family: 'Lato',
-                    size: 13,
-                    weight: '700'
-                  },
-                  padding: {
-                    top: 7,
-                    bottom: 2
-                  }
+                  display: false
                 },
                 ticks: {
                   color: '#151515',
@@ -3043,7 +3639,7 @@
                     weight: '400'
                   },
                   callback(value) {
-                    return isEmployerMajorTick(value, employerModel.axisSpec)
+                    return isEmployerMajorTick(value, employerAxisState)
                       ? formatEmployerAxisTick(value, employerModel.view)
                       : '';
                   }
@@ -3052,7 +3648,7 @@
                   color(context) {
                     return isEmployerMajorTick(
                       context.tick?.value,
-                      employerModel.axisSpec
+                      employerAxisState
                     )
                       ? 'rgba(105, 113, 138, 0.075)'
                       : 'rgba(105, 113, 138, 0.035)';
@@ -3060,7 +3656,7 @@
                   lineWidth(context) {
                     return isEmployerMajorTick(
                       context.tick?.value,
-                      employerModel.axisSpec
+                      employerAxisState
                     )
                       ? 1
                       : 0.7;
@@ -3107,6 +3703,7 @@
           plugins: [
             constantSpinePlugin,
             employerAxisTickPlugin,
+            employerXAxisTitlePlugin,
             employerOutlinePlugin,
             employerTotalLabelsPlugin,
             employerThresholdNotePlugin
@@ -3115,50 +3712,503 @@
       );
     }
 
+    function sameEmployerStructure(firstModel, secondModel) {
+      if (
+        !firstModel ||
+        !secondModel ||
+        firstModel.groups.length !== secondModel.groups.length ||
+        firstModel.datasets.length !== secondModel.datasets.length
+      ) {
+        return false;
+      }
+
+      return firstModel.groups.every(
+        (group, index) =>
+          group.key ===
+          secondModel.groups[index]?.key
+      );
+    }
+
+    function applyEmployerDatasetPresentation(
+      targetDataset,
+      sourceDataset
+    ) {
+      Object.keys(sourceDataset).forEach(key => {
+        if (key === 'data') {
+          return;
+        }
+
+        targetDataset[key] =
+          sourceDataset[key];
+      });
+    }
+
     function updateEmployerChart(animate = true) {
-      employerModel = buildEmployerModel(activeView);
-      employerModel.axisSpec = getEmployerAxisSpec(employerModel.totals);
+      const previousModel =
+        employerModel;
+
+      const sameMetric =
+        previousModel &&
+        getMetricTabView(previousModel.view) ===
+          getMetricTabView(activeView);
+
+      const preferredOrderKeys =
+        sameMetric
+          ? previousModel.groups.map(group => group.key)
+          : null;
+
+      const nextModel =
+        buildEmployerModel(
+          activeView,
+          preferredOrderKeys
+        );
+
+      nextModel.axisSpec =
+        getEmployerAxisSpec(
+          nextModel.totals
+        );
+
+      const nextAxisTitle =
+        getEmployerAxisTitle(
+          activeView
+        );
 
       if (!employerChart) {
-        createEmployerChart();
+        if (
+          animate &&
+          !PFF.reducedMotion()
+        ) {
+          const zeroModel = {
+            ...nextModel,
+
+            totals:
+              nextModel.totals.map(
+                () => 0
+              ),
+
+            datasets:
+              nextModel.datasets.map(
+                dataset => ({
+                  ...dataset,
+                  data:
+                    dataset.data.map(
+                      () => 0
+                    )
+                })
+              )
+          };
+
+          zeroModel.axisSpec =
+            nextModel.axisSpec;
+
+          createEmployerChart(
+            zeroModel,
+            false
+          );
+
+          updateEmployerChart(
+            true
+          );
+
+          return;
+        }
+
+        createEmployerChart(
+          nextModel,
+          false
+        );
+
         return;
       }
 
-      employerChart.data.labels = employerModel.labels;
-      employerChart.data.datasets = employerModel.datasets;
-      employerChart.options.scales.x.max = employerModel.axisSpec.maximum;
-      employerChart.options.scales.x.title.text = getEmployerAxisTitle(activeView);
-      employerChart.options.layout.padding.right = 48;
+      const canInterpolate =
+        sameEmployerStructure(
+          previousModel,
+          nextModel
+        );
 
-      employerChart.update(animate ? undefined : 'none');
+      const reduceMotion =
+        PFF.reducedMotion();
+
+      if (
+        !animate ||
+        reduceMotion ||
+        !canInterpolate
+      ) {
+        employerMeasureAnimator.cancel();
+        employerAxisTitleAnimator.cancel();
+
+        employerModel =
+          nextModel;
+
+        employerAxisState.maximum =
+          nextModel.axisSpec.maximum;
+
+        employerAxisState.majorStep =
+          nextModel.axisSpec.majorStep;
+
+        employerAxisState.minorStep =
+          nextModel.axisSpec.minorStep;
+
+        displayedEmployerAxisTitle =
+          nextAxisTitle;
+
+        employerAxisTitleTransition.active =
+          false;
+
+        employerAxisTitleTransition.progress =
+          1;
+
+        employerAxisTitleTransition.fromText =
+          '';
+
+        employerAxisTitleTransition.toText =
+          '';
+
+        employerChart.data.labels =
+          nextModel.labels;
+
+        employerChart.data.datasets =
+          nextModel.datasets;
+
+        employerChart.options.scales.x.max =
+          employerAxisState.maximum;
+
+        employerChart.options.layout.padding.right =
+          45;
+
+        employerChart.update('none');
+
+        return;
+      }
+
+      const startDatasets =
+        employerChart.data.datasets.map(
+          dataset =>
+            (dataset.data || []).map(
+              value =>
+                Number(value) || 0
+            )
+        );
+
+      const targetDatasets =
+        nextModel.datasets.map(
+          dataset =>
+            (dataset.data || []).map(
+              value =>
+                Number(value) || 0
+            )
+        );
+
+      const startAxis = {
+        maximum:
+          employerAxisState.maximum,
+
+        majorStep:
+          employerAxisState.majorStep,
+
+        minorStep:
+          employerAxisState.minorStep
+      };
+
+      const targetAxis =
+        nextModel.axisSpec;
+
+      const previousAxisTitle =
+        displayedEmployerAxisTitle ||
+        getEmployerAxisTitle(
+          previousModel?.view ||
+          activeView
+        );
+
+      const wasInteractionLocked =
+        interactionLocked;
+
+      interactionLocked =
+        true;
+
+      employerChart.tooltip
+        ?.setActiveElements(
+          [],
+          {
+            x: 0,
+            y: 0
+          }
+        );
+
+      employerModel =
+        nextModel;
+
+      employerChart.data.labels =
+        nextModel.labels;
+
+      nextModel.datasets.forEach(
+        (
+          nextDataset,
+          datasetIndex
+        ) => {
+          const currentDataset =
+            employerChart.data.datasets[
+              datasetIndex
+            ];
+
+          applyEmployerDatasetPresentation(
+            currentDataset,
+            nextDataset
+          );
+
+          currentDataset.data =
+            startDatasets[
+              datasetIndex
+            ].slice();
+        }
+      );
+
+      animateEmployerAxisTitle(
+        previousAxisTitle,
+        nextAxisTitle,
+        Math.min(
+          600,
+          CONFIG.transitionMs
+        )
+      );
+
+      updateViewControls();
+
+      employerMeasureAnimator.run({
+        duration:
+          CONFIG.transitionMs,
+
+        easing:
+          easeInOutCubic,
+
+        onFrame(progress) {
+          employerChart.data.datasets.forEach(
+            (
+              dataset,
+              datasetIndex
+            ) => {
+              const startValues =
+                startDatasets[
+                  datasetIndex
+                ];
+
+              const targetValues =
+                targetDatasets[
+                  datasetIndex
+                ];
+
+              dataset.data =
+                targetValues.map(
+                  (
+                    targetValue,
+                    valueIndex
+                  ) => {
+                    const startValue =
+                      startValues?.[
+                        valueIndex
+                      ] ?? 0;
+
+                    return (
+                      startValue +
+                      (
+                        targetValue -
+                        startValue
+                      ) *
+                      progress
+                    );
+                  }
+                );
+            }
+          );
+
+          employerAxisState.maximum =
+            startAxis.maximum +
+            (
+              targetAxis.maximum -
+              startAxis.maximum
+            ) *
+            progress;
+
+          employerAxisState.majorStep =
+            employerAxisState.maximum /
+            5;
+
+          employerAxisState.minorStep =
+            employerAxisState.maximum /
+            10;
+
+          employerChart.options.scales.x.max =
+            employerAxisState.maximum;
+
+          employerChart.update('none');
+        },
+
+        onComplete() {
+          employerChart.data.datasets.forEach(
+            (
+              dataset,
+              datasetIndex
+            ) => {
+              dataset.data =
+                targetDatasets[
+                  datasetIndex
+                ].slice();
+            }
+          );
+
+          employerAxisState.maximum =
+            targetAxis.maximum;
+
+          employerAxisState.majorStep =
+            targetAxis.majorStep;
+
+          employerAxisState.minorStep =
+            targetAxis.minorStep;
+
+          employerChart.options.scales.x.max =
+            employerAxisState.maximum;
+
+          employerChart.update('none');
+
+          if (!wasInteractionLocked) {
+            interactionLocked =
+              false;
+
+            updateViewControls();
+          }
+        }
+      });
     }
 
     function setChartFamilyVisibility(showEmployer, animate = true, onComplete) {
-      const fromEmployer = employerCanvas.classList.contains('is-visible');
-      const startEmployerOpacity = fromEmployer ? 1 : 0;
-      const endEmployerOpacity = showEmployer ? 1 : 0;
+      const fromEmployer =
+        employerCanvas.classList.contains('is-visible');
+
+      const startEmployerOpacity =
+        fromEmployer
+          ? 1
+          : 0;
+
+      const endEmployerOpacity =
+        showEmployer
+          ? 1
+          : 0;
 
       chartFamilyAnimator.run({
-        duration: animate ? CONFIG.chartFamilyFadeMs : 0,
-        easing: easeInOutCubic,
+        duration:
+          animate
+            ? CONFIG.chartFamilyFadeMs
+            : 0,
+
+        easing:
+          easeInOutCubic,
+
         onFrame(progress) {
           const employerOpacity =
             startEmployerOpacity +
-            (endEmployerOpacity - startEmployerOpacity) * progress;
+            (
+              endEmployerOpacity -
+              startEmployerOpacity
+            ) *
+            progress;
 
-          employerCanvas.style.opacity = String(employerOpacity);
-          chartCanvas.style.opacity = String(1 - employerOpacity);
+          const standardOpacity =
+            1 -
+            employerOpacity;
+
+          employerCanvas.style.opacity =
+            String(employerOpacity);
+
+          chartCanvas.style.opacity =
+            String(standardOpacity);
+
+          employerCanvas.style.transform =
+            `translate3d(0, ${
+              (1 - employerOpacity) * 6
+            }px, 0) scale(${
+              0.994 +
+              employerOpacity * 0.006
+            })`;
+
+          chartCanvas.style.transform =
+            `translate3d(0, ${
+              employerOpacity * -4
+            }px, 0) scale(${
+              1 -
+              employerOpacity * 0.006
+            })`;
         },
+
         onComplete() {
-          employerCanvas.style.opacity = showEmployer ? '1' : '0';
-          chartCanvas.style.opacity = showEmployer ? '0' : '1';
-          employerCanvas.classList.toggle('is-visible', showEmployer);
-          chartCanvas.classList.toggle('is-hidden-family', showEmployer);
-          employerCanvas.style.pointerEvents = showEmployer ? 'auto' : 'none';
-          chartCanvas.style.pointerEvents = showEmployer ? 'none' : 'auto';
+          employerCanvas.style.opacity =
+            showEmployer
+              ? '1'
+              : '0';
+
+          chartCanvas.style.opacity =
+            showEmployer
+              ? '0'
+              : '1';
+
+          employerCanvas.style.transform =
+            showEmployer
+              ? 'translate3d(0, 0, 0) scale(1)'
+              : 'translate3d(0, 6px, 0) scale(0.994)';
+
+          chartCanvas.style.transform =
+            showEmployer
+              ? 'translate3d(0, -4px, 0) scale(0.994)'
+              : 'translate3d(0, 0, 0) scale(1)';
+
+          employerCanvas.classList.toggle(
+            'is-visible',
+            showEmployer
+          );
+
+          chartCanvas.classList.toggle(
+            'is-hidden-family',
+            showEmployer
+          );
+
+          employerCanvas.style.pointerEvents =
+            showEmployer
+              ? 'auto'
+              : 'none';
+
+          chartCanvas.style.pointerEvents =
+            showEmployer
+              ? 'none'
+              : 'auto';
+
           onComplete?.();
         }
       });
+    }
+
+    function unlockAfterFamilyTransition(animate = true) {
+      const delay =
+        animate &&
+        !PFF.reducedMotion()
+          ? Math.max(
+              0,
+              CONFIG.transitionMs -
+              CONFIG.chartFamilyFadeMs
+            )
+          : 0;
+
+      window.setTimeout(
+        () => {
+          viewSwitchLocked =
+            false;
+
+          interactionLocked =
+            false;
+
+          updateViewControls();
+        },
+        delay
+      );
     }
 
     function switchChartFamily(nextView, animate = true) {
@@ -3166,92 +4216,259 @@
         return;
       }
 
-      const currentIsEmployer = isEmployerView(activeView);
-      const nextIsEmployer = isEmployerView(nextView);
+      const currentIsEmployer =
+        isEmployerView(activeView);
+
+      const nextIsEmployer =
+        isEmployerView(nextView);
 
       if (!currentIsEmployer && !nextIsEmployer) {
-        applyView(nextView, animate);
+        applyView(
+          nextView,
+          animate
+        );
+
         return;
       }
 
       if (currentIsEmployer && nextIsEmployer) {
-        viewSwitchLocked = true;
-        interactionLocked = true;
-        activeView = nextView;
+        viewSwitchLocked =
+          true;
+
+        interactionLocked =
+          true;
+
+        activeView =
+          nextView;
+
         updateHeading(true);
         updateActiveTab();
-        updateLegend(CATEGORY_CONFIG, true);
-        updateViewToggles();
+
+        updateLegend(
+          CATEGORY_CONFIG,
+          true
+        );
+
+        updateViewControls();
         updateEmployerChart(animate);
 
-        window.setTimeout(() => {
-          viewSwitchLocked = false;
-          interactionLocked = false;
-          updateViewToggles();
-        }, animate && !PFF.reducedMotion() ? CONFIG.transitionMs + 40 : 0);
+        window.setTimeout(
+          () => {
+            viewSwitchLocked =
+              false;
+
+            interactionLocked =
+              false;
+
+            updateViewControls();
+          },
+          animate &&
+          !PFF.reducedMotion()
+            ? CONFIG.transitionMs + 40
+            : 0
+        );
 
         return;
       }
 
-      viewSwitchLocked = true;
-      interactionLocked = true;
-      tooltipPinned = false;
-      activeTooltipKey = '';
+      viewSwitchLocked =
+        true;
+
+      interactionLocked =
+        true;
+
+      tooltipPinned =
+        false;
+
+      activeTooltipKey =
+        '';
 
       if (nextIsEmployer) {
-        activeView = nextView;
-        updateEmployerChart(false);
+        activeView =
+          nextView;
+
+        updateEmployerChart(animate);
         updateHeading(true);
         updateActiveTab();
-        updateLegend(CATEGORY_CONFIG, true);
-        updateViewToggles();
 
-        setChartFamilyVisibility(true, animate, () => {
-          viewSwitchLocked = false;
-          interactionLocked = false;
-          updateViewToggles();
-        });
+        updateLegend(
+          CATEGORY_CONFIG,
+          true
+        );
+
+        updateViewControls();
+
+        setChartFamilyVisibility(
+          true,
+          animate,
+          () => {
+            unlockAfterFamilyTransition(
+              animate
+            );
+          }
+        );
 
         return;
       }
 
-      activeView = nextView;
+      activeView =
+        nextView;
 
-      const model = buildViewModel(activeView);
-      currentYAxisModel = model.yAxis;
-      axisNumberTransition.fromMaximum = model.yAxis.maximum;
-      axisNumberTransition.toMaximum = model.yAxis.maximum;
-      axisNumberTransition.progress = 1;
-      axisLabelOpacity = 1;
-      displayedYAxisTitleParts = getYAxisTitleParts(activeView);
-      axisTitleTransition.active = false;
-      axisTitleTransition.progress = 1;
-      axisTitleTransition.fromParts = null;
-      axisTitleTransition.toParts = null;
-      applyModelToChart(model, false);
+      const model =
+        buildViewModel(
+          activeView
+        );
+
+      currentYAxisModel =
+        model.yAxis;
+
+      axisNumberTransition.fromMaximum =
+        model.yAxis.maximum;
+
+      axisNumberTransition.toMaximum =
+        model.yAxis.maximum;
+
+      axisNumberTransition.progress =
+        1;
+
+      axisLabelOpacity =
+        1;
+
+      displayedYAxisTitleParts =
+        getYAxisTitleParts(
+          activeView
+        );
+
+      axisTitleTransition.active =
+        false;
+
+      axisTitleTransition.progress =
+        1;
+
+      axisTitleTransition.fromParts =
+        null;
+
+      axisTitleTransition.toParts =
+        null;
+
+      applyModelToChart(
+        model,
+        animate
+      );
+
       updateHeading(true);
       updateActiveTab();
-      updateLegend(model.legendItems, true);
-      updateViewToggles();
 
-      setChartFamilyVisibility(false, animate, () => {
-        viewSwitchLocked = false;
-        interactionLocked = false;
-        updateViewToggles();
-      });
+      updateLegend(
+        model.legendItems,
+        true
+      );
+
+      updateViewControls();
+
+      setChartFamilyVisibility(
+        false,
+        animate,
+        () => {
+          unlockAfterFamilyTransition(
+            animate
+          );
+        }
+      );
     }
 
-    function requestViewSwitch(nextView) {
+    function requestTabSwitch(nextTabView) {
+      const currentTabView =
+        activeView === 'affected'
+          ? 'affected'
+          : getMetricTabView(activeView);
+
       if (
-        nextView === activeView ||
+        nextTabView === currentTabView ||
         interactionLocked ||
         viewSwitchLocked ||
-        !VIEW_CONFIG[nextView]
+        !VIEW_CONFIG[nextTabView]
       ) {
         return;
       }
 
-      switchChartFamily(nextView, true);
+      const nextInternalView =
+        resolveInternalViewForMetric(
+          nextTabView
+        );
+
+      switchChartFamily(
+        nextInternalView,
+        true
+      );
+    }
+
+    function requestMetricViewMode(nextMode) {
+      if (
+        interactionLocked ||
+        viewSwitchLocked ||
+        !['overall', 'affected', 'employer'].includes(nextMode)
+      ) {
+        return;
+      }
+
+      const metricView =
+        getMetricTabView(
+          activeView
+        );
+
+      if (
+        metricView !== 'cost' &&
+        metricView !== 'time'
+      ) {
+        return;
+      }
+
+      const currentMode =
+        getCurrentViewMode(
+          activeView
+        );
+
+      if (nextMode === currentMode) {
+        viewMenuController?.closeMenu();
+        return;
+      }
+
+      viewModeByMetric[metricView] =
+        nextMode;
+
+      affectedOnlyByView[metricView] =
+        nextMode === 'affected';
+
+      viewMenuController?.closeMenu();
+
+      if (nextMode === 'employer') {
+        switchChartFamily(
+          getEmployerViewForMetric(
+            metricView
+          ),
+          true
+        );
+
+        return;
+      }
+
+      if (isEmployerView(activeView)) {
+        switchChartFamily(
+          metricView,
+          true
+        );
+
+        return;
+      }
+
+      applyView(
+        metricView,
+        true,
+        true,
+        null,
+        nextMode === 'affected'
+      );
     }
 
     function updateHeadingScrollControls() {
@@ -3282,7 +4499,12 @@
     }
 
     function updateActiveTab() {
-      tabController?.set(activeView, {
+      const tabView =
+        activeView === 'affected'
+          ? 'affected'
+          : getMetricTabView(activeView);
+
+      tabController?.set(tabView, {
         notify: false
       });
     }
@@ -3295,7 +4517,7 @@
       controlled: true,
       leftButton: tabScrollLeft,
       rightButton: tabScrollRight,
-      onRequest: requestViewSwitch
+      onRequest: requestTabSwitch
     });
 
     headingScroller = PFF.setupScrollableRegion({
@@ -3311,23 +4533,19 @@
       rightButton: legendScrollRight
     });
 
-    affectedToggleButton.addEventListener('click', () => {
-      if (
-        interactionLocked ||
-        viewSwitchLocked ||
-        !VIEW_CONFIG[activeView]?.supportsAffected
-      ) {
-        return;
-      }
+    viewMenuController = PFF.setupMenu({
+      menu: viewControl,
+      button: viewMenuButton,
+      panel: viewMenuPanel,
+      items: viewMenuItems
+    });
 
-      const nextAffectedOnly = !affectedOnlyByView[activeView];
-      applyView(
-        activeView,
-        true,
-        true,
-        null,
-        nextAffectedOnly
-      );
+    viewMenuItems.forEach(item => {
+      item.addEventListener('click', () => {
+        requestMetricViewMode(
+          item.dataset.viewMode
+        );
+      });
     });
 
     totalToggleButton.addEventListener('click', () => {
@@ -3339,13 +4557,19 @@
         return;
       }
 
-      const nextTotalMode = !totalModeByView[activeView];
+      const metricView =
+        getMetricTabView(activeView);
+
+      const nextTotalMode =
+        !totalModeByView[metricView];
+
+      totalModeByView[metricView] =
+        nextTotalMode;
 
       if (isEmployerView(activeView)) {
-        totalModeByView[activeView] = nextTotalMode;
         updateHeading(true);
         updateEmployerChart(true);
-        updateViewToggles();
+        updateViewControls();
         return;
       }
 
@@ -3427,7 +4651,7 @@
           chart.resize();
           chart.update('none');
           updateLegend(model.legendItems, false);
-          updateViewToggles();
+          updateViewControls();
         }
 
         updateTabIndicator(false);
@@ -3481,7 +4705,7 @@
         }
 
         updateHeading(false);
-        updateViewToggles();
+        updateViewControls();
 
         hideLoadingState();
         createChart();
