@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.1
+ * PFF Core v1.2.2
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.1';
+  const VERSION = '1.2.2';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -675,6 +675,10 @@ body.pff-chart-app .pff-app {
   background: var(--pff-cached-amber);
 }
 
+.live-data.is-unavailable .live-data-dot {
+  background: var(--pff-muted);
+}
+
 #status,
 .pff-status {
   position: absolute;
@@ -738,7 +742,143 @@ body.pff-chart-app .pff-app {
   align-items: flex-start;
   gap: 4px;
 }
+.pff-chart-toggle-group {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
 
+.pff-chart-toggle-group.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.pff-chart-toggle-button {
+  display: grid;
+  grid-template-columns: 15px max-content 22px;
+  width: max-content;
+  min-width: 0;
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+  color: var(--pff-ink);
+  background: var(--pff-white);
+  border: 1px solid var(--pff-track);
+  border-radius: 4px;
+  box-shadow: none;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+.pff-chart-toggle-button:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px rgba(21, 21, 21, 0.12);
+}
+
+.pff-chart-toggle-button:focus-visible {
+  outline: 2px solid rgba(102, 0, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.pff-chart-toggle-button.is-active {
+  border-color: var(--pff-purple);
+}
+
+.pff-chart-toggle-button.is-hidden {
+  display: none;
+}
+
+.pff-chart-toggle-button:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.pff-chart-toggle-indicator {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  max-width: 15px;
+  flex: 0 0 15px;
+  align-self: center;
+  justify-self: center;
+  border: 1px solid var(--pff-muted);
+  border-radius: 2px;
+  background: var(--pff-white);
+}
+
+.pff-chart-toggle-button.is-active .pff-chart-toggle-indicator {
+  border-color: var(--pff-purple);
+  background: var(--pff-purple);
+}
+
+.pff-chart-toggle-button.is-active .pff-chart-toggle-indicator::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  width: 4px;
+  height: 7px;
+  border-right: 2px solid var(--pff-white);
+  border-bottom: 2px solid var(--pff-white);
+  transform: rotate(45deg);
+}
+
+.pff-chart-toggle-label {
+  color: var(--pff-ink);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.05;
+  text-align: left;
+}
+
+.pff-chart-toggle-value {
+  display: inline-block;
+  width: 22px;
+  min-width: 22px;
+  justify-self: end;
+  color: var(--pff-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  line-height: 1;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pff-chart-toggle-button.is-active .pff-chart-toggle-value {
+  color: var(--pff-purple);
+}
+
+.pff-threshold-note {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  z-index: 4;
+  max-width: min(210px, calc(100% - 76px));
+  padding: 5px 7px;
+  color: var(--pff-muted);
+  background: rgba(255, 255, 255, 0.90);
+  border: 1px solid rgba(105, 113, 138, 0.16);
+  border-radius: 4px;
+  font-size: 8.5px;
+  line-height: 1.3;
+  pointer-events: none;
+}
+
+.pff-threshold-note.is-hidden {
+  display: none;
+}
 .state-control {
   position: relative;
   z-index: 45;
@@ -1554,6 +1694,28 @@ body.pff-chart-app .pff-app {
   .chart-heading-row { height: 29px; min-height: 29px; gap: 4px; }
   .chart-heading { padding-top: 4px; font-size: 14px; line-height: 21px; }
   .heading-controls { gap: 3px; }
+  .pff-chart-toggle-button {
+    grid-template-columns: 15px max-content 22px;
+    min-width: 0;
+    min-height: 29px;
+    padding-right: 5px;
+    padding-left: 4px;
+    font-size: 10px;
+  }
+
+  .pff-chart-toggle-label,
+  .pff-chart-toggle-value {
+    font-size: 9px;
+  }
+
+  .pff-chart-toggle-value {
+    transform: translateX(-3px);
+  }
+
+  .pff-threshold-note {
+    max-width: min(190px, calc(100% - 62px));
+    font-size: 8px;
+  }  
   .state-button { min-width: 80px; padding-right: 4px; padding-left: 4px; font-size: 9px; }
   .yoy-trend-toggle {
     width: 61px;
@@ -1572,6 +1734,19 @@ body.pff-chart-app .pff-app {
 @media (max-width: 350px) {
   .chart-heading { font-size: 13px; }
   .heading-controls { gap: 2px; }
+
+  .pff-chart-toggle-button {
+    grid-template-columns: 15px max-content 22px;
+    min-width: 0;
+    padding-right: 5px;
+    padding-left: 3px;
+    font-size: 9px;
+  }
+
+  .pff-chart-toggle-value {
+    transform: translateX(-3px);
+  }
+
   .yoy-trend-toggle {
     width: 60px;
     flex-basis: 60px;
@@ -1960,15 +2135,58 @@ body.pff-chart-app .pff-app {
   }
 
   function setDataSourceIndicator(source, options = {}) {
-    const indicator = options.indicator || document.getElementById('dataSourceIndicator');
-    const text = options.text || document.getElementById('dataSourceText');
-    const cached = String(source).toLowerCase() !== 'live';
+    const indicator =
+      options.indicator ||
+      document.getElementById(
+        'dataSourceIndicator'
+      );
 
-    indicator?.classList.toggle('is-cached', cached);
-    indicator?.setAttribute('aria-label', cached ? 'Cached data' : 'Live data');
+    const text =
+      options.text ||
+      document.getElementById(
+        'dataSourceText'
+      );
+
+    const normalised =
+      String(
+        source ||
+        ''
+      ).toLowerCase();
+
+    const unavailable =
+      normalised === 'none' ||
+      normalised === 'unavailable';
+
+    const cached =
+      !unavailable &&
+      normalised !== 'live';
+
+    indicator?.classList.toggle(
+      'is-cached',
+      cached
+    );
+
+    indicator?.classList.toggle(
+      'is-unavailable',
+      unavailable
+    );
+
+    indicator?.setAttribute(
+      'aria-label',
+      unavailable
+        ? 'Data unavailable'
+        : cached
+          ? 'Cached data'
+          : 'Live data'
+    );
 
     if (text) {
-      text.textContent = cached ? 'CACHED data' : 'LIVE data';
+      text.textContent =
+        unavailable
+          ? 'DATA unavailable'
+          : cached
+            ? 'CACHED data'
+            : 'LIVE data';
     }
   }
 
@@ -3285,6 +3503,36 @@ function getEmployerAppearance(
     return cell?.v ?? cell?.f ?? '';
   }
 
+  function parsePercentCell(cell) {
+    const formatted = cleanText(cell?.f);
+
+    if (formatted.includes('%')) {
+      const number = toNumber(formatted);
+
+      return Number.isFinite(number)
+        ? clamp(number, 0, 100)
+        : NaN;
+    }
+
+    const number =
+      toNumber(cell?.v ?? cell?.f);
+
+    if (!Number.isFinite(number)) {
+      return NaN;
+    }
+
+    const percentage =
+      number > 0 && number < 1
+        ? number * 100
+        : number;
+
+    return clamp(
+      percentage,
+      0,
+      100
+    );
+  }
+
   function parseDateUtc(value) {
     const dayMs = 86400000;
 
@@ -3354,7 +3602,85 @@ function getEmployerAppearance(
           parsed.getDate()
         );
   }
+  function formatFinancialYear(startYear) {
+    const year =
+      Number(startYear);
 
+    if (!Number.isInteger(year)) {
+      return '';
+    }
+
+    return `FY${year}–${String(
+      year + 1
+    ).slice(-2)}`;
+  }
+
+  function getCurrentFinancialYearWindow(
+    options = {}
+  ) {
+    const timeZone =
+      options.timeZone ||
+      'Australia/Sydney';
+
+    const now =
+      options.now instanceof Date
+        ? options.now
+        : new Date(
+            options.now ??
+            Date.now()
+          );
+
+    const parts =
+      new Intl.DateTimeFormat(
+        'en-AU',
+        {
+          timeZone,
+          year: 'numeric',
+          month: 'numeric'
+        }
+      ).formatToParts(now);
+
+    const year =
+      Number(
+        parts.find(
+          part =>
+            part.type === 'year'
+        )?.value
+      );
+
+    const month =
+      Number(
+        parts.find(
+          part =>
+            part.type === 'month'
+        )?.value
+      );
+
+    const startYear =
+      month >= 7
+        ? year
+        : year - 1;
+
+    return {
+      startYear,
+      start:
+        Date.UTC(
+          startYear,
+          6,
+          1
+        ),
+      end:
+        Date.UTC(
+          startYear + 1,
+          6,
+          1
+        ),
+      label:
+        formatFinancialYear(
+          startYear
+        )
+    };
+  }
   function normaliseMMM(value) {
     const text = cleanText(value).toUpperCase();
 
@@ -3621,24 +3947,56 @@ function getEmployerAppearance(
             second
         );
 
+    const sum =
+      sorted.reduce(
+        (
+          total,
+          value
+        ) =>
+          total + value,
+        0
+      );
+
     return {
       count:
         sorted.length,
+
       median:
         percentile(
           sorted,
           0.5
         ),
+
       q1:
         percentile(
           sorted,
           0.25
         ),
+
       q3:
         percentile(
           sorted,
           0.75
-        )
+        ),
+
+      mean:
+        sorted.length
+          ? sum / sorted.length
+          : NaN,
+
+      sum,
+
+      minimum:
+        sorted.length
+          ? sorted[0]
+          : NaN,
+
+      maximum:
+        sorted.length
+          ? sorted[
+              sorted.length - 1
+            ]
+          : NaN
     };
   }
 
@@ -7302,7 +7660,10 @@ function getEmployerAppearance(
       normaliseText,
       toNumber,
       cellValue,
+      parsePercentCell,
       parseDateUtc,
+      formatFinancialYear,
+      getCurrentFinancialYearWindow,
       normaliseMMM,
       normaliseState,
 
