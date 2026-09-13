@@ -50,11 +50,15 @@
       display: none;
     }
 
+    /*
+     * The View selector intentionally uses the shared core
+     * .pff-menu / .pff-menu-button / .pff-menu-panel / .pff-menu-item
+     * styling. Only compact app-specific sizing and value emphasis live here.
+     */
     .view-menu-button {
-      min-width: 118px;
-      display: grid;
-      grid-template-columns: max-content minmax(48px, 1fr) 6px;
-      gap: 5px;
+      width: 138px;
+      min-width: 138px;
+      min-height: 27px;
       padding-right: 7px;
       padding-left: 7px;
       font-weight: 400;
@@ -63,10 +67,12 @@
     .view-menu-prefix {
       color: var(--pff-ink);
       font-weight: 400;
+      white-space: nowrap;
     }
 
     .view-menu-value {
-      min-width: 48px;
+      min-width: 0;
+      margin-left: auto;
       color: var(--pff-purple);
       font-size: 10px;
       font-weight: 700;
@@ -76,9 +82,21 @@
     }
 
     .view-control .pff-menu-panel {
-      right: auto;
-      left: 0;
+      right: 0;
+      left: auto;
       min-width: 158px;
+    }
+
+    .employer-transition-snapshot {
+      position: absolute;
+      inset: 0;
+      z-index: 6;
+      display: block;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      transform-origin: 50% 50%;
+      will-change: opacity, transform;
     }
 
     .work-chart-canvas {
@@ -102,16 +120,15 @@
       }
 
       .view-menu-button {
-        min-width: 108px;
-        min-height: 29px;
-        grid-template-columns: max-content minmax(43px, 1fr) 6px;
+        width: 132px;
+        min-width: 132px;
+        min-height: 27px;
         padding-right: 6px;
         padding-left: 6px;
         font-size: 9px;
       }
 
       .view-menu-value {
-        min-width: 43px;
         font-size: 9px;
       }
     }
@@ -300,7 +317,7 @@
       transitionMs: 1500,
       axisFadeOutMs: 170,
       axisFadeInMs: 300,
-      chartFamilyFadeMs: 520,
+      chartFamilyFadeMs: 760,
 
       pointRadius: 2.7,
       pointHoverRadius: 4.4,
@@ -1006,7 +1023,7 @@
 
     function getViewModeLabel(mode) {
       if (mode === 'affected') {
-        return 'Affected';
+        return 'Affected optoms';
       }
 
       if (mode === 'employer') {
@@ -1061,119 +1078,273 @@
     }
 
     function buildEmployerModel(view = activeView, preferredOrderKeys = null) {
-      const metric = getEmployerMetric(view);
-      const groups = new Map();
+      const metric =
+        getEmployerMetric(view);
+
+      const groups =
+        new Map();
 
       rows.forEach(row => {
-        const identity = getEmployerIdentity(row.employer);
+        const identity =
+          getEmployerIdentity(
+            row.employer
+          );
 
-        if (!identity || !employerRowHasCalculatedMetric(row, view)) {
+        if (
+          !identity ||
+          !employerRowHasCalculatedMetric(
+            row,
+            view
+          )
+        ) {
           return;
         }
 
         if (!groups.has(identity.key)) {
-          groups.set(identity.key, {
-            ...identity,
-            rows: []
-          });
+          groups.set(
+            identity.key,
+            {
+              ...identity,
+              rows: []
+            }
+          );
         }
 
-        groups.get(identity.key).rows.push(row);
+        groups
+          .get(identity.key)
+          .rows
+          .push(row);
       });
 
-      const allGroups = [...groups.values()].map(group => {
-        const categoryStatistics = {};
+      const allGroups =
+        [...groups.values()]
+          .map(group => {
+            const categoryStatistics =
+              {};
 
-        CATEGORY_CONFIG.forEach(category => {
-          const values = group.rows
-            .map(row => getCategoryValues(row, category.key)[metric])
-            .filter(Number.isFinite);
+            CATEGORY_CONFIG.forEach(
+              category => {
+                const values =
+                  group.rows
+                    .map(
+                      row =>
+                        getCategoryValues(
+                          row,
+                          category.key
+                        )[metric]
+                    )
+                    .filter(
+                      Number.isFinite
+                    );
 
-          categoryStatistics[category.key] =
-            calculateStatistics(values);
-        });
+                categoryStatistics[
+                  category.key
+                ] =
+                  calculateStatistics(
+                    values
+                  );
+              }
+            );
 
-        const values = CATEGORY_CONFIG.map(category => {
-          const statistics = categoryStatistics[category.key];
-          return isTotalMode(view)
-            ? statistics.sum
-            : statistics.median;
-        });
+            const values =
+              CATEGORY_CONFIG.map(
+                category => {
+                  const statistics =
+                    categoryStatistics[
+                      category.key
+                    ];
 
-        return {
-          ...group,
-          responseCount: group.rows.length,
-          categoryStatistics,
-          values,
-          displayTotal: values.reduce(
-            (total, value) =>
-              total + (Number.isFinite(value) ? value : 0),
-            0
-          )
-        };
-      });
+                  return isTotalMode(view)
+                    ? statistics.sum
+                    : statistics.median;
+                }
+              );
 
-      const excludedCount = allGroups.filter(
-        group => group.responseCount < CONFIG.minimumEmployerN
-      ).length;
+            return {
+              ...group,
 
-      const includedGroups = allGroups
-        .filter(group =>
-          group.responseCount >= CONFIG.minimumEmployerN
+              responseCount:
+                group.rows.length,
+
+              categoryStatistics,
+
+              values,
+
+              displayTotal:
+                values.reduce(
+                  (
+                    total,
+                    value
+                  ) =>
+                    total +
+                    (
+                      Number.isFinite(value)
+                        ? value
+                        : 0
+                    ),
+                  0
+                )
+            };
+          });
+
+      const excludedCount =
+        allGroups.filter(
+          group =>
+            group.responseCount <
+            CONFIG.minimumEmployerN
+        ).length;
+
+      const includedGroups =
+        allGroups.filter(
+          group =>
+            group.responseCount >=
+            CONFIG.minimumEmployerN
         );
 
-      if (Array.isArray(preferredOrderKeys) && preferredOrderKeys.length) {
-        const order = new Map(
-          preferredOrderKeys.map((key, index) => [key, index])
-        );
-
-        includedGroups.sort((first, second) => {
-          const firstOrder = order.has(first.key)
-            ? order.get(first.key)
-            : Number.POSITIVE_INFINITY;
-
-          const secondOrder = order.has(second.key)
-            ? order.get(second.key)
-            : Number.POSITIVE_INFINITY;
-
-          return (
-            firstOrder - secondOrder ||
-            second.displayTotal - first.displayTotal ||
-            first.label.localeCompare(second.label)
+      if (
+        Array.isArray(
+          preferredOrderKeys
+        ) &&
+        preferredOrderKeys.length
+      ) {
+        const order =
+          new Map(
+            preferredOrderKeys.map(
+              (
+                key,
+                index
+              ) => [
+                key,
+                index
+              ]
+            )
           );
-        });
+
+        includedGroups.sort(
+          (
+            first,
+            second
+          ) => {
+            const firstOrder =
+              order.has(first.key)
+                ? order.get(first.key)
+                : Number.POSITIVE_INFINITY;
+
+            const secondOrder =
+              order.has(second.key)
+                ? order.get(second.key)
+                : Number.POSITIVE_INFINITY;
+
+            return (
+              firstOrder -
+                secondOrder ||
+              second.displayTotal -
+                first.displayTotal ||
+              first.label.localeCompare(
+                second.label
+              )
+            );
+          }
+        );
       } else {
-        includedGroups.sort((first, second) =>
-          second.displayTotal - first.displayTotal ||
-          first.label.localeCompare(second.label)
+        includedGroups.sort(
+          (
+            first,
+            second
+          ) =>
+            second.displayTotal -
+              first.displayTotal ||
+            first.label.localeCompare(
+              second.label
+            )
         );
       }
 
       return {
         view,
         metric,
-        groups: includedGroups,
+        groups:
+          includedGroups,
         excludedCount,
-        labels: includedGroups.map(group => group.label),
-        totals: includedGroups.map(group => group.displayTotal),
-        datasets: CATEGORY_CONFIG.map((category, categoryIndex) => ({
-          label: category.legendLabel,
-          categoryKey: category.key,
-          data: includedGroups.map(group => group.values[categoryIndex]),
-          backgroundColor: category.colour,
-          hoverBackgroundColor: category.colour,
-          borderColor: 'transparent',
-          hoverBorderColor: 'transparent',
-          borderWidth: 0,
-          hoverBorderWidth: 0,
-          borderSkipped: false,
-          borderRadius: 2,
-          barPercentage: 0.74,
-          categoryPercentage: 0.82,
-          employerStatistics: includedGroups.map(
-            group => group.categoryStatistics[category.key]
+
+        labels:
+          includedGroups.map(
+            group =>
+              group.label
+          ),
+
+        totals:
+          includedGroups.map(
+            group =>
+              group.displayTotal
+          ),
+
+        datasets:
+          CATEGORY_CONFIG.map(
+            (
+              category,
+              categoryIndex
+            ) => ({
+              label:
+                category.legendLabel,
+
+              categoryKey:
+                category.key,
+
+              data:
+                includedGroups.map(
+                  group => {
+                    const value =
+                      group.values[
+                        categoryIndex
+                      ];
+
+                    return Number.isFinite(value)
+                      ? value
+                      : 0;
+                  }
+                ),
+
+              backgroundColor:
+                category.colour,
+
+              hoverBackgroundColor:
+                category.colour,
+
+              borderColor:
+                'transparent',
+
+              hoverBorderColor:
+                'transparent',
+
+              borderWidth:
+                0,
+
+              hoverBorderWidth:
+                0,
+
+              borderSkipped:
+                false,
+
+              borderRadius:
+                2,
+
+              barPercentage:
+                0.74,
+
+              categoryPercentage:
+                0.82,
+
+              employerStatistics:
+                includedGroups.map(
+                  group =>
+                    group
+                      .categoryStatistics[
+                        category.key
+                      ]
+                )
+            })
           )
-        }))
       };
     }
 
@@ -2383,48 +2554,25 @@
           lead: '% of optoms affected',
           shared: '',
           tail: '',
-          year: analysisWindow.label ? `(${analysisWindow.label})` : ''
+          year
         };
       }
 
-      if (view === 'employerCost') {
-        return isTotalMode(view)
-          ? {
-              lead: 'Total $',
-              shared: 'loss',
-              tail: 'by employer',
-              year
-            }
-          : {
-              lead: '$',
-              shared: 'loss per optom',
-              tail: 'by employer',
-              year
-            };
-      }
+      const metricView =
+        getMetricTabView(view);
 
-      if (view === 'employerTime') {
-        return isTotalMode(view)
-          ? {
-              lead: 'Total time',
-              shared: 'loss',
-              tail: 'by employer',
-              year
-            }
-          : {
-              lead: 'Time',
-              shared: 'loss per optom',
-              tail: 'by employer',
-              year
-            };
-      }
+      const total =
+        isTotalMode(view);
 
-      const total = isTotalMode(view);
-      const isTime = view === 'time';
+      const isTime =
+        metricView === 'time';
 
       if (total) {
         return {
-          lead: isTime ? 'Total time' : 'Total $',
+          lead:
+            isTime
+              ? 'Total time'
+              : 'Total $',
           shared: 'loss',
           tail: '',
           year
@@ -2432,7 +2580,10 @@
       }
 
       return {
-        lead: isTime ? 'Time' : '$',
+        lead:
+          isTime
+            ? 'Time'
+            : '$',
         shared: 'loss',
         tail: 'per optom',
         year
@@ -3225,7 +3376,8 @@
         const context = chartInstance.ctx;
 
         context.save();
-        context.lineWidth = 0.9;
+        context.lineWidth = 2.6;
+        context.lineJoin = 'round';
 
         employerModel.groups.forEach((group, index) => {
           const bounds =
@@ -3265,18 +3417,18 @@
 
           if (typeof context.roundRect === 'function') {
             context.roundRect(
-              bounds.left + 0.45,
-              top + 0.45,
-              Math.max(0, width - 0.9),
-              Math.max(0, height - 0.9),
+              bounds.left + 1.3,
+              top + 1.3,
+              Math.max(0, width - 2.6),
+              Math.max(0, height - 2.6),
               radius
             );
           } else {
             context.rect(
-              bounds.left + 0.45,
-              top + 0.45,
-              Math.max(0, width - 0.9),
-              Math.max(0, height - 0.9)
+              bounds.left + 1.3,
+              top + 1.3,
+              Math.max(0, width - 2.6),
+              Math.max(0, height - 2.6)
             );
           }
 
@@ -3452,39 +3604,87 @@
     };
 
     function employerTooltipLabel(item) {
-      return (
-        `${item.dataset.label}: ` +
-        `${formatEmployerMetric(
-          item.parsed.x,
-          employerModel?.view
-        )}/year`
-      );
-    }
+      const index =
+        item?.dataIndex;
 
-    function employerTooltipFooter(items) {
-      const index = items?.[0]?.dataIndex;
-      const group = employerModel?.groups?.[index];
+      const group =
+        employerModel
+          ?.groups?.[index];
 
       if (!group) {
         return [];
       }
 
-      const totalLabel =
-        isTotalMode(employerModel.view)
-          ? 'Total'
-          : 'Combined';
+      const view =
+        employerModel.view;
 
-      return [
-        `${totalLabel}: ${formatEmployerMetric(
-          group.displayTotal,
-          employerModel.view
-        )}/year`,
+      const costView =
+        getEmployerMetric(view) ===
+        'cost';
 
+      function formatTooltipValue(
+        value
+      ) {
+        if (!Number.isFinite(value)) {
+          return '—';
+        }
+
+        if (costView) {
+          return (
+            `${formatCurrency(
+              value,
+              0
+            )} (FTE $/year)`
+          );
+        }
+
+        return (
+          `${formatNumber(
+            value,
+            Math.abs(value) < 10
+              ? 1
+              : 0
+          )} hours/year`
+        );
+      }
+
+      const lines =
+        CATEGORY_CONFIG.map(
+          (
+            category,
+            categoryIndex
+          ) =>
+            `${category.legendLabel}: ` +
+            formatTooltipValue(
+              group.values[
+                categoryIndex
+              ]
+            )
+        );
+
+      lines.push(
+        `${
+          isTotalMode(view)
+            ? 'Total'
+            : 'Combined'
+        }: ` +
+        formatTooltipValue(
+          group.displayTotal
+        )
+      );
+
+      lines.push(
         `Respondents: ${formatNumber(
           group.responseCount,
           0
         )}`
-      ];
+      );
+
+      return lines;
+    }
+
+    function employerTooltipFooter() {
+      return [];
     }
 
     function createEmployerChart(initialModel = null, animateInitial = true) {
@@ -3576,32 +3776,39 @@
                 axis: 'y',
                 intersect: false,
                 position: 'nearest',
-                displayColors: true,
+                displayColors: false,
                 padding: 7,
-                boxWidth: 8,
-                boxHeight: 8,
-                boxPadding: 4,
                 titleMarginBottom: 4,
                 bodySpacing: 2,
-                footerMarginTop: 4,
-                footerFont: {
-                  family: 'Lato',
-                  size: 10,
-                  weight: '700'
-                },
 
-                filter() {
-                  return !interactionLocked;
+                /*
+                 * Keep one tooltip body entry only. That one entry
+                 * returns all three categories + combined/total +
+                 * respondent count, so the user never has to target
+                 * a particular stacked segment.
+                 */
+                filter(item) {
+                  return (
+                    !interactionLocked &&
+                    item.datasetIndex === 0
+                  );
                 },
 
                 callbacks: {
                   title(items) {
-                    const index = items?.[0]?.dataIndex;
-                    return employerModel?.groups?.[index]?.label || '';
+                    const index =
+                      items?.[0]?.dataIndex;
+
+                    return (
+                      employerModel
+                        ?.groups?.[index]
+                        ?.label ||
+                      ''
+                    );
                   },
 
-                  label: employerTooltipLabel,
-                  footer: employerTooltipFooter
+                  label:
+                    employerTooltipLabel
                 }
               })
             },
@@ -3716,16 +3923,30 @@
       if (
         !firstModel ||
         !secondModel ||
-        firstModel.groups.length !== secondModel.groups.length ||
-        firstModel.datasets.length !== secondModel.datasets.length
+        firstModel.groups.length !==
+          secondModel.groups.length ||
+        firstModel.datasets.length !==
+          secondModel.datasets.length
       ) {
         return false;
       }
 
       return firstModel.groups.every(
-        (group, index) =>
+        (
+          group,
+          index
+        ) =>
           group.key ===
-          secondModel.groups[index]?.key
+          secondModel.groups[
+            index
+          ]?.key
+      );
+    }
+
+    function sameEmployerOrder(firstModel, secondModel) {
+      return sameEmployerStructure(
+        firstModel,
+        secondModel
       );
     }
 
@@ -3733,7 +3954,9 @@
       targetDataset,
       sourceDataset
     ) {
-      Object.keys(sourceDataset).forEach(key => {
+      Object.keys(
+        sourceDataset
+      ).forEach(key => {
         if (key === 'data') {
           return;
         }
@@ -3743,29 +3966,414 @@
       });
     }
 
+    function applyEmployerModelImmediately(
+      model,
+      axisTitle =
+        getEmployerAxisTitle(
+          model?.view ||
+          activeView
+        )
+    ) {
+      if (!model) {
+        return;
+      }
+
+      employerMeasureAnimator.cancel();
+      employerAxisTitleAnimator.cancel();
+
+      employerModel =
+        model;
+
+      employerAxisState.maximum =
+        model.axisSpec.maximum;
+
+      employerAxisState.majorStep =
+        model.axisSpec.majorStep;
+
+      employerAxisState.minorStep =
+        model.axisSpec.minorStep;
+
+      displayedEmployerAxisTitle =
+        axisTitle;
+
+      employerAxisTitleTransition.active =
+        false;
+
+      employerAxisTitleTransition.progress =
+        1;
+
+      employerAxisTitleTransition.fromText =
+        '';
+
+      employerAxisTitleTransition.toText =
+        '';
+
+      employerChart.data.labels =
+        model.labels;
+
+      employerChart.data.datasets =
+        model.datasets;
+
+      employerChart.options.scales.x.max =
+        employerAxisState.maximum;
+
+      employerChart.options.layout.padding.right =
+        45;
+
+      employerChart.update(
+        'none'
+      );
+    }
+
+    function captureEmployerTransitionSnapshot() {
+      if (
+        !employerCanvas ||
+        !chartShell
+      ) {
+        return null;
+      }
+
+      const snapshot =
+        document.createElement(
+          'canvas'
+        );
+
+      snapshot.className =
+        'employer-transition-snapshot';
+
+      snapshot.width =
+        employerCanvas.width;
+
+      snapshot.height =
+        employerCanvas.height;
+
+      const context =
+        snapshot.getContext(
+          '2d'
+        );
+
+      if (!context) {
+        return null;
+      }
+
+      context.drawImage(
+        employerCanvas,
+        0,
+        0
+      );
+
+      chartShell.appendChild(
+        snapshot
+      );
+
+      return snapshot;
+    }
+
+    function animateEmployerModelCrossfade(
+      targetModel,
+      targetAxisTitle,
+      duration = 360,
+      onComplete
+    ) {
+      const reduceMotion =
+        PFF.reducedMotion();
+
+      if (
+        reduceMotion ||
+        duration <= 0 ||
+        !employerCanvas
+          .classList
+          .contains(
+            'is-visible'
+          )
+      ) {
+        applyEmployerModelImmediately(
+          targetModel,
+          targetAxisTitle
+        );
+
+        onComplete?.();
+        return;
+      }
+
+      const snapshot =
+        captureEmployerTransitionSnapshot();
+
+      applyEmployerModelImmediately(
+        targetModel,
+        targetAxisTitle
+      );
+
+      if (
+        !snapshot ||
+        !employerCanvas.animate
+      ) {
+        snapshot?.remove();
+        onComplete?.();
+        return;
+      }
+
+      employerCanvas.style.opacity =
+        '0';
+
+      employerCanvas.style.transform =
+        'translate3d(0, 5px, 0) scale(0.997)';
+
+      requestAnimationFrame(
+        () => {
+          const incoming =
+            employerCanvas.animate(
+              [
+                {
+                  opacity: 0,
+                  transform:
+                    'translate3d(0, 5px, 0) scale(0.997)'
+                },
+                {
+                  opacity: 1,
+                  transform:
+                    'translate3d(0, 0, 0) scale(1)'
+                }
+              ],
+              {
+                duration,
+                easing:
+                  'cubic-bezier(0.22, 1, 0.36, 1)',
+                fill:
+                  'forwards'
+              }
+            );
+
+          const outgoing =
+            snapshot.animate(
+              [
+                {
+                  opacity: 1,
+                  transform:
+                    'translate3d(0, 0, 0) scale(1)'
+                },
+                {
+                  opacity: 0,
+                  transform:
+                    'translate3d(0, -5px, 0) scale(0.997)'
+                }
+              ],
+              {
+                duration,
+                easing:
+                  'cubic-bezier(0.22, 1, 0.36, 1)',
+                fill:
+                  'forwards'
+              }
+            );
+
+          Promise.allSettled(
+            [
+              incoming.finished,
+              outgoing.finished
+            ]
+          ).then(() => {
+            incoming.cancel();
+            outgoing.cancel();
+
+            snapshot.remove();
+
+            employerCanvas.style.opacity =
+              '1';
+
+            employerCanvas.style.transform =
+              'translate3d(0, 0, 0) scale(1)';
+
+            onComplete?.();
+          });
+        }
+      );
+    }
+
+    function animateEmployerFamilyEntry(
+      targetModel,
+      startMaximum,
+      duration = 880
+    ) {
+      if (!targetModel) {
+        return;
+      }
+
+      const safeStartMaximum =
+        Number.isFinite(
+          startMaximum
+        ) &&
+        startMaximum > 0
+          ? startMaximum
+          : targetModel
+              .axisSpec
+              .maximum;
+
+      const zeroModel = {
+        ...targetModel,
+
+        datasets:
+          targetModel.datasets.map(
+            dataset => ({
+              ...dataset,
+
+              data:
+                dataset.data.map(
+                  () => 0
+                )
+            })
+          )
+      };
+
+      zeroModel.axisSpec = {
+        maximum:
+          safeStartMaximum,
+
+        majorStep:
+          safeStartMaximum / 5,
+
+        minorStep:
+          safeStartMaximum / 10
+      };
+
+      if (!employerChart) {
+        createEmployerChart(
+          zeroModel,
+          false
+        );
+      } else {
+        applyEmployerModelImmediately(
+          zeroModel,
+          getEmployerAxisTitle(
+            targetModel.view
+          )
+        );
+      }
+
+      employerModel =
+        targetModel;
+
+      const startAxis = {
+        maximum:
+          safeStartMaximum,
+
+        majorStep:
+          safeStartMaximum / 5,
+
+        minorStep:
+          safeStartMaximum / 10
+      };
+
+      const targetAxis =
+        targetModel.axisSpec;
+
+      const targetDatasets =
+        targetModel.datasets.map(
+          dataset =>
+            dataset.data.map(
+              value =>
+                Number(value) || 0
+            )
+        );
+
+      employerMeasureAnimator.cancel();
+
+      employerMeasureAnimator.run({
+        duration:
+          PFF.reducedMotion()
+            ? 0
+            : duration,
+
+        easing:
+          easeOutCubic,
+
+        onFrame(progress) {
+          employerChart.data.datasets.forEach(
+            (
+              dataset,
+              datasetIndex
+            ) => {
+              dataset.data =
+                targetDatasets[
+                  datasetIndex
+                ].map(
+                  value =>
+                    value *
+                    progress
+                );
+            }
+          );
+
+          employerAxisState.maximum =
+            startAxis.maximum +
+            (
+              targetAxis.maximum -
+              startAxis.maximum
+            ) *
+            progress;
+
+          employerAxisState.majorStep =
+            employerAxisState.maximum /
+            5;
+
+          employerAxisState.minorStep =
+            employerAxisState.maximum /
+            10;
+
+          employerChart.options.scales.x.max =
+            employerAxisState.maximum;
+
+          employerChart.update(
+            'none'
+          );
+        },
+
+        onComplete() {
+          employerModel =
+            targetModel;
+
+          employerChart.data.labels =
+            targetModel.labels;
+
+          employerChart.data.datasets =
+            targetModel.datasets;
+
+          employerAxisState.maximum =
+            targetAxis.maximum;
+
+          employerAxisState.majorStep =
+            targetAxis.majorStep;
+
+          employerAxisState.minorStep =
+            targetAxis.minorStep;
+
+          employerChart.options.scales.x.max =
+            targetAxis.maximum;
+
+          displayedEmployerAxisTitle =
+            getEmployerAxisTitle(
+              targetModel.view
+            );
+
+          employerChart.update(
+            'none'
+          );
+        }
+      });
+    }
+
     function updateEmployerChart(animate = true) {
       const previousModel =
         employerModel;
 
-      const sameMetric =
-        previousModel &&
-        getMetricTabView(previousModel.view) ===
-          getMetricTabView(activeView);
-
-      const preferredOrderKeys =
-        sameMetric
-          ? previousModel.groups.map(group => group.key)
-          : null;
-
-      const nextModel =
+      const rankedModel =
         buildEmployerModel(
-          activeView,
-          preferredOrderKeys
+          activeView
         );
 
-      nextModel.axisSpec =
+      rankedModel.axisSpec =
         getEmployerAxisSpec(
-          nextModel.totals
+          rankedModel.totals
         );
 
       const nextAxisTitle =
@@ -3774,131 +4382,117 @@
         );
 
       if (!employerChart) {
-        if (
-          animate &&
-          !PFF.reducedMotion()
-        ) {
-          const zeroModel = {
-            ...nextModel,
-
-            totals:
-              nextModel.totals.map(
-                () => 0
-              ),
-
-            datasets:
-              nextModel.datasets.map(
-                dataset => ({
-                  ...dataset,
-                  data:
-                    dataset.data.map(
-                      () => 0
-                    )
-                })
-              )
-          };
-
-          zeroModel.axisSpec =
-            nextModel.axisSpec;
-
-          createEmployerChart(
-            zeroModel,
-            false
-          );
-
-          updateEmployerChart(
-            true
-          );
-
-          return;
-        }
-
         createEmployerChart(
-          nextModel,
+          rankedModel,
           false
         );
 
         return;
       }
 
-      const canInterpolate =
-        sameEmployerStructure(
-          previousModel,
-          nextModel
-        );
-
       const reduceMotion =
         PFF.reducedMotion();
+
+      const chartVisible =
+        employerCanvas
+          .classList
+          .contains(
+            'is-visible'
+          );
 
       if (
         !animate ||
         reduceMotion ||
-        !canInterpolate
+        !chartVisible
       ) {
-        employerMeasureAnimator.cancel();
-        employerAxisTitleAnimator.cancel();
+        applyEmployerModelImmediately(
+          rankedModel,
+          nextAxisTitle
+        );
 
-        employerModel =
-          nextModel;
+        return;
+      }
 
-        employerAxisState.maximum =
-          nextModel.axisSpec.maximum;
+      const sameMetric =
+        previousModel &&
+        getMetricTabView(
+          previousModel.view
+        ) ===
+        getMetricTabView(
+          activeView
+        );
 
-        employerAxisState.majorStep =
-          nextModel.axisSpec.majorStep;
+      const preferredOrderKeys =
+        sameMetric &&
+        previousModel
+          ? previousModel.groups.map(
+              group =>
+                group.key
+            )
+          : null;
 
-        employerAxisState.minorStep =
-          nextModel.axisSpec.minorStep;
+      const transitionModel =
+        preferredOrderKeys
+          ? buildEmployerModel(
+              activeView,
+              preferredOrderKeys
+            )
+          : rankedModel;
 
-        displayedEmployerAxisTitle =
-          nextAxisTitle;
+      transitionModel.axisSpec =
+        rankedModel.axisSpec;
 
-        employerAxisTitleTransition.active =
-          false;
+      const canInterpolate =
+        sameEmployerStructure(
+          previousModel,
+          transitionModel
+        );
 
-        employerAxisTitleTransition.progress =
-          1;
+      if (!canInterpolate) {
+        interactionLocked =
+          true;
 
-        employerAxisTitleTransition.fromText =
-          '';
+        updateViewControls();
 
-        employerAxisTitleTransition.toText =
-          '';
+        animateEmployerModelCrossfade(
+          rankedModel,
+          nextAxisTitle,
+          420,
+          () => {
+            interactionLocked =
+              false;
 
-        employerChart.data.labels =
-          nextModel.labels;
-
-        employerChart.data.datasets =
-          nextModel.datasets;
-
-        employerChart.options.scales.x.max =
-          employerAxisState.maximum;
-
-        employerChart.options.layout.padding.right =
-          45;
-
-        employerChart.update('none');
+            updateViewControls();
+          }
+        );
 
         return;
       }
 
       const startDatasets =
-        employerChart.data.datasets.map(
-          dataset =>
-            (dataset.data || []).map(
-              value =>
-                Number(value) || 0
-            )
-        );
+        employerChart
+          .data
+          .datasets
+          .map(
+            dataset =>
+              (dataset.data || [])
+                .map(
+                  value =>
+                    Number(value) || 0
+                )
+          );
 
       const targetDatasets =
-        nextModel.datasets.map(
-          dataset =>
-            (dataset.data || []).map(
-              value =>
-                Number(value) || 0
-            )
-        );
+        transitionModel
+          .datasets
+          .map(
+            dataset =>
+              (dataset.data || [])
+                .map(
+                  value =>
+                    Number(value) || 0
+                )
+          );
 
       const startAxis = {
         maximum:
@@ -3912,7 +4506,7 @@
       };
 
       const targetAxis =
-        nextModel.axisSpec;
+        transitionModel.axisSpec;
 
       const previousAxisTitle =
         displayedEmployerAxisTitle ||
@@ -3937,20 +4531,22 @@
         );
 
       employerModel =
-        nextModel;
+        transitionModel;
 
       employerChart.data.labels =
-        nextModel.labels;
+        transitionModel.labels;
 
-      nextModel.datasets.forEach(
+      transitionModel.datasets.forEach(
         (
           nextDataset,
           datasetIndex
         ) => {
           const currentDataset =
-            employerChart.data.datasets[
-              datasetIndex
-            ];
+            employerChart
+              .data
+              .datasets[
+                datasetIndex
+              ];
 
           applyEmployerDatasetPresentation(
             currentDataset,
@@ -3975,6 +4571,15 @@
 
       updateViewControls();
 
+      function finishTransition() {
+        if (!wasInteractionLocked) {
+          interactionLocked =
+            false;
+
+          updateViewControls();
+        }
+      }
+
       employerMeasureAnimator.run({
         duration:
           CONFIG.transitionMs,
@@ -3983,44 +4588,47 @@
           easeInOutCubic,
 
         onFrame(progress) {
-          employerChart.data.datasets.forEach(
-            (
-              dataset,
-              datasetIndex
-            ) => {
-              const startValues =
-                startDatasets[
-                  datasetIndex
-                ];
+          employerChart
+            .data
+            .datasets
+            .forEach(
+              (
+                dataset,
+                datasetIndex
+              ) => {
+                const startValues =
+                  startDatasets[
+                    datasetIndex
+                  ];
 
-              const targetValues =
-                targetDatasets[
-                  datasetIndex
-                ];
+                const targetValues =
+                  targetDatasets[
+                    datasetIndex
+                  ];
 
-              dataset.data =
-                targetValues.map(
-                  (
-                    targetValue,
-                    valueIndex
-                  ) => {
-                    const startValue =
-                      startValues?.[
-                        valueIndex
-                      ] ?? 0;
+                dataset.data =
+                  targetValues.map(
+                    (
+                      targetValue,
+                      valueIndex
+                    ) => {
+                      const startValue =
+                        startValues?.[
+                          valueIndex
+                        ] ?? 0;
 
-                    return (
-                      startValue +
-                      (
-                        targetValue -
-                        startValue
-                      ) *
-                      progress
-                    );
-                  }
-                );
-            }
-          );
+                      return (
+                        startValue +
+                        (
+                          targetValue -
+                          startValue
+                        ) *
+                        progress
+                      );
+                    }
+                  );
+              }
+            );
 
           employerAxisState.maximum =
             startAxis.maximum +
@@ -4041,21 +4649,20 @@
           employerChart.options.scales.x.max =
             employerAxisState.maximum;
 
-          employerChart.update('none');
+          employerChart.update(
+            'none'
+          );
         },
 
         onComplete() {
-          employerChart.data.datasets.forEach(
-            (
-              dataset,
-              datasetIndex
-            ) => {
-              dataset.data =
-                targetDatasets[
-                  datasetIndex
-                ].slice();
-            }
-          );
+          employerModel =
+            transitionModel;
+
+          employerChart.data.labels =
+            transitionModel.labels;
+
+          employerChart.data.datasets =
+            transitionModel.datasets;
 
           employerAxisState.maximum =
             targetAxis.maximum;
@@ -4067,76 +4674,117 @@
             targetAxis.minorStep;
 
           employerChart.options.scales.x.max =
-            employerAxisState.maximum;
+            targetAxis.maximum;
 
-          employerChart.update('none');
+          employerChart.update(
+            'none'
+          );
 
-          if (!wasInteractionLocked) {
-            interactionLocked =
-              false;
+          if (
+            sameEmployerOrder(
+              transitionModel,
+              rankedModel
+            )
+          ) {
+            employerModel =
+              rankedModel;
 
-            updateViewControls();
+            finishTransition();
+            return;
           }
+
+          animateEmployerModelCrossfade(
+            rankedModel,
+            nextAxisTitle,
+            420,
+            finishTransition
+          );
         }
       });
     }
 
     function setChartFamilyVisibility(showEmployer, animate = true, onComplete) {
       const fromEmployer =
-        employerCanvas.classList.contains('is-visible');
+        employerCanvas
+          .classList
+          .contains(
+            'is-visible'
+          );
 
-      const startEmployerOpacity =
-        fromEmployer
-          ? 1
-          : 0;
-
-      const endEmployerOpacity =
-        showEmployer
-          ? 1
+      const duration =
+        animate &&
+        !PFF.reducedMotion()
+          ? CONFIG.chartFamilyFadeMs
           : 0;
 
       chartFamilyAnimator.run({
-        duration:
-          animate
-            ? CONFIG.chartFamilyFadeMs
-            : 0,
+        duration,
 
         easing:
-          easeInOutCubic,
+          easeOutCubic,
 
         onFrame(progress) {
+          /*
+           * Mirror the older PFF legacy-view transition:
+           * fade the outgoing axes/chart first, then let the
+           * incoming geometry and axes establish themselves.
+           */
+          const outgoing =
+            clamp(
+              progress / 0.46,
+              0,
+              1
+            );
+
+          const incoming =
+            clamp(
+              (
+                progress -
+                0.16
+              ) /
+              0.84,
+              0,
+              1
+            );
+
           const employerOpacity =
-            startEmployerOpacity +
-            (
-              endEmployerOpacity -
-              startEmployerOpacity
-            ) *
-            progress;
+            showEmployer
+              ? incoming
+              : 1 - outgoing;
 
           const standardOpacity =
-            1 -
-            employerOpacity;
+            showEmployer
+              ? 1 - outgoing
+              : incoming;
 
           employerCanvas.style.opacity =
-            String(employerOpacity);
+            String(
+              employerOpacity
+            );
 
           chartCanvas.style.opacity =
-            String(standardOpacity);
+            String(
+              standardOpacity
+            );
 
           employerCanvas.style.transform =
             `translate3d(0, ${
-              (1 - employerOpacity) * 6
+              (1 - employerOpacity) *
+              8
             }px, 0) scale(${
-              0.994 +
-              employerOpacity * 0.006
+              0.992 +
+              employerOpacity *
+              0.008
             })`;
 
           chartCanvas.style.transform =
             `translate3d(0, ${
-              employerOpacity * -4
+              (1 - standardOpacity) *
+              -6
             }px, 0) scale(${
-              1 -
-              employerOpacity * 0.006
+              0.992 +
+              standardOpacity *
+              0.008
             })`;
         },
 
@@ -4154,22 +4802,26 @@
           employerCanvas.style.transform =
             showEmployer
               ? 'translate3d(0, 0, 0) scale(1)'
-              : 'translate3d(0, 6px, 0) scale(0.994)';
+              : 'translate3d(0, 8px, 0) scale(0.992)';
 
           chartCanvas.style.transform =
             showEmployer
-              ? 'translate3d(0, -4px, 0) scale(0.994)'
+              ? 'translate3d(0, -6px, 0) scale(0.992)'
               : 'translate3d(0, 0, 0) scale(1)';
 
-          employerCanvas.classList.toggle(
-            'is-visible',
-            showEmployer
-          );
+          employerCanvas
+            .classList
+            .toggle(
+              'is-visible',
+              showEmployer
+            );
 
-          chartCanvas.classList.toggle(
-            'is-hidden-family',
-            showEmployer
-          );
+          chartCanvas
+            .classList
+            .toggle(
+              'is-hidden-family',
+              showEmployer
+            );
 
           employerCanvas.style.pointerEvents =
             showEmployer
@@ -4212,17 +4864,27 @@
     }
 
     function switchChartFamily(nextView, animate = true) {
-      if (viewSwitchLocked || interactionLocked) {
+      if (
+        viewSwitchLocked ||
+        interactionLocked
+      ) {
         return;
       }
 
       const currentIsEmployer =
-        isEmployerView(activeView);
+        isEmployerView(
+          activeView
+        );
 
       const nextIsEmployer =
-        isEmployerView(nextView);
+        isEmployerView(
+          nextView
+        );
 
-      if (!currentIsEmployer && !nextIsEmployer) {
+      if (
+        !currentIsEmployer &&
+        !nextIsEmployer
+      ) {
         applyView(
           nextView,
           animate
@@ -4231,7 +4893,10 @@
         return;
       }
 
-      if (currentIsEmployer && nextIsEmployer) {
+      if (
+        currentIsEmployer &&
+        nextIsEmployer
+      ) {
         viewSwitchLocked =
           true;
 
@@ -4250,7 +4915,9 @@
         );
 
         updateViewControls();
-        updateEmployerChart(animate);
+        updateEmployerChart(
+          animate
+        );
 
         window.setTimeout(
           () => {
@@ -4264,7 +4931,8 @@
           },
           animate &&
           !PFF.reducedMotion()
-            ? CONFIG.transitionMs + 40
+            ? CONFIG.transitionMs +
+              40
             : 0
         );
 
@@ -4284,10 +4952,32 @@
         '';
 
       if (nextIsEmployer) {
+        const sourceMaximum =
+          currentYAxisModel
+            ?.maximum;
+
         activeView =
           nextView;
 
-        updateEmployerChart(animate);
+        const targetModel =
+          buildEmployerModel(
+            activeView
+          );
+
+        targetModel.axisSpec =
+          getEmployerAxisSpec(
+            targetModel.totals
+          );
+
+        animateEmployerFamilyEntry(
+          targetModel,
+          sourceMaximum,
+          Math.min(
+            900,
+            CONFIG.transitionMs
+          )
+        );
+
         updateHeading(true);
         updateActiveTab();
 
@@ -4311,6 +5001,9 @@
         return;
       }
 
+      const employerMaximum =
+        employerAxisState.maximum;
+
       activeView =
         nextView;
 
@@ -4321,15 +5014,6 @@
 
       currentYAxisModel =
         model.yAxis;
-
-      axisNumberTransition.fromMaximum =
-        model.yAxis.maximum;
-
-      axisNumberTransition.toMaximum =
-        model.yAxis.maximum;
-
-      axisNumberTransition.progress =
-        1;
 
       axisLabelOpacity =
         1;
@@ -4355,6 +5039,36 @@
         model,
         animate
       );
+
+      axisNumberTransition.fromMaximum =
+        Number.isFinite(
+          employerMaximum
+        )
+          ? employerMaximum
+          : model.yAxis.maximum;
+
+      axisNumberTransition.toMaximum =
+        model.yAxis.maximum;
+
+      axisNumberTransition.progress =
+        animate &&
+        !PFF.reducedMotion()
+          ? 0
+          : 1;
+
+      if (
+        animate &&
+        !PFF.reducedMotion()
+      ) {
+        animateAxisMaximum(
+          axisNumberTransition.fromMaximum,
+          model.yAxis.maximum,
+          Math.min(
+            900,
+            CONFIG.transitionMs
+          )
+        );
+      }
 
       updateHeading(true);
       updateActiveTab();
