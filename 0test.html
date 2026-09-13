@@ -51,32 +51,83 @@
     }
 
     /*
-     * The View selector intentionally uses the shared core
-     * .pff-menu / .pff-menu-button / .pff-menu-panel / .pff-menu-item
-     * styling. Only compact app-specific sizing and value emphasis live here.
+     * Keep the shared PFF menu behaviour, but match the compact filter
+     * controls used elsewhere in PFF: white background, 1 px track border,
+     * 4 px radius, regular label, purple compact value and triangle arrow.
+     *
+     * The button width is fixed so choosing another option never shifts the
+     * neighbouring Total control. The displayed values are deliberately
+     * shortened to Overall / Affected / Employer; the menu keeps the full
+     * option wording.
      */
     .view-menu-button {
-      width: auto;
-      min-width: 0;
-      min-height: 27px;
+      display: grid;
+      width: 104px;
+      min-width: 104px;
+      min-height: 31px;
+      grid-template-columns: max-content 1fr 8px;
+      align-items: center;
       gap: 4px;
-      padding-right: 6px;
-      padding-left: 6px;
+      padding: 0 5px;
+      color: var(--pff-ink);
+      background: #fff;
+      border: 1px solid var(--pff-track);
+      border-radius: 4px;
+      box-shadow: none;
       font-weight: 400;
+      cursor: pointer;
+      transition:
+        border-color 140ms ease,
+        background 140ms ease,
+        box-shadow 140ms ease;
+    }
+
+    .view-menu-button:hover,
+    .view-menu-button[aria-expanded='true'] {
+      box-shadow: inset 0 0 0 1px rgba(21, 21, 21, 0.12);
+    }
+
+    .view-menu-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
+    }
+
+    .view-menu-button::after {
+      width: 0;
+      height: 0;
+      min-width: 0;
+      flex: 0 0 auto;
+      border-top: 4px solid var(--pff-muted);
+      border-right: 4px solid transparent;
+      border-bottom: 0;
+      border-left: 4px solid transparent;
+      transform: none;
+      transition: transform 140ms ease;
+    }
+
+    .view-control.is-open .view-menu-button::after,
+    .view-menu-button[aria-expanded='true']::after {
+      transform: rotate(180deg);
     }
 
     .view-menu-prefix {
       color: var(--pff-ink);
+      font-size: 11px;
       font-weight: 400;
+      line-height: 1.05;
       white-space: nowrap;
     }
 
     .view-menu-value {
-      min-width: 0;
+      display: inline-block;
+      width: 52px;
+      min-width: 52px;
       margin-left: 0;
       color: var(--pff-purple);
       font-size: 10px;
       font-weight: 700;
+      letter-spacing: 0.025em;
+      line-height: 1;
       text-align: right;
       white-space: nowrap;
       will-change: opacity;
@@ -88,10 +139,10 @@
       min-width: 158px;
     }
 
-    .employer-transition-snapshot {
+    .axis-transition-layer {
       position: absolute;
       inset: 0;
-      z-index: 6;
+      z-index: 7;
       display: block;
       width: 100%;
       height: 100%;
@@ -100,16 +151,20 @@
       will-change: opacity, transform;
     }
 
+    .axis-transition-layer {
+      z-index: 9;
+    }
+
     .work-chart-canvas {
       opacity: 1;
-      transform: translate3d(0, 0, 0) scale(1);
+      transform: none;
       transform-origin: 50% 50%;
-      will-change: opacity, transform;
+      will-change: opacity;
     }
 
     #employerWorkChart {
-      opacity: 1;
-      transform: translate3d(100%, 0, 0);
+      opacity: 0;
+      transform: none;
       pointer-events: none;
     }
 
@@ -316,10 +371,10 @@
       range: 'A:BP',
       fetchTimeoutMs: 20000,
 
-      transitionMs: 1500,
+      transitionMs: 650,
       axisFadeOutMs: 170,
       axisFadeInMs: 300,
-      chartFamilyFadeMs: 760,
+      chartFamilyFadeMs: 650,
 
       pointRadius: 2.7,
       pointHoverRadius: 4.4,
@@ -500,6 +555,12 @@
     let legendController = null;
     let viewMenuController = null;
     let viewMenuAnimationToken = 0;
+
+    const employerReorderState = {
+      active: false,
+      progress: 1,
+      fromYByKey: new Map()
+    };
 
     const axisTitleTransition = {
       active: false,
@@ -1025,11 +1086,11 @@
 
     function getViewModeLabel(mode) {
       if (mode === 'affected') {
-        return 'Affected optoms';
+        return 'Affected';
       }
 
       if (mode === 'employer') {
-        return 'By employer';
+        return 'Employer';
       }
 
       return 'Overall';
@@ -3524,6 +3585,214 @@
       }
     };
 
+    function getEmployerAnimatedY(
+      chartInstance,
+      group,
+      index
+    ) {
+      const targetY =
+        chartInstance
+          ?.scales
+          ?.y
+          ?.getPixelForValue(
+            index
+          );
+
+      if (
+        !Number.isFinite(targetY) ||
+        !employerReorderState.active
+      ) {
+        return targetY;
+      }
+
+      const fromY =
+        employerReorderState
+          .fromYByKey
+          .get(
+            group?.key
+          );
+
+      if (!Number.isFinite(fromY)) {
+        return targetY;
+      }
+
+      return (
+        fromY +
+        (
+          targetY -
+          fromY
+        ) *
+        clamp(
+          employerReorderState.progress,
+          0,
+          1
+        )
+      );
+    }
+
+    const employerReorderGeometryPlugin = {
+      id: 'pffEmployerReorderGeometryPlugin',
+
+      beforeDatasetsDraw(chartInstance) {
+        if (
+          !employerReorderState.active ||
+          !employerModel?.groups?.length
+        ) {
+          return;
+        }
+
+        chartInstance.data.datasets.forEach(
+          (
+            _dataset,
+            datasetIndex
+          ) => {
+            const elements =
+              chartInstance
+                .getDatasetMeta(
+                  datasetIndex
+                )
+                ?.data ||
+              [];
+
+            elements.forEach(
+              (
+                element,
+                index
+              ) => {
+                const group =
+                  employerModel
+                    ?.groups?.[
+                      index
+                    ];
+
+                const y =
+                  getEmployerAnimatedY(
+                    chartInstance,
+                    group,
+                    index
+                  );
+
+                if (
+                  Number.isFinite(
+                    y
+                  )
+                ) {
+                  element.y =
+                    y;
+                }
+              }
+            );
+          }
+        );
+      }
+    };
+
+    const employerReorderLabelsPlugin = {
+      id: 'pffEmployerReorderLabelsPlugin',
+
+      afterDatasetsDraw(chartInstance) {
+        if (
+          !employerReorderState.active ||
+          !employerModel?.groups?.length
+        ) {
+          return;
+        }
+
+        const scale =
+          chartInstance.scales.y;
+
+        if (!scale) {
+          return;
+        }
+
+        const context =
+          chartInstance.ctx;
+
+        const fontSize =
+          PFF.mobileLayout()
+            ? 9
+            : 10;
+
+        const maximumCharacters =
+          PFF.mobileLayout()
+            ? 15
+            : 18;
+
+        context.save();
+        context.fillStyle =
+          '#151515';
+
+        context.font =
+          `400 ${fontSize}px Lato, sans-serif`;
+
+        context.textAlign =
+          'right';
+
+        context.textBaseline =
+          'middle';
+
+        employerModel.groups.forEach(
+          (
+            group,
+            index
+          ) => {
+            const y =
+              getEmployerAnimatedY(
+                chartInstance,
+                group,
+                index
+              );
+
+            if (!Number.isFinite(y)) {
+              return;
+            }
+
+            const wrapped =
+              wrapEmployerLabel(
+                group.label,
+                maximumCharacters
+              );
+
+            const lines =
+              Array.isArray(
+                wrapped
+              )
+                ? wrapped
+                : [wrapped];
+
+            const lineHeight =
+              fontSize + 1;
+
+            const firstY =
+              y -
+              (
+                lines.length -
+                1
+              ) *
+              lineHeight /
+              2;
+
+            lines.forEach(
+              (
+                line,
+                lineIndex
+              ) => {
+                context.fillText(
+                  line,
+                  scale.right - 5,
+                  firstY +
+                    lineIndex *
+                    lineHeight
+                );
+              }
+            );
+          }
+        );
+
+        context.restore();
+      }
+    };
+
     const employerAxisTickPlugin = {
       id: 'pffEmployerAxisTickPlugin',
 
@@ -3884,7 +4153,11 @@
                 stacked: true,
                 offset: true,
                 ticks: {
-                  color: '#151515',
+                  color() {
+                    return employerReorderState.active
+                      ? 'rgba(21, 21, 21, 0)'
+                      : '#151515';
+                  },
                   autoSkip: false,
                   padding: 5,
                   font: {
@@ -3893,6 +4166,10 @@
                     weight: '400'
                   },
                   callback(value) {
+                    if (employerReorderState.active) {
+                      return '';
+                    }
+
                     return wrapEmployerLabel(
                       this.getLabelForValue(value),
                       PFF.mobileLayout() ? 15 : 18
@@ -3913,8 +4190,10 @@
             constantSpinePlugin,
             employerAxisTickPlugin,
             employerXAxisTitlePlugin,
+            employerReorderGeometryPlugin,
             employerOutlinePlugin,
             employerTotalLabelsPlugin,
+            employerReorderLabelsPlugin,
             employerThresholdNotePlugin
           ]
         }
@@ -3952,6 +4231,75 @@
       );
     }
 
+    function sameEmployerMembers(firstModel, secondModel) {
+      if (
+        !firstModel ||
+        !secondModel ||
+        firstModel.groups.length !==
+          secondModel.groups.length
+      ) {
+        return false;
+      }
+
+      const firstKeys =
+        new Set(
+          firstModel.groups.map(
+            group =>
+              group.key
+          )
+        );
+
+      return secondModel.groups.every(
+        group =>
+          firstKeys.has(
+            group.key
+          )
+      );
+    }
+
+    function captureEmployerYPositions(
+      model
+    ) {
+      const positions =
+        new Map();
+
+      if (
+        !employerChart ||
+        !model?.groups?.length
+      ) {
+        return positions;
+      }
+
+      const elements =
+        employerChart
+          .getDatasetMeta(0)
+          ?.data ||
+        [];
+
+      model.groups.forEach(
+        (
+          group,
+          index
+        ) => {
+          const y =
+            elements[
+              index
+            ]?.y;
+
+          if (
+            Number.isFinite(y)
+          ) {
+            positions.set(
+              group.key,
+              y
+            );
+          }
+        }
+      );
+
+      return positions;
+    }
+
     function applyEmployerDatasetPresentation(
       targetDataset,
       sourceDataset
@@ -3982,6 +4330,15 @@
 
       employerMeasureAnimator.cancel();
       employerAxisTitleAnimator.cancel();
+
+      employerReorderState.active =
+        false;
+
+      employerReorderState.progress =
+        1;
+
+      employerReorderState.fromYByKey =
+        new Map();
 
       employerModel =
         model;
@@ -4027,189 +4384,17 @@
       );
     }
 
-    function captureEmployerTransitionSnapshot() {
-      if (
-        !employerCanvas ||
-        !chartShell
-      ) {
-        return null;
-      }
-
-      const snapshot =
-        document.createElement(
-          'canvas'
-        );
-
-      snapshot.className =
-        'employer-transition-snapshot';
-
-      snapshot.width =
-        employerCanvas.width;
-
-      snapshot.height =
-        employerCanvas.height;
-
-      const context =
-        snapshot.getContext(
-          '2d'
-        );
-
-      if (!context) {
-        return null;
-      }
-
-      context.drawImage(
-        employerCanvas,
-        0,
-        0
-      );
-
-      chartShell.appendChild(
-        snapshot
-      );
-
-      return snapshot;
-    }
-
-    function animateEmployerModelCrossfade(
-      targetModel,
-      targetAxisTitle,
-      duration = 360,
-      onComplete
-    ) {
-      const reduceMotion =
-        PFF.reducedMotion();
-
-      if (
-        reduceMotion ||
-        duration <= 0 ||
-        !employerCanvas
-          .classList
-          .contains(
-            'is-visible'
-          )
-      ) {
-        applyEmployerModelImmediately(
-          targetModel,
-          targetAxisTitle
-        );
-
-        onComplete?.();
-        return;
-      }
-
-      const snapshot =
-        captureEmployerTransitionSnapshot();
-
-      applyEmployerModelImmediately(
-        targetModel,
-        targetAxisTitle
-      );
-
-      if (
-        !snapshot ||
-        !employerCanvas.animate
-      ) {
-        snapshot?.remove();
-        onComplete?.();
-        return;
-      }
-
-      employerCanvas.style.opacity =
-        '0';
-
-      employerCanvas.style.transform =
-        'translate3d(0, 5px, 0) scale(0.997)';
-
-      requestAnimationFrame(
-        () => {
-          const incoming =
-            employerCanvas.animate(
-              [
-                {
-                  opacity: 0,
-                  transform:
-                    'translate3d(0, 5px, 0) scale(0.997)'
-                },
-                {
-                  opacity: 1,
-                  transform:
-                    'translate3d(0, 0, 0) scale(1)'
-                }
-              ],
-              {
-                duration,
-                easing:
-                  'cubic-bezier(0.22, 1, 0.36, 1)',
-                fill:
-                  'forwards'
-              }
-            );
-
-          const outgoing =
-            snapshot.animate(
-              [
-                {
-                  opacity: 1,
-                  transform:
-                    'translate3d(0, 0, 0) scale(1)'
-                },
-                {
-                  opacity: 0,
-                  transform:
-                    'translate3d(0, -5px, 0) scale(0.997)'
-                }
-              ],
-              {
-                duration,
-                easing:
-                  'cubic-bezier(0.22, 1, 0.36, 1)',
-                fill:
-                  'forwards'
-              }
-            );
-
-          Promise.allSettled(
-            [
-              incoming.finished,
-              outgoing.finished
-            ]
-          ).then(() => {
-            incoming.cancel();
-            outgoing.cancel();
-
-            snapshot.remove();
-
-            employerCanvas.style.opacity =
-              '1';
-
-            employerCanvas.style.transform =
-              'translate3d(0, 0, 0) scale(1)';
-
-            onComplete?.();
-          });
-        }
-      );
-    }
-
     function animateEmployerFamilyEntry(
       targetModel,
-      startMaximum,
-      duration = 880
+      _startMaximum,
+      duration = CONFIG.transitionMs
     ) {
       if (!targetModel) {
         return;
       }
 
-      const safeStartMaximum =
-        Number.isFinite(
-          startMaximum
-        ) &&
-        startMaximum > 0
-          ? startMaximum
-          : targetModel
-              .axisSpec
-              .maximum;
+      const targetAxis =
+        targetModel.axisSpec;
 
       const zeroModel = {
         ...targetModel,
@@ -4228,14 +4413,7 @@
       };
 
       zeroModel.axisSpec = {
-        maximum:
-          safeStartMaximum,
-
-        majorStep:
-          safeStartMaximum / 5,
-
-        minorStep:
-          safeStartMaximum / 10
+        ...targetAxis
       };
 
       if (!employerChart) {
@@ -4255,19 +4433,17 @@
       employerModel =
         targetModel;
 
-      const startAxis = {
-        maximum:
-          safeStartMaximum,
+      employerAxisState.maximum =
+        targetAxis.maximum;
 
-        majorStep:
-          safeStartMaximum / 5,
+      employerAxisState.majorStep =
+        targetAxis.majorStep;
 
-        minorStep:
-          safeStartMaximum / 10
-      };
+      employerAxisState.minorStep =
+        targetAxis.minorStep;
 
-      const targetAxis =
-        targetModel.axisSpec;
+      employerChart.options.scales.x.max =
+        targetAxis.maximum;
 
       const targetDatasets =
         targetModel.datasets.map(
@@ -4305,25 +4481,6 @@
                 );
             }
           );
-
-          employerAxisState.maximum =
-            startAxis.maximum +
-            (
-              targetAxis.maximum -
-              startAxis.maximum
-            ) *
-            progress;
-
-          employerAxisState.majorStep =
-            employerAxisState.maximum /
-            5;
-
-          employerAxisState.minorStep =
-            employerAxisState.maximum /
-            10;
-
-          employerChart.options.scales.x.max =
-            employerAxisState.maximum;
 
           employerChart.update(
             'none'
@@ -4405,7 +4562,8 @@
       if (
         !animate ||
         reduceMotion ||
-        !chartVisible
+        !chartVisible ||
+        !previousModel
       ) {
         applyEmployerModelImmediately(
           rankedModel,
@@ -4415,90 +4573,89 @@
         return;
       }
 
-      const sameMetric =
-        previousModel &&
-        getMetricTabView(
-          previousModel.view
-        ) ===
-        getMetricTabView(
-          activeView
+      /*
+       * One continuous employer transition:
+       * - category values change,
+       * - the numeric x scale changes,
+       * - employers move to their new descending positions,
+       * - employer labels move with their bars,
+       * - outlines/end labels follow the rendered bar geometry.
+       *
+       * There is deliberately no second cross-fade/rebuild phase.
+       */
+      const previousIndexByKey =
+        new Map(
+          previousModel.groups.map(
+            (
+              group,
+              index
+            ) => [
+              group.key,
+              index
+            ]
+          )
         );
 
-      const preferredOrderKeys =
-        sameMetric &&
-        previousModel
-          ? previousModel.groups.map(
-              group =>
-                group.key
-            )
-          : null;
-
-      const transitionModel =
-        preferredOrderKeys
-          ? buildEmployerModel(
-              activeView,
-              preferredOrderKeys
-            )
-          : rankedModel;
-
-      transitionModel.axisSpec =
-        rankedModel.axisSpec;
-
-      const canInterpolate =
-        sameEmployerStructure(
-          previousModel,
-          transitionModel
+      const startYByKey =
+        captureEmployerYPositions(
+          previousModel
         );
-
-      if (!canInterpolate) {
-        interactionLocked =
-          true;
-
-        updateViewControls();
-
-        animateEmployerModelCrossfade(
-          rankedModel,
-          nextAxisTitle,
-          420,
-          () => {
-            interactionLocked =
-              false;
-
-            updateViewControls();
-          }
-        );
-
-        return;
-      }
 
       const startDatasets =
-        employerChart
-          .data
-          .datasets
-          .map(
-            dataset =>
-              (dataset.data || [])
-                .map(
-                  value =>
-                    Number(value) || 0
-                )
-          );
+        rankedModel.datasets.map(
+          (
+            _dataset,
+            datasetIndex
+          ) =>
+            rankedModel.groups.map(
+              group => {
+                const previousIndex =
+                  previousIndexByKey.get(
+                    group.key
+                  );
+
+                if (
+                  previousIndex ===
+                  undefined
+                ) {
+                  return 0;
+                }
+
+                return (
+                  Number(
+                    previousModel
+                      .datasets?.[
+                        datasetIndex
+                      ]
+                      ?.data?.[
+                        previousIndex
+                      ]
+                  ) ||
+                  0
+                );
+              }
+            )
+        );
 
       const targetDatasets =
-        transitionModel
-          .datasets
-          .map(
-            dataset =>
-              (dataset.data || [])
-                .map(
-                  value =>
-                    Number(value) || 0
-                )
-          );
+        rankedModel.datasets.map(
+          dataset =>
+            dataset.data.map(
+              value =>
+                Number(value) || 0
+            )
+        );
 
       const startAxis = {
         maximum:
-          employerAxisState.maximum,
+          Number.isFinite(
+            employerAxisState.maximum
+          ) &&
+          employerAxisState.maximum > 0
+            ? employerAxisState.maximum
+            : rankedModel
+                .axisSpec
+                .maximum,
 
         majorStep:
           employerAxisState.majorStep,
@@ -4508,12 +4665,12 @@
       };
 
       const targetAxis =
-        transitionModel.axisSpec;
+        rankedModel.axisSpec;
 
       const previousAxisTitle =
         displayedEmployerAxisTitle ||
         getEmployerAxisTitle(
-          previousModel?.view ||
+          previousModel.view ||
           activeView
         );
 
@@ -4533,12 +4690,12 @@
         );
 
       employerModel =
-        transitionModel;
+        rankedModel;
 
       employerChart.data.labels =
-        transitionModel.labels;
+        rankedModel.labels;
 
-      transitionModel.datasets.forEach(
+      rankedModel.datasets.forEach(
         (
           nextDataset,
           datasetIndex
@@ -4549,6 +4706,22 @@
               .datasets[
                 datasetIndex
               ];
+
+          if (!currentDataset) {
+            employerChart
+              .data
+              .datasets[
+                datasetIndex
+              ] = {
+                ...nextDataset,
+                data:
+                  startDatasets[
+                    datasetIndex
+                  ].slice()
+              };
+
+            return;
+          }
 
           applyEmployerDatasetPresentation(
             currentDataset,
@@ -4562,25 +4735,43 @@
         }
       );
 
+      employerChart.data.datasets.length =
+        rankedModel.datasets.length;
+
+      employerReorderState.active =
+        true;
+
+      employerReorderState.progress =
+        0;
+
+      employerReorderState.fromYByKey =
+        startYByKey;
+
+      employerAxisState.maximum =
+        startAxis.maximum;
+
+      employerAxisState.majorStep =
+        startAxis.maximum / 5;
+
+      employerAxisState.minorStep =
+        startAxis.maximum / 10;
+
+      employerChart.options.scales.x.max =
+        startAxis.maximum;
+
       animateEmployerAxisTitle(
         previousAxisTitle,
         nextAxisTitle,
-        Math.min(
-          600,
-          CONFIG.transitionMs
-        )
+        CONFIG.transitionMs
       );
 
       updateViewControls();
 
-      function finishTransition() {
-        if (!wasInteractionLocked) {
-          interactionLocked =
-            false;
+      employerChart.update(
+        'none'
+      );
 
-          updateViewControls();
-        }
-      }
+      employerMeasureAnimator.cancel();
 
       employerMeasureAnimator.run({
         duration:
@@ -4590,6 +4781,9 @@
           easeInOutCubic,
 
         onFrame(progress) {
+          employerReorderState.progress =
+            progress;
+
           employerChart
             .data
             .datasets
@@ -4601,12 +4795,14 @@
                 const startValues =
                   startDatasets[
                     datasetIndex
-                  ];
+                  ] ||
+                  [];
 
                 const targetValues =
                   targetDatasets[
                     datasetIndex
-                  ];
+                  ] ||
+                  [];
 
                 dataset.data =
                   targetValues.map(
@@ -4617,7 +4813,8 @@
                       const startValue =
                         startValues?.[
                           valueIndex
-                        ] ?? 0;
+                        ] ??
+                        0;
 
                       return (
                         startValue +
@@ -4658,13 +4855,13 @@
 
         onComplete() {
           employerModel =
-            transitionModel;
+            rankedModel;
 
           employerChart.data.labels =
-            transitionModel.labels;
+            rankedModel.labels;
 
           employerChart.data.datasets =
-            transitionModel.datasets;
+            rankedModel.datasets;
 
           employerAxisState.maximum =
             targetAxis.maximum;
@@ -4678,31 +4875,242 @@
           employerChart.options.scales.x.max =
             targetAxis.maximum;
 
+          employerReorderState.active =
+            false;
+
+          employerReorderState.progress =
+            1;
+
+          employerReorderState.fromYByKey =
+            new Map();
+
           employerChart.update(
             'none'
           );
 
-          if (
-            sameEmployerOrder(
-              transitionModel,
-              rankedModel
-            )
-          ) {
-            employerModel =
-              rankedModel;
+          if (!wasInteractionLocked) {
+            interactionLocked =
+              false;
 
-            finishTransition();
-            return;
+            updateViewControls();
           }
-
-          animateEmployerModelCrossfade(
-            rankedModel,
-            nextAxisTitle,
-            420,
-            finishTransition
-          );
         }
       });
+    }
+
+    function createAxisTransitionLayer(
+      sourceCanvas,
+      chartArea,
+      axis,
+      className
+    ) {
+      if (
+        !sourceCanvas ||
+        !chartArea ||
+        !chartShell
+      ) {
+        return null;
+      }
+
+      const cssWidth =
+        sourceCanvas.clientWidth ||
+        sourceCanvas.getBoundingClientRect().width;
+
+      const cssHeight =
+        sourceCanvas.clientHeight ||
+        sourceCanvas.getBoundingClientRect().height;
+
+      if (
+        !cssWidth ||
+        !cssHeight ||
+        !sourceCanvas.width ||
+        !sourceCanvas.height
+      ) {
+        return null;
+      }
+
+      const scaleX =
+        sourceCanvas.width /
+        cssWidth;
+
+      const scaleY =
+        sourceCanvas.height /
+        cssHeight;
+
+      const layer =
+        document.createElement(
+          'canvas'
+        );
+
+      layer.className =
+        `axis-transition-layer ${className}`;
+
+      layer.width =
+        sourceCanvas.width;
+
+      layer.height =
+        sourceCanvas.height;
+
+      const context =
+        layer.getContext(
+          '2d'
+        );
+
+      if (!context) {
+        return null;
+      }
+
+      if (axis === 'x') {
+        const sourceX =
+          Math.max(
+            0,
+            (
+              chartArea.left -
+              2
+            ) *
+            scaleX
+          );
+
+        const sourceY =
+          Math.max(
+            0,
+            (
+              chartArea.bottom -
+              2
+            ) *
+            scaleY
+          );
+
+        const sourceWidth =
+          sourceCanvas.width -
+          sourceX;
+
+        const sourceHeight =
+          sourceCanvas.height -
+          sourceY;
+
+        context.drawImage(
+          sourceCanvas,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight
+        );
+      } else {
+        const sourceX =
+          0;
+
+        const sourceY =
+          Math.max(
+            0,
+            chartArea.top *
+            scaleY
+          );
+
+        const sourceWidth =
+          Math.min(
+            sourceCanvas.width,
+            (
+              chartArea.left +
+              2
+            ) *
+            scaleX
+          );
+
+        const sourceHeight =
+          Math.max(
+            0,
+            (
+              chartArea.bottom -
+              chartArea.top
+            ) *
+            scaleY
+          );
+
+        context.drawImage(
+          sourceCanvas,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight
+        );
+      }
+
+      chartShell.appendChild(
+        layer
+      );
+
+      return layer;
+    }
+
+    function clipCanvasToPlot(
+      canvas,
+      chartArea
+    ) {
+      if (
+        !canvas ||
+        !chartArea
+      ) {
+        return;
+      }
+
+      const width =
+        canvas.clientWidth ||
+        canvas.getBoundingClientRect().width;
+
+      const height =
+        canvas.clientHeight ||
+        canvas.getBoundingClientRect().height;
+
+      const top =
+        Math.max(
+          0,
+          chartArea.top
+        );
+
+      const right =
+        0;
+
+      const bottom =
+        Math.max(
+          0,
+          height -
+          chartArea.bottom
+        );
+
+      const left =
+        Math.max(
+          0,
+          chartArea.left
+        );
+
+      canvas.style.clipPath =
+        `inset(${top}px ${right}px ${bottom}px ${left}px)`;
+
+      canvas.style.webkitClipPath =
+        canvas.style.clipPath;
+    }
+
+    function clearCanvasPlotClip(
+      canvas
+    ) {
+      if (!canvas) {
+        return;
+      }
+
+      canvas.style.clipPath =
+        '';
+
+      canvas.style.webkitClipPath =
+        '';
     }
 
     function setChartFamilyVisibility(showEmployer, animate = true, onComplete) {
@@ -4722,20 +5130,29 @@
           ? chartCanvas
           : employerCanvas;
 
-      /*
-       * Slide the complete chart surface — data, axes, tick labels and
-       * axis titles — rather than fading one graph into the other.
-       * This mirrors the directional PFF view-change animation while
-       * preserving the normal in-place morphs when the scale/category
-       * structure itself has not changed.
-       *
-       * Entering By employer: employer slides in from the right.
-       * Leaving By employer: the standard graph slides in from the left.
-       */
-      const direction =
+      const incomingChart =
         showEmployer
-          ? 1
-          : -1;
+          ? employerChart
+          : chart;
+
+      const outgoingChart =
+        showEmployer
+          ? chart
+          : employerChart;
+
+      employerCanvas
+        .classList
+        .toggle(
+          'is-visible',
+          showEmployer
+        );
+
+      chartCanvas
+        .classList
+        .toggle(
+          'is-hidden-family',
+          showEmployer
+        );
 
       incomingCanvas.style.pointerEvents =
         'none';
@@ -4743,36 +5160,42 @@
       outgoingCanvas.style.pointerEvents =
         'none';
 
-      incomingCanvas.style.opacity =
-        '1';
+      incomingCanvas.style.transform =
+        'none';
 
-      outgoingCanvas.style.opacity =
-        '1';
+      outgoingCanvas.style.transform =
+        'none';
 
-      if (duration <= 0) {
-        employerCanvas
-          .classList
-          .toggle(
-            'is-visible',
-            showEmployer
-          );
+      const incomingArea =
+        incomingChart
+          ?.chartArea;
 
-        chartCanvas
-          .classList
-          .toggle(
-            'is-hidden-family',
-            showEmployer
-          );
+      const outgoingArea =
+        outgoingChart
+          ?.chartArea;
 
-        employerCanvas.style.transform =
+      if (
+        duration <= 0 ||
+        !incomingArea ||
+        !outgoingArea
+      ) {
+        clearCanvasPlotClip(
+          incomingCanvas
+        );
+
+        clearCanvasPlotClip(
+          outgoingCanvas
+        );
+
+        employerCanvas.style.opacity =
           showEmployer
-            ? 'translate3d(0, 0, 0)'
-            : 'translate3d(100%, 0, 0)';
+            ? '1'
+            : '0';
 
-        chartCanvas.style.transform =
+        chartCanvas.style.opacity =
           showEmployer
-            ? 'translate3d(-100%, 0, 0)'
-            : 'translate3d(0, 0, 0)';
+            ? '0'
+            : '1';
 
         employerCanvas.style.pointerEvents =
           showEmployer
@@ -4788,59 +5211,199 @@
         return;
       }
 
-      incomingCanvas.style.transform =
-        `translate3d(${direction * 100}%, 0, 0)`;
+      /*
+       * Only the axes slide. The canvases remain fixed in place.
+       * During the transition the real canvases are clipped to their plot
+       * regions, while lightweight axis snapshots move into/out of position.
+       * This keeps the data motion independent of the axes and avoids the
+       * previous whole-chart/page-like slide.
+       */
+      const outgoingXAxis =
+        createAxisTransitionLayer(
+          outgoingCanvas,
+          outgoingArea,
+          'x',
+          'axis-transition-x axis-transition-outgoing'
+        );
 
-      outgoingCanvas.style.transform =
-        'translate3d(0, 0, 0)';
+      const incomingXAxis =
+        createAxisTransitionLayer(
+          incomingCanvas,
+          incomingArea,
+          'x',
+          'axis-transition-x axis-transition-incoming'
+        );
+
+      const outgoingYAxis =
+        createAxisTransitionLayer(
+          outgoingCanvas,
+          outgoingArea,
+          'y',
+          'axis-transition-y axis-transition-outgoing'
+        );
+
+      const incomingYAxis =
+        createAxisTransitionLayer(
+          incomingCanvas,
+          incomingArea,
+          'y',
+          'axis-transition-y axis-transition-incoming'
+        );
+
+      clipCanvasToPlot(
+        outgoingCanvas,
+        outgoingArea
+      );
+
+      clipCanvasToPlot(
+        incomingCanvas,
+        incomingArea
+      );
+
+      const incomingStartsVisible =
+        showEmployer;
+
+      outgoingCanvas.style.opacity =
+        '1';
+
+      incomingCanvas.style.opacity =
+        incomingStartsVisible
+          ? '1'
+          : '0';
+
+      const slideDistance =
+        PFF.mobileLayout()
+          ? 12
+          : 16;
+
+      function setAxisFrame(
+        progress
+      ) {
+        const eased =
+          easeInOutCubic(
+            progress
+          );
+
+        if (outgoingXAxis) {
+          outgoingXAxis.style.transform =
+            `translate3d(0, ${slideDistance * eased}px, 0)`;
+
+          outgoingXAxis.style.opacity =
+            String(
+              1 -
+              eased *
+              0.78
+            );
+        }
+
+        if (incomingXAxis) {
+          incomingXAxis.style.transform =
+            `translate3d(0, ${-slideDistance * (1 - eased)}px, 0)`;
+
+          incomingXAxis.style.opacity =
+            String(
+              0.22 +
+              eased *
+              0.78
+            );
+        }
+
+        if (outgoingYAxis) {
+          outgoingYAxis.style.transform =
+            `translate3d(${-slideDistance * eased}px, 0, 0)`;
+
+          outgoingYAxis.style.opacity =
+            String(
+              1 -
+              eased *
+              0.78
+            );
+        }
+
+        if (incomingYAxis) {
+          incomingYAxis.style.transform =
+            `translate3d(${slideDistance * (1 - eased)}px, 0, 0)`;
+
+          incomingYAxis.style.opacity =
+            String(
+              0.22 +
+              eased *
+              0.78
+            );
+        }
+      }
+
+      setAxisFrame(
+        0
+      );
 
       chartFamilyAnimator.run({
         duration,
+
         easing:
-          easeInOutCubic,
+          value =>
+            value,
 
         onFrame(progress) {
-          const incomingX =
-            direction *
-            (1 - progress) *
-            100;
+          const eased =
+            easeInOutCubic(
+              progress
+            );
 
-          const outgoingX =
-            -direction *
-            progress *
-            100;
+          setAxisFrame(
+            progress
+          );
 
-          incomingCanvas.style.transform =
-            `translate3d(${incomingX}%, 0, 0)`;
+          outgoingCanvas.style.opacity =
+            String(
+              1 -
+              eased
+            );
 
-          outgoingCanvas.style.transform =
-            `translate3d(${outgoingX}%, 0, 0)`;
+          incomingCanvas.style.opacity =
+            incomingStartsVisible
+              ? '1'
+              : String(
+                  eased
+                );
         },
 
         onComplete() {
-          employerCanvas
-            .classList
-            .toggle(
-              'is-visible',
-              showEmployer
+          [
+            outgoingXAxis,
+            incomingXAxis,
+            outgoingYAxis,
+            incomingYAxis
+          ]
+            .filter(Boolean)
+            .forEach(
+              layer =>
+                layer.remove()
             );
 
-          chartCanvas
-            .classList
-            .toggle(
-              'is-hidden-family',
-              showEmployer
-            );
+          clearCanvasPlotClip(
+            incomingCanvas
+          );
+
+          clearCanvasPlotClip(
+            outgoingCanvas
+          );
+
+          employerCanvas.style.opacity =
+            showEmployer
+              ? '1'
+              : '0';
+
+          chartCanvas.style.opacity =
+            showEmployer
+              ? '0'
+              : '1';
 
           employerCanvas.style.transform =
-            showEmployer
-              ? 'translate3d(0, 0, 0)'
-              : 'translate3d(100%, 0, 0)';
+            'none';
 
           chartCanvas.style.transform =
-            showEmployer
-              ? 'translate3d(-100%, 0, 0)'
-              : 'translate3d(0, 0, 0)';
+            'none';
 
           employerCanvas.style.pointerEvents =
             showEmployer
