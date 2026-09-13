@@ -139,20 +139,35 @@
       min-width: 158px;
     }
 
-    .axis-transition-layer {
+    /*
+     * One shared pair of axis spines is drawn above the two chart canvases
+     * while switching to/from By employer. Their geometry is interpolated
+     * between the old and new chart areas, so the axes behave like the same
+     * lines being repositioned rather than two separate axes sliding past
+     * each other.
+     */
+    .family-axis-morph-layer {
       position: absolute;
       inset: 0;
-      z-index: 7;
-      display: block;
-      width: 100%;
-      height: 100%;
+      z-index: 9;
       pointer-events: none;
-      transform-origin: 50% 50%;
-      will-change: opacity, transform;
     }
 
-    .axis-transition-layer {
-      z-index: 9;
+    .family-axis-morph-x,
+    .family-axis-morph-y {
+      position: absolute;
+      display: block;
+      background: var(--pff-ink);
+      pointer-events: none;
+      will-change: left, top, width, height;
+    }
+
+    .family-axis-morph-x {
+      height: 1px;
+    }
+
+    .family-axis-morph-y {
+      width: 1px;
     }
 
     .work-chart-canvas {
@@ -176,8 +191,8 @@
       }
 
       .view-menu-button {
-        width: auto;
-        min-width: 0;
+        width: 104px;
+        min-width: 104px;
         min-height: 27px;
         gap: 3px;
         padding-right: 5px;
@@ -371,10 +386,11 @@
       range: 'A:BP',
       fetchTimeoutMs: 20000,
 
-      transitionMs: 650,
+      transitionMs: 1500,
+      employerTransitionMs: 650,
       axisFadeOutMs: 170,
       axisFadeInMs: 300,
-      chartFamilyFadeMs: 650,
+      chartFamilyTransitionMs: 650,
 
       pointRadius: 2.7,
       pointHoverRadius: 4.4,
@@ -492,8 +508,6 @@
       CATEGORY_CONFIG.map(category => [category.key, category])
     );
 
-    const DAY_MS = 86400000;
-
     const app = document.getElementById('app');
     const statusElement = document.getElementById('status');
     const dataSourceIndicator = document.getElementById('dataSourceIndicator');
@@ -542,6 +556,7 @@
     let tooltipPinned = false;
     let displayedYAxisTitleParts = null;
     let headingAnimationToken = 0;
+    let familySpineMorphActive = false;
 
     const axisLabelAnimator = PFFCharts.createAnimationController();
     const axisTitleAnimator = PFFCharts.createAnimationController();
@@ -2033,7 +2048,10 @@
       afterDatasetsDraw(activeChart) {
         const area = activeChart.chartArea;
 
-        if (!area) {
+        if (
+          !area ||
+          familySpineMorphActive
+        ) {
           return;
         }
 
@@ -3954,10 +3972,6 @@
       return lines;
     }
 
-    function employerTooltipFooter() {
-      return [];
-    }
-
     function createEmployerChart(initialModel = null, animateInitial = true) {
       employerModel =
         initialModel ||
@@ -4000,7 +4014,7 @@
               duration:
                 animateInitial &&
                 !PFF.reducedMotion()
-                  ? CONFIG.transitionMs
+                  ? CONFIG.employerTransitionMs
                   : 0,
               easing: 'easeOutCubic'
             },
@@ -4200,63 +4214,6 @@
       );
     }
 
-    function sameEmployerStructure(firstModel, secondModel) {
-      if (
-        !firstModel ||
-        !secondModel ||
-        firstModel.groups.length !==
-          secondModel.groups.length ||
-        firstModel.datasets.length !==
-          secondModel.datasets.length
-      ) {
-        return false;
-      }
-
-      return firstModel.groups.every(
-        (
-          group,
-          index
-        ) =>
-          group.key ===
-          secondModel.groups[
-            index
-          ]?.key
-      );
-    }
-
-    function sameEmployerOrder(firstModel, secondModel) {
-      return sameEmployerStructure(
-        firstModel,
-        secondModel
-      );
-    }
-
-    function sameEmployerMembers(firstModel, secondModel) {
-      if (
-        !firstModel ||
-        !secondModel ||
-        firstModel.groups.length !==
-          secondModel.groups.length
-      ) {
-        return false;
-      }
-
-      const firstKeys =
-        new Set(
-          firstModel.groups.map(
-            group =>
-              group.key
-          )
-        );
-
-      return secondModel.groups.every(
-        group =>
-          firstKeys.has(
-            group.key
-          )
-      );
-    }
-
     function captureEmployerYPositions(
       model
     ) {
@@ -4387,7 +4344,7 @@
     function animateEmployerFamilyEntry(
       targetModel,
       _startMaximum,
-      duration = CONFIG.transitionMs
+      duration = CONFIG.employerTransitionMs
     ) {
       if (!targetModel) {
         return;
@@ -4762,7 +4719,7 @@
       animateEmployerAxisTitle(
         previousAxisTitle,
         nextAxisTitle,
-        CONFIG.transitionMs
+        CONFIG.employerTransitionMs
       );
 
       updateViewControls();
@@ -4775,7 +4732,7 @@
 
       employerMeasureAnimator.run({
         duration:
-          CONFIG.transitionMs,
+          CONFIG.employerTransitionMs,
 
         easing:
           easeInOutCubic,
@@ -4898,226 +4855,200 @@
       });
     }
 
-    function createAxisTransitionLayer(
-      sourceCanvas,
-      chartArea,
-      axis,
-      className
+    function copyFamilyChartArea(area) {
+      if (!area) {
+        return null;
+      }
+
+      const copy = {
+        left: Number(area.left),
+        right: Number(area.right),
+        top: Number(area.top),
+        bottom: Number(area.bottom)
+      };
+
+      return Object.values(copy).every(Number.isFinite)
+        ? copy
+        : null;
+    }
+
+    function interpolateFamilyChartArea(
+      fromArea,
+      toArea,
+      progress
+    ) {
+      const from =
+        copyFamilyChartArea(
+          fromArea
+        );
+
+      const to =
+        copyFamilyChartArea(
+          toArea
+        );
+
+      if (!from || !to) {
+        return to || from;
+      }
+
+      const p =
+        clamp(
+          progress,
+          0,
+          1
+        );
+
+      return {
+        left:
+          from.left +
+          (
+            to.left -
+            from.left
+          ) *
+          p,
+
+        right:
+          from.right +
+          (
+            to.right -
+            from.right
+          ) *
+          p,
+
+        top:
+          from.top +
+          (
+            to.top -
+            from.top
+          ) *
+          p,
+
+        bottom:
+          from.bottom +
+          (
+            to.bottom -
+            from.bottom
+          ) *
+          p
+      };
+    }
+
+    function createFamilyAxisMorphLayer(
+      initialArea
     ) {
       if (
-        !sourceCanvas ||
-        !chartArea ||
-        !chartShell
+        !chartShell ||
+        !initialArea
       ) {
         return null;
       }
-
-      const cssWidth =
-        sourceCanvas.clientWidth ||
-        sourceCanvas.getBoundingClientRect().width;
-
-      const cssHeight =
-        sourceCanvas.clientHeight ||
-        sourceCanvas.getBoundingClientRect().height;
-
-      if (
-        !cssWidth ||
-        !cssHeight ||
-        !sourceCanvas.width ||
-        !sourceCanvas.height
-      ) {
-        return null;
-      }
-
-      const scaleX =
-        sourceCanvas.width /
-        cssWidth;
-
-      const scaleY =
-        sourceCanvas.height /
-        cssHeight;
 
       const layer =
         document.createElement(
-          'canvas'
+          'div'
         );
 
       layer.className =
-        `axis-transition-layer ${className}`;
+        'family-axis-morph-layer';
 
-      layer.width =
-        sourceCanvas.width;
-
-      layer.height =
-        sourceCanvas.height;
-
-      const context =
-        layer.getContext(
-          '2d'
+      const xSpine =
+        document.createElement(
+          'span'
         );
 
-      if (!context) {
-        return null;
-      }
+      xSpine.className =
+        'family-axis-morph-x';
 
-      if (axis === 'x') {
-        const sourceX =
-          Math.max(
-            0,
-            (
-              chartArea.left -
-              2
-            ) *
-            scaleX
-          );
-
-        const sourceY =
-          Math.max(
-            0,
-            (
-              chartArea.bottom -
-              2
-            ) *
-            scaleY
-          );
-
-        const sourceWidth =
-          sourceCanvas.width -
-          sourceX;
-
-        const sourceHeight =
-          sourceCanvas.height -
-          sourceY;
-
-        context.drawImage(
-          sourceCanvas,
-          sourceX,
-          sourceY,
-          sourceWidth,
-          sourceHeight,
-          sourceX,
-          sourceY,
-          sourceWidth,
-          sourceHeight
+      const ySpine =
+        document.createElement(
+          'span'
         );
-      } else {
-        const sourceX =
-          0;
 
-        const sourceY =
-          Math.max(
-            0,
-            chartArea.top *
-            scaleY
-          );
+      ySpine.className =
+        'family-axis-morph-y';
 
-        const sourceWidth =
-          Math.min(
-            sourceCanvas.width,
-            (
-              chartArea.left +
-              2
-            ) *
-            scaleX
-          );
+      layer.appendChild(
+        xSpine
+      );
 
-        const sourceHeight =
-          Math.max(
-            0,
-            (
-              chartArea.bottom -
-              chartArea.top
-            ) *
-            scaleY
-          );
-
-        context.drawImage(
-          sourceCanvas,
-          sourceX,
-          sourceY,
-          sourceWidth,
-          sourceHeight,
-          sourceX,
-          sourceY,
-          sourceWidth,
-          sourceHeight
-        );
-      }
+      layer.appendChild(
+        ySpine
+      );
 
       chartShell.appendChild(
         layer
       );
 
+      setFamilyAxisMorphGeometry(
+        layer,
+        initialArea
+      );
+
       return layer;
     }
 
-    function clipCanvasToPlot(
-      canvas,
-      chartArea
+    function setFamilyAxisMorphGeometry(
+      layer,
+      area
     ) {
+      const geometry =
+        copyFamilyChartArea(
+          area
+        );
+
       if (
-        !canvas ||
-        !chartArea
+        !layer ||
+        !geometry
       ) {
         return;
       }
 
-      const width =
-        canvas.clientWidth ||
-        canvas.getBoundingClientRect().width;
-
-      const height =
-        canvas.clientHeight ||
-        canvas.getBoundingClientRect().height;
-
-      const top =
-        Math.max(
-          0,
-          chartArea.top
+      const xSpine =
+        layer.querySelector(
+          '.family-axis-morph-x'
         );
 
-      const right =
-        0;
-
-      const bottom =
-        Math.max(
-          0,
-          height -
-          chartArea.bottom
+      const ySpine =
+        layer.querySelector(
+          '.family-axis-morph-y'
         );
 
-      const left =
-        Math.max(
-          0,
-          chartArea.left
-        );
+      if (xSpine) {
+        xSpine.style.left =
+          `${geometry.left}px`;
 
-      canvas.style.clipPath =
-        `inset(${top}px ${right}px ${bottom}px ${left}px)`;
+        xSpine.style.top =
+          `${geometry.bottom}px`;
 
-      canvas.style.webkitClipPath =
-        canvas.style.clipPath;
-    }
-
-    function clearCanvasPlotClip(
-      canvas
-    ) {
-      if (!canvas) {
-        return;
+        xSpine.style.width =
+          `${Math.max(
+            0,
+            geometry.right -
+            geometry.left
+          )}px`;
       }
 
-      canvas.style.clipPath =
-        '';
+      if (ySpine) {
+        ySpine.style.left =
+          `${geometry.left}px`;
 
-      canvas.style.webkitClipPath =
-        '';
+        ySpine.style.top =
+          `${geometry.top}px`;
+
+        ySpine.style.height =
+          `${Math.max(
+            0,
+            geometry.bottom -
+            geometry.top
+          )}px`;
+      }
     }
 
     function setChartFamilyVisibility(showEmployer, animate = true, onComplete) {
       const duration =
         animate &&
         !PFF.reducedMotion()
-          ? CONFIG.chartFamilyFadeMs
+          ? CONFIG.chartFamilyTransitionMs
           : 0;
 
       const incomingCanvas =
@@ -5166,26 +5097,25 @@
       outgoingCanvas.style.transform =
         'none';
 
-      const incomingArea =
-        incomingChart
-          ?.chartArea;
+      const fromArea =
+        copyFamilyChartArea(
+          outgoingChart
+            ?.chartArea
+        );
 
-      const outgoingArea =
-        outgoingChart
-          ?.chartArea;
+      const toArea =
+        copyFamilyChartArea(
+          incomingChart
+            ?.chartArea
+        );
 
       if (
         duration <= 0 ||
-        !incomingArea ||
-        !outgoingArea
+        !fromArea ||
+        !toArea
       ) {
-        clearCanvasPlotClip(
-          incomingCanvas
-        );
-
-        clearCanvasPlotClip(
-          outgoingCanvas
-        );
+        familySpineMorphActive =
+          false;
 
         employerCanvas.style.opacity =
           showEmployer
@@ -5207,187 +5137,79 @@
             ? 'none'
             : 'auto';
 
+        incomingChart?.draw();
+
         onComplete?.();
         return;
       }
 
       /*
-       * Only the axes slide. The canvases remain fixed in place.
-       * During the transition the real canvases are clipped to their plot
-       * regions, while lightweight axis snapshots move into/out of position.
-       * This keeps the data motion independent of the axes and avoids the
-       * previous whole-chart/page-like slide.
+       * Match the permanent-legacy animation:
+       * the axis spines themselves are one continuous piece of geometry.
+       * Only coordinates that actually change move. For example, when the
+       * chart bottom is unchanged the x-axis remains on the same baseline
+       * while its left/right endpoints reshape with the moving y-axis.
+       *
+       * Axis labels/ticks transition with their respective canvases, while
+       * the shared black spines stay fully opaque throughout the morph.
        */
-      const outgoingXAxis =
-        createAxisTransitionLayer(
-          outgoingCanvas,
-          outgoingArea,
-          'x',
-          'axis-transition-x axis-transition-outgoing'
+      const morphLayer =
+        createFamilyAxisMorphLayer(
+          fromArea
         );
 
-      const incomingXAxis =
-        createAxisTransitionLayer(
-          incomingCanvas,
-          incomingArea,
-          'x',
-          'axis-transition-x axis-transition-incoming'
-        );
+      familySpineMorphActive =
+        true;
 
-      const outgoingYAxis =
-        createAxisTransitionLayer(
-          outgoingCanvas,
-          outgoingArea,
-          'y',
-          'axis-transition-y axis-transition-outgoing'
-        );
-
-      const incomingYAxis =
-        createAxisTransitionLayer(
-          incomingCanvas,
-          incomingArea,
-          'y',
-          'axis-transition-y axis-transition-incoming'
-        );
-
-      clipCanvasToPlot(
-        outgoingCanvas,
-        outgoingArea
-      );
-
-      clipCanvasToPlot(
-        incomingCanvas,
-        incomingArea
-      );
-
-      const incomingStartsVisible =
-        showEmployer;
+      /*
+       * Redraw once with each chart's own constant spine suppressed. This
+       * prevents two static spines appearing underneath the shared morph.
+       */
+      outgoingChart?.draw();
+      incomingChart?.draw();
 
       outgoingCanvas.style.opacity =
         '1';
 
       incomingCanvas.style.opacity =
-        incomingStartsVisible
-          ? '1'
-          : '0';
-
-      const slideDistance =
-        PFF.mobileLayout()
-          ? 12
-          : 16;
-
-      function setAxisFrame(
-        progress
-      ) {
-        const eased =
-          easeInOutCubic(
-            progress
-          );
-
-        if (outgoingXAxis) {
-          outgoingXAxis.style.transform =
-            `translate3d(0, ${slideDistance * eased}px, 0)`;
-
-          outgoingXAxis.style.opacity =
-            String(
-              1 -
-              eased *
-              0.78
-            );
-        }
-
-        if (incomingXAxis) {
-          incomingXAxis.style.transform =
-            `translate3d(0, ${-slideDistance * (1 - eased)}px, 0)`;
-
-          incomingXAxis.style.opacity =
-            String(
-              0.22 +
-              eased *
-              0.78
-            );
-        }
-
-        if (outgoingYAxis) {
-          outgoingYAxis.style.transform =
-            `translate3d(${-slideDistance * eased}px, 0, 0)`;
-
-          outgoingYAxis.style.opacity =
-            String(
-              1 -
-              eased *
-              0.78
-            );
-        }
-
-        if (incomingYAxis) {
-          incomingYAxis.style.transform =
-            `translate3d(${slideDistance * (1 - eased)}px, 0, 0)`;
-
-          incomingYAxis.style.opacity =
-            String(
-              0.22 +
-              eased *
-              0.78
-            );
-        }
-      }
-
-      setAxisFrame(
-        0
-      );
+        '0';
 
       chartFamilyAnimator.run({
         duration,
 
         easing:
-          value =>
-            value,
+          easeInOutCubic,
 
         onFrame(progress) {
-          const eased =
-            easeInOutCubic(
+          const geometry =
+            interpolateFamilyChartArea(
+              fromArea,
+              toArea,
               progress
             );
 
-          setAxisFrame(
-            progress
+          setFamilyAxisMorphGeometry(
+            morphLayer,
+            geometry
           );
 
           outgoingCanvas.style.opacity =
             String(
               1 -
-              eased
+              progress
             );
 
           incomingCanvas.style.opacity =
-            incomingStartsVisible
-              ? '1'
-              : String(
-                  eased
-                );
+            String(
+              progress
+            );
         },
 
         onComplete() {
-          [
-            outgoingXAxis,
-            incomingXAxis,
-            outgoingYAxis,
-            incomingYAxis
-          ]
-            .filter(Boolean)
-            .forEach(
-              layer =>
-                layer.remove()
-            );
+          familySpineMorphActive =
+            false;
 
-          clearCanvasPlotClip(
-            incomingCanvas
-          );
-
-          clearCanvasPlotClip(
-            outgoingCanvas
-          );
+          morphLayer?.remove();
 
           employerCanvas.style.opacity =
             showEmployer
@@ -5415,6 +5237,8 @@
               ? 'none'
               : 'auto';
 
+          incomingChart?.draw();
+
           onComplete?.();
         }
       });
@@ -5426,8 +5250,8 @@
         !PFF.reducedMotion()
           ? Math.max(
               0,
-              CONFIG.transitionMs -
-              CONFIG.chartFamilyFadeMs
+              CONFIG.employerTransitionMs -
+              CONFIG.chartFamilyTransitionMs
             )
           : 0;
 
@@ -5513,7 +5337,7 @@
           },
           animate &&
           !PFF.reducedMotion()
-            ? CONFIG.transitionMs +
+            ? CONFIG.employerTransitionMs +
               40
             : 0
         );
@@ -5556,7 +5380,7 @@
           sourceMaximum,
           Math.min(
             900,
-            CONFIG.transitionMs
+            CONFIG.employerTransitionMs
           )
         );
 
@@ -5619,7 +5443,7 @@
 
       applyModelToChart(
         model,
-        animate
+        false
       );
 
       axisNumberTransition.fromMaximum =
@@ -5647,7 +5471,7 @@
           model.yAxis.maximum,
           Math.min(
             900,
-            CONFIG.transitionMs
+            CONFIG.chartFamilyTransitionMs
           )
         );
       }
