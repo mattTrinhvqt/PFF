@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+box" class="emp<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -645,4 +645,522 @@
             </label>
 
             <label class="check-option employer-option" style="order: 16; --employer-colour:#bfc3c7;">
-              <input type="checkbox" class="emp
+              <input type="checkbox" class="emp" value="Other (e.g., uni, hospital, govt, not-for-profit)">
+              <span class="employer-card">Other (e.g., uni, hospital, govt, not-for-profit)</span>
+            </label>
+
+            <label class="check-option employer-option" style="order: 17; --employer-colour:#009552;">
+              <input type="checkbox" class="emp" value="Specsavers">
+              <span class="employer-card">Specsavers</span>
+            </label>
+
+            <label class="check-option employer-option" style="order: 18; --employer-colour:#007781;">
+              <input type="checkbox" class="emp" value="Teacher’s Health Fund">
+              <span class="employer-card">Teachers Health</span>
+            </label>
+
+            <label class="check-option employer-option" style="order: 20; --employer-colour:#ff2401;">
+              <input type="checkbox" class="emp" value="The Optical Superstore">
+              <span class="employer-card">The Optical Superstore</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <button id="toStep2" type="button">Next</button>
+        </div>
+
+        <div class="progress">Q 1 of 2</div>
+      </div>
+
+      <div id="step2" class="step">
+        <div class="step-body">
+          <label for="q2_score" class="step-title">
+            <span id="empContext" class="employer-context"></span>
+            How likely are you to recommend working here?
+            <small>0 = Not at all likely · 5 = Unsure · 10 = Extremely likely</small>
+          </label>
+
+          <input id="q2_score" class="score-input" type="number" min="0" max="10" step="1" inputmode="numeric" required>
+
+          <div class="checklist-title">
+            What positively influenced your score?
+            <small>Select all that apply, or none</small>
+          </div>
+
+          <div class="checklist" aria-label="Positive influences">
+            <label class="check-option"><input type="checkbox" class="q3" value="Pay/bonuses"><span>Pay/bonuses</span></label>
+            <label class="check-option"><input type="checkbox" class="q3" value="Work-life flexibility"><span>Work-life flexibility</span></label>
+            <label class="check-option"><input type="checkbox" class="q3" value="Clinical autonomy &amp; professional growth"><span>Clinical autonomy &amp; professional growth</span></label>
+            <label class="check-option"><input type="checkbox" class="q3" value="Supportive team &amp; management"><span>Supportive team &amp; management</span></label>
+            <label class="check-option"><input type="checkbox" class="q3" value="Staffing &amp; sustainable workload"><span>Staffing &amp; sustainable workload</span></label>
+            <label class="check-option"><input type="checkbox" class="q3" value="Quality equipment &amp; technology"><span>Quality equipment &amp; technology</span></label>
+          </div>
+        </div>
+
+        <div class="nav-row">
+          <button id="nextOrSubmit" type="button">Submit</button>
+        </div>
+
+        <div class="progress">Q 2 of 2</div>
+      </div>
+
+      <div id="out" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script>
+    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwT9nXpXx_gbsFjJTeTXbOzZ-xxF4_UmYfBfjYh5HvxH09kY8vQSK-SVc6QHpHRpDyNVg/exec';
+
+    function callPromoterBackend(action, params = {}) {
+      return new Promise((resolve, reject) => {
+        if (!BACKEND_URL || BACKEND_URL === 'PASTE_YOUR_DEPLOYED_WEB_APP_URL_HERE') {
+          reject(new Error('Backend URL has not been set.'));
+          return;
+        }
+
+        const callbackName = `workplacePromoterCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+        const script = document.createElement('script');
+
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('Request timed out.'));
+        }, 90000);
+
+        function cleanup() {
+          window.clearTimeout(timeout);
+
+          try {
+            delete window[callbackName];
+          } catch (error) {
+            window[callbackName] = undefined;
+          }
+
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+
+        window[callbackName] = response => {
+          cleanup();
+
+          if (!response || !response.ok) {
+            reject(new Error(response?.message || 'Request failed.'));
+            return;
+          }
+
+          resolve(response);
+        };
+
+        script.onerror = () => {
+          cleanup();
+          reject(new Error('Network error.'));
+        };
+
+        const query = new URLSearchParams({
+          callback: callbackName,
+          action,
+          ...params
+        });
+
+        script.src = `${BACKEND_URL}?${query.toString()}`;
+        document.body.appendChild(script);
+      });
+    }
+
+    const out = document.getElementById('out');
+    const ENFORCE_SINGLE_SUBMISSION = true;
+    const SUBMIT_KEY = 'promoterLastSubmit';
+
+    let employers = [];
+    let responses = [];
+    let idx = 0;
+    let optimisticSubmittedTimer = null;
+    let hasShownOptimisticSubmitted = false;
+
+    const step1 = document.getElementById('step1');
+    const step2 = document.getElementById('step2');
+    const trackerNotice = document.getElementById('trackerNotice');
+    const empContext = document.getElementById('empContext');
+    const toStep2 = document.getElementById('toStep2');
+    const nextOrSubmit = document.getElementById('nextOrSubmit');
+
+    function applyScale() {
+      // Scaling intentionally disabled to match the other trackers.
+    }
+
+    function setSelectedState(input) {
+      const option = input.closest('.check-option');
+      if (option) option.classList.toggle('selected', input.checked);
+    }
+
+    function refreshSelectedStates() {
+      document.querySelectorAll('.check-option input[type="checkbox"]').forEach(setSelectedState);
+    }
+
+    document.addEventListener('change', event => {
+      if (event.target.matches('input, select')) {
+        out.classList.remove(
+          'terminal-state',
+          'is-error'
+        );
+        out.textContent = '';
+      }
+    
+      if (event.target.matches('.check-option input[type="checkbox"]')) {
+        setSelectedState(event.target);
+      }
+    });
+    
+    document.addEventListener('input', event => {
+      if (event.target.matches('input, select')) {
+        out.classList.remove(
+          'terminal-state',
+          'is-error'
+        );
+        out.textContent = '';
+      }
+    });
+
+    function lockSubmittedForm() {
+      document.querySelectorAll('.box input, .box select, .box textarea, .box button').forEach(el => {
+        el.disabled = true;
+      });
+    }
+    
+    function formatSubmissionDate(value) {
+      const date = new Date(value);
+    
+      if (Number.isNaN(date.getTime())) {
+        return 'Date unavailable';
+      }
+    
+      return date.toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+    }
+    
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+    
+    function formatSubmittedEmployers(batch) {
+      if (!Array.isArray(batch) || !batch.length) return '';
+    
+      const employers = batch
+        .map(item => item.employer)
+        .filter(Boolean);
+    
+      if (!employers.length) return '';
+    
+      return [
+        '<section class="terminal-section">',
+        '<div class="terminal-section-label">Submitted workplaces</div>',
+        `<div class="terminal-details">${escapeHtml(employers.join(' · '))}</div>`,
+        '</section>'
+      ].join('');
+    }
+    
+    function formatSubmissionMessage(submittedAt, title, batch = [], showResultsLabel = false) {
+      return [
+        '<section class="terminal-card">',
+        `<div class="terminal-title">${title}</div>`,
+        `<div class="terminal-subtitle">Submitted ${formatSubmissionDate(submittedAt)}</div>`,
+        showResultsLabel
+          ? '<div class="terminal-subtitle terminal-results-line">Results below</div>'
+          : '',
+        formatSubmittedEmployers(batch),
+        '</section>'
+      ].filter(Boolean).join('');
+    }
+    
+    function showTerminalState(message) {
+      step1.classList.remove('active');
+      step2.classList.remove('active');
+      trackerNotice.hidden = true;
+    
+      out.classList.remove('is-error');
+      out.classList.add('terminal-state');
+      out.innerHTML = message;
+    }
+    
+    function showAlreadySubmitted(submittedAt) {
+      lockSubmittedForm();
+      showTerminalState(
+        formatSubmissionMessage(
+          submittedAt,
+          'Already submitted',
+          [],
+          true
+        )
+      );
+    }
+
+    function initialiseSubmissionLock() {
+      if (!ENFORCE_SINGLE_SUBMISSION) return;
+
+      const last = localStorage.getItem(SUBMIT_KEY);
+      if (!last) return;
+
+      showAlreadySubmitted(last);
+    }
+
+    toStep2.addEventListener('click', () => {
+      const selected = [...document.querySelectorAll('.emp')]
+        .filter(input => input.checked)
+        .map(input => input.value);
+
+      if (!selected.length) {
+        out.classList.remove('terminal-state');
+        out.classList.add('is-error');
+        out.textContent = 'Please select at least one employer.';
+        return;
+      }
+
+      employers = selected;
+      idx = 0;
+      responses = [];
+
+      step1.classList.remove('active');
+      step2.classList.add('active');
+      trackerNotice.hidden = true;
+      out.classList.remove('is-error');
+      out.textContent = '';
+
+      populateStep2();
+    });
+
+    nextOrSubmit.addEventListener('click', () => {
+      const scoreRaw = document.getElementById('q2_score').value.trim();
+      const score = scoreRaw === '' ? NaN : Number(scoreRaw);
+
+      let boosters = [...document.querySelectorAll('.q3')]
+        .filter(input => input.checked)
+        .map(input => input.value);
+
+      if (Number.isNaN(score) || score < 0 || score > 10) {
+        out.classList.remove('terminal-state');
+        out.classList.add('is-error');
+        out.textContent = 'Please fill all fields';
+        return;
+      }
+
+      if (!boosters.length) boosters = ['None'];
+
+      responses[idx] = {
+        employer: employers[idx],
+        score,
+        boosters
+      };
+
+      if (idx < employers.length - 1) {
+        idx++;
+        populateStep2();
+        return;
+      }
+
+      const batch = responses.map(response => ({
+        employer: response.employer,
+        score: response.score,
+        boosters: response.boosters.join('; ')
+      }));
+      
+      out.classList.remove(
+        'terminal-state',
+        'is-error'
+      );
+      out.textContent = 'Submitting…';
+      nextOrSubmit.disabled = true;
+      hasShownOptimisticSubmitted = false;
+      
+      clearTimeout(optimisticSubmittedTimer);
+      optimisticSubmittedTimer = window.setTimeout(() => {
+        hasShownOptimisticSubmitted = true;
+      
+        const optimisticSubmittedAt = new Date().toISOString();
+      
+        if (ENFORCE_SINGLE_SUBMISSION) {
+          localStorage.setItem(SUBMIT_KEY, optimisticSubmittedAt);
+          lockSubmittedForm();
+        }
+      
+        showTerminalState(
+          formatSubmissionMessage(optimisticSubmittedAt, 'Submitted', batch)
+        );
+      }, 3000);
+
+      callPromoterBackend('saveAll', {
+        batch: JSON.stringify(batch)
+      })
+        .then(() => {
+          clearTimeout(optimisticSubmittedTimer);
+        
+          if (hasShownOptimisticSubmitted) {
+            return;
+          }
+        
+          const count = batch.length;
+          const submittedAt = new Date().toISOString();
+        
+          if (ENFORCE_SINGLE_SUBMISSION) {
+            localStorage.setItem(SUBMIT_KEY, submittedAt);
+            lockSubmittedForm();
+            showTerminalState(
+              formatSubmissionMessage(submittedAt, 'Submitted', batch)
+            );
+          } else {
+            out.textContent = `Submitted ${count} ${count === 1 ? 'entry!' : 'entries!'}`;
+          }
+        })
+        .catch(error => {
+          clearTimeout(optimisticSubmittedTimer);
+        
+          if (hasShownOptimisticSubmitted) {
+            console.error(error);
+            return;
+          }
+        
+          out.classList.remove('terminal-state');
+          out.classList.add('is-error');
+          out.textContent = 'Unable to submit right now, please try again';
+          nextOrSubmit.disabled = false;
+          console.error(error);
+        });
+    });
+
+    function populateStep2() {
+      empContext.textContent = `For ${employers[idx]}:`;
+      document.getElementById('q2_score').value = responses[idx]?.score ?? '';
+
+      document.querySelectorAll('.q3').forEach(input => {
+        input.checked = responses[idx]?.boosters.includes(input.value) || false;
+      });
+
+      refreshSelectedStates();
+      nextOrSubmit.textContent = idx < employers.length - 1 ? 'Next' : 'Submit';
+      nextOrSubmit.disabled = false;
+      out.classList.remove('is-error');
+      out.textContent = '';
+    }
+
+    function fitEmployerCardText() {
+      const cards =
+        document.querySelectorAll(
+          '.employer-card'
+        );
+
+      cards.forEach(
+        card => {
+          card.style.fontSize = '';
+        }
+      );
+
+      requestAnimationFrame(
+        () => {
+          cards.forEach(
+            card => {
+              let fontSize =
+                parseFloat(
+                  getComputedStyle(
+                    card
+                  ).fontSize
+                );
+
+              const minimumFontSize =
+                window.matchMedia(
+                  '(max-width: 430px)'
+                ).matches
+                  ? 7.5
+                  : 8.5;
+
+              function getLineCount() {
+                const range =
+                  document.createRange();
+
+                range.selectNodeContents(
+                  card
+                );
+
+                const lineTops =
+                  [];
+
+                Array.from(
+                  range.getClientRects()
+                )
+                  .filter(
+                    rect =>
+                      rect.width > 0 &&
+                      rect.height > 0
+                  )
+                  .forEach(
+                    rect => {
+                      const alreadyCounted =
+                        lineTops.some(
+                          top =>
+                            Math.abs(
+                              top -
+                              rect.top
+                            ) < 1
+                        );
+
+                      if (
+                        !alreadyCounted
+                      ) {
+                        lineTops.push(
+                          rect.top
+                        );
+                      }
+                    }
+                  );
+
+                return lineTops.length;
+              }
+
+              while (
+                getLineCount() > 2 &&
+                fontSize >
+                  minimumFontSize
+              ) {
+                fontSize -= 0.25;
+
+                card.style.fontSize =
+                  `${fontSize}px`;
+              }
+            }
+          );
+        }
+      );
+    }
+
+
+    window.addEventListener(
+      'resize',
+      fitEmployerCardText
+    );
+
+    window.addEventListener(
+      'orientationchange',
+      fitEmployerCardText
+    );
+
+    if (
+      document.fonts?.ready
+    ) {
+      document.fonts.ready.then(
+        fitEmployerCardText
+      );
+    }
+
+    initialiseSubmissionLock();
+    refreshSelectedStates();
+    fitEmployerCardText();
+  </script>
+</body>
+</html>
