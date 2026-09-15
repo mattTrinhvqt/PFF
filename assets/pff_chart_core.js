@@ -3537,6 +3537,19 @@ function getEmployerAppearance(
     const dayMs = 86400000;
 
     if (
+      value instanceof Date &&
+      !Number.isNaN(
+        value.getTime()
+      )
+    ) {
+      return Date.UTC(
+        value.getFullYear(),
+        value.getMonth(),
+        value.getDate()
+      );
+    }
+
+    if (
       typeof value === 'number' &&
       value > 20000 &&
       value < 80000
