@@ -5592,13 +5592,41 @@ function getEmployerAppearance(
 
   function loadGVizSheet(options = {}) {
     const sheetId = options.sheetId;
-    const sheetName = options.sheetName;
+
+    const sheetName =
+      String(
+        options.sheetName ??
+        ''
+      ).trim();
+
+    const gid =
+      String(
+        options.gid ??
+        ''
+      ).trim();
+
     const range = options.range;
     const timeoutMs = Number(options.timeoutMs) || 15000;
     const headers = String(options.headers ?? '1');
 
-    if (!sheetId || !sheetName || !range) {
-      return Promise.reject(new Error('PFFCharts.loadGVizSheet requires sheetId, sheetName and range.'));
+    const sheetLabel =
+      sheetName ||
+      (
+        gid
+          ? `sheet GID ${gid}`
+          : 'Google Sheet'
+      );
+
+    if (
+      !sheetId ||
+      (!sheetName && !gid) ||
+      !range
+    ) {
+      return Promise.reject(
+        new Error(
+          'PFFCharts.loadGVizSheet requires sheetId, range and either sheetName or gid.'
+        )
+      );
     }
 
     return new Promise((resolve, reject) => {
@@ -5608,6 +5636,7 @@ function getEmployerAppearance(
 
       const cleanup = () => {
         script.remove();
+
         try {
           delete global[callbackName];
         } catch (_) {
@@ -5617,6 +5646,7 @@ function getEmployerAppearance(
 
       const finish = callback => value => {
         if (completed) return;
+
         completed = true;
         global.clearTimeout(timer);
         cleanup();
@@ -5624,35 +5654,76 @@ function getEmployerAppearance(
       };
 
       const timer = global.setTimeout(
-        () => finish(reject)(new Error(`Timed out loading ${sheetName}.`)),
+        () =>
+          finish(reject)(
+            new Error(
+              `Timed out loading ${sheetLabel}.`
+            )
+          ),
         timeoutMs
       );
 
       global[callbackName] = response => {
         if (completed) return;
-        if (!response || response.status === 'error') {
+
+        if (
+          !response ||
+          response.status === 'error'
+        ) {
           const message =
             response?.errors?.[0]?.detailed_message ||
             response?.errors?.[0]?.message ||
-            `Could not load ${sheetName}.`;
-          finish(reject)(new Error(message));
+            `Could not load ${sheetLabel}.`;
+
+          finish(reject)(
+            new Error(message)
+          );
+
           return;
         }
-        finish(resolve)(response.table);
+
+        finish(resolve)(
+          response.table
+        );
       };
 
-      script.onerror = () => finish(reject)(new Error(`Could not connect to ${sheetName}.`));
+      script.onerror =
+        () =>
+          finish(reject)(
+            new Error(
+              `Could not connect to ${sheetLabel}.`
+            )
+          );
 
-      const params = new URLSearchParams({
-        sheet: sheetName,
-        range,
-        headers,
-        tqx: `responseHandler:${callbackName}`,
-        _: String(Date.now())
-      });
+      const params =
+        new URLSearchParams({
+          range,
+          headers,
+          tqx:
+            `responseHandler:${callbackName}`,
+          _:
+            String(
+              Date.now()
+            )
+        });
+
+      if (sheetName) {
+        params.set(
+          'sheet',
+          sheetName
+        );
+      } else {
+        params.set(
+          'gid',
+          gid
+        );
+      }
 
       if (options.query) {
-        params.set('tq', options.query);
+        params.set(
+          'tq',
+          options.query
+        );
       }
 
       script.src =
@@ -5666,7 +5737,6 @@ function getEmployerAppearance(
       );
     });
   }
-
   function loadAppsScriptCache(options = {}) {
     const url = String(options.url || '').trim();
     const appKey = String(options.appKey || '').trim();
