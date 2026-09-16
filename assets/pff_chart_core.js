@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.3
+ * PFF Core v1.2.4
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.3';
+  const VERSION = '1.2.4';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -463,6 +463,35 @@ body.pff-chart-app .pff-app {
   line-height: 1.35;
   text-align: center;
   animation: pffLoadingTextPulse 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+}
+
+.pff-value-loader {
+  position: relative;
+  display: block;
+  width: 64px;
+  height: 28px;
+  margin: 0 auto;
+  overflow: visible;
+  isolation: isolate;
+  flex: 0 0 64px;
+}
+
+.pff-value-loader .cone {
+  bottom: 3px;
+  width: 21px;
+  height: 24px;
+}
+
+.pff-value-loader .cone.blue {
+  left: 12px;
+}
+
+.pff-value-loader .cone.green {
+  left: 25px;
+}
+
+.pff-value-loader .cone.red {
+  left: 31px;
 }
 
 @keyframes pffBlueConeCycle {
