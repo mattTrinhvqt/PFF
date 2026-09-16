@@ -5199,10 +5199,16 @@ function getEmployerAppearance(
                   : -Infinity;
 
           const p =
-            calculateTwoSidedTTestPValue(
-              t,
-              degreesOfFreedom
-            );
+            Number.isFinite(
+              t
+            )
+              ? calculateTwoSidedTTestPValue(
+                  t,
+                  degreesOfFreedom
+                )
+              : Math.abs(t) === Infinity
+                ? 0
+                : NaN;
 
           return {
             coefficient,
