@@ -11,6 +11,8 @@
     rel="stylesheet"
   >
 
+  <script src="./assets/pff_chart_core.js"></script>
+
   <style>
     :root {
       --purple: #6600ff;
@@ -359,12 +361,33 @@
       white-space: nowrap;
     }
     .response-value.is-error {
+      position: relative;
       margin-top: 0;
+      padding-left: 20px;
       color: var(--error);
       font-size: 12px;
       font-weight: 400;
       line-height: 1.15;
       white-space: nowrap;
+    }
+
+    .response-value.is-error::before {
+      content: "!";
+      position: absolute;
+      top: 50%;
+      left: 0;
+      display: inline-flex;
+      width: 14px;
+      height: 14px;
+      align-items: center;
+      justify-content: center;
+      color: var(--error);
+      border: 1.5px solid var(--error);
+      border-radius: 50%;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+      transform: translateY(-50%);
     }
     .response-value.is-loading {
       margin-top: 2px;
@@ -594,7 +617,22 @@
       padding: 0 8px;
       background: #fff;
     }
-
+    #podium-status:not([hidden])::before {
+      content: "!";
+      display: inline-flex;
+      width: 14px;
+      height: 14px;
+      margin-right: 6px;
+      flex: 0 0 14px;
+      align-items: center;
+      justify-content: center;
+      color: var(--error);
+      border: 1.5px solid var(--error);
+      border-radius: 50%;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+    }
     @media (max-width: 430px) {
       #app {
         width: calc(100% - 6px);
@@ -853,38 +891,101 @@
   </div>
 
   <script>
-(() => {
+  (() => {
+    'use strict';
 
-    const SPREADSHEET_ID =
-      '1G3BV5lA_jaRPRR3ZmFWL-j8nRVWk5k01D-gOeO5nVgQ';
+    const CONFIG = Object.freeze({
+      spreadsheetId:
+        '1G3BV5lA_jaRPRR3ZmFWL-j8nRVWk5k01D-gOeO5nVgQ',
 
-    const SHEET_GID =
-      '0';
+      sheetGid:
+        '0',
 
-    const RAW_DATA_RANGE =
-      'A2:C';
+      rawDataRange:
+        'A2:C',
 
-    const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+      cacheWebAppUrl:
+        'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec',
+
+      cacheAppKey:
+        'workplace-promoter-score-graph',
+
+      browserCacheKey:
+        'pff-best-optometry-workplaces:raw:v1',
+
+      fetchTimeoutMs:
+        10000,
+
+      minRows:
+        1,
+
+      forceCached:
+        false
+    });
+
+    const EMPLOYER_SEPARATOR =
+      '\u001F';
 
     /*
-     * Reuse the existing Workplace Promoter Score raw-data cache.
-     * It already stores raw A:D, so this summary needs no
-     * separate summary-cell cache.
+     * Preserve this app's existing tie-break order and display names.
+     * Employer matching/aliases come from core.js.
      */
-    const CACHE_APP_KEY =
-      'workplace-promoter-score-graph';
+    const EMPLOYER_TIE_ORDER =
+      Object.freeze([
+        'gm',
+        'toss',
+        'th',
+        'costco',
+        'ow',
+        'bn',
+        '1001',
+        'cw',
+        'indie',
+        'hcf',
+        'ophthal',
+        'toc',
+        'ss',
+        'bupa',
+        'other',
+        'opsm',
+        'dresden',
+        'obnp',
+        'eyeconcepts',
+        'icontact'
+      ]);
 
-    const CACHE_FETCH_TIMEOUT_MS =
-      10000;
+    const EMPLOYER_ORDER =
+      new Map(
+        EMPLOYER_TIE_ORDER.map(
+          (key, index) => [
+            key,
+            index
+          ]
+        )
+      );
 
-    /*
-     * Testing switch only.
-     * Leave false in normal use.
-     */
-    const FORCE_CACHED_DATA =
-      false;
+    const EMPLOYER_DISPLAY_OVERRIDES =
+      Object.freeze({
+        toss:
+          'The Optical Superstore',
 
+        th:
+          'Teachers Health',
+
+        toc:
+          'The Optical Company (incl. NIB)',
+
+        other:
+          'Other (e.g., uni, hospital, govt, not-for-profit)',
+
+        opsm:
+          'OPSM (incl. L&P, EyeQ)'
+      });
+
+    const app =
+      document.getElementById(
+        'app'
+      );
 
     const countSection =
       document.querySelector(
@@ -906,16 +1007,54 @@
         'data-source-text'
       );
 
-    const status =
+    const countStatus =
       document.getElementById(
         'count-status'
       );
 
+    const podiumSection =
+      document.getElementById(
+        'podium-section'
+      );
+
+    const loadingState =
+      document.getElementById(
+        'loading-state'
+      );
+
+    const podiumList =
+      document.querySelector(
+        '.podium-list'
+      );
+
+    const podiumStatus =
+      document.getElementById(
+        'podium-status'
+      );
+
+    const podiumRows =
+      Object.freeze([
+        'gold',
+        'silver',
+        'bronze'
+      ]);
 
     let randomCountTimer =
       null;
 
     let countUpAnimationFrame =
+      null;
+
+    let responsiveLayoutFrame =
+      null;
+
+    let lastObservedWidth =
+      0;
+
+    let lastObservedHeight =
+      0;
+
+    let layoutResizeObserver =
       null;
 
     const RANDOM_COUNT_INTERVAL_MS =
@@ -933,7 +1072,6 @@
         return;
       }
 
-
       const updateRandomCount =
         () => {
           responseCount.textContent =
@@ -945,7 +1083,6 @@
               1
             );
         };
-
 
       updateRandomCount();
 
@@ -965,7 +1102,6 @@
         return;
       }
 
-
       window.clearInterval(
         randomCountTimer
       );
@@ -975,11 +1111,22 @@
     }
 
 
+    function hideCountLoadingState() {
+      responseCount.classList.remove(
+        'is-loading'
+      );
+
+      countSection.setAttribute(
+        'aria-busy',
+        'false'
+      );
+    }
+
+
     function animateFinalCount(
       value
     ) {
       stopRandomCount();
-
 
       if (
         countUpAnimationFrame !==
@@ -993,18 +1140,10 @@
           null;
       }
 
-
       const target =
-        Number(
-          String(
-            value ??
-            ''
-          ).replace(
-            /,/g,
-            ''
-          )
+        PFF.toNumber(
+          value
         );
-
 
       if (
         !Number.isFinite(
@@ -1017,11 +1156,10 @@
           value ||
           '—';
 
-        hideLoadingState();
+        hideCountLoadingState();
 
         return;
       }
-
 
       const roundedTarget =
         Math.round(
@@ -1036,7 +1174,6 @@
 
       const startTime =
         performance.now();
-
 
       function drawCount(
         now
@@ -1070,10 +1207,9 @@
           );
 
         responseCount.textContent =
-          current.toLocaleString(
-            'en-AU'
+          PFF.formatInteger(
+            current
           );
-
 
         if (
           progress <
@@ -1087,18 +1223,16 @@
           return;
         }
 
-
         responseCount.textContent =
-          roundedTarget.toLocaleString(
-            'en-AU'
+          PFF.formatInteger(
+            roundedTarget
           );
 
         countUpAnimationFrame =
           null;
 
-        hideLoadingState();
+        hideCountLoadingState();
       }
-
 
       countUpAnimationFrame =
         requestAnimationFrame(
@@ -1110,506 +1244,127 @@
     function setDataSource(
       source
     ) {
-      const isCached =
-        source ===
-        'cached';
-
-
       dataSourceIndicator.hidden =
         false;
 
+      PFF.setDataSourceIndicator(
+        source,
+        {
+          indicator:
+            dataSourceIndicator,
 
-      dataSourceIndicator
-        .classList
-        .toggle(
-          'is-cached',
-          isCached
-        );
-
-
-      dataSourceIndicator
-        .setAttribute(
-          'aria-label',
-          isCached
-            ? 'Cached data'
-            : 'Live data'
-        );
-
-
-      dataSourceText.textContent =
-        isCached
-          ? 'CACHED data'
-          : 'LIVE data';
-    }
-
-
-    function hideLoadingState() {
-      responseCount.classList.remove(
-        'is-loading'
-      );
-
-      countSection.setAttribute(
-        'aria-busy',
-        'false'
+          text:
+            dataSourceText
+        }
       );
     }
 
 
-    function getCellDisplayValue(
-      cell
+    function normaliseRows(
+      rows
     ) {
       if (
-        !cell
-      ) {
-        return '';
-      }
-
-
-      return String(
-        cell.f ??
-        cell.v ??
-        ''
-      ).trim();
-    }
-
-
-    function loadGvizRange(
-      range
-    ) {
-      return new Promise(
-        (
-          resolve,
-          reject
-        ) => {
-          const callbackName =
-            `bestWorkplacesCallback_${Date.now()}_${Math.floor(
-              Math.random() *
-              100000
-            )}`;
-
-          const script =
-            document.createElement(
-              'script'
-            );
-
-          const timeout =
-            window.setTimeout(
-              () => {
-                cleanup();
-
-                reject(
-                  new Error(
-                    'Could not load data'
-                  )
-                );
-              },
-              10000
-            );
-
-
-          function cleanup() {
-            window.clearTimeout(
-              timeout
-            );
-
-
-            try {
-              delete window[
-                callbackName
-              ];
-            } catch (
-              error
-            ) {
-              window[
-                callbackName
-              ] = undefined;
-            }
-
-
-            if (
-              script.parentNode
-            ) {
-              script.parentNode
-                .removeChild(
-                  script
-                );
-            }
-          }
-
-
-          window[
-            callbackName
-          ] = response => {
-            cleanup();
-
-
-            if (
-              response?.status ===
-              'error'
-            ) {
-              reject(
-                new Error(
-                  response
-                    ?.errors
-                    ?.[0]
-                    ?.detailed_message ||
-                  'Could not load Google Sheet data'
-                )
-              );
-
-              return;
-            }
-
-
-            resolve(
-              response
-            );
-          };
-
-
-          script.onerror =
-            () => {
-              cleanup();
-
-              reject(
-                new Error(
-                  'Could not load data'
-                )
-              );
-            };
-
-
-          const params =
-            new URLSearchParams({
-              gid:
-                SHEET_GID,
-
-              range,
-
-              headers:
-                '0',
-
-              tqx:
-                `responseHandler:${callbackName}`
-            });
-
-
-          script.src =
-            `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
-
-
-          document.body
-            .appendChild(
-              script
-            );
-        }
-      );
-    }
-
-
-    function loadCachedDashboard() {
-      return new Promise(
-        (
-          resolve,
-          reject
-        ) => {
-          if (
-            !CACHE_WEB_APP_URL ||
-            CACHE_WEB_APP_URL.includes(
-              'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'
-            )
-          ) {
-            reject(
-              new Error(
-                'The cached-data web app URL has not been configured'
-              )
-            );
-
-            return;
-          }
-
-
-          const callbackName =
-            `bestWorkplacesCacheCallback_${Date.now()}_${Math.floor(
-              Math.random() *
-              100000
-            )}`;
-
-          const script =
-            document.createElement(
-              'script'
-            );
-
-          let settled =
-            false;
-
-
-          const timeout =
-            window.setTimeout(
-              () => {
-                finish(
-                  new Error(
-                    'The cached-data request timed out'
-                  )
-                );
-              },
-              CACHE_FETCH_TIMEOUT_MS
-            );
-
-
-          function cleanup() {
-            window.clearTimeout(
-              timeout
-            );
-
-
-            try {
-              delete window[
-                callbackName
-              ];
-            } catch (
-              error
-            ) {
-              window[
-                callbackName
-              ] = undefined;
-            }
-
-
-            if (
-              script.parentNode
-            ) {
-              script.parentNode
-                .removeChild(
-                  script
-                );
-            }
-          }
-
-
-          function finish(
-            error,
-            response
-          ) {
-            if (
-              settled
-            ) {
-              return;
-            }
-
-
-            settled =
-              true;
-
-            cleanup();
-
-
-            if (
-              error
-            ) {
-              reject(
-                error
-              );
-
-              return;
-            }
-
-
-            resolve(
-              response
-            );
-          }
-
-
-          window[
-            callbackName
-          ] = response => {
-            if (
-              !response ||
-              typeof response !==
-                'object'
-            ) {
-              finish(
-                new Error(
-                  'The cached-data response was malformed'
-                )
-              );
-
-              return;
-            }
-
-
-            finish(
-              null,
-              response
-            );
-          };
-
-
-          script.onerror =
-            () => {
-              finish(
-                new Error(
-                  'Could not load the cached-data service'
-                )
-              );
-            };
-
-
-          const params =
-            new URLSearchParams({
-              appKey:
-                CACHE_APP_KEY,
-
-              callback:
-                callbackName,
-
-              _:
-                String(
-                  Date.now()
-                )
-            });
-
-
-          const separator =
-            CACHE_WEB_APP_URL.includes(
-              '?'
-            )
-              ? '&'
-              : '?';
-
-
-          script.src =
-            `${CACHE_WEB_APP_URL}${separator}${params.toString()}`;
-
-
-          document.body
-            .appendChild(
-              script
-            );
-        }
-      );
-    }
-
-
-    function buildDashboardFromRawData(
-      response
-    ) {
-      const rows =
-        response
-          ?.table
-          ?.rows ||
-        [];
-
-
-      let totalResponses =
-        0;
-
-
-      rows.forEach(
-        row => {
-          const cells =
-            row?.c ||
-            [];
-
-
-          const timestamp =
-            getCellDisplayValue(
-              cells[0]
-            );
-
-
-          /*
-           * Equivalent to:
-           * =COUNTA(A2:A)
-           */
-          if (
-            timestamp !==
-            ''
-          ) {
-            totalResponses++;
-          }
-        }
-      );
-
-
-      return {
-        responseCount:
-          String(
-            totalResponses
-          )
-      };
-    }
-
-
-    function isUsableDashboardText(
-      value
-    ) {
-      const text =
-        String(
-          value ??
-          ''
-        ).trim();
-
-
-      return Boolean(
-        text &&
-        text !==
-          '—'
-      );
-    }
-
-
-    function validateDashboardData(
-      data
-    ) {
-      if (
-        !isUsableDashboardText(
-          data?.responseCount
+        !Array.isArray(
+          rows
         )
       ) {
-        throw new Error(
-          'Dashboard data is missing a usable responseCount value'
-        );
+        return [];
       }
 
+      return rows
+        .map(
+          row => {
+            const source =
+              Array.isArray(
+                row
+              )
+                ? row
+                : [];
 
-      return {
-        responseCount:
-          String(
-            data.responseCount
-          ).trim()
-      };
+            const timestamp =
+              PFF.cleanText(
+                source[0]
+              );
+
+            const employer =
+              PFF.cleanText(
+                source[1]
+              );
+
+            const score =
+              PFF.toNumber(
+                source[2]
+              );
+
+            const positiveInfluences =
+              PFF.cleanText(
+                source[3]
+              );
+
+            return [
+              timestamp,
+              employer,
+              Number.isFinite(score)
+                ? score
+                : '',
+              positiveInfluences
+            ];
+          }
+        )
+        .filter(
+          row =>
+            row.some(
+              value =>
+                value !== '' &&
+                value !== null &&
+                value !== undefined
+            )
+        );
     }
 
 
-    function normaliseCachedDashboard(
+    function parseLiveRows(
+      table
+    ) {
+      const rows =
+        table?.rows ||
+        [];
+
+      return normaliseRows(
+        rows.map(
+          row => {
+            const cells =
+              row?.c ||
+              [];
+
+            return [
+              PFF.cellValue(
+                cells[0]
+              ),
+
+              PFF.cellValue(
+                cells[1]
+              ),
+
+              PFF.cellValue(
+                cells[2]
+              ),
+
+              PFF.cellValue(
+                cells[3]
+              )
+            ];
+          }
+        )
+      );
+    }
+
+
+    function parseRemoteRows(
       response
     ) {
       if (
-        response?.ok !==
-        true
-      ) {
-        throw new Error(
-          response?.error ||
-          response?.message ||
-          'The cached-data service did not return a snapshot'
-        );
-      }
-
-
-      if (
-        response.appKey !==
-        CACHE_APP_KEY
-      ) {
-        throw new Error(
-          'The cached-data response belongs to a different app'
-        );
-      }
-
-
-      if (
-        !response.cachedAt ||
+        !response?.cachedAt ||
         Number.isNaN(
           Date.parse(
             response.cachedAt
@@ -1621,644 +1376,313 @@
         );
       }
 
+      const rows =
+        normaliseRows(
+          response?.data?.rows
+        );
 
       if (
-        !Array.isArray(
-          response.data?.rows
-        ) ||
-        !response.data.rows.length
+        rows.length <
+        CONFIG.minRows
       ) {
         throw new Error(
           'The cached-data response has no survey rows'
         );
       }
 
+      return rows;
+    }
 
-      const rawResponse = {
-        table: {
-          rows:
-            response.data.rows.map(
-              row => ({
-                c: [
-                  {
-                    v:
-                      row?.[0] ??
-                      ''
-                  },
 
-                  {
-                    v:
-                      row?.[1] ??
-                      ''
-                  },
-
-                  {
-                    v:
-                      row?.[2] ??
-                      ''
-                  }
-                ]
-              })
+    function countResponses(
+      rows
+    ) {
+      return rows.reduce(
+        (
+          total,
+          row
+        ) =>
+          total +
+          (
+            PFF.cleanText(
+              row?.[0]
             )
-        }
-      };
-
-
-      return validateDashboardData(
-        buildDashboardFromRawData(
-          rawResponse
-        )
+              ? 1
+              : 0
+          ),
+        0
       );
     }
 
 
-    function renderDashboard(
-      data
+    function getEmployerRecord(
+      employerName
     ) {
-      status.hidden =
-        true;
-
-      status.textContent =
-        '';
-
-
-      animateFinalCount(
-        data.responseCount ||
-        '—'
-      );
-    }
-
-
-    function showError(
-      error
-    ) {
-      console.error(
-        error
-      );
-
-
-      dataSourceIndicator.hidden =
-        true;
-
-
-      stopRandomCount();
-
-      responseCount
-        .classList
-        .add(
-          'is-error'
+      const appearance =
+        PFF.getEmployerAppearance(
+          employerName,
+          {
+            fallbackLabel:
+              employerName
+          }
         );
 
-      responseCount.textContent =
-        '⚠ Loading failed, please refresh';
-
-
-      status.hidden =
-        true;
-
-      status.textContent =
-        '';
-
-
-      hideLoadingState();
-    }
-
-    async function loadDashboard() {
-      let liveError =
-        null;
-
-
-      if (
-        !FORCE_CACHED_DATA
-      ) {
-        try {
-          const rawData =
-            await loadGvizRange(
-              RAW_DATA_RANGE
+      const key =
+        appearance.matched
+          ? appearance.key
+          : PFF.normaliseText(
+              employerName
+            ) ||
+            PFF.cleanText(
+              employerName
             );
 
-
-          const liveDashboard =
-            validateDashboardData(
-              buildDashboardFromRawData(
-                rawData
-              )
+      const fullName =
+        appearance.matched
+          ? (
+              EMPLOYER_DISPLAY_OVERRIDES[
+                appearance.key
+              ] ||
+              appearance.fullName
+            )
+          : (
+              PFF.cleanText(
+                employerName
+              ) ||
+              'Unknown employer'
             );
 
+      return {
+        key,
 
-          setDataSource(
-            'live'
-          );
+        fullName,
 
-
-          renderDashboard(
-            liveDashboard
-          );
-
-          return;
-        } catch (
-          error
-        ) {
-          liveError =
-            error;
-
-
-          console.warn(
-            'Live Google Sheets data could not be used',
-            error
-          );
-        }
-      } else {
-        liveError =
-          new Error(
-            'Live data bypassed for cached-data test'
-          );
-      }
-
-
-      try {
-        const cachedResponse =
-          await loadCachedDashboard();
-
-
-        const cachedDashboard =
-          normaliseCachedDashboard(
-            cachedResponse
-          );
-
-
-        setDataSource(
-          'cached'
-        );
-
-
-        renderDashboard(
-          cachedDashboard
-        );
-      } catch (
-        cachedError
-      ) {
-        console.error(
-          'Live Google Sheets data error',
-          liveError
-        );
-
-
-        console.error(
-          'Cached Apps Script data error',
-          cachedError
-        );
-
-
-        showError(
-          new Error(
-            'Live and cached data are currently unavailable'
+        order:
+          EMPLOYER_ORDER.has(
+            appearance.key
           )
-        );
-      }
+            ? EMPLOYER_ORDER.get(
+                appearance.key
+              )
+            : Number.MAX_SAFE_INTEGER
+      };
     }
 
 
-    startRandomCount();
-
-    document.addEventListener(
-      'DOMContentLoaded',
-      loadDashboard
-    );
-  
-})();
-  </script>
-
-  <script>
-(() => {
-
-    const SPREADSHEET_ID =
-      '1G3BV5lA_jaRPRR3ZmFWL-j8nRVWk5k01D-gOeO5nVgQ';
-
-    const SHEET_GID =
-      '0';
-
-    const RAW_DATA_RANGE =
-      'A2:C';
-
-    const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
-
-    /*
-     * Reuse the existing Workplace Promoter Score raw-data cache.
-     * It already stores raw A:D, so this summary needs no
-     * separate summary-cell cache.
-     */
-    const CACHE_APP_KEY =
-      'workplace-promoter-score-graph';
-
-    const CACHE_FETCH_TIMEOUT_MS =
-      10000;
-
-    /*
-     * Testing switch only.
-     * Leave false in normal use.
-     */
-    const FORCE_CACHED_DATA =
-      false;
-
-
-    const app =
-      document.getElementById(
-        'app'
-      );
-
-    const podiumSection =
-      document.getElementById(
-        'podium-section'
-      );
-
-    const loadingState =
-      document.getElementById(
-        'loading-state'
-      );
-
-    const podiumList =
-      document.querySelector(
-        '.podium-list'
-      );
-
-    const status =
-      document.getElementById(
-        'podium-status'
-      );
-
-
-    const podiumRows = [
-      {
-        key:
-          'gold'
-      },
-
-      {
-        key:
-          'silver'
-      },
-
-      {
-        key:
-          'bronze'
-      }
-    ];
-
-
-    const EMPLOYERS = [
-      {
-        fullName:
-          'George & Matilda Eyecare',
-
-        aliases: [
-          'G&M',
-          'George & Matilda',
-          'George & Matilda Eyecare'
-        ]
-      },
-
-      {
-        fullName:
-          'The Optical Superstore',
-
-        aliases: [
-          'TOSS',
-          'The Optical Superstore',
-          'The Optical Super Store'
-        ]
-      },
-
-      {
-        fullName:
-          'Teachers Health',
-
-        aliases: [
-          'TH',
-          'THF',
-          'Teachers Health',
-          'Teachers Health Fund',
-          "Teacher's Health",
-          "Teacher's Health Fund",
-          'Teacher’s Health Fund'
-        ]
-      },
-
-      {
-        fullName:
-          'Costco Optical',
-
-        aliases: [
-          'Costco',
-          'Costco Optical'
-        ]
-      },
-
-      {
-        fullName:
-          'Oscar Wylee',
-
-        aliases: [
-          'OW',
-          'Oscar Wylee'
-        ]
-      },
-
-      {
-        fullName:
-          'Bailey Nelson',
-
-        aliases: [
-          'BN',
-          'Bailey Nelson'
-        ]
-      },
-
-      {
-        fullName:
-          '1001 Optometry',
-
-        aliases: [
-          '1001',
-          '1001 Optometry'
-        ]
-      },
-
-      {
-        fullName:
-          'Chemist Warehouse Optometry',
-
-        aliases: [
-          'CW',
-          'Chemist Warehouse',
-          'Chemist Warehouse Optometry',
-          'Chemist/Optometrist Warehouse'
-        ]
-      },
-
-      {
-        fullName:
-          'Independent',
-
-        aliases: [
-          'Indie',
-          'Independent'
-        ]
-      },
-
-      {
-        fullName:
-          'HCF Eyecare',
-
-        aliases: [
-          'HCF',
-          'HCF Eyecare'
-        ]
-      },
-
-      {
-        fullName:
-          'Ophthalmologist',
-
-        aliases: [
-          'Ophthal',
-          'Ophthalmologist'
-        ]
-      },
-
-      {
-        fullName:
-          'The Optical Company (incl. NIB)',
-
-        aliases: [
-          'NIB',
-          'TOC',
-          'The Optical Company',
-          'The Optical Company (incl. NIB)',
-          'NIB (incl. the Optical Company)'
-        ]
-      },
-
-      {
-        fullName:
-          'Specsavers',
-
-        aliases: [
-          'SS',
-          'Specsavers'
-        ]
-      },
-
-      {
-        fullName:
-          'Bupa Optical',
-
-        aliases: [
-          'Bupa',
-          'Bupa Optical'
-        ]
-      },
-
-      {
-        fullName:
-          'Other (e.g., uni, hospital, govt, not-for-profit)',
-
-        aliases: [
-          'Other',
-          'Other (e.g., uni, hospital, govt, not-for-profit)'
-        ]
-      },
-
-      {
-        fullName:
-          'OPSM (incl. L&P, EyeQ)',
-
-        aliases: [
-          'OPSM',
-          'OPSM (incl. L&P, EyeQ)'
-        ]
-      },
-
-      {
-        fullName:
-          'Dresden Vision',
-
-        aliases: [
-          'Dresden',
-          'Dresden Vision'
-        ]
-      },
-
-      {
-        fullName:
-          'Optical by National Pharmacies',
-
-        aliases: [
-          'ObNP',
-          'Optical by National Pharmacies'
-        ]
-      },
-
-      {
-        fullName:
-          'Eye Concepts',
-
-        aliases: [
-          'Eye Concepts',
-          'EyeConcepts'
-        ]
-      },
-
-      {
-        fullName:
-          'iContact',
-
-        aliases: [
-          'iContact',
-          'IContact',
-          'i Contact'
-        ]
-      }
-    ];
-
-
-    function normaliseEmployerName(
-      value
+    function calculateMedian(
+      values
     ) {
-      return String(
-        value ||
-        ''
-      )
-        .toLowerCase()
-        .normalize(
-          'NFKD'
-        )
-        .replace(
-          /[’‘]/g,
-          "'"
-        )
-        .replace(
-          /&/g,
-          ' and '
-        )
-        .replace(
-          /[^a-z0-9]+/g,
-          ' '
-        )
-        .trim()
-        .replace(
-          /\s+/g,
-          ' '
-        );
+      const sorted =
+        values
+          .filter(
+            Number.isFinite
+          )
+          .slice()
+          .sort(
+            (
+              first,
+              second
+            ) =>
+              first -
+              second
+          );
+
+      return PFFStats.percentile(
+        sorted,
+        0.5
+      );
     }
 
 
-    const EMPLOYER_ALIAS_MAP =
-      new Map();
+    function buildPodium(
+      rows
+    ) {
+      const employerScores =
+        new Map();
 
+      rows.forEach(
+        row => {
+          const employerName =
+            PFF.cleanText(
+              row?.[1]
+            );
 
-    EMPLOYERS.forEach(
-      (
-        employer,
-        employerIndex
-      ) => {
-        [
-          employer.fullName,
-          ...employer.aliases
-        ].forEach(
-          alias => {
-            EMPLOYER_ALIAS_MAP.set(
-              normaliseEmployerName(
-                alias
-              ),
+          const score =
+            PFF.toNumber(
+              row?.[2]
+            );
+
+          if (
+            !employerName ||
+            !Number.isFinite(
+              score
+            )
+          ) {
+            return;
+          }
+
+          const employer =
+            getEmployerRecord(
+              employerName
+            );
+
+          if (
+            !employerScores.has(
+              employer.key
+            )
+          ) {
+            employerScores.set(
+              employer.key,
               {
                 fullName:
                   employer.fullName,
 
                 order:
-                  employerIndex
+                  employer.order,
+
+                scores:
+                  []
               }
             );
           }
-        );
-      }
-    );
 
+          employerScores
+            .get(
+              employer.key
+            )
+            .scores
+            .push(
+              score
+            );
+        }
+      );
 
-    function getEmployerAppearance(
-      employerName
-    ) {
-      const original =
-        String(
-          employerName ||
-          ''
-        ).trim();
+      const employers =
+        [
+          ...employerScores.values()
+        ]
+          .map(
+            employer => ({
+              fullName:
+                employer.fullName,
 
+              order:
+                employer.order,
 
-      const normalised =
-        normaliseEmployerName(
-          original
-        );
+              median:
+                calculateMedian(
+                  employer.scores
+                )
+            })
+          )
+          .filter(
+            employer =>
+              Number.isFinite(
+                employer.median
+              )
+          );
 
+      const distinctMedians =
+        [
+          ...new Set(
+            employers.map(
+              employer =>
+                employer.median
+            )
+          )
+        ]
+          .sort(
+            (
+              first,
+              second
+            ) =>
+              second -
+              first
+          );
 
-      const knownEmployer =
-        EMPLOYER_ALIAS_MAP.get(
-          normalised
-        );
-
-
-      if (
-        knownEmployer
+      function buildRankText(
+        rankIndex
       ) {
-        return {
-          key:
-            normaliseEmployerName(
-              knownEmployer.fullName
-            ),
+        const targetMedian =
+          distinctMedians[
+            rankIndex
+          ];
 
-          fullName:
-            knownEmployer.fullName,
+        if (
+          !Number.isFinite(
+            targetMedian
+          )
+        ) {
+          return '';
+        }
 
-          order:
-            knownEmployer.order
-        };
+        const matchingEmployers =
+          employers
+            .filter(
+              employer =>
+                employer.median ===
+                targetMedian
+            )
+            .sort(
+              (
+                first,
+                second
+              ) =>
+                first.order -
+                  second.order ||
+                first.fullName.localeCompare(
+                  second.fullName
+                )
+            )
+            .map(
+              employer =>
+                employer.fullName
+            );
+
+        if (
+          !matchingEmployers.length
+        ) {
+          return '';
+        }
+
+        return (
+          `#${rankIndex + 1} ` +
+          matchingEmployers.join(
+            EMPLOYER_SEPARATOR
+          )
+        );
       }
-
 
       return {
-        key:
-          normalised ||
-          original,
+        gold:
+          buildRankText(
+            0
+          ),
 
-        fullName:
-          original ||
-          'Unknown employer',
+        silver:
+          buildRankText(
+            1
+          ),
 
-        order:
-          Number.MAX_SAFE_INTEGER
+        bronze:
+          buildRankText(
+            2
+          )
       };
     }
-
-
-    const EMPLOYER_SEPARATOR =
-      '\u001F';
 
 
     function formatWorkplaceEmployers(
       value
     ) {
       const text =
-        String(
-          value ||
-          ''
+        PFF.cleanText(
+          value
         )
-          .trim()
           .replace(
             /^#(?:1|2|3)\s*/,
             ''
           );
-
 
       const employers =
         text
@@ -2273,13 +1697,13 @@
             Boolean
           );
 
-
       return employers.length
         ? employers
         : [
             'No result available'
           ];
     }
+
 
     function renderWorkplaceResult(
       target,
@@ -2292,7 +1716,6 @@
 
       const fragment =
         document.createDocumentFragment();
-
 
       employers.forEach(
         (
@@ -2319,18 +1742,12 @@
         }
       );
 
-
       target.replaceChildren(
         fragment
       );
     }
 
 
-    /*
-     * Gold, Silver and Bronze always remain the same fixed height.
-     * The employer font is reduced separately if more than two
-     * employer lines need to fit inside a box.
-     */
     function updatePodiumRowProportions() {
       podiumList.style.gridTemplateRows =
         window.matchMedia(
@@ -2341,15 +1758,6 @@
     }
 
 
-    /*
-     * Each Gold/Silver/Bronze box normally uses a 14px
-     * employer font on desktop and 12px on mobile.
-     *
-     * If the employers in one box do not fit vertically
-     * or horizontally, only that box's employer font is
-     * reduced. The other boxes remain at the normal size
-     * unless they independently need to shrink as well.
-     */
     function fitSharedEmployerFontSize() {
       const results =
         Array.from(
@@ -2365,7 +1773,6 @@
           ? 12
           : 14;
 
-
       results.forEach(
         result => {
           const lines =
@@ -2375,17 +1782,12 @@
               )
             );
 
-
           if (
             !lines.length
           ) {
             return;
           }
 
-
-          /*
-           * Always begin this box at the normal responsive size.
-           */
           lines.forEach(
             line => {
               line.style.fontSize =
@@ -2393,16 +1795,9 @@
             }
           );
 
-
           let boxFontSize =
             baseFontSize;
 
-
-          /*
-           * Horizontal limit:
-           * if an employer name is too long for this particular
-           * box, reduce this box only enough to keep it on one line.
-           */
           lines.forEach(
             line => {
               if (
@@ -2414,11 +1809,9 @@
                 return;
               }
 
-
               const widthScale =
                 line.clientWidth /
                 line.scrollWidth;
-
 
               boxFontSize =
                 Math.min(
@@ -2429,13 +1822,6 @@
             }
           );
 
-
-          /*
-           * Vertical limit:
-           * a 40px box comfortably fits up to two employer
-           * lines at 11px. If there are more lines, reduce
-           * this box's font only as much as necessary.
-           */
           const styles =
             window.getComputedStyle(
               result
@@ -2493,13 +1879,11 @@
               lineHeightRatio
             );
 
-
           boxFontSize =
             Math.min(
               boxFontSize,
               verticalFontLimit
             );
-
 
           boxFontSize =
             Math.max(
@@ -2511,7 +1895,6 @@
               10
             );
 
-
           lines.forEach(
             line => {
               line.style.fontSize =
@@ -2519,11 +1902,6 @@
             }
           );
 
-
-          /*
-           * Final small correction for browser rounding,
-           * again affecting this box only.
-           */
           const finalWidthScale =
             Math.min(
               1,
@@ -2538,7 +1916,6 @@
                     return 1;
                   }
 
-
                   return (
                     line.clientWidth /
                     line.scrollWidth
@@ -2546,7 +1923,6 @@
                 }
               )
             );
-
 
           if (
             finalWidthScale <
@@ -2560,7 +1936,6 @@
                 0.995
               );
 
-
             lines.forEach(
               line => {
                 line.style.fontSize =
@@ -2571,8 +1946,6 @@
         }
       );
     }
-    let responsiveLayoutFrame =
-      null;
 
 
     function refreshPodiumLayout() {
@@ -2585,7 +1958,6 @@
         );
       }
 
-
       responsiveLayoutFrame =
         requestAnimationFrame(
           () => {
@@ -2594,11 +1966,6 @@
 
             updatePodiumRowProportions();
 
-
-            /*
-             * Allow the new grid row proportions to be applied
-             * before measuring the available line height.
-             */
             requestAnimationFrame(
               fitSharedEmployerFontSize
             );
@@ -2607,7 +1974,7 @@
     }
 
 
-    function hideLoadingState() {
+    function hidePodiumLoadingState() {
       podiumSection.classList.remove(
         'is-loading'
       );
@@ -2626,806 +1993,70 @@
     }
 
 
-    function getCellDisplayValue(
-      cell
+    function renderDashboard(
+      rows
     ) {
-      if (
-        !cell
-      ) {
-        return '';
-      }
-
-
-      return String(
-        cell.f ??
-        cell.v ??
-        ''
-      ).trim();
-    }
-
-
-    function loadGvizRange(
-      range
-    ) {
-      return new Promise(
-        (
-          resolve,
-          reject
-        ) => {
-          const callbackName =
-            `bestWorkplacesCallback_${Date.now()}_${Math.floor(
-              Math.random() *
-              100000
-            )}`;
-
-          const script =
-            document.createElement(
-              'script'
-            );
-
-          const timeout =
-            window.setTimeout(
-              () => {
-                cleanup();
-
-                reject(
-                  new Error(
-                    'Could not load data'
-                  )
-                );
-              },
-              10000
-            );
-
-
-          function cleanup() {
-            window.clearTimeout(
-              timeout
-            );
-
-
-            try {
-              delete window[
-                callbackName
-              ];
-            } catch (
-              error
-            ) {
-              window[
-                callbackName
-              ] = undefined;
-            }
-
-
-            if (
-              script.parentNode
-            ) {
-              script.parentNode
-                .removeChild(
-                  script
-                );
-            }
-          }
-
-
-          window[
-            callbackName
-          ] = response => {
-            cleanup();
-
-
-            if (
-              response?.status ===
-              'error'
-            ) {
-              reject(
-                new Error(
-                  response
-                    ?.errors
-                    ?.[0]
-                    ?.detailed_message ||
-                  'Could not load Google Sheet data'
-                )
-              );
-
-              return;
-            }
-
-
-            resolve(
-              response
-            );
-          };
-
-
-          script.onerror =
-            () => {
-              cleanup();
-
-              reject(
-                new Error(
-                  'Could not load data'
-                )
-              );
-            };
-
-
-          const params =
-            new URLSearchParams({
-              gid:
-                SHEET_GID,
-
-              range,
-
-              headers:
-                '0',
-
-              tqx:
-                `responseHandler:${callbackName}`
-            });
-
-
-          script.src =
-            `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?${params.toString()}`;
-
-
-          document.body
-            .appendChild(
-              script
-            );
-        }
-      );
-    }
-
-
-    function loadCachedDashboard() {
-      return new Promise(
-        (
-          resolve,
-          reject
-        ) => {
-          if (
-            !CACHE_WEB_APP_URL ||
-            CACHE_WEB_APP_URL.includes(
-              'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'
-            )
-          ) {
-            reject(
-              new Error(
-                'The cached-data web app URL has not been configured'
-              )
-            );
-
-            return;
-          }
-
-
-          const callbackName =
-            `bestWorkplacesCacheCallback_${Date.now()}_${Math.floor(
-              Math.random() *
-              100000
-            )}`;
-
-          const script =
-            document.createElement(
-              'script'
-            );
-
-          let settled =
-            false;
-
-
-          const timeout =
-            window.setTimeout(
-              () => {
-                finish(
-                  new Error(
-                    'The cached-data request timed out'
-                  )
-                );
-              },
-              CACHE_FETCH_TIMEOUT_MS
-            );
-
-
-          function cleanup() {
-            window.clearTimeout(
-              timeout
-            );
-
-
-            try {
-              delete window[
-                callbackName
-              ];
-            } catch (
-              error
-            ) {
-              window[
-                callbackName
-              ] = undefined;
-            }
-
-
-            if (
-              script.parentNode
-            ) {
-              script.parentNode
-                .removeChild(
-                  script
-                );
-            }
-          }
-
-
-          function finish(
-            error,
-            response
-          ) {
-            if (
-              settled
-            ) {
-              return;
-            }
-
-
-            settled =
-              true;
-
-            cleanup();
-
-
-            if (
-              error
-            ) {
-              reject(
-                error
-              );
-
-              return;
-            }
-
-
-            resolve(
-              response
-            );
-          }
-
-
-          window[
-            callbackName
-          ] = response => {
-            if (
-              !response ||
-              typeof response !==
-                'object'
-            ) {
-              finish(
-                new Error(
-                  'The cached-data response was malformed'
-                )
-              );
-
-              return;
-            }
-
-
-            finish(
-              null,
-              response
-            );
-          };
-
-
-          script.onerror =
-            () => {
-              finish(
-                new Error(
-                  'Could not load the cached-data service'
-                )
-              );
-            };
-
-
-          const params =
-            new URLSearchParams({
-              appKey:
-                CACHE_APP_KEY,
-
-              callback:
-                callbackName,
-
-              _:
-                String(
-                  Date.now()
-                )
-            });
-
-
-          const separator =
-            CACHE_WEB_APP_URL.includes(
-              '?'
-            )
-              ? '&'
-              : '?';
-
-
-          script.src =
-            `${CACHE_WEB_APP_URL}${separator}${params.toString()}`;
-
-
-          document.body
-            .appendChild(
-              script
-            );
-        }
-      );
-    }
-
-
-    function calculateMedian(
-      values
-    ) {
-      const sorted =
-        values
-          .filter(
-            Number.isFinite
-          )
-          .slice()
-          .sort(
-            (
-              first,
-              second
-            ) =>
-              first -
-              second
-          );
-
-
-      if (
-        !sorted.length
-      ) {
-        return NaN;
-      }
-
-
-      const middle =
-        Math.floor(
-          sorted.length /
-          2
+      const responseTotal =
+        countResponses(
+          rows
         );
 
-
-      if (
-        sorted.length %
-          2 ===
-        1
-      ) {
-        return sorted[
-          middle
-        ];
-      }
-
-
-      return (
-        sorted[
-          middle - 1
-        ] +
-        sorted[
-          middle
-        ]
-      ) /
-      2;
-    }
-
-
-    function buildDashboardFromRawData(
-      response
-    ) {
-      const rows =
-        response
-          ?.table
-          ?.rows ||
-        [];
-
-
-      const employerScores =
-        new Map();
-
-
-      rows.forEach(
-        row => {
-          const cells =
-            row?.c ||
-            [];
-
-
-          const employerName =
-            getCellDisplayValue(
-              cells[1]
-            );
-
-
-          const scoreText =
-            getCellDisplayValue(
-              cells[2]
-            );
-
-
-          if (
-            !employerName ||
-            scoreText ===
-              ''
-          ) {
-            return;
-          }
-
-
-          const score =
-            Number(
-              scoreText
-            );
-
-
-          if (
-            !Number.isFinite(
-              score
-            )
-          ) {
-            return;
-          }
-
-
-          const appearance =
-            getEmployerAppearance(
-              employerName
-            );
-
-
-          if (
-            !employerScores.has(
-              appearance.key
-            )
-          ) {
-            employerScores.set(
-              appearance.key,
-              {
-                fullName:
-                  appearance.fullName,
-
-                order:
-                  appearance.order,
-
-                scores:
-                  []
-              }
-            );
-          }
-
-
-          employerScores
-            .get(
-              appearance.key
-            )
-            .scores
-            .push(
-              score
-            );
-        }
-      );
-
-
-      const employers =
-        [
-          ...employerScores.values()
-        ]
-          .map(
-            employer => ({
-              fullName:
-                employer.fullName,
-
-              order:
-                employer.order,
-
-              median:
-                calculateMedian(
-                  employer.scores
-                )
-            })
-          )
-          .filter(
-            employer =>
-              Number.isFinite(
-                employer.median
-              )
-          );
-
-
-      const distinctMedians =
-        [
-          ...new Set(
-            employers.map(
-              employer =>
-                employer.median
-            )
-          )
-        ]
-          .sort(
-            (
-              first,
-              second
-            ) =>
-              second -
-              first
-          );
-
-
-      function buildRankText(
-        rankIndex
-      ) {
-        const targetMedian =
-          distinctMedians[
-            rankIndex
-          ];
-
-
-        if (
-          !Number.isFinite(
-            targetMedian
-          )
-        ) {
-          return '';
-        }
-
-
-        const matchingEmployers =
-          employers
-            .filter(
-              employer =>
-                employer.median ===
-                targetMedian
-            )
-            .sort(
-              (
-                first,
-                second
-              ) =>
-                first.order -
-                  second.order ||
-                first.fullName.localeCompare(
-                  second.fullName
-                )
-            )
-            .map(
-              employer =>
-                employer.fullName
-            );
-
-
-        if (
-          !matchingEmployers.length
-        ) {
-          return '';
-        }
-
-
-        return (
-          `#${rankIndex + 1} ` +
-          matchingEmployers.join(
-            EMPLOYER_SEPARATOR
-          )
+      const podium =
+        buildPodium(
+          rows
         );
-      }
 
-
-      return {
-
-        gold:
-          buildRankText(
-            0
-          ),
-
-        silver:
-          buildRankText(
-            1
-          ),
-
-        bronze:
-          buildRankText(
-            2
-          )
-      };
-    }
-
-    function isUsableDashboardText(
-      value
-    ) {
-      const text =
-        String(
-          value ??
-          ''
-        ).trim();
-
-
-      return Boolean(
-        text &&
-        text !==
-          '—'
-      );
-    }
-
-
-    function validateDashboardData(
-      data
-    ) {
-      const requiredFields = [
-        'gold',
-        'silver',
-        'bronze'
-      ];
-
-
-      const missingField =
-        requiredFields.find(
-          field =>
-            !isUsableDashboardText(
-              data?.[
-                field
+      const missingRank =
+        podiumRows.find(
+          key =>
+            !PFF.cleanText(
+              podium[
+                key
               ]
             )
         );
 
-
       if (
-        missingField
+        missingRank
       ) {
         throw new Error(
-          `Dashboard data is missing a usable ${missingField} value`
+          `Dashboard data is missing a usable ${missingRank} value`
         );
       }
 
-
-      return {
-        gold:
-          String(
-            data.gold
-          ).trim(),
-
-        silver:
-          String(
-            data.silver
-          ).trim(),
-
-        bronze:
-          String(
-            data.bronze
-          ).trim()
-      };
-    }
-
-
-    function normaliseCachedDashboard(
-      response
-    ) {
-      if (
-        response?.ok !==
-        true
-      ) {
-        throw new Error(
-          response?.error ||
-          response?.message ||
-          'The cached-data service did not return a snapshot'
-        );
-      }
-
-
-      if (
-        response.appKey !==
-        CACHE_APP_KEY
-      ) {
-        throw new Error(
-          'The cached-data response belongs to a different app'
-        );
-      }
-
-
-      if (
-        !response.cachedAt ||
-        Number.isNaN(
-          Date.parse(
-            response.cachedAt
-          )
-        )
-      ) {
-        throw new Error(
-          'The cached-data response has no valid timestamp'
-        );
-      }
-
-
-      if (
-        !Array.isArray(
-          response.data?.rows
-        ) ||
-        !response.data.rows.length
-      ) {
-        throw new Error(
-          'The cached-data response has no survey rows'
-        );
-      }
-
-
-      const rawResponse = {
-        table: {
-          rows:
-            response.data.rows.map(
-              row => ({
-                c: [
-                  {
-                    v:
-                      row?.[0] ??
-                      ''
-                  },
-
-                  {
-                    v:
-                      row?.[1] ??
-                      ''
-                  },
-
-                  {
-                    v:
-                      row?.[2] ??
-                      ''
-                  }
-                ]
-              })
-            )
-        }
-      };
-
-
-      return validateDashboardData(
-        buildDashboardFromRawData(
-          rawResponse
-        )
-      );
-    }
-
-
-    function renderDashboard(
-      data
-    ) {
-      status.hidden =
+      countStatus.hidden =
         true;
 
-      status.textContent =
+      countStatus.textContent =
         '';
 
+      podiumStatus.hidden =
+        true;
+
+      podiumStatus.textContent =
+        '';
+
+      animateFinalCount(
+        responseTotal
+      );
 
       podiumRows.forEach(
-        (
-          {
-            key
-          }
-        ) => {
+        key => {
           const target =
             document.getElementById(
               `${key}-text`
             );
 
-
           renderWorkplaceResult(
             target,
-            data[
+            podium[
               key
             ]
           );
         }
       );
 
-
-      hideLoadingState();
+      hidePodiumLoadingState();
     }
 
 
@@ -3436,18 +2067,30 @@
         error
       );
 
+      dataSourceIndicator.hidden =
+        true;
+
+      stopRandomCount();
+
+      responseCount.classList.add(
+        'is-error'
+      );
+
+      responseCount.textContent =
+        'Loading failed, please refresh';
+
+      countStatus.hidden =
+        true;
+
+      countStatus.textContent =
+        '';
 
       podiumRows.forEach(
-        (
-          {
-            key
-          }
-        ) => {
+        key => {
           const target =
             document.getElementById(
               `${key}-text`
             );
-
 
           renderWorkplaceResult(
             target,
@@ -3456,112 +2099,97 @@
         }
       );
 
-
-      status.hidden =
+      podiumStatus.hidden =
         false;
 
-      status.textContent =
-        '⚠ Loading failed, please refresh';
+      podiumStatus.textContent =
+        'Loading failed, please refresh';
 
-
-      hideLoadingState();
+      hideCountLoadingState();
+      hidePodiumLoadingState();
     }
 
 
     async function loadDashboard() {
-      let liveError =
-        null;
-
-
-      if (
-        !FORCE_CACHED_DATA
-      ) {
-        try {
-          const rawData =
-            await loadGvizRange(
-              RAW_DATA_RANGE
-            );
-
-
-          const liveDashboard =
-            validateDashboardData(
-              buildDashboardFromRawData(
-                rawData
-              )
-            );
-
-
-          renderDashboard(
-            liveDashboard
-          );
-
-          return;
-        } catch (
-          error
-        ) {
-          liveError =
-            error;
-
-
-          console.warn(
-            'Live Google Sheets data could not be used',
-            error
-          );
-        }
-      } else {
-        liveError =
-          new Error(
-            'Live data bypassed for cached-data test'
-          );
-      }
-
-
       try {
-        const cachedResponse =
-          await loadCachedDashboard();
+        const loaded =
+          await PFFCharts.loadLiveCacheFallback({
+            loadLive:
+              () =>
+                PFFCharts.loadGVizSheet({
+                  sheetId:
+                    CONFIG.spreadsheetId,
 
+                  gid:
+                    CONFIG.sheetGid,
 
-        const cachedDashboard =
-          normaliseCachedDashboard(
-            cachedResponse
-          );
+                  range:
+                    CONFIG.rawDataRange,
 
+                  headers:
+                    0,
+
+                  timeoutMs:
+                    CONFIG.fetchTimeoutMs
+                }),
+
+            parseLive:
+              parseLiveRows,
+
+            loadRemoteCache:
+              () =>
+                PFFCharts.loadAppsScriptCache({
+                  url:
+                    CONFIG.cacheWebAppUrl,
+
+                  appKey:
+                    CONFIG.cacheAppKey,
+
+                  timeoutMs:
+                    CONFIG.fetchTimeoutMs
+                }),
+
+            parseRemoteCache:
+              parseRemoteRows,
+
+            cacheKey:
+              CONFIG.browserCacheKey,
+
+            minRows:
+              CONFIG.minRows,
+
+            forceCached:
+              CONFIG.forceCached,
+
+            onLiveError:
+              error =>
+                console.warn(
+                  'Live Google Sheets data could not be used',
+                  error
+                ),
+
+            onRemoteCacheError:
+              error =>
+                console.warn(
+                  'Cached Apps Script data could not be used',
+                  error
+                ),
+
+            onSource:
+              setDataSource
+          });
 
         renderDashboard(
-          cachedDashboard
+          loaded.rows
         );
       } catch (
-        cachedError
+        error
       ) {
-        console.error(
-          'Live Google Sheets data error',
-          liveError
-        );
-
-
-        console.error(
-          'Cached Apps Script data error',
-          cachedError
-        );
-
-
         showError(
-          new Error(
-            'Live and cached data are currently unavailable'
-          )
+          error
         );
       }
     }
-
-
-    let lastObservedWidth =
-      0;
-
-    let lastObservedHeight =
-      0;
-
-    let layoutResizeObserver =
-      null;
 
 
     if (
@@ -3578,13 +2206,11 @@
                   app
               );
 
-
             if (
               !appEntry
             ) {
               return;
             }
-
 
             const currentWidth =
               appEntry.contentRect.width;
@@ -3605,7 +2231,6 @@
                 lastObservedHeight
               ) >
               0.5;
-
 
             if (
               currentWidth >
@@ -3628,12 +2253,10 @@
           }
         );
 
-
       layoutResizeObserver.observe(
         app
       );
     }
-
 
     window.addEventListener(
       'resize',
@@ -3643,7 +2266,6 @@
           true
       }
     );
-
 
     window.visualViewport
       ?.addEventListener(
@@ -3655,12 +2277,10 @@
         }
       );
 
-
     window.addEventListener(
       'pageshow',
       refreshPodiumLayout
     );
-
 
     document.addEventListener(
       'visibilitychange',
@@ -3673,7 +2293,6 @@
       }
     );
 
-
     if (
       document.fonts
         ?.ready
@@ -3683,13 +2302,14 @@
       );
     }
 
+    startRandomCount();
 
     document.addEventListener(
       'DOMContentLoaded',
       loadDashboard
     );
-  
-})();
+  })();
   </script>
+
 </body>
 </html>
