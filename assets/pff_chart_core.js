@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.4
+ * PFF Core v1.2.5
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.4';
+  const VERSION = '1.2.5';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -492,6 +492,98 @@ body.pff-chart-app .pff-app {
 
 .pff-value-loader .cone.red {
   left: 31px;
+}
+
+.pff-autofit-table-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pff-autofit-table-wrap.has-gradient-divider::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: var(--pff-table-divider-left, 50%);
+  width: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    var(--pff-white) 0%,
+    rgba(21, 21, 21, 0.16) 10%,
+    var(--pff-ink) 18%,
+    rgba(21, 21, 21, 0.16) 78%,
+    var(--pff-white) 100%
+  );
+}
+
+.pff-autofit-table {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  margin: 0;
+  border-collapse: collapse;
+  table-layout: auto;
+  transform-origin: top left;
+}
+
+.pff-autofit-table th,
+.pff-autofit-table td {
+  position: relative;
+  padding: 8px 12px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.pff-autofit-table th:first-child,
+.pff-autofit-table td:first-child {
+  padding-left: 8px;
+  padding-right: 12px;
+  text-align: left;
+}
+
+.pff-autofit-table th:nth-child(2),
+.pff-autofit-table td:nth-child(2) {
+  padding-left: 12px;
+  padding-right: 8px;
+}
+
+.pff-autofit-table th {
+  color: var(--pff-muted);
+  font-size: clamp(11px, 3.4vw, 14px);
+  font-weight: 700;
+}
+
+.pff-autofit-table td {
+  color: var(--pff-ink);
+  font-size: clamp(12px, 3.6vw, 15px);
+  font-weight: 400;
+}
+
+.pff-autofit-table th + th,
+.pff-autofit-table td + td {
+  border-left: 0;
+}
+
+.pff-table-major-separator td {
+  height: 1px;
+  padding: 0;
+  line-height: 0;
+  border: 0;
+  background: var(--pff-ink);
+}
+
+.pff-table-empty-separator td {
+  height: 0;
+  padding: 0;
+  line-height: 0;
+  background: transparent;
+  border-top: 1px solid var(--pff-track);
 }
 
 @keyframes pffBlueConeCycle {
@@ -1762,7 +1854,22 @@ body.pff-chart-app .pff-app {
   .loader-text { font-size: 10px; }
   .chart-tab { padding-right: 7px; padding-left: 7px; font-size: 12px; }
   .live-data { margin-right: 3px; font-size: 8px; }
+
+  .pff-autofit-table th,
+  .pff-autofit-table td {
+    padding: 7px 4px;
+  }
+
+  .pff-autofit-table th {
+    font-size: 11px;
+  }
+
+  .pff-autofit-table td {
+    font-size: 12px;
+  }
+
   .chart-heading-row { height: 29px; min-height: 29px; gap: 4px; }
+
   .chart-heading { padding-top: 4px; font-size: 14px; line-height: 21px; }
   .heading-controls { gap: 3px; }
   .pff-chart-toggle-button {
@@ -2259,6 +2366,352 @@ body.pff-chart-app .pff-app {
             ? 'CACHED data'
             : 'LIVE data';
     }
+  }
+  function renderTwoColumnTable(table, values, options = {}) {
+    if (!table) {
+      return null;
+    }
+
+    const thead =
+      table.querySelector(
+        'thead'
+      );
+
+    const tbody =
+      table.querySelector(
+        'tbody'
+      );
+
+    if (
+      !thead ||
+      !tbody
+    ) {
+      return null;
+    }
+
+    const fallback =
+      String(
+        options.fallback ??
+        '—'
+      );
+
+    const majorSeparatorClass =
+      String(
+        options.majorSeparatorClass ||
+        'pff-table-major-separator'
+      );
+
+    const emptySeparatorClass =
+      String(
+        options.emptySeparatorClass ||
+        'pff-table-empty-separator'
+      );
+
+    const rows =
+      Array.isArray(values)
+        ? values
+        : [];
+
+    const headers =
+      Array.isArray(rows[0])
+        ? rows[0]
+        : [fallback, fallback];
+
+    const dataRows =
+      rows.slice(1);
+
+    thead.textContent =
+      '';
+
+    tbody.textContent =
+      '';
+
+    const headerRow =
+      document.createElement(
+        'tr'
+      );
+
+    for (
+      let column = 0;
+      column < 2;
+      column++
+    ) {
+      const th =
+        document.createElement(
+          'th'
+        );
+
+      th.scope =
+        'col';
+
+      th.textContent =
+        String(
+          headers?.[column] ??
+          ''
+        ).trim() ||
+        fallback;
+
+      headerRow.appendChild(
+        th
+      );
+    }
+
+    thead.appendChild(
+      headerRow
+    );
+
+    if (majorSeparatorClass) {
+      const separatorRow =
+        document.createElement(
+          'tr'
+        );
+
+      separatorRow.className =
+        majorSeparatorClass;
+
+      const separatorCell =
+        document.createElement(
+          'td'
+        );
+
+      separatorCell.colSpan =
+        2;
+
+      separatorRow.appendChild(
+        separatorCell
+      );
+
+      thead.appendChild(
+        separatorRow
+      );
+    }
+
+    dataRows.forEach(
+      row => {
+        const left =
+          String(
+            row?.[0] ??
+            ''
+          ).trim();
+
+        const right =
+          String(
+            row?.[1] ??
+            ''
+          ).trim();
+
+        if (
+          !left &&
+          !right &&
+          emptySeparatorClass
+        ) {
+          const blankRow =
+            document.createElement(
+              'tr'
+            );
+
+          blankRow.className =
+            emptySeparatorClass;
+
+          const blankCell =
+            document.createElement(
+              'td'
+            );
+
+          blankCell.colSpan =
+            2;
+
+          blankRow.appendChild(
+            blankCell
+          );
+
+          tbody.appendChild(
+            blankRow
+          );
+
+          return;
+        }
+
+        const tr =
+          document.createElement(
+            'tr'
+          );
+
+        [left, right].forEach(
+          value => {
+            const td =
+              document.createElement(
+                'td'
+              );
+
+            td.textContent =
+              value ||
+              fallback;
+
+            tr.appendChild(
+              td
+            );
+          }
+        );
+
+        tbody.appendChild(
+          tr
+        );
+      }
+    );
+
+    return table;
+  }
+
+  function fitTableToContainer(table, options = {}) {
+    if (!table) {
+      return 1;
+    }
+
+    const wrapper =
+      options.wrapper ||
+      table.closest(
+        options.wrapperSelector ||
+        '.pff-autofit-table-wrap'
+      );
+
+    if (!wrapper) {
+      return 1;
+    }
+
+    table.style.transform =
+      'none';
+
+    wrapper.style.height =
+      'auto';
+
+    const availableWidth =
+      wrapper.clientWidth;
+
+    const naturalWidth =
+      table.scrollWidth;
+
+    const naturalHeight =
+      table.offsetHeight;
+
+    if (
+      !availableWidth ||
+      !naturalWidth
+    ) {
+      return 1;
+    }
+
+    const scale =
+      Math.min(
+        availableWidth /
+          naturalWidth,
+        1
+      );
+
+    const dividerVariable =
+      options.dividerVariable ||
+      '--pff-table-divider-left';
+
+    if (dividerVariable) {
+      const firstCell =
+        table.querySelector(
+          options.firstCellSelector ||
+          'thead tr:first-child th:first-child'
+        ) ||
+        table.querySelector(
+          'tr > *:first-child'
+        );
+
+      if (firstCell) {
+        const naturalDividerX =
+          firstCell.offsetLeft +
+          firstCell.offsetWidth;
+
+        wrapper.style.setProperty(
+          dividerVariable,
+          `${naturalDividerX * scale}px`
+        );
+      }
+    }
+
+    table.style.transform =
+      `scale(${scale})`;
+
+    wrapper.style.height =
+      `${Math.ceil(
+        naturalHeight *
+        scale
+      )}px`;
+
+    return scale;
+  }
+
+  function setupAutoFitTable(table, options = {}) {
+    const delay =
+      Math.max(
+        0,
+        Number(
+          options.delay ??
+          80
+        ) ||
+        0
+      );
+
+    let timer =
+      null;
+
+    const fitNow =
+      () =>
+        fitTableToContainer(
+          table,
+          options
+        );
+
+    const refresh =
+      () => {
+        global.clearTimeout(
+          timer
+        );
+
+        timer =
+          global.setTimeout(
+            () =>
+              global.requestAnimationFrame(
+                fitNow
+              ),
+            delay
+          );
+      };
+
+    global.addEventListener(
+      'resize',
+      refresh
+    );
+
+    global.addEventListener(
+      'orientationchange',
+      refresh
+    );
+
+    return {
+      fitNow,
+      refresh,
+      destroy() {
+        global.clearTimeout(
+          timer
+        );
+
+        global.removeEventListener(
+          'resize',
+          refresh
+        );
+
+        global.removeEventListener(
+          'orientationchange',
+          refresh
+        );
+      }
+    };
   }
 
   function setStatus(message, element = document.getElementById('status')) {
@@ -3755,6 +4208,14 @@ function getEmployerAppearance(
 
   function cellValue(cell) {
     return cell?.v ?? cell?.f ?? '';
+  }
+
+  function cellDisplayValue(cell) {
+    return String(
+      cell?.f ??
+      cell?.v ??
+      ''
+    ).trim();
   }
 
   function parsePercentCell(cell) {
@@ -8394,6 +8855,7 @@ function getEmployerAppearance(
       normaliseText,
       toNumber,
       cellValue,
+      cellDisplayValue,
       parsePercentCell,
       parseDateUtc,
       formatFinancialYear,
@@ -8416,6 +8878,9 @@ function getEmployerAppearance(
       hideLoadingState,
       setDataSourceIndicator,
       setStatus,
+      renderTwoColumnTable,
+      fitTableToContainer,
+      setupAutoFitTable,
 
       setupScrollableRegion,
       setupTabs,
