@@ -700,6 +700,48 @@ body.pff-chart-app .pff-app {
 #status:empty,
 .pff-status:empty { display: none; }
 
+.pff-status-error::before {
+  content: "!";
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--pff-error);
+  border: 1.5px solid var(--pff-error);
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.pff-tooltip {
+  position: fixed;
+  z-index: 9999;
+  display: none;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 20px));
+  padding: 9px;
+  color: var(--pff-muted);
+  background: var(--pff-white);
+  border: 1px solid var(--pff-track);
+  border-radius: 4px;
+  box-shadow: none;
+  font-family: 'Lato', sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  pointer-events: none;
+  white-space: normal;
+}
+
+.pff-tooltip.is-visible {
+  display: block;
+}
+
 .chart-heading-row {
   position: relative;
   z-index: 30;
@@ -2290,6 +2332,189 @@ body.pff-chart-app .pff-app {
         global.removeEventListener('resize', update);
         global.visualViewport?.removeEventListener('resize', update);
         observer?.disconnect();
+      }
+    };
+  }
+  function setupTextTooltip(options = {}) {
+    const tooltip =
+      options.tooltip ||
+      document.getElementById(options.tooltipId || 'tooltip');
+
+    const selector = options.selector || '[data-tooltip]';
+    const visibleClass = options.visibleClass || 'is-visible';
+    const openClass = options.openClass || 'is-open';
+    const margin = Number(options.margin ?? 8);
+    const gap = Number(options.gap ?? 7);
+
+    let activeTrigger = null;
+
+    if (!tooltip) {
+      return {
+        show() {},
+        hide() {},
+        reposition() {},
+        destroy() {}
+      };
+    }
+
+    function position(trigger) {
+      if (!trigger) return;
+
+      const triggerRect = trigger.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+
+      const left =
+        clamp(
+          triggerRect.left +
+            triggerRect.width / 2 -
+            tooltipRect.width / 2,
+          margin,
+          global.innerWidth - tooltipRect.width - margin
+        );
+
+      let top =
+        triggerRect.top -
+        tooltipRect.height -
+        gap;
+
+      if (top < margin) {
+        top =
+          triggerRect.bottom +
+          gap;
+      }
+
+      top =
+        clamp(
+          top,
+          margin,
+          global.innerHeight - tooltipRect.height - margin
+        );
+
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    }
+
+    function show(trigger) {
+      const text =
+        String(
+          options.getText?.(trigger) ??
+          trigger?.dataset?.tooltip ??
+          ''
+        ).trim();
+
+      if (!text) return;
+
+      if (
+        activeTrigger &&
+        activeTrigger !== trigger
+      ) {
+        activeTrigger.classList.remove(openClass);
+      }
+
+      activeTrigger = trigger;
+      trigger.classList.add(openClass);
+      tooltip.textContent = text;
+      tooltip.classList.add(visibleClass);
+
+      requestAnimationFrame(
+        () => position(trigger)
+      );
+    }
+
+    function hide() {
+      activeTrigger?.classList.remove(openClass);
+      activeTrigger = null;
+      tooltip.classList.remove(visibleClass);
+    }
+
+    function closestTrigger(event) {
+      return event.target?.closest?.(selector) || null;
+    }
+
+    const onPointerOver = event => {
+      if (event.pointerType === 'touch') return;
+      const trigger = closestTrigger(event);
+      if (trigger) show(trigger);
+    };
+
+    const onPointerOut = event => {
+      if (event.pointerType === 'touch') return;
+      const trigger = closestTrigger(event);
+
+      if (
+        trigger &&
+        !trigger.contains(event.relatedTarget)
+      ) {
+        hide();
+      }
+    };
+
+    const onFocusIn = event => {
+      const trigger = closestTrigger(event);
+      if (trigger) show(trigger);
+    };
+
+    const onFocusOut = event => {
+      if (closestTrigger(event)) hide();
+    };
+
+    const onClick = event => {
+      const trigger = closestTrigger(event);
+
+      if (!trigger) {
+        hide();
+        return;
+      }
+
+      if (
+        activeTrigger === trigger &&
+        tooltip.classList.contains(visibleClass)
+      ) {
+        hide();
+      } else {
+        show(trigger);
+      }
+    };
+
+    const reposition =
+      () => {
+        if (activeTrigger) {
+          position(activeTrigger);
+        }
+      };
+
+    document.addEventListener('pointerover', onPointerOver);
+    document.addEventListener('pointerout', onPointerOut);
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    document.addEventListener('click', onClick);
+
+    global.addEventListener(
+      'resize',
+      reposition,
+      { passive: true }
+    );
+
+    global.addEventListener(
+      'scroll',
+      reposition,
+      true
+    );
+
+    return {
+      show,
+      hide,
+      reposition,
+
+      destroy() {
+        document.removeEventListener('pointerover', onPointerOver);
+        document.removeEventListener('pointerout', onPointerOut);
+        document.removeEventListener('focusin', onFocusIn);
+        document.removeEventListener('focusout', onFocusOut);
+        document.removeEventListener('click', onClick);
+        global.removeEventListener('resize', reposition);
+        global.removeEventListener('scroll', reposition, true);
+        hide();
       }
     };
   }
@@ -4611,6 +4836,397 @@ function getEmployerAppearance(
       pValue
     };
   }
+  function fitOlsHc3(designMatrix, outcomes) {
+    const X =
+      Array.from(designMatrix || [])
+        .map(row =>
+          Array.from(row || [])
+            .map(Number)
+        );
+
+    const y =
+      Array.from(outcomes || [])
+        .map(Number);
+
+    const n = X.length;
+    const k = X[0]?.length || 0;
+
+    if (
+      !n ||
+      !k ||
+      y.length !== n ||
+      X.some(
+        row =>
+          row.length !== k ||
+          row.some(value => !Number.isFinite(value))
+      ) ||
+      y.some(value => !Number.isFinite(value))
+    ) {
+      throw new Error(
+        'OLS requires a finite design matrix and matching outcome vector'
+      );
+    }
+
+    function zeros(rows, columns) {
+      return Array.from(
+        { length: rows },
+        () => Array(columns).fill(0)
+      );
+    }
+
+    function transpose(matrix) {
+      return matrix[0].map(
+        (_, columnIndex) =>
+          matrix.map(row => row[columnIndex])
+      );
+    }
+
+    function matrixMultiply(first, second) {
+      const output =
+        zeros(
+          first.length,
+          second[0].length
+        );
+
+      for (let i = 0; i < first.length; i++) {
+        for (let kIndex = 0; kIndex < second.length; kIndex++) {
+          const value = first[i][kIndex];
+
+          for (let j = 0; j < second[0].length; j++) {
+            output[i][j] +=
+              value *
+              second[kIndex][j];
+          }
+        }
+      }
+
+      return output;
+    }
+
+    function matrixVectorMultiply(matrix, vector) {
+      return matrix.map(
+        row =>
+          row.reduce(
+            (sum, value, index) =>
+              sum +
+              value *
+              vector[index],
+            0
+          )
+      );
+    }
+
+    function dot(first, second) {
+      return first.reduce(
+        (sum, value, index) =>
+          sum +
+          value *
+          second[index],
+        0
+      );
+    }
+
+    function invertMatrix(matrix) {
+      const size = matrix.length;
+
+      if (
+        !size ||
+        matrix.some(row => row.length !== size)
+      ) {
+        throw new Error('Matrix must be square');
+      }
+
+      const augmented =
+        matrix.map((row, rowIndex) => [
+          ...row,
+
+          ...Array.from(
+            { length: size },
+            (_, columnIndex) =>
+              rowIndex === columnIndex
+                ? 1
+                : 0
+          )
+        ]);
+
+      for (let column = 0; column < size; column++) {
+        let pivotRow = column;
+        let pivotMagnitude =
+          Math.abs(
+            augmented[column][column]
+          );
+
+        for (let row = column + 1; row < size; row++) {
+          const magnitude =
+            Math.abs(
+              augmented[row][column]
+            );
+
+          if (magnitude > pivotMagnitude) {
+            pivotMagnitude = magnitude;
+            pivotRow = row;
+          }
+        }
+
+        if (pivotMagnitude < 1e-11) {
+          throw new Error(
+            'Predictors are perfectly collinear or lack variation'
+          );
+        }
+
+        if (pivotRow !== column) {
+          [
+            augmented[column],
+            augmented[pivotRow]
+          ] = [
+            augmented[pivotRow],
+            augmented[column]
+          ];
+        }
+
+        const pivot =
+          augmented[column][column];
+
+        for (let j = 0; j < 2 * size; j++) {
+          augmented[column][j] /=
+            pivot;
+        }
+
+        for (let row = 0; row < size; row++) {
+          if (row === column) continue;
+
+          const factor =
+            augmented[row][column];
+
+          if (Math.abs(factor) < 1e-18) {
+            continue;
+          }
+
+          for (let j = 0; j < 2 * size; j++) {
+            augmented[row][j] -=
+              factor *
+              augmented[column][j];
+          }
+        }
+      }
+
+      return augmented.map(
+        row => row.slice(size)
+      );
+    }
+
+    const Xt =
+      transpose(X);
+
+    const XtXInverse =
+      invertMatrix(
+        matrixMultiply(Xt, X)
+      );
+
+    const Xty =
+      Xt.map(
+        column =>
+          dot(column, y)
+      );
+
+    const beta =
+      matrixVectorMultiply(
+        XtXInverse,
+        Xty
+      );
+
+    const fitted =
+      X.map(
+        row =>
+          dot(row, beta)
+      );
+
+    const residuals =
+      y.map(
+        (value, index) =>
+          value -
+          fitted[index]
+      );
+
+    const yMean =
+      y.reduce(
+        (sum, value) =>
+          sum + value,
+        0
+      ) /
+      n;
+
+    const sse =
+      residuals.reduce(
+        (sum, residual) =>
+          sum +
+          residual *
+          residual,
+        0
+      );
+
+    const sst =
+      y.reduce(
+        (sum, value) => {
+          const difference =
+            value -
+            yMean;
+
+          return (
+            sum +
+            difference *
+            difference
+          );
+        },
+        0
+      );
+
+    const r2 =
+      sst > 0
+        ? 1 - sse / sst
+        : 0;
+
+    const leverage =
+      X.map(row => {
+        const transformed =
+          matrixVectorMultiply(
+            XtXInverse,
+            row
+          );
+
+        return clamp(
+          dot(row, transformed),
+          0,
+          0.999999999
+        );
+      });
+
+    const model = {
+      n,
+      k,
+      beta,
+      fitted,
+      residuals,
+      sse,
+      r2,
+      leverage,
+      XtXInverse
+    };
+
+    const meat =
+      zeros(k, k);
+
+    for (let i = 0; i < n; i++) {
+      const denominator =
+        Math.max(
+          1e-8,
+          1 - leverage[i]
+        );
+
+      const adjustedResidual =
+        residuals[i] /
+        denominator;
+
+      const weight =
+        adjustedResidual *
+        adjustedResidual;
+
+      for (let a = 0; a < k; a++) {
+        for (let b = 0; b < k; b++) {
+          meat[a][b] +=
+            X[i][a] *
+            X[i][b] *
+            weight;
+        }
+      }
+    }
+
+    const covariance =
+      matrixMultiply(
+        matrixMultiply(
+          XtXInverse,
+          meat
+        ),
+        XtXInverse
+      );
+
+    const degreesOfFreedom =
+      n -
+      k;
+
+    let low = 0;
+    let high = 20;
+
+    for (let iteration = 0; iteration < 80; iteration++) {
+      const midpoint =
+        (low + high) / 2;
+
+      const pValue =
+        calculateTwoSidedTTestPValue(
+          midpoint,
+          degreesOfFreedom
+        );
+
+      if (pValue > 0.05) {
+        low = midpoint;
+      } else {
+        high = midpoint;
+      }
+    }
+
+    const critical =
+      (low + high) / 2;
+
+    const inference =
+      beta.map(
+        (coefficient, index) => {
+          const variance =
+            Math.max(
+              0,
+              covariance[index][index]
+            );
+
+          const se =
+            Math.sqrt(variance);
+
+          const t =
+            se > 0
+              ? coefficient / se
+              : coefficient === 0
+                ? 0
+                : coefficient > 0
+                  ? Infinity
+                  : -Infinity;
+
+          const p =
+            calculateTwoSidedTTestPValue(
+              t,
+              degreesOfFreedom
+            );
+
+          return {
+            coefficient,
+            se,
+            t,
+            p,
+            lower:
+              coefficient -
+              critical *
+              se,
+            upper:
+              coefficient +
+              critical *
+              se
+          };
+        }
+      );
+
+    return {
+      model,
+      inference
+    };
+  }
+
 
   function parseCssColour(
     value,
@@ -7771,6 +8387,7 @@ function getEmployerAppearance(
       setupMetricSwitch,
       setupMenu,
       setupStepper,
+      setupTextTooltip,
       animateHeading,
       animateTextChange,
 
@@ -7792,6 +8409,7 @@ function getEmployerAppearance(
       calculateStatistics,
       calculateTwoSidedTTestPValue,
       calculateRegression,
+      fitOlsHc3,
       formatPValue
     });
 
