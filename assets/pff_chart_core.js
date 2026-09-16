@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.5
+ * PFF Core v1.2.6
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.5';
+  const VERSION = '1.2.6';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -571,11 +571,12 @@ body.pff-chart-app .pff-app {
 }
 
 .pff-table-major-separator td {
-  height: 1px;
+  height: 0;
   padding: 0;
   line-height: 0;
   border: 0;
-  background: var(--pff-ink);
+  border-top: 1px solid var(--pff-ink);
+  background: transparent;
 }
 
 .pff-table-empty-separator td {
