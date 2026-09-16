@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.6
+ * PFF Core v1.2.7
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.6';
+  const VERSION = '1.2.7';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -6850,8 +6850,212 @@ function getEmployerAppearance(
       );
     });
   }
+  function loadAppsScriptJsonp(options = {}) {
+    const url =
+      String(
+        options.url ||
+        ''
+      ).trim();
+
+    const timeoutMs =
+      Math.max(
+        1000,
+        Number(
+          options.timeoutMs
+        ) ||
+        10000
+      );
+
+    const callbackParam =
+      String(
+        options.callbackParam ||
+        'callback'
+      ).trim() ||
+      'callback';
+
+    const params =
+      options.params &&
+      typeof options.params ===
+        'object'
+        ? options.params
+        : {};
+
+    if (!url) {
+      return Promise.reject(
+        new Error(
+          'Apps Script URL is missing.'
+        )
+      );
+    }
+
+    return new Promise(
+      (
+        resolve,
+        reject
+      ) => {
+        const callbackName =
+          `__pff_jsonp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+        const script =
+          document.createElement(
+            'script'
+          );
+
+        let completed =
+          false;
+
+        const cleanup =
+          () => {
+            script.remove();
+
+            try {
+              delete global[
+                callbackName
+              ];
+            } catch (_) {
+              global[
+                callbackName
+              ] =
+                undefined;
+            }
+          };
+
+        const finish =
+          callback =>
+            value => {
+              if (completed) {
+                return;
+              }
+
+              completed =
+                true;
+
+              global.clearTimeout(
+                timer
+              );
+
+              cleanup();
+
+              callback(
+                value
+              );
+            };
+
+        const timer =
+          global.setTimeout(
+            () =>
+              finish(
+                reject
+              )(
+                new Error(
+                  'Timed out loading Apps Script data.'
+                )
+              ),
+            timeoutMs
+          );
+
+        global[
+          callbackName
+        ] =
+          payload => {
+            try {
+              const value =
+                typeof options.validate ===
+                  'function'
+                  ? options.validate(
+                      payload
+                    )
+                  : payload;
+
+              finish(
+                resolve
+              )(
+                value
+              );
+            } catch (
+              error
+            ) {
+              finish(
+                reject
+              )(
+                error
+              );
+            }
+          };
+
+        script.onerror =
+          () =>
+            finish(
+              reject
+            )(
+              new Error(
+                'Could not connect to the Apps Script backend.'
+              )
+            );
+
+        const searchParams =
+          new URLSearchParams();
+
+        Object.entries(
+          params
+        ).forEach(
+          ([
+            key,
+            value
+          ]) => {
+            if (
+              value ===
+                undefined ||
+              value ===
+                null
+            ) {
+              return;
+            }
+
+            searchParams.set(
+              key,
+              String(
+                value
+              )
+            );
+          }
+        );
+
+        searchParams.set(
+          callbackParam,
+          callbackName
+        );
+
+        searchParams.set(
+          '_',
+          String(
+            Date.now()
+          )
+        );
+
+        const separator =
+          url.includes(
+            '?'
+          )
+            ? '&'
+            : '?';
+
+        script.src =
+          `${url}${separator}${searchParams.toString()}`;
+
+        script.async =
+          true;
+
+        document.body.appendChild(
+          script
+        );
+      }
+    );
+  }
+
   function loadAppsScriptCache(options = {}) {
     const url = String(options.url || '').trim();
+
     const appKey = String(options.appKey || '').trim();
     const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 10000);
 
@@ -8891,8 +9095,10 @@ function getEmployerAppearance(
       setupTextTooltip,
       animateHeading,
       animateTextChange,
+      createAnimationController,
 
       loadGVizSheet,
+      loadAppsScriptJsonp,
       loadAppsScriptCache,
       saveLocalCache,
       loadLocalCache,
