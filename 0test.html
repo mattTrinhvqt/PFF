@@ -1,8 +1,15 @@
 <!DOCTYPE html>
-<html lang="en-AU">
+<html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+
+  <title>PFF Report Summary</title>
+
   <script src="./assets/pff_chart_core.js"></script>
 
   <style>
@@ -13,7 +20,8 @@
       min-height: 0;
       margin: 0;
       padding: 0;
-      overflow: hidden;
+      overflow-x: hidden;
+      overflow-y: visible;
       background: transparent;
     }
 
@@ -39,6 +47,10 @@
       text-align: center;
     }
 
+    #app.is-loading .table-section {
+      display: none;
+    }
+
     .response-summary {
       position: relative;
       width: 100%;
@@ -46,6 +58,7 @@
     }
 
     .summary-grid {
+      position: relative;
       display: grid;
       grid-template-columns: 1fr 1fr;
       width: 100%;
@@ -144,6 +157,11 @@
       );
     }
 
+    .table-section {
+      width: 100%;
+      margin-top: 30px;
+    }
+
     @media (max-width: 430px) {
       #app {
         padding: 12px 1px;
@@ -162,7 +180,10 @@
 
 <body>
   <div id="fit">
-    <main id="app">
+    <main
+      id="app"
+      class="is-loading"
+    >
       <section
         class="response-summary"
         aria-live="polite"
@@ -175,7 +196,7 @@
 
             <div class="response-value-row">
               <div
-                id="reportsValue"
+                id="reports-value"
                 class="response-value is-loading"
               >
                 <span
@@ -183,9 +204,9 @@
                   role="status"
                   aria-label="Loading report count"
                 >
-                  <span class="cone blue"></span>
-                  <span class="cone green"></span>
-                  <span class="cone red"></span>
+                  <span class="cone blue" aria-hidden="true"></span>
+                  <span class="cone green" aria-hidden="true"></span>
+                  <span class="cone red" aria-hidden="true"></span>
                 </span>
               </div>
             </div>
@@ -198,7 +219,7 @@
 
             <div class="response-value-row">
               <div
-                id="documentsValue"
+                id="documents-value"
                 class="response-value is-loading"
               >
                 <span
@@ -206,9 +227,9 @@
                   role="status"
                   aria-label="Loading supporting document count"
                 >
-                  <span class="cone blue"></span>
-                  <span class="cone green"></span>
-                  <span class="cone red"></span>
+                  <span class="cone blue" aria-hidden="true"></span>
+                  <span class="cone green" aria-hidden="true"></span>
+                  <span class="cone red" aria-hidden="true"></span>
                 </span>
               </div>
 
@@ -230,6 +251,24 @@
           </div>
         </div>
       </section>
+
+      <section
+        class="table-section"
+        aria-label="Report summary table"
+      >
+        <div
+          id="tableWrap"
+          class="pff-autofit-table-wrap has-gradient-divider"
+        >
+          <table
+            id="summary-table"
+            class="pff-autofit-table"
+          >
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -244,8 +283,17 @@
       sheetGid:
         '0',
 
-      liveRange:
+      countRange:
         'B1:C1',
+
+      tableHeaderRange:
+        'T2:V2',
+
+      tableDataRange:
+        'T3:V14',
+
+      tableRows:
+        12,
 
       cacheWebAppUrl:
         'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec',
@@ -254,13 +302,13 @@
         'pff-report-summary',
 
       browserCacheKey:
-        'pff-report-summary:counts:v1',
+        'pff-report-summary:dashboard:v1',
 
       fetchTimeoutMs:
         10000,
 
       minRows:
-        1,
+        14,
 
       refreshMs:
         60000,
@@ -269,14 +317,34 @@
         false
     });
 
+    const app =
+      document.getElementById(
+        'app'
+      );
+
     const reportsValue =
       document.getElementById(
-        'reportsValue'
+        'reports-value'
       );
 
     const documentsValue =
       document.getElementById(
-        'documentsValue'
+        'documents-value'
+      );
+
+    const summaryTable =
+      document.getElementById(
+        'summary-table'
+      );
+
+    const tableWrap =
+      document.getElementById(
+        'tableWrap'
+      );
+
+    const tableSection =
+      document.querySelector(
+        '.table-section'
       );
 
     const dataSourceIndicator =
@@ -289,10 +357,26 @@
         'dataSourceText'
       );
 
+    const tableFit =
+      PFF.setupAutoFitTable(
+        summaryTable,
+        {
+          wrapper:
+            tableWrap,
 
-    function makeCountRows(
+          dividerVariable:
+            '--pff-table-divider-left',
+
+          delay:
+            80
+        }
+      );
+
+
+    function makeDashboardRows(
       reportsValue,
-      documentsValue
+      documentsValue,
+      tableValues
     ) {
       const reports =
         PFF.toNumber(
@@ -319,36 +403,114 @@
         );
       }
 
-      return [[
-        Math.round(
-          reports
-        ),
+      if (
+        !Array.isArray(
+          tableValues
+        ) ||
+        tableValues.length !==
+          CONFIG.tableRows + 1
+      ) {
+        throw new Error(
+          'Report summary table is incomplete'
+        );
+      }
 
-        Math.round(
-          documents
-        )
-      ]];
+      const normalisedTable =
+        tableValues.map(
+          row => [
+            String(
+              row?.[0] ??
+              ''
+            ).trim(),
+
+            String(
+              row?.[1] ??
+              ''
+            ).trim()
+          ]
+        );
+
+      normalisedTable[0] = [
+        normalisedTable[0]?.[0] ||
+          '—',
+
+        normalisedTable[0]?.[1] ||
+          '—'
+      ];
+
+      return [
+        [
+          Math.round(
+            reports
+          ),
+
+          Math.round(
+            documents
+          )
+        ],
+
+        ...normalisedTable
+      ];
     }
 
 
     function parseLiveRows(
-      table
+      payload
     ) {
-      const row =
-        table?.rows?.[0];
-
-      const cells =
-        row?.c ||
+      const countRow =
+        payload?.counts?.rows?.[0]?.c ||
         [];
 
-      return makeCountRows(
-        PFF.cellValue(
-          cells[0]
+      const headerRow =
+        payload?.header?.rows?.[0]?.c ||
+        [];
+
+      const dataRows =
+        payload?.data?.rows ||
+        [];
+
+      const tableValues = [[
+        PFF.cellDisplayValue(
+          headerRow[0]
+        ) ||
+          '—',
+
+        PFF.cellDisplayValue(
+          headerRow[2]
+        ) ||
+          '—'
+      ]];
+
+      for (
+        let index = 0;
+        index < CONFIG.tableRows;
+        index++
+      ) {
+        const row =
+          dataRows[index]?.c ||
+          [];
+
+        tableValues.push([
+          PFF.cellDisplayValue(
+            row[0]
+          ),
+
+          PFF.cellDisplayValue(
+            row[2]
+          )
+        ]);
+      }
+
+      return makeDashboardRows(
+        PFF.cellDisplayValue(
+          countRow[0]
         ),
 
-        PFF.cellValue(
-          cells[1]
-        )
+        PFF.cellDisplayValue(
+          countRow[1]
+        ),
+
+        tableValues
       );
     }
 
@@ -369,29 +531,38 @@
         );
       }
 
-      return makeCountRows(
+      return makeDashboardRows(
         response?.data?.reports,
-        response?.data?.documents
+        response?.data?.documents,
+        response?.data?.tableValues
       );
     }
 
 
-    function normaliseCounts(
+    function unpackDashboardRows(
       rows
     ) {
-      const row =
-        Array.isArray(
-          rows?.[0]
-        )
-          ? rows[0]
-          : [];
+      if (
+        !Array.isArray(
+          rows
+        ) ||
+        rows.length !==
+          CONFIG.minRows
+      ) {
+        throw new Error(
+          'Report summary data are incomplete'
+        );
+      }
 
       return {
         reports:
-          row[0],
+          rows[0]?.[0],
 
         documents:
-          row[1]
+          rows[0]?.[1],
+
+        tableValues:
+          rows.slice(1)
       };
     }
 
@@ -413,10 +584,10 @@
 
       element.textContent =
         Number.isFinite(
-          value
+          Number(value)
         )
           ? PFF.formatInteger(
-              value
+              Number(value)
             )
           : '—';
     }
@@ -442,28 +613,169 @@
     }
 
 
+    function renderDashboard(
+      rows
+    ) {
+      const data =
+        unpackDashboardRows(
+          rows
+        );
+
+      showValue(
+        reportsValue,
+        data.reports
+      );
+
+      showValue(
+        documentsValue,
+        data.documents
+      );
+
+      tableSection.style.visibility =
+        'hidden';
+
+      PFF.renderTwoColumnTable(
+        summaryTable,
+        data.tableValues
+      );
+
+      app.classList.remove(
+        'is-loading'
+      );
+
+      tableFit.fitNow();
+
+      tableSection.style.visibility =
+        '';
+    }
+
+
+    function showError(
+      error
+    ) {
+      console.error(
+        error
+      );
+
+      showValue(
+        reportsValue,
+        NaN,
+        true
+      );
+
+      showValue(
+        documentsValue,
+        NaN,
+        true
+      );
+
+      const emptyTable = [
+        ['—', '—'],
+        ...Array.from(
+          {
+            length:
+              CONFIG.tableRows
+          },
+          () => [
+            '—',
+            '—'
+          ]
+        )
+      ];
+
+      tableSection.style.visibility =
+        'hidden';
+
+      PFF.renderTwoColumnTable(
+        summaryTable,
+        emptyTable
+      );
+
+      app.classList.remove(
+        'is-loading'
+      );
+
+      tableFit.fitNow();
+
+      tableSection.style.visibility =
+        '';
+
+      setDataSource(
+        'unavailable'
+      );
+    }
+
+
     async function loadDashboardData() {
       try {
         const loaded =
           await PFF.loadLiveCacheFallback({
             loadLive:
-              () =>
-                PFF.loadGVizSheet({
-                  sheetId:
-                    CONFIG.spreadsheetId,
+              async () => {
+                const [
+                  counts,
+                  header,
+                  data
+                ] =
+                  await Promise.all([
+                    PFF.loadGVizSheet({
+                      sheetId:
+                        CONFIG.spreadsheetId,
 
-                  gid:
-                    CONFIG.sheetGid,
+                      gid:
+                        CONFIG.sheetGid,
 
-                  range:
-                    CONFIG.liveRange,
+                      range:
+                        CONFIG.countRange,
 
-                  headers:
-                    0,
+                      headers:
+                        0,
 
-                  timeoutMs:
-                    CONFIG.fetchTimeoutMs
-                }),
+                      timeoutMs:
+                        CONFIG.fetchTimeoutMs
+                    }),
+
+                    PFF.loadGVizSheet({
+                      sheetId:
+                        CONFIG.spreadsheetId,
+
+                      gid:
+                        CONFIG.sheetGid,
+
+                      range:
+                        CONFIG.tableHeaderRange,
+
+                      headers:
+                        0,
+
+                      timeoutMs:
+                        CONFIG.fetchTimeoutMs
+                    }),
+
+                    PFF.loadGVizSheet({
+                      sheetId:
+                        CONFIG.spreadsheetId,
+
+                      gid:
+                        CONFIG.sheetGid,
+
+                      range:
+                        CONFIG.tableDataRange,
+
+                      headers:
+                        0,
+
+                      timeoutMs:
+                        CONFIG.fetchTimeoutMs
+                    })
+                  ]);
+
+                return {
+                  counts,
+                  header,
+                  data
+                };
+              },
 
             parseLive:
               parseLiveRows,
@@ -511,41 +823,14 @@
                 )
           });
 
-        const counts =
-          normaliseCounts(
-            loaded.rows
-          );
-
-        showValue(
-          reportsValue,
-          counts.reports
-        );
-
-        showValue(
-          documentsValue,
-          counts.documents
+        renderDashboard(
+          loaded.rows
         );
       } catch (
         error
       ) {
-        console.error(
+        showError(
           error
-        );
-
-        showValue(
-          reportsValue,
-          NaN,
-          true
-        );
-
-        showValue(
-          documentsValue,
-          NaN,
-          true
-        );
-
-        setDataSource(
-          'unavailable'
         );
       }
     }
