@@ -494,6 +494,19 @@ body.pff-chart-app .pff-app {
   left: 31px;
 }
 
+.pff-gradient-line {
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    var(--pff-white) 0%,
+    rgba(102, 0, 255, 0.14) 24%,
+    var(--pff-purple) 50%,
+    rgba(102, 0, 255, 0.14) 76%,
+    var(--pff-white) 100%
+  );
+}
+
 .pff-autofit-table-wrap {
   position: relative;
   width: 100%;
@@ -6069,6 +6082,266 @@ function getEmployerAppearance(
       }
     };
   }
+  function createIntegerCounter(
+    element,
+    options = {}
+  ) {
+    const animation =
+      createAnimationController();
+
+    const duration =
+      Math.max(
+        0,
+        Number(
+          options.duration
+        ) ||
+        0
+      );
+
+    const minimum =
+      Number.isFinite(
+        Number(
+          options.minimum
+        )
+      )
+        ? Number(
+            options.minimum
+          )
+        : 0;
+
+    const firstVisibleMinimum =
+      Math.max(
+        0,
+        Math.round(
+          Number(
+            options.firstVisibleMinimum
+          ) ||
+          0
+        )
+      );
+
+    const loadingClass =
+      String(
+        options.loadingClass ||
+        'is-loading'
+      );
+
+    const errorClass =
+      String(
+        options.errorClass ||
+        'is-error'
+      );
+
+    const format =
+      typeof options.format ===
+        'function'
+        ? options.format
+        : formatInteger;
+
+    const easing =
+      typeof options.easing ===
+        'function'
+        ? options.easing
+        : progress =>
+            1 -
+            Math.pow(
+              1 - progress,
+              3
+            );
+
+    let hasValue =
+      false;
+
+    let currentValue =
+      null;
+
+    function cancel() {
+      animation.cancel();
+    }
+
+    function show(
+      value,
+      config = {}
+    ) {
+      cancel();
+
+      element?.classList.remove(
+        loadingClass
+      );
+
+      element?.classList.toggle(
+        errorClass,
+        Boolean(
+          config.error
+        )
+      );
+
+      if (element) {
+        element.textContent =
+          String(
+            value ??
+            ''
+          ).trim() ||
+          '—';
+      }
+
+      if (
+        config.remember ===
+        false
+      ) {
+        return;
+      }
+
+      currentValue =
+        null;
+
+      hasValue =
+        true;
+    }
+
+    function set(
+      value
+    ) {
+      const numericValue =
+        Number(
+          String(
+            value ??
+            ''
+          ).replace(
+            /,/g,
+            ''
+          )
+        );
+
+      if (
+        !Number.isFinite(
+          numericValue
+        ) ||
+        numericValue <
+          minimum
+      ) {
+        show(
+          value
+        );
+
+        return;
+      }
+
+      const target =
+        Math.round(
+          numericValue
+        );
+
+      const firstLoad =
+        !hasValue ||
+        currentValue ===
+          null;
+
+      const startValue =
+        firstLoad
+          ? Math.round(
+              Number(
+                options.initialValue
+              ) ||
+              0
+            )
+          : currentValue;
+
+      element?.classList.remove(
+        loadingClass,
+        errorClass
+      );
+
+      if (
+        startValue ===
+        target
+      ) {
+        if (element) {
+          element.textContent =
+            format(
+              target
+            );
+        }
+
+        currentValue =
+          target;
+
+        hasValue =
+          true;
+
+        return;
+      }
+
+      animation.run({
+        duration,
+        easing,
+
+        onFrame:
+          progress => {
+            let current =
+              Math.round(
+                startValue +
+                (
+                  target -
+                  startValue
+                ) *
+                progress
+              );
+
+            if (
+              firstLoad &&
+              target >
+                0 &&
+              firstVisibleMinimum >
+                0
+            ) {
+              current =
+                Math.max(
+                  firstVisibleMinimum,
+                  current
+                );
+            }
+
+            if (element) {
+              element.textContent =
+                format(
+                  current
+                );
+            }
+          },
+
+        onComplete:
+          () => {
+            if (element) {
+              element.textContent =
+                format(
+                  target
+                );
+            }
+
+            currentValue =
+              target;
+
+            hasValue =
+              true;
+          }
+      });
+    }
+
+    return {
+      set,
+      show,
+      cancel,
+
+      get currentValue() {
+        return currentValue;
+      },
+
+      get hasValue() {
+        return hasValue;
+      }
+    };
+  }
 
   function setupDisplayLegend(
     options = {}
@@ -9096,6 +9369,7 @@ function getEmployerAppearance(
       animateHeading,
       animateTextChange,
       createAnimationController,
+      createIntegerCounter,
 
       loadGVizSheet,
       loadAppsScriptJsonp,
