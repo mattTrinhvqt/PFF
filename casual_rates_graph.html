@@ -2577,6 +2577,110 @@
       }
     };
 
+    function drawInteractionNote(context, area, text) {
+      if (!text) return;
+
+      context.save();
+      context.font = '400 8.5px Lato, sans-serif';
+      context.textBaseline = 'middle';
+      context.textAlign = 'left';
+
+      const maximumTextWidth = Math.max(
+        90,
+        Math.min(235, area.right - area.left - 20)
+      );
+      const words = text.split(/\s+/);
+      const lines = [];
+      let line = '';
+
+      words.forEach(word => {
+        const candidate = line ? `${line} ${word}` : word;
+        if (
+          line &&
+          context.measureText(candidate).width > maximumTextWidth
+        ) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = candidate;
+        }
+      });
+      if (line) lines.push(line);
+
+      const paddingX = 5;
+      const paddingY = 4;
+      const lineHeight = 11;
+      const textWidth = Math.max(
+        ...lines.map(item => context.measureText(item).width)
+      );
+      const boxWidth = textWidth + paddingX * 2;
+      const boxHeight = lines.length * lineHeight + paddingY * 2;
+      const x = area.right - boxWidth - 6;
+      const y = area.bottom - boxHeight - 6;
+      const radius = 4;
+
+      context.beginPath();
+      context.moveTo(x + radius, y);
+      context.lineTo(x + boxWidth - radius, y);
+      context.quadraticCurveTo(
+        x + boxWidth,
+        y,
+        x + boxWidth,
+        y + radius
+      );
+      context.lineTo(x + boxWidth, y + boxHeight - radius);
+      context.quadraticCurveTo(
+        x + boxWidth,
+        y + boxHeight,
+        x + boxWidth - radius,
+        y + boxHeight
+      );
+      context.lineTo(x + radius, y + boxHeight);
+      context.quadraticCurveTo(
+        x,
+        y + boxHeight,
+        x,
+        y + boxHeight - radius
+      );
+      context.lineTo(x, y + radius);
+      context.quadraticCurveTo(x, y, x + radius, y);
+      context.closePath();
+      context.fillStyle = 'rgba(255, 255, 255, 0.84)';
+      context.fill();
+      context.strokeStyle = 'rgba(105, 113, 138, 0.16)';
+      context.lineWidth = 1;
+      context.stroke();
+
+      context.fillStyle = 'rgba(105, 113, 138, 0.88)';
+      lines.forEach((item, index) => {
+        context.fillText(
+          item,
+          x + paddingX,
+          y + paddingY + lineHeight * index + lineHeight / 2
+        );
+      });
+      context.restore();
+    }
+
+    const interactionNotePlugin = {
+      id: 'interactionNotePlugin',
+
+      afterDatasetsDraw(activeChart) {
+        if (
+          !['state', 'employer'].includes(activeView) ||
+          activeChart.data.datasets[0]?.datasetRole !== 'bubbleAggregate'
+        ) {
+          return;
+        }
+
+        drawInteractionNote(
+          activeChart.ctx,
+          activeChart.chartArea,
+          'Double-tap for raw rates'
+        );
+      }
+    };
+
     function tooltipFontLineHeight(font, fallbackSize) {
       const size =
         Number(font?.size) ||
@@ -2635,10 +2739,7 @@
         const padding =
           Number(options.padding) || 9;
 
-        const bodySpacing =
-          Number.isFinite(Number(options.bodySpacing))
-            ? Number(options.bodySpacing)
-            : 2;
+        const bodySpacing = 10;
 
         const titleSpacing =
           Number.isFinite(Number(options.titleSpacing))
@@ -2685,8 +2786,9 @@
 
         context.save();
         context.strokeStyle =
-          '#e8eaf0';
+          '#dfe2e8';
         context.lineWidth = 1;
+        context.setLineDash([3, 3]);
 
         bodyItems.forEach(
           (bodyItem, index) => {
@@ -3779,6 +3881,13 @@
                 display: false
               },
               tooltip: PFFCharts.tooltipOptions({
+                bodySpacing(context) {
+                  return context.tooltip
+                    ?.getActiveElements?.()
+                    .length > 1
+                    ? 10
+                    : 2;
+                },
                 filter() {
                   return !interactionLocked;
                 },
@@ -3801,6 +3910,7 @@
             xAxisFadePlugin,
             variableAxisTickPlugin,
             bubbleLabelPlugin,
+            interactionNotePlugin,
             tooltipDividerPlugin
           ]
         }
