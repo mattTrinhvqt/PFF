@@ -7,7 +7,7 @@
   <title>PFF Locum Rates Data</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <script src="./assets/pff_chart_core.js?v=1.2.0-20260910c"></script>
+  <script src="./assets/pff_chart_core.js?v=1.2.11-20260917"></script>
 
   <style>
     /* Locum Rates-specific components only. Shared PFF chart styling lives in pff_chart_core.js. */
@@ -214,8 +214,18 @@
               class="chart-tab is-active"
               type="button"
               role="tab"
-              data-view="experience"
+              data-view="employer"
               aria-selected="true"
+            >
+              Employer
+            </button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              data-view="experience"
+              aria-selected="false"
             >
               Experience
             </button>
@@ -279,7 +289,7 @@
 
       <div class="chart-heading-row">
         <h2 id="chartHeading" class="chart-heading">
-          <span class="chart-heading-fixed">Locum rates</span><span id="chartHeadingDetail" class="chart-heading-detail">by experience</span>
+          <span class="chart-heading-fixed">Locum rates</span><span id="chartHeadingDetail" class="chart-heading-detail">by employer</span>
         </h2>
 
         <button
@@ -340,9 +350,9 @@
     const CONFIG = {
       sheetId: '1wmrmNS4cz-_aPKnyBVg7-SShbhs6czMNh07UjyLo04s',
       sheetName: 'Data',
-      range: 'A:J',
+      range: 'A:K',
       fetchTimeoutMs: 20000,
-      localCacheKey: 'pff-locum-rates-data-v1',
+      localCacheKey: 'pff-locum-rates-data-v2',
 
       transitionMs: PFF.defaults.viewTransitionMs,
       splitAnimationMs: 820,
@@ -386,6 +396,9 @@
       false;
 
     const VIEW_CONFIG = {
+      employer: {
+        headingDetail: 'by employer'
+      },
       experience: {
         headingDetail: 'by experience'
       },
@@ -442,6 +455,47 @@
       'Company/trust': '#00b26f'
     };
 
+    const EMPLOYER_FRONT_NAMES = Object.freeze({
+      '1001': '1001 Optometry',
+      bn: 'Bailey Nelson',
+      bupa: 'Bupa Optical',
+      cw: 'Chemist Warehouse Optometry',
+      costco: 'Costco Optical',
+      dresden: 'Dresden Vision',
+      eyeconcepts: 'Eye Concepts',
+      gm: 'George & Matilda Eyecare',
+      hcf: 'HCF Eyecare',
+      icontact: 'iContact',
+      indie: 'Independent',
+      ophthal: 'Ophthalmologist',
+      opsm: 'OPSM (incl. L&P, EyeQ)',
+      obnp: 'Optical by National Pharmacies',
+      ow: 'Oscar Wylee',
+      other: 'Other (e.g., uni, hospital, govt, not-for-profit)',
+      ss: 'Specsavers',
+      th: 'Teachers Health',
+      toc: 'The Optical Company (incl. NIB)',
+      toss: 'The Optical Superstore'
+    });
+
+    const EMPLOYERS = Object.freeze(
+      PFF.employers.map(employer =>
+        Object.freeze({
+          ...employer,
+          fullName:
+            EMPLOYER_FRONT_NAMES[employer.key] ||
+            employer.fullName
+        })
+      )
+    );
+
+    const EMPLOYER_BY_KEY = new Map(
+      EMPLOYERS.map(employer => [
+        employer.key,
+        employer
+      ])
+    );
+
     const YEAR_MS =
       365.2425 * 86400000;
 
@@ -495,7 +549,7 @@
 
     let chart = null;
     let rows = [];
-    let activeView = 'experience';
+    let activeView = 'employer';
     let interactionLocked = false;
     let viewMorphInProgress = false;
     let currentXAxisOptions = null;
@@ -1558,17 +1612,25 @@
       }
     };
 
-    let locationCategories = [];
-    let locationAggregatePoints = [];
-    let locationRawRows = new Map();
-    let locationRawDisplayPoints = [];
+    function createBubbleStore() {
+      return {
+        categories: [],
+        aggregates: [],
+        rowsByKey: new Map(),
+        rawPoints: [],
+        splitKeys: new Set(),
+        splitProgress: new Map(),
+        mergingKeys: new Set(),
+        mergeProgress: 0,
+        dimProgress: 0
+      };
+    }
 
-    const splitStates = new Set();
-    const splitProgress = new Map();
-    const mergingStates = new Set();
+    const bubbleStores = {
+      location: createBubbleStore(),
+      employer: createBubbleStore()
+    };
 
-    let mergeProgress = 0;
-    let aggregateDimProgress = 0;
     let lastAggregateClickKey = null;
     let lastAggregateClickTime = 0;
 
@@ -1612,9 +1674,6 @@
 
     const formatQuarterTick =
       PFF.formatQuarterTick;
-
-    const formatExperienceBand =
-      PFF.formatExperienceBand;
 
     const calculateRegression =
       PFFStats.calculateRegression;
@@ -1673,9 +1732,33 @@
       return 'Unspecified';
     }
 
+    function normaliseEmployer(value) {
+      const text =
+        normaliseText(value);
 
+      if (
+        !text ||
+        text === 'x' ||
+        text === 'xxx'
+      ) {
+        return null;
+      }
 
+      const employer =
+        EMPLOYERS.find(item =>
+          [
+            item.key,
+            item.label,
+            item.fullName,
+            ...item.aliases
+          ].some(candidate =>
+            normaliseText(candidate) ===
+            text
+          )
+        );
 
+      return employer?.key || 'other';
+    }
 
 
 
@@ -1720,68 +1803,46 @@
     }
 
     function buildIndividualDetailLines(raw) {
-      const lines = [];
-
       if (activeView === 'experience') {
-        lines.push(
+        return [
           Number.isFinite(
             raw?.experience
           )
             ? `Experience: ${formatNumber(raw.experience, 1)} years`
             : 'Experience: Unspecified'
-        );
-
-        return lines;
+        ];
       }
 
-      if (activeView === 'rurality') {
-        lines.push(
-          `Rurality: ${
-            raw?.rurality ||
-            'Unspecified'
-          }`
-        );
-      }
+      return [
+        `Employer: ${
+          EMPLOYER_BY_KEY.get(
+            raw?.employerKey
+          )?.fullName ||
+          'Unspecified'
+        }`,
 
-      if (activeView === 'location') {
-        lines.push(
-          `State: ${
-            raw?.state ||
-            'Unspecified'
-          }`
-        );
-      }
+        `Rurality: ${
+          raw?.rurality ||
+          'Unspecified'
+        }`,
 
-      if (activeView === 'structure') {
-        lines.push(
-          `Business structure: ${
-            raw?.structure ||
-            'Unspecified'
-          }`
-        );
-      }
+        `State: ${
+          raw?.state ||
+          'Unspecified'
+        }`,
 
-      if (activeView === 'date') {
-        lines.push(
-          Number.isFinite(
-            raw?.date
-          )
-            ? `Date: ${formatDate(raw.date)}`
-            : 'Date: Unspecified'
-        );
-      }
+        `Business structure: ${
+          raw?.structure ||
+          'Unspecified'
+        }`,
 
-      lines.push(
-        `Experience: ${
-          formatExperienceBand(
-            raw?.experience
-          )
-        }`
-      );
-
-      return lines;
+        Number.isFinite(
+          raw?.date
+        )
+          ? `Date: ${formatDate(raw.date)}`
+          : 'Date: Unspecified'
+      ];
     }
-
 
 
     function normaliseRows(sourceRows) {
@@ -1807,9 +1868,19 @@
                 getCellValue(cells[2])
               ),
 
+            patientsPerDay:
+              toNumber(
+                getCellValue(cells[3])
+              ),
+
             rurality:
               normaliseRurality(
                 getCellValue(cells[4])
+              ),
+
+            specialtyServices:
+              cleanText(
+                getCellValue(cells[5])
               ),
 
             state:
@@ -1820,6 +1891,11 @@
             structure:
               normaliseStructure(
                 getCellValue(cells[9])
+              ),
+
+            employerKey:
+              normaliseEmployer(
+                getCellValue(cells[10])
               )
           };
         })
@@ -3049,7 +3125,68 @@
       });
     }
 
-    function getBaseLocationRadius(
+    function bubbleConfig(view) {
+      if (view === 'employer') {
+        return {
+          order:
+            EMPLOYERS
+              .slice()
+              .sort(
+                (first, second) =>
+                  first.label.localeCompare(
+                    second.label,
+                    'en-AU',
+                    {
+                      sensitivity: 'base',
+                      numeric: true
+                    }
+                  )
+              )
+              .map(employer =>
+                employer.key
+              ),
+
+          accessor:
+            row => row.employerKey,
+
+          label:
+            key =>
+              EMPLOYER_BY_KEY.get(key)?.label ||
+              key,
+
+          fullName:
+            key =>
+              EMPLOYER_BY_KEY.get(key)?.fullName ||
+              key,
+
+          colour:
+            key =>
+              EMPLOYER_BY_KEY.get(key)?.colour ||
+              '#777777'
+        };
+      }
+
+      return {
+        order:
+          STATE_ORDER,
+
+        accessor:
+          row => row.state,
+
+        label:
+          key => key,
+
+        fullName:
+          key => key,
+
+        colour:
+          key =>
+            STATE_COLOURS[key] ||
+            '#777777'
+      };
+    }
+
+    function getBaseBubbleRadius(
       respondents
     ) {
       return clamp(
@@ -3064,7 +3201,7 @@
       );
     }
 
-    function buildLocationPositions(
+    function buildBubblePositions(
       items
     ) {
       const sortedItems =
@@ -3076,8 +3213,9 @@
                 second.y ||
               second.statistics.count -
                 first.statistics.count ||
-              first.state.localeCompare(
-                second.state
+              first.fullName.localeCompare(
+                second.fullName,
+                'en-AU'
               )
           );
 
@@ -3109,7 +3247,7 @@
         }
 
         laneAssignments.set(
-          item.state,
+          item.categoryKey,
           laneIndex
         );
       });
@@ -3122,8 +3260,8 @@
 
       return new Map(
         [...laneAssignments.entries()]
-          .map(([state, laneIndex]) => [
-            state,
+          .map(([key, laneIndex]) => [
+            key,
 
             21 +
             laneIndex /
@@ -3136,75 +3274,102 @@
       );
     }
 
-    function rebuildLocationData() {
-      locationCategories =
-        STATE_ORDER.filter(
-          state =>
+    function rebuildBubbleStore(view) {
+      const store =
+        bubbleStores[view];
+
+      const config =
+        bubbleConfig(view);
+
+      store.categories =
+        config.order.filter(
+          categoryKey =>
             rows.some(
               row =>
-                row.state === state
+                config.accessor(row) ===
+                categoryKey
             )
         );
 
-      locationRawRows =
+      store.rowsByKey =
         new Map();
 
       const items =
-        locationCategories.map(state => {
-          const stateRows =
-            rows.filter(
-              row =>
-                row.state === state
+        store.categories.map(
+          categoryKey => {
+            const categoryRows =
+              rows.filter(
+                row =>
+                  config.accessor(row) ===
+                  categoryKey
+              );
+
+            const statistics =
+              calculateStatistics(
+                categoryRows.map(
+                  row => row.hourlyRate
+                )
+              );
+
+            store.rowsByKey.set(
+              categoryKey,
+              categoryRows
             );
 
-          const statistics =
-            calculateStatistics(
-              stateRows.map(
-                row => row.hourlyRate
-              )
-            );
+            return {
+              kind:
+                'bubbleAggregate',
 
-          locationRawRows.set(
-            state,
-            stateRows
-          );
+              bubbleView:
+                view,
 
-          return {
-            kind:
-              'locationAggregate',
+              categoryKey,
 
-            state,
+              label:
+                config.label(
+                  categoryKey
+                ),
 
-            x:
-              21,
+              fullName:
+                config.fullName(
+                  categoryKey
+                ),
 
-            y:
-              statistics.median,
+              x:
+                21,
 
-            baseRadius:
-              getBaseLocationRadius(
-                statistics.count
-              ),
+              y:
+                statistics.median,
 
-            colour:
-              STATE_COLOURS[state],
+              baseRadius:
+                getBaseBubbleRadius(
+                  statistics.count
+                ),
 
-            statistics
-          };
-        });
+              colour:
+                config.colour(
+                  categoryKey
+                ),
+
+              statistics
+            };
+          }
+        );
 
       const positions =
-        buildLocationPositions(
+        buildBubblePositions(
           items
         );
 
-      locationAggregatePoints =
+      store.aggregates =
         items
           .map(item => ({
             ...item,
 
             x:
-              positions.get(item.state) ??
+              positions.get(
+                item.categoryKey
+              ) ??
               21
           }))
           .sort(
@@ -3216,26 +3381,41 @@
           );
     }
 
-    function getLocationAggregateVisibility(
-      state
-    ) {
-      if (splitProgress.has(state)) {
+    function getBubbleVisibility(raw) {
+      const store =
+        bubbleStores[
+          raw.bubbleView
+        ];
+
+      if (
+        store.splitProgress.has(
+          raw.categoryKey
+        )
+      ) {
         return (
           1 -
-          splitProgress.get(state)
+          store.splitProgress.get(
+            raw.categoryKey
+          )
         );
       }
 
-      if (mergingStates.has(state)) {
-        return mergeProgress;
+      if (
+        store.mergingKeys.has(
+          raw.categoryKey
+        )
+      ) {
+        return store.mergeProgress;
       }
 
-      return splitStates.has(state)
+      return store.splitKeys.has(
+        raw.categoryKey
+      )
         ? 0
         : 1;
     }
 
-    function getDisplayedLocationRadius(
+    function getDisplayedBubbleRadius(
       activeChart,
       raw
     ) {
@@ -3280,7 +3460,7 @@
       );
     }
 
-    function getLocationAggregateRadius(
+    function getBubbleRadius(
       activeChart,
       raw
     ) {
@@ -3289,21 +3469,25 @@
       }
 
       const visibility =
-        getLocationAggregateVisibility(
-          raw.state
-        );
+        getBubbleVisibility(raw);
 
       if (visibility <= 0.001) {
         return 0;
       }
 
-      return getDisplayedLocationRadius(
+      return getDisplayedBubbleRadius(
         activeChart,
         raw
       );
     }
 
-    function buildLocationView() {
+    function buildBubbleView(view) {
+      const store =
+        bubbleStores[view];
+
+      const config =
+        bubbleConfig(view);
+
       return {
         datasets: [
           {
@@ -3311,22 +3495,24 @@
               'scatter',
 
             datasetRole:
-              'locationAggregate',
+              'bubbleAggregate',
 
             order:
               10,
 
             label:
-              'State median rates',
+              view === 'employer'
+                ? 'Employer median rates'
+                : 'State median rates',
 
             data:
-              locationAggregatePoints,
+              store.aggregates,
 
             parsing:
               false,
 
             pointRadius(context) {
-              return getLocationAggregateRadius(
+              return getBubbleRadius(
                 context.chart,
                 context.raw
               );
@@ -3334,7 +3520,7 @@
 
             pointHoverRadius(context) {
               const radius =
-                getLocationAggregateRadius(
+                getBubbleRadius(
                   context.chart,
                   context.raw
                 );
@@ -3356,9 +3542,7 @@
 
               const visibility =
                 raw
-                  ? getLocationAggregateVisibility(
-                      raw.state
-                    )
+                  ? getBubbleVisibility(raw)
                   : 0;
 
               const opacity =
@@ -3367,7 +3551,9 @@
                   CONFIG.dimmedAggregateOpacity -
                   CONFIG.aggregateOpacity
                 ) *
-                aggregateDimProgress;
+                bubbleStores[
+                  raw.bubbleView
+                ].dimProgress;
 
               return rgba(
                 raw?.colour ||
@@ -3382,9 +3568,7 @@
 
               const visibility =
                 raw
-                  ? getLocationAggregateVisibility(
-                      raw.state
-                    )
+                  ? getBubbleVisibility(raw)
                   : 0;
 
               const opacity =
@@ -3393,7 +3577,9 @@
                   CONFIG.dimmedAggregateHoverOpacity -
                   CONFIG.aggregateHoverOpacity
                 ) *
-                aggregateDimProgress;
+                bubbleStores[
+                  raw.bubbleView
+                ].dimProgress;
 
               return rgba(
                 raw?.colour ||
@@ -3426,16 +3612,18 @@
               'scatter',
 
             datasetRole:
-              'locationRaw',
+              'bubbleRaw',
 
             order:
               -10,
 
             label:
-              'Raw state rates',
+              view === 'employer'
+                ? 'Raw employer rates'
+                : 'Raw state rates',
 
             data:
-              locationRawDisplayPoints,
+              store.rawPoints,
 
             parsing:
               false,
@@ -3525,11 +3713,15 @@
           }),
 
         legendItems:
-          locationCategories.map(
-            state =>
+          store.categories.map(
+            categoryKey =>
               buildLegendItem(
-                STATE_COLOURS[state],
-                state,
+                config.colour(
+                  categoryKey
+                ),
+                config.label(
+                  categoryKey
+                ),
                 'bubble'
               )
           ),
@@ -3540,6 +3732,12 @@
     }
 
     function buildViewModel(view) {
+      if (view === 'employer') {
+        return buildBubbleView(
+          'employer'
+        );
+      }
+
       if (view === 'rurality') {
         return buildRuralityView();
       }
@@ -3549,7 +3747,9 @@
       }
 
       if (view === 'location') {
-        return buildLocationView();
+        return buildBubbleView(
+          'location'
+        );
       }
 
       if (view === 'date') {
@@ -3559,27 +3759,23 @@
       return buildExperienceView();
     }
 
-    const locationLabelPlugin = {
+    const bubbleLabelPlugin = {
       id:
-        'locationLabelPlugin',
+        'bubbleLabelPlugin',
 
       afterDatasetDraw(
         activeChart,
         args
       ) {
-        const dataset =
-          activeChart
-            .data
-            .datasets[
-              args.index
-            ];
-
         if (
-          activeView !== 'location' ||
+          ![
+            'location',
+            'employer'
+          ].includes(activeView) ||
           viewMorphInProgress ||
           args.index !== 0 ||
-          dataset?.datasetRole !==
-            'locationAggregate'
+          activeChart.data.datasets[0]?.datasetRole !==
+            'bubbleAggregate'
         ) {
           return;
         }
@@ -3594,23 +3790,24 @@
         metadata.data.forEach(
           (element, index) => {
             const raw =
-              dataset.data[index];
+              activeChart
+                .data
+                .datasets[0]
+                .data[index];
 
-            if (!raw?.state) {
+            if (!raw?.categoryKey) {
               return;
             }
 
             const visibility =
-              getLocationAggregateVisibility(
-                raw.state
-              );
+              getBubbleVisibility(raw);
 
             if (visibility <= 0.02) {
               return;
             }
 
             const radius =
-              getDisplayedLocationRadius(
+              getDisplayedBubbleRadius(
                 activeChart,
                 raw
               );
@@ -3625,7 +3822,9 @@
               visibility *
               (
                 1 -
-                aggregateDimProgress *
+                bubbleStores[
+                  raw.bubbleView
+                ].dimProgress *
                 0.43
               );
 
@@ -3636,7 +3835,12 @@
               'middle';
 
             context.font =
-              '700 13px Lato, sans-serif';
+              `700 ${
+                raw.bubbleView ===
+                  'employer'
+                  ? 11
+                  : 13
+              }px Lato, sans-serif`;
 
             context.lineJoin =
               'round';
@@ -3646,17 +3850,18 @@
 
             context.strokeStyle =
               'rgba(255, 255, 255, 0.94)';
+
             context.fillStyle =
               '#151515';
 
             context.strokeText(
-              raw.state,
+              raw.label,
               element.x,
               element.y
             );
 
             context.fillText(
-              raw.state,
+              raw.label,
               element.x,
               element.y
             );
@@ -3675,10 +3880,14 @@
         item?.raw;
 
       if (
-        role === 'locationAggregate' ||
-        role === 'locationRaw'
+        role === 'bubbleAggregate' ||
+        role === 'bubbleRaw'
       ) {
-        return raw?.state || '';
+        return (
+          raw?.fullName ||
+          raw?.label ||
+          ''
+        );
       }
 
       if (
@@ -3743,20 +3952,20 @@
             metadata.statistics
           )}`,
 
-          `Respondents: ${formatNumber(
+          `Submissions: ${formatNumber(
             metadata.statistics?.count,
             0
           )}`
         ];
       }
 
-      if (role === 'locationAggregate') {
+      if (role === 'bubbleAggregate') {
         return [
           `Median [IQR]: ${formatMedianIqr(
             raw.statistics
           )}`,
 
-          `Respondents: ${formatNumber(
+          `Submissions: ${formatNumber(
             raw.statistics?.count,
             0
           )}`,
@@ -3765,20 +3974,8 @@
         ];
       }
 
-      if (role === 'locationRaw') {
-        return [
-          `Rate: ${formatCurrency(
-            raw?.hourlyRate,
-            1
-          )}/hour`,
-
-          ...buildIndividualDetailLines(
-            raw
-          )
-        ];
-      }
-
       if (
+        role === 'bubbleRaw' ||
         role === 'categoryPoints' ||
         role === 'continuousPoints'
       ) {
@@ -3811,8 +4008,8 @@
           role === 'regression' ||
           role === 'categoryPoints' ||
           role === 'categoryMedian' ||
-          role === 'locationAggregate' ||
-          role === 'locationRaw'
+          role === 'bubbleAggregate' ||
+          role === 'bubbleRaw'
         );
       });
     }
@@ -3989,7 +4186,7 @@
 
       return bestMatch;
     }
-    function findRawLocationElement(event) {
+    function findRawBubbleElement(event) {
       if (!chart?.chartArea) {
         return null;
       }
@@ -4021,7 +4218,7 @@
         (dataset, datasetIndex) => {
           if (
             dataset.datasetRole !==
-              'locationRaw'
+              'bubbleRaw'
           ) {
             return;
           }
@@ -4105,7 +4302,7 @@
         (dataset, datasetIndex) => {
           if (
             dataset.datasetRole !==
-              'locationAggregate'
+              'bubbleAggregate'
           ) {
             return;
           }
@@ -4223,9 +4420,9 @@
         dataset?.datasetRole !==
           'categoryMedian' &&
         dataset?.datasetRole !==
-          'locationAggregate' &&
+          'bubbleAggregate' &&
         dataset?.datasetRole !==
-          'locationRaw'
+          'bubbleRaw'
       ) {
         return;
       }
@@ -4268,7 +4465,7 @@
       }
 
       const selectedElement =
-        findRawLocationElement(event) ||
+        findRawBubbleElement(event) ||
         findPrioritySummaryElement(event) ||
         getInteractiveElement(elements);
 
@@ -4287,11 +4484,14 @@
           : null;
 
       chart.canvas.style.cursor =
-        activeView === 'location' &&
         dataset?.datasetRole ===
-          'locationAggregate' &&
+          'bubbleAggregate' &&
         raw &&
-        !splitStates.has(raw.state)
+        !bubbleStores[
+          raw.bubbleView
+        ].splitKeys.has(
+          raw.categoryKey
+        )
           ? 'pointer'
           : selectedElement
             ? 'pointer'
@@ -4305,9 +4505,9 @@
           dataset?.datasetRole ===
             'categoryMedian' ||
           dataset?.datasetRole ===
-            'locationAggregate' ||
+            'bubbleAggregate' ||
           dataset?.datasetRole ===
-            'locationRaw'
+            'bubbleRaw'
         )
       ) {
         showHoveredLineTooltip(
@@ -4332,7 +4532,7 @@
         ?.preventDefault?.();
 
       const selectedElement =
-        findRawLocationElement(event) ||
+        findRawBubbleElement(event) ||
         findPrioritySummaryElement(event) ||
         getInteractiveElement(elements);
 
@@ -4365,11 +4565,14 @@
         ];
 
       if (
-        activeView !== 'location' ||
         dataset?.datasetRole !==
-          'locationAggregate' ||
+          'bubbleAggregate' ||
         !raw ||
-        splitStates.has(raw.state)
+        bubbleStores[
+          raw.bubbleView
+        ].splitKeys.has(
+          raw.categoryKey
+        )
       ) {
         lastAggregateClickKey =
           null;
@@ -4383,9 +4586,12 @@
       const clickedAt =
         performance.now();
 
+      const clickKey =
+        `${raw.bubbleView}:${raw.categoryKey}`;
+
       const isSecondActivation =
         lastAggregateClickKey ===
-          raw.state &&
+          clickKey &&
         clickedAt -
           lastAggregateClickTime <=
           CONFIG.doubleActivationMs;
@@ -4407,15 +4613,16 @@
 
         chart.update('none');
 
-        animateStateSplit(
-          raw.state
+        animateBubbleSplit(
+          raw.bubbleView,
+          raw.categoryKey
         );
 
         return;
       }
 
       lastAggregateClickKey =
-        raw.state;
+        clickKey;
 
       lastAggregateClickTime =
         clickedAt;
@@ -4723,6 +4930,27 @@
         }
       }
 
+      if (
+        targetRaw?.bubbleView &&
+        targetRaw?.categoryKey
+      ) {
+        const sameBubble =
+          allPointPixels.filter(
+            pixel =>
+              pixel.raw?.bubbleView ===
+                targetRaw.bubbleView &&
+              pixel.raw?.categoryKey ===
+                targetRaw.categoryKey
+          );
+
+        if (sameBubble.length) {
+          return findNearestPixel(
+            targetPixel,
+            sameBubble
+          );
+        }
+      }
+
       if (targetRaw?.state) {
         const sameState =
           allPointPixels.filter(
@@ -4735,6 +4963,22 @@
           return findNearestPixel(
             targetPixel,
             sameState
+          );
+        }
+      }
+
+      if (targetRaw?.employerKey) {
+        const sameEmployer =
+          allPointPixels.filter(
+            pixel =>
+              pixel.raw?.employerKey ===
+              targetRaw.employerKey
+          );
+
+        if (sameEmployer.length) {
+          return findNearestPixel(
+            targetPixel,
+            sameEmployer
           );
         }
       }
@@ -5413,7 +5657,7 @@
             plugins: [
               xAxisFadePlugin,
               variableAxisTickPlugin,
-              locationLabelPlugin
+              bubbleLabelPlugin
             ]
           }
         );
@@ -5515,9 +5759,13 @@
         return;
       }
 
+      const currentBubbleStore =
+        bubbleStores[
+          activeView
+        ];
+
       if (
-        activeView === 'location' &&
-        splitStates.size > 0
+        currentBubbleStore?.splitKeys.size
       ) {
         animateReaggregation(
           () => {
@@ -5561,9 +5809,19 @@
 
 
     function updateReaggregateButton() {
+      const store =
+        bubbleStores[
+          activeView
+        ];
+
       const shouldShow =
-        splitStates.size > 0 ||
-        mergingStates.size > 0;
+        Boolean(
+          store &&
+          (
+            store.splitKeys.size > 0 ||
+            store.mergingKeys.size > 0
+          )
+        );
 
       reaggregateButton.classList.toggle(
         'is-hidden',
@@ -5584,31 +5842,36 @@
         interactionLocked;
     }
 
-    function createRawStatePoints(state) {
+    function createRawBubblePoints(
+      view,
+      categoryKey
+    ) {
+      const store =
+        bubbleStores[view];
+
       const aggregatePoint =
-        locationAggregatePoints.find(
+        store.aggregates.find(
           point =>
-            point.state === state
+            point.categoryKey ===
+            categoryKey
         );
 
-      const stateRows =
-        locationRawRows.get(state) ||
-        [];
+      const categoryRows =
+        store.rowsByKey.get(
+          categoryKey
+        ) || [];
 
       if (
         !aggregatePoint ||
-        !stateRows.length
+        !categoryRows.length
       ) {
         return [];
       }
 
-      const statistics =
-        aggregatePoint.statistics;
-
       const rateGroups =
         new Map();
 
-      stateRows.forEach(row => {
+      categoryRows.forEach(row => {
         const key =
           String(row.hourlyRate);
 
@@ -5667,9 +5930,18 @@
 
             points.push({
               kind:
-                'locationRaw',
+                'bubbleRaw',
 
-              state,
+              bubbleView:
+                view,
+
+              categoryKey,
+
+              label:
+                aggregatePoint.label,
+
+              fullName:
+                aggregatePoint.fullName,
 
               x:
                 aggregatePoint.x,
@@ -5685,7 +5957,8 @@
               colour:
                 aggregatePoint.colour,
 
-              statistics,
+              statistics:
+                aggregatePoint.statistics,
 
               ...row
             });
@@ -5696,19 +5969,28 @@
       return points;
     }
 
-    function animateStateSplit(state) {
+    function animateBubbleSplit(
+      view,
+      categoryKey
+    ) {
+      const store =
+        bubbleStores[view];
+
       if (
-        activeView !== 'location' ||
+        activeView !== view ||
         interactionLocked ||
-        splitStates.has(state) ||
+        store.splitKeys.has(
+          categoryKey
+        ) ||
         !chart
       ) {
         return;
       }
 
       const newPoints =
-        createRawStatePoints(
-          state
+        createRawBubblePoints(
+          view,
+          categoryKey
         );
 
       if (!newPoints.length) {
@@ -5716,15 +5998,17 @@
       }
 
       const shouldDim =
-        splitStates.size === 0;
+        store.splitKeys.size === 0;
 
       interactionLocked =
         true;
 
-      splitStates.add(state);
+      store.splitKeys.add(
+        categoryKey
+      );
 
-      splitProgress.set(
-        state,
+      store.splitProgress.set(
+        categoryKey,
         0
       );
 
@@ -5736,12 +6020,12 @@
           point.y;
       });
 
-      locationRawDisplayPoints.push(
+      store.rawPoints.push(
         ...newPoints
       );
 
       chart.data.datasets[1].data =
-        locationRawDisplayPoints;
+        store.rawPoints;
 
       chart.update('none');
 
@@ -5755,13 +6039,13 @@
           easeOutCubic,
 
         onFrame(progress) {
-          splitProgress.set(
-            state,
+          store.splitProgress.set(
+            categoryKey,
             progress
           );
 
           if (shouldDim) {
-            aggregateDimProgress =
+            store.dimProgress =
               progress;
           }
 
@@ -5795,12 +6079,12 @@
               point.targetY;
           });
 
-          splitProgress.delete(
-            state
+          store.splitProgress.delete(
+            categoryKey
           );
 
           if (shouldDim) {
-            aggregateDimProgress =
+            store.dimProgress =
               1;
           }
 
@@ -5817,11 +6101,16 @@
     function animateReaggregation(
       onCompleteCallback = null
     ) {
+      const store =
+        bubbleStores[
+          activeView
+        ];
+
       if (
-        activeView !== 'location' ||
+        !store ||
         interactionLocked ||
         !chart ||
-        splitStates.size === 0
+        store.splitKeys.size === 0
       ) {
         return;
       }
@@ -5829,20 +6118,24 @@
       interactionLocked =
         true;
 
-      mergeProgress =
+      store.mergeProgress =
         0;
 
-      splitStates.forEach(state => {
-        mergingStates.add(state);
-      });
+      store.splitKeys.forEach(
+        categoryKey => {
+          store.mergingKeys.add(
+            categoryKey
+          );
+        }
+      );
 
-      locationRawDisplayPoints.forEach(
+      store.rawPoints.forEach(
         point => {
           const aggregatePoint =
-            locationAggregatePoints.find(
+            store.aggregates.find(
               item =>
-                item.state ===
-                point.state
+                item.categoryKey ===
+                point.categoryKey
             );
 
           point.mergeStartX =
@@ -5873,13 +6166,13 @@
           easeInOutCubic,
 
         onFrame(progress) {
-          mergeProgress =
+          store.mergeProgress =
             progress;
 
-          aggregateDimProgress =
+          store.dimProgress =
             1 - progress;
 
-          locationRawDisplayPoints.forEach(
+          store.rawPoints.forEach(
             point => {
               point.x =
                 point.mergeStartX +
@@ -5903,20 +6196,20 @@
         },
 
         onComplete() {
-          locationRawDisplayPoints =
+          store.rawPoints =
             [];
 
           chart.data.datasets[1].data =
-            locationRawDisplayPoints;
+            store.rawPoints;
 
-          splitStates.clear();
-          splitProgress.clear();
-          mergingStates.clear();
+          store.splitKeys.clear();
+          store.splitProgress.clear();
+          store.mergingKeys.clear();
 
-          mergeProgress =
+          store.mergeProgress =
             0;
 
-          aggregateDimProgress =
+          store.dimProgress =
             0;
 
           interactionLocked =
@@ -6039,7 +6332,7 @@
 
           if (!parsedRows.length) {
             throw new Error(
-              'No valid hourly rate rows were found in columns A to J'
+              'No valid hourly rate rows were found in columns A to K'
             );
           }
 
@@ -6082,7 +6375,7 @@
                 (row, sourceIndex) => {
                   if (
                     !Array.isArray(row) ||
-                    row.length < 6
+                    row.length < 9
                   ) {
                     return null;
                   }
@@ -6095,17 +6388,27 @@
                       toNumber(row[1]),
                     experience:
                       toNumber(row[2]),
+                    patientsPerDay:
+                      toNumber(row[3]),
                     rurality:
                       normaliseRurality(
-                        row[3]
+                        row[4]
+                      ),
+                    specialtyServices:
+                      cleanText(
+                        row[5]
                       ),
                     state:
                       normaliseState(
-                        row[4]
+                        row[6]
                       ),
                     structure:
                       normaliseStructure(
-                        row[5]
+                        row[7]
+                      ),
+                    employerKey:
+                      normaliseEmployer(
+                        row[8]
                       )
                   };
                 }
@@ -6155,7 +6458,14 @@
           rows =
             loaded.rows;
 
-          rebuildLocationData();
+          rebuildBubbleStore(
+            'location'
+          );
+
+          rebuildBubbleStore(
+            'employer'
+          );
+
           createChart();
 
           tabsController?.set(
