@@ -294,7 +294,7 @@
     .summary-slider-drag-cue {
       position: absolute;
       top: -8px;
-      left: calc(var(--summary-slider-progress) - 23px);
+      left: calc(var(--summary-slider-progress) + 10px);
       z-index: 5;
       display: inline-block;
       color: var(--pff-muted);
@@ -324,12 +324,12 @@
 
       54% {
         opacity: 0.88;
-        transform: translateX(-6px);
+        transform: translateX(6px);
       }
 
       72% {
         opacity: 0.42;
-        transform: translateX(-8px);
+        transform: translateX(8px);
       }
     }
 
@@ -1704,7 +1704,7 @@
 
           <div id="summary-slider-wrap" class="summary-slider-wrap">
             <div id="summary-slider-ticks" class="summary-slider-ticks" aria-hidden="true"></div>
-            <span class="summary-slider-drag-cue" aria-hidden="true">←</span>
+            <span class="summary-slider-drag-cue" aria-hidden="true">→</span>
 
             <input
               id="summary-period-slider"
@@ -1771,7 +1771,7 @@
             (+<span id="repeat-count">0</span> repeats)
             of
             <span id="total-count" class="status-count">0</span>
-            jobs within last 3 mths
+            jobs within last <span id="table-period-label">3 mths</span>
           </p>
         </div>
 
@@ -2390,6 +2390,9 @@
 
     const totalCountElement =
       document.getElementById('total-count');
+
+    const tablePeriodLabel =
+      document.getElementById('table-period-label');
 
     const summaryTable =
       document.getElementById('summary-table');
@@ -3954,6 +3957,46 @@
       )}`;
     }
 
+    function tablePeriodText() {
+      const weeks =
+        state.summaryWeeksToShow;
+
+      if (
+        weeks ===
+        state.summaryMaxWeeks
+      ) {
+        return '3 mths';
+      }
+
+      return `${weeks} ${weeks === 1 ? 'wk' : 'wks'}`;
+    }
+
+    function rowMatchesSummaryPeriod(
+      row
+    ) {
+      if (
+        !(row.dateValue instanceof Date) ||
+        Number.isNaN(
+          row.dateValue.getTime()
+        )
+      ) {
+        return false;
+      }
+
+      const start =
+        summaryPeriodStart();
+
+      const end =
+        summaryPeriodEnd();
+
+      return (
+        row.dateValue.getTime() >=
+          start.getTime() &&
+        row.dateValue.getTime() <=
+          end.getTime()
+      );
+    }
+
     function updateSummarySliderProgress() {
       const min =
         Number(summaryPeriodSlider.min);
@@ -4508,7 +4551,9 @@
           weekDifference + 1
         );
 
-      state.summaryWeeksToShow = 1;
+      state.summaryWeeksToShow =
+        state.summaryMaxWeeks;
+
       state.summarySelection = null;
 
       summaryPeriodSlider.min = '1';
@@ -4517,10 +4562,7 @@
           state.summaryMaxWeeks
         );
       summaryPeriodSlider.step = '1';
-      summaryPeriodSlider.value =
-        String(
-          state.summaryMaxWeeks
-        );
+      summaryPeriodSlider.value = '1';
 
       summarySliderWrap.classList.toggle(
         'has-been-dragged',
@@ -6555,16 +6597,8 @@
               );
 
             const hidden =
-              (
-                !summaryActive &&
-                (
-                  !(row.dateValue instanceof Date) ||
-                  Number.isNaN(
-                    row.dateValue.getTime()
-                  ) ||
-                  row.dateValue <
-                    state.dateCutoff
-                )
+              !rowMatchesSummaryPeriod(
+                row
               ) ||
               (
                 !state.filters
@@ -6620,6 +6654,14 @@
         state.rows.filter(
           row => {
             if (
+              !rowMatchesSummaryPeriod(
+                row
+              )
+            ) {
+              return false;
+            }
+
+            if (
               state.summarySelection
             ) {
               return rowMatchesSummarySelection(
@@ -6627,14 +6669,7 @@
               );
             }
 
-            return (
-              row.dateValue instanceof Date &&
-              !Number.isNaN(
-                row.dateValue.getTime()
-              ) &&
-              row.dateValue >=
-                state.dateCutoff
-            );
+            return true;
           }
         ).length;
 
@@ -6707,6 +6742,9 @@
       totalCountCounter.set(
         totalCount
       );
+
+      tablePeriodLabel.textContent =
+        tablePeriodText();
     }
 
     function commitFilterResult(
@@ -7042,12 +7080,7 @@
         );
 
         renderSummaryCounts();
-
-        if (
-          state.summarySelection
-        ) {
-          applyFilters(true);
-        }
+        applyFilters(true);
       }
     );
 
@@ -7358,6 +7391,17 @@
 
         state.filters =
           cloneDefaultFilters();
+
+        summarySliderHasBeenUsed =
+          false;
+
+        summaryPeriodSlider.value = '1';
+
+        summarySliderWrap.classList.remove(
+          'has-been-dragged'
+        );
+
+        renderSummaryCounts();
 
         setMenuOpen(
           null,
