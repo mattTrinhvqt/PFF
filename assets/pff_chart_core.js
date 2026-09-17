@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.8
+ * PFF Core v1.2.9
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.8';
+  const VERSION = '1.2.9';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -306,6 +306,14 @@ const EMPLOYERS = Object.freeze([
   --pff-blue-cone: rgba(74, 86, 255, 0.82);
   --pff-green-cone: rgba(36, 210, 116, 0.78);
   --pff-red-cone: rgba(255, 92, 48, 0.76);
+  --pff-state-nsw: #2db7f5;
+  --pff-state-vic: #2d3a8c;
+  --pff-state-qld: #7a0036;
+  --pff-state-sa: #f03a47;
+  --pff-state-wa: #000000;
+  --pff-state-tas: #22a36b;
+  --pff-state-nt: #c25e00;
+  --pff-state-act: #7b61ff;  
   --pff-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --pff-chart-max-width: 520px;
   --pff-metric-columns: 2;
@@ -2831,6 +2839,332 @@ body.pff-chart-app .pff-app {
       }
     };
   }
+  function setupOverflowHints(options = {}) {
+    const scroller = options.scroller;
+    const container = options.container || options.shell || null;
+    const leftClass = String(options.leftClass || 'can-scroll-left');
+    const rightClass = String(options.rightClass || 'can-scroll-right');
+    const tolerance = Math.max(0, Number(options.tolerance) || 2);
+
+    if (!scroller || !container) {
+      return { update() {}, destroy() {} };
+    }
+
+    const update = () => {
+      const maximumScrollLeft = Math.max(
+        0,
+        scroller.scrollWidth - scroller.clientWidth
+      );
+
+      container.classList.toggle(
+        leftClass,
+        scroller.scrollLeft > tolerance
+      );
+
+      container.classList.toggle(
+        rightClass,
+        scroller.scrollLeft < maximumScrollLeft - tolerance
+      );
+    };
+
+    scroller.addEventListener('scroll', update, { passive: true });
+
+    let observer = null;
+    if ('ResizeObserver' in global) {
+      observer = new ResizeObserver(update);
+      observer.observe(scroller);
+    }
+
+    global.addEventListener('resize', update, { passive: true });
+    global.visualViewport?.addEventListener('resize', update, { passive: true });
+    requestAnimationFrame(update);
+
+    return {
+      update,
+      destroy() {
+        scroller.removeEventListener('scroll', update);
+        global.removeEventListener('resize', update);
+        global.visualViewport?.removeEventListener('resize', update);
+        observer?.disconnect();
+      }
+    };
+  }
+
+  function setupTextPopover(options = {}) {
+    const root = options.root || document;
+    const popover = options.popover;
+    const triggerSelector = options.triggerSelector || '.has-full-text';
+    const ignoredSelector = options.ignoredSelector || 'a';
+    const visibleClass = options.visibleClass || 'is-visible';
+    const margin = Math.max(0, Number(options.margin) || 8);
+    const gap = Math.max(0, Number(options.gap) || 5);
+    const closeOnScrollTargets = Array.from(options.closeOnScrollTargets || []);
+
+    let activeTrigger = null;
+
+    if (!popover) {
+      return {
+        show() {},
+        close() {},
+        destroy() {},
+        get activeTrigger() { return null; }
+      };
+    }
+
+    function close() {
+      popover.classList.remove(visibleClass);
+      popover.setAttribute('aria-hidden', 'true');
+      popover.textContent = '';
+      activeTrigger = null;
+    }
+
+    function position(trigger) {
+      const anchorRect = trigger.getBoundingClientRect();
+      const popoverRect = popover.getBoundingClientRect();
+
+      const left = Math.max(
+        margin,
+        Math.min(
+          anchorRect.left,
+          global.innerWidth - popoverRect.width - margin
+        )
+      );
+
+      let top = anchorRect.bottom + gap;
+
+      if (
+        top + popoverRect.height >
+        global.innerHeight - margin
+      ) {
+        top = anchorRect.top - popoverRect.height - gap;
+      }
+
+      top = Math.max(
+        margin,
+        Math.min(
+          top,
+          global.innerHeight - popoverRect.height - margin
+        )
+      );
+
+      popover.style.left = `${Math.round(left)}px`;
+      popover.style.top = `${Math.round(top)}px`;
+      popover.style.visibility = '';
+    }
+
+    function show(trigger) {
+      const text = String(
+        options.getText?.(trigger) ??
+        trigger?.dataset?.fullText ??
+        ''
+      ).trim();
+
+      if (!text) {
+        return;
+      }
+
+      if (
+        activeTrigger === trigger &&
+        popover.classList.contains(visibleClass)
+      ) {
+        close();
+        return;
+      }
+
+      activeTrigger = trigger;
+      popover.textContent = text;
+      popover.classList.add(visibleClass);
+      popover.setAttribute('aria-hidden', 'false');
+      popover.style.visibility = 'hidden';
+      popover.style.left = '0px';
+      popover.style.top = '0px';
+      position(trigger);
+    }
+
+    function closestTrigger(event) {
+      const trigger = event.target?.closest?.(triggerSelector) || null;
+
+      if (!trigger) {
+        return null;
+      }
+
+      if (
+        root !== document &&
+        typeof root.contains === 'function' &&
+        !root.contains(trigger)
+      ) {
+        return null;
+      }
+
+      return trigger;
+    }
+
+    const clickHandler = event => {
+      const trigger = closestTrigger(event);
+
+      if (
+        !trigger ||
+        (ignoredSelector && event.target?.closest?.(ignoredSelector))
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      show(trigger);
+    };
+
+    const keyHandler = event => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+
+      const trigger = closestTrigger(event);
+      if (!trigger) {
+        return;
+      }
+
+      event.preventDefault();
+      show(trigger);
+    };
+
+    const outsideHandler = event => {
+      if (
+        popover.classList.contains(visibleClass) &&
+        !event.target?.closest?.(triggerSelector)
+      ) {
+        close();
+      }
+    };
+
+    const escapeHandler = event => {
+      if (event.key === 'Escape') {
+        close();
+      }
+    };
+
+    root.addEventListener('click', clickHandler);
+    root.addEventListener('keydown', keyHandler);
+    document.addEventListener('pointerdown', outsideHandler);
+    document.addEventListener('keydown', escapeHandler);
+
+    const scrollHandler = () => close();
+    closeOnScrollTargets.forEach(target =>
+      target?.addEventListener?.('scroll', scrollHandler, { passive: true })
+    );
+
+    if (options.closeOnWindowScroll !== false) {
+      global.addEventListener('scroll', scrollHandler, { passive: true });
+    }
+
+    if (options.closeOnResize !== false) {
+      global.addEventListener('resize', scrollHandler, { passive: true });
+    }
+
+    return {
+      show,
+      close,
+      destroy() {
+        root.removeEventListener('click', clickHandler);
+        root.removeEventListener('keydown', keyHandler);
+        document.removeEventListener('pointerdown', outsideHandler);
+        document.removeEventListener('keydown', escapeHandler);
+
+        closeOnScrollTargets.forEach(target =>
+          target?.removeEventListener?.('scroll', scrollHandler)
+        );
+
+        global.removeEventListener('scroll', scrollHandler);
+        global.removeEventListener('resize', scrollHandler);
+      },
+      get activeTrigger() {
+        return activeTrigger;
+      }
+    };
+  }
+
+  function setupStickyTableHeader(options = {}) {
+    const table = options.table;
+    const shell = options.shell;
+    const scroller = options.scroller;
+    const stickyHeader = options.stickyHeader;
+    const stickyScroller = options.stickyScroller;
+    const stickyTable = options.stickyTable;
+    const visibleClass = options.visibleClass || 'is-visible';
+
+    if (
+      !table ||
+      !shell ||
+      !scroller ||
+      !stickyHeader ||
+      !stickyScroller ||
+      !stickyTable
+    ) {
+      return { sync() {}, update() {}, destroy() {} };
+    }
+
+    function update() {
+      const thead = table.querySelector('thead');
+
+      if (!thead || table.style.display === 'none') {
+        stickyHeader.classList.remove(visibleClass);
+        return;
+      }
+
+      const headerRect = thead.getBoundingClientRect();
+      const shellRect = shell.getBoundingClientRect();
+      const shouldShow =
+        headerRect.top < 0 &&
+        shellRect.bottom > headerRect.height;
+
+      stickyHeader.classList.toggle(visibleClass, shouldShow);
+
+      if (!shouldShow) {
+        return;
+      }
+
+      stickyHeader.style.left = `${Math.round(shellRect.left)}px`;
+      stickyHeader.style.width = `${Math.round(shellRect.width)}px`;
+      stickyScroller.scrollLeft = scroller.scrollLeft;
+    }
+
+    function sync() {
+      const colgroup = table.querySelector('colgroup');
+      const thead = table.querySelector('thead');
+
+      if (!colgroup || !thead) {
+        return;
+      }
+
+      stickyTable.replaceChildren(
+        colgroup.cloneNode(true),
+        thead.cloneNode(true)
+      );
+
+      stickyTable.style.width = table.style.width;
+      stickyTable.style.minWidth = table.style.minWidth;
+      stickyScroller.scrollLeft = scroller.scrollLeft;
+      update();
+    }
+
+    const scrollerHandler = () => {
+      stickyScroller.scrollLeft = scroller.scrollLeft;
+    };
+
+    scroller.addEventListener('scroll', scrollerHandler, { passive: true });
+    global.addEventListener('scroll', update, { passive: true });
+    global.addEventListener('resize', update, { passive: true });
+
+    return {
+      sync,
+      update,
+      destroy() {
+        scroller.removeEventListener('scroll', scrollerHandler);
+        global.removeEventListener('scroll', update);
+        global.removeEventListener('resize', update);
+      }
+    };
+  }  
   function setupTextTooltip(options = {}) {
     const tooltip =
       options.tooltip ||
@@ -6975,7 +7309,36 @@ function getEmployerAppearance(
       }
     });
   }
+  async function retryAsync(operation, options = {}) {
+    if (typeof operation !== 'function') {
+      throw new TypeError('PFF.retryAsync requires an operation function.');
+    }
 
+    const attempts = Math.max(
+      1,
+      Math.round(Number(options.attempts) || 1)
+    );
+
+    const delayMs = Math.max(0, Number(options.delayMs) || 0);
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await operation(attempt, attempts);
+      } catch (error) {
+        lastError = error;
+        options.onAttemptError?.(error, attempt, attempts);
+
+        if (attempt < attempts && delayMs > 0) {
+          await new Promise(resolve =>
+            global.setTimeout(resolve, delayMs)
+          );
+        }
+      }
+    }
+
+    throw lastError || new Error('The operation failed.');
+  }
   function loadGVizSheet(options = {}) {
     const sheetId = options.sheetId;
 
@@ -8650,6 +9013,12 @@ function getEmployerAppearance(
 
     let open = false;
 
+    const focusOnOpen =
+      options.focusOnOpen !== false;
+
+    const focusOnEscape =
+      options.focusOnEscape !== false;
+
     function setOpen(
       nextOpen,
       focus = false
@@ -8695,7 +9064,8 @@ function getEmployerAppearance(
 
         setOpen(
           !open,
-          !open
+          !open &&
+            focusOnOpen
         );
       };
 
@@ -8718,10 +9088,12 @@ function getEmployerAppearance(
         ) {
           setOpen(false);
 
-          button?.focus?.({
-            preventScroll:
-              true
-          });
+          if (focusOnEscape) {
+            button?.focus?.({
+              preventScroll:
+                true
+            });
+          }
         }
       };
 
@@ -8748,7 +9120,7 @@ function getEmployerAppearance(
       openMenu() {
         setOpen(
           true,
-          true
+          focusOnOpen
         );
       },
 
@@ -8759,7 +9131,8 @@ function getEmployerAppearance(
       toggle() {
         setOpen(
           !open,
-          !open
+          !open &&
+            focusOnOpen
         );
       },
 
@@ -9399,16 +9772,20 @@ function getEmployerAppearance(
       setupAutoFitTable,
 
       setupScrollableRegion,
+      setupOverflowHints,
       setupTabs,
       setupMetricSwitch,
       setupMenu,
       setupStepper,
       setupTextTooltip,
+      setupTextPopover,
+      setupStickyTableHeader,
       animateHeading,
       animateTextChange,
       createAnimationController,
       createIntegerCounter,
 
+      retryAsync,
       loadGVizSheet,
       loadAppsScriptJsonp,
       loadAppsScriptCache,
