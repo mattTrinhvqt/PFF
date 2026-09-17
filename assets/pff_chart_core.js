@@ -6597,6 +6597,15 @@ function getEmployerAppearance(
             );
         }
 
+        currentValue =
+          target;
+
+        hasValue =
+          true;
+
+        return;
+      }
+
       currentValue =
         startValue;
 
