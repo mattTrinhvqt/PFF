@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.9
+ * PFF Core v1.3.0
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.9';
+  const VERSION = '1.3.0';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -6606,6 +6606,12 @@ function getEmployerAppearance(
         return;
       }
 
+      currentValue =
+        startValue;
+
+      hasValue =
+        true;
+
       animation.run({
         duration,
         easing,
@@ -6635,6 +6641,9 @@ function getEmployerAppearance(
                   current
                 );
             }
+
+            currentValue =
+              current;
 
             if (element) {
               element.textContent =
