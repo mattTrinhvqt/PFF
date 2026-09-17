@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.7
+ * PFF Core v1.2.8
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.7';
+  const VERSION = '1.2.8';
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -8806,16 +8806,34 @@ function getEmployerAppearance(
         []
       );
 
-    const backButton =
-      options.backButton ||
-      root?.querySelector?.(
-        '[data-step-back]'
+    const backButtons =
+      Array.from(
+        options.backButtons ||
+        (
+          options.backButton
+            ? [
+                options.backButton
+              ]
+            : root?.querySelectorAll?.(
+                '[data-step-back]'
+              ) ||
+              []
+        )
       );
 
-    const nextButton =
-      options.nextButton ||
-      root?.querySelector?.(
-        '[data-step-next]'
+    const nextButtons =
+      Array.from(
+        options.nextButtons ||
+        (
+          options.nextButton
+            ? [
+                options.nextButton
+              ]
+            : root?.querySelectorAll?.(
+                '[data-step-next]'
+              ) ||
+              []
+        )
       );
 
     let index =
@@ -8875,16 +8893,20 @@ function getEmployerAppearance(
         }
       );
 
-      if (backButton) {
-        backButton.disabled =
-          index <= 0;
-      }
+      backButtons.forEach(
+        button => {
+          button.disabled =
+            index <= 0;
+        }
+      );
 
-      if (nextButton) {
-        nextButton.disabled =
-          index >=
-          steps.length - 1;
-      }
+      nextButtons.forEach(
+        button => {
+          button.disabled =
+            index >=
+            steps.length - 1;
+        }
+      );
 
       root?.style.setProperty(
         '--pff-step-index',
@@ -8958,14 +8980,22 @@ function getEmployerAppearance(
           index + 1
         );
 
-    backButton?.addEventListener(
-      'click',
-      backHandler
+    backButtons.forEach(
+      button => {
+        button.addEventListener(
+          'click',
+          backHandler
+        );
+      }
     );
 
-    nextButton?.addEventListener(
-      'click',
-      nextHandler
+    nextButtons.forEach(
+      button => {
+        button.addEventListener(
+          'click',
+          nextHandler
+        );
+      }
     );
 
     render(false);
@@ -8999,14 +9029,22 @@ function getEmployerAppearance(
       },
 
       destroy() {
-        backButton?.removeEventListener(
-          'click',
-          backHandler
+        backButtons.forEach(
+          button => {
+            button.removeEventListener(
+              'click',
+              backHandler
+            );
+          }
         );
 
-        nextButton?.removeEventListener(
-          'click',
-          nextHandler
+        nextButtons.forEach(
+          button => {
+            button.removeEventListener(
+              'click',
+              nextHandler
+            );
+          }
         );
       }
     };
