@@ -2292,6 +2292,160 @@
       }
     };
 
+    function tooltipFontLineHeight(font, fallbackSize) {
+      const size =
+        Number(font?.size) ||
+        fallbackSize;
+
+      const configured =
+        font?.lineHeight;
+
+      if (
+        typeof configured === 'number' &&
+        Number.isFinite(configured)
+      ) {
+        return configured > 4
+          ? configured
+          : size * configured;
+      }
+
+      if (typeof configured === 'string') {
+        const text = configured.trim();
+        const value = parseFloat(text);
+
+        if (Number.isFinite(value)) {
+          if (text.endsWith('px')) {
+            return value;
+          }
+
+          if (text.endsWith('%')) {
+            return size * value / 100;
+          }
+
+          return size * value;
+        }
+      }
+
+      return size * 1.2;
+    }
+
+    const tooltipDividerPlugin = {
+      id: 'tooltipDividerPlugin',
+
+      afterTooltipDraw(activeChart, args) {
+        const tooltip = args.tooltip;
+        const bodyItems = tooltip?.body || [];
+
+        if (
+          !tooltip ||
+          tooltip.opacity <= 0 ||
+          bodyItems.length < 2
+        ) {
+          return;
+        }
+
+        const options =
+          tooltip.options || {};
+
+        const padding =
+          Number(options.padding) || 9;
+
+        const bodySpacing =
+          Number.isFinite(Number(options.bodySpacing))
+            ? Number(options.bodySpacing)
+            : 2;
+
+        const titleSpacing =
+          Number.isFinite(Number(options.titleSpacing))
+            ? Number(options.titleSpacing)
+            : 2;
+
+        const titleMarginBottom =
+          Number.isFinite(Number(options.titleMarginBottom))
+            ? Number(options.titleMarginBottom)
+            : 6;
+
+        const bodyLineHeight =
+          tooltipFontLineHeight(
+            options.bodyFont,
+            11
+          );
+
+        const titleLineHeight =
+          tooltipFontLineHeight(
+            options.titleFont,
+            12
+          );
+
+        const titleCount =
+          tooltip.title?.length || 0;
+
+        let dividerY =
+          tooltip.y + padding;
+
+        if (titleCount) {
+          dividerY +=
+            titleCount * titleLineHeight +
+            Math.max(0, titleCount - 1) *
+              titleSpacing +
+            titleMarginBottom;
+        }
+
+        dividerY +=
+          (tooltip.beforeBody?.length || 0) *
+          (bodyLineHeight + bodySpacing);
+
+        const context =
+          activeChart.ctx;
+
+        context.save();
+        context.strokeStyle =
+          '#e8eaf0';
+        context.lineWidth = 1;
+
+        bodyItems.forEach(
+          (bodyItem, index) => {
+            const lineCount =
+              (bodyItem.before?.length || 0) +
+              (bodyItem.lines?.length || 0) +
+              (bodyItem.after?.length || 0);
+
+            dividerY +=
+              lineCount *
+              (bodyLineHeight + bodySpacing);
+
+            if (
+              index >=
+              bodyItems.length - 1
+            ) {
+              return;
+            }
+
+            const crispY =
+              Math.round(
+                dividerY -
+                bodySpacing / 2
+              ) + 0.5;
+
+            context.beginPath();
+            context.moveTo(
+              tooltip.x + padding,
+              crispY
+            );
+            context.lineTo(
+              tooltip.x +
+              tooltip.width -
+              padding,
+              crispY
+            );
+            context.stroke();
+          }
+        );
+
+        context.restore();
+      }
+    };
+
     function tooltipTitle(item) {
       return item?.dataset?.label
         ? CATEGORY_BY_KEY.get(item.dataset.categoryKey)?.label || ''
@@ -2715,7 +2869,8 @@
           plugins: [
             constantSpinePlugin,
             variableAxisTickPlugin,
-            animatedYAxisLabelPlugin
+            animatedYAxisLabelPlugin,
+            tooltipDividerPlugin
           ]
         }
       );
