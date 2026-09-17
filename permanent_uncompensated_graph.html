@@ -2329,8 +2329,103 @@
       return size * 1.2;
     }
 
+    function drawTooltipBodyWithObservationSpacing(
+      point,
+      context,
+      options
+    ) {
+      const bodyItems = this.body || [];
+      const bodyFont = options.bodyFont || {};
+      const bodyLineHeight = tooltipFontLineHeight(bodyFont, 11);
+      const internalSpacing = 2;
+      const observationSpacing = 8;
+      const paddingOptions = options.padding;
+      const fallbackPadding = Number(paddingOptions) || 9;
+      const paddingLeft =
+        Number(paddingOptions?.left) || fallbackPadding;
+      const paddingRight =
+        Number(paddingOptions?.right) || fallbackPadding;
+      const bodyAlign = options.bodyAlign || 'left';
+      const fontStyle =
+        bodyFont.style && bodyFont.style !== 'normal'
+          ? `${bodyFont.style} `
+          : '';
+      const fontWeight = bodyFont.weight
+        ? `${bodyFont.weight} `
+        : '';
+
+      let textX = this.x + paddingLeft;
+
+      if (bodyAlign === 'center') {
+        textX = this.x + this.width / 2;
+      } else if (bodyAlign === 'right') {
+        textX = this.x + this.width - paddingRight;
+      }
+
+      context.textAlign = bodyAlign;
+      context.textBaseline = 'middle';
+      context.font =
+        bodyFont.string ||
+        `${fontStyle}${fontWeight}${Number(bodyFont.size) || 11}px ` +
+          `${bodyFont.family || 'Lato'}`;
+
+      const drawLine = (line, colour) => {
+        context.fillStyle = colour;
+        context.fillText(
+          line,
+          textX,
+          point.y + bodyLineHeight / 2
+        );
+        point.y += bodyLineHeight + internalSpacing;
+      };
+
+      (this.beforeBody || []).forEach(line => {
+        drawLine(line, options.bodyColor);
+      });
+
+      bodyItems.forEach((bodyItem, index) => {
+        const colour =
+          this.labelTextColors?.[index] || options.bodyColor;
+
+        [
+          ...(bodyItem.before || []),
+          ...(bodyItem.lines || []),
+          ...(bodyItem.after || [])
+        ].forEach(line => {
+          drawLine(line, colour);
+        });
+
+        if (index < bodyItems.length - 1) {
+          point.y += observationSpacing;
+        }
+      });
+
+      (this.afterBody || []).forEach(line => {
+        drawLine(line, options.bodyColor);
+      });
+
+      point.y -= internalSpacing;
+    }
+
     const tooltipDividerPlugin = {
       id: 'tooltipDividerPlugin',
+
+      beforeTooltipDraw(activeChart, args) {
+        const tooltip = args.tooltip;
+
+        if (
+          !tooltip ||
+          (tooltip.body?.length || 0) < 2
+        ) {
+          return;
+        }
+
+        tooltip.pffOriginalDrawBody =
+          tooltip.drawBody;
+
+        tooltip.drawBody =
+          drawTooltipBodyWithObservationSpacing;
+      },
 
       afterTooltipDraw(activeChart, args) {
         const tooltip = args.tooltip;
@@ -2350,7 +2445,9 @@
         const padding =
           Number(options.padding) || 9;
 
-        const bodySpacing = 10;
+        const bodySpacing = 2;
+        const dividerOffset = 3;
+        const observationSpacing = 8;
 
         const titleSpacing =
           Number.isFinite(Number(options.titleSpacing))
@@ -2421,8 +2518,8 @@
 
             const crispY =
               Math.round(
-                dividerY -
-                bodySpacing / 2
+                dividerY +
+                dividerOffset
               ) + 0.5;
 
             context.beginPath();
@@ -2437,10 +2534,20 @@
               crispY
             );
             context.stroke();
+
+            dividerY +=
+              observationSpacing;
           }
         );
 
         context.restore();
+
+        if (tooltip.pffOriginalDrawBody) {
+          tooltip.drawBody =
+            tooltip.pffOriginalDrawBody;
+
+          delete tooltip.pffOriginalDrawBody;
+        }
       }
     };
 
@@ -2603,13 +2710,20 @@
             borderColor: '#e8eaf0',
             borderWidth: 1,
             cornerRadius: 4,
-            padding: 9,
-            bodySpacing(context) {
-              return context.tooltip
-                ?.getActiveElements?.()
-                .length > 1
-                ? 10
-                : 2;
+            padding(context) {
+              const observationCount =
+                context.tooltip
+                  ?.getActiveElements?.()
+                  .length || 0;
+
+              return {
+                top: 9,
+                right: 9,
+                bottom:
+                  9 +
+                  Math.max(0, observationCount - 1) * 8,
+                left: 9
+              };
             },
             titleFont: {
               family: 'Lato',
