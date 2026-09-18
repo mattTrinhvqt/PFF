@@ -3507,7 +3507,96 @@
 
       return '';
     }
+    function tooltipEntrySignature(item) {
+      const role =
+        item?.dataset?.datasetRole;
 
+      if (
+        ![
+          'continuousPoints',
+          'categoryPoints',
+          'bubbleRaw'
+        ].includes(role)
+      ) {
+        return '';
+      }
+
+      const label =
+        tooltipLabel(item);
+
+      const lines =
+        Array.isArray(label)
+          ? label
+          : [label];
+
+      return JSON.stringify([
+        tooltipTitle(item),
+        ...lines.map(line =>
+          String(line ?? '')
+        )
+      ]);
+    }
+
+    function activeTooltipItems(activeChart) {
+      const activeElements =
+        activeChart
+          ?.tooltip
+          ?.getActiveElements?.() ||
+        [];
+
+      return activeElements
+        .map(element => {
+          const dataset =
+            activeChart
+              ?.data
+              ?.datasets
+              ?.[element.datasetIndex];
+
+          return {
+            chart: activeChart,
+            dataset,
+            datasetIndex:
+              element.datasetIndex,
+            dataIndex:
+              element.index,
+            raw:
+              dataset
+                ?.data
+                ?.[element.index]
+          };
+        })
+        .filter(item =>
+          item.dataset
+        );
+    }
+
+    function identicalTooltipCount(item) {
+      const signature =
+        tooltipEntrySignature(item);
+
+      if (!signature) {
+        return 0;
+      }
+
+      const activeItems =
+        activeTooltipItems(
+          item?.chart
+        );
+
+      if (
+        activeItems.length < 2 ||
+        !activeItems.every(
+          activeItem =>
+            tooltipEntrySignature(
+              activeItem
+            ) === signature
+        )
+      ) {
+        return 0;
+      }
+
+      return activeItems.length;
+    }
     function getInteractiveElement(elements) {
       return elements.find(element => {
         const role =
@@ -5010,8 +5099,34 @@
                   padding: 9,
                   bodySpacing: 5,
 
-                  filter() {
-                    return !interactionLocked;
+                  filter(
+                    item,
+                    index,
+                    tooltipItems
+                  ) {
+                    if (interactionLocked) {
+                      return false;
+                    }
+
+                    const signature =
+                      tooltipEntrySignature(
+                        item
+                      );
+
+                    const allIdentical =
+                      Boolean(signature) &&
+                      tooltipItems.length > 1 &&
+                      tooltipItems.every(
+                        tooltipItem =>
+                          tooltipEntrySignature(
+                            tooltipItem
+                          ) === signature
+                      );
+
+                    return (
+                      !allIdentical ||
+                      index === 0
+                    );
                   },
 
                   callbacks: {
@@ -5025,6 +5140,17 @@
                       return tooltipLabel(
                         item
                       );
+                    },
+
+                    footer(items) {
+                      const count =
+                        identicalTooltipCount(
+                          items?.[0]
+                        );
+
+                      return count > 1
+                        ? `×${count} identical submissions`
+                        : '';
                     }
                   }
                 })
