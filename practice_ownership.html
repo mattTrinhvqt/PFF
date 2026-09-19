@@ -1342,57 +1342,178 @@
       }
     };
 
-    function drawBarXAxisTicks(context, scale) {
-      if (!scale) {
-        return;
+    function currentAxisGeometry(chartInstance) {
+      const area = chartInstance?.chartArea;
+
+      if (!area) {
+        return null;
       }
 
-      const ticks = scale.ticks || [];
-
-      if (!ticks.length) {
-        return;
-      }
-
-      context.save();
-      context.strokeStyle = '#151515';
-      context.lineCap = 'butt';
-
-      ticks.forEach((tick, index) => {
-        const value = Number(tick.value);
-        const pixel = scale.getPixelForTick(index);
-
-        if (
-          !Number.isFinite(value) ||
-          !Number.isFinite(pixel)
-        ) {
-          return;
-        }
-
-        const major = value % 20 === 0;
-        const tickLength = major ? 6 : 2;
-
-        context.beginPath();
-        context.lineWidth = major ? 1 : 0.7;
-        context.moveTo(pixel, scale.top);
-        context.lineTo(pixel, scale.top + tickLength);
-        context.stroke();
-      });
-
-      context.restore();
+      return {
+        left:
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.left)
+            ? spineTransitionState.left
+            : area.left,
+        right:
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.right)
+            ? spineTransitionState.right
+            : area.right,
+        top:
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.top)
+            ? spineTransitionState.top
+            : area.top,
+        bottom:
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.bottom)
+            ? spineTransitionState.bottom
+            : area.bottom
+      };
     }
 
-    const barAxisTickPlugin = {
-      id: 'pffPracticeBarAxisTicks',
+    function xAxisPixel(geometry, value) {
+      return geometry.left +
+        (geometry.right - geometry.left) *
+        (Number(value) / 100);
+    }
 
-      afterDatasetsDraw(chartInstance) {
+    const barAxisPresentationPlugin = {
+      id: 'pffPracticeBarAxisPresentation',
+
+      beforeDatasetsDraw(chartInstance) {
         if (activeView === 'all') {
           return;
         }
 
-        drawBarXAxisTicks(
-          chartInstance.ctx,
-          chartInstance.scales.x
+        const geometry = currentAxisGeometry(chartInstance);
+
+        if (!geometry) {
+          return;
+        }
+
+        const context = chartInstance.ctx;
+
+        context.save();
+        context.lineCap = 'butt';
+
+        for (let value = 0; value <= 100; value += 10) {
+          const x = xAxisPixel(geometry, value);
+          const major = value % 20 === 0;
+
+          context.strokeStyle = major
+            ? 'rgba(105, 113, 138, 0.075)'
+            : 'rgba(105, 113, 138, 0.035)';
+          context.lineWidth = major ? 1 : 0.7;
+
+          context.beginPath();
+          context.moveTo(Math.round(x) + 0.5, geometry.top);
+          context.lineTo(Math.round(x) + 0.5, geometry.bottom);
+          context.stroke();
+        }
+
+        context.restore();
+      },
+
+      afterDraw(chartInstance) {
+        if (activeView === 'all') {
+          return;
+        }
+
+        const geometry = currentAxisGeometry(chartInstance);
+
+        if (!geometry) {
+          return;
+        }
+
+        const context = chartInstance.ctx;
+        const mobile = PFF.mobileLayout();
+        const tickFontSize = mobile ? 9 : 10;
+        const titleFontSize = mobile ? 12 : 13;
+
+        context.save();
+        context.lineCap = 'butt';
+        context.strokeStyle = '#151515';
+
+        const firstDatasetMeta = chartInstance.getDatasetMeta(0);
+        const yLabelPadding = activeView === 'phn' ? 3 : 5;
+
+        context.fillStyle = '#151515';
+        context.textAlign = 'right';
+        context.textBaseline = 'middle';
+
+        (activeModel?.labels || []).forEach((label, index) => {
+          const bar = firstDatasetMeta?.data?.[index];
+
+          if (!Number.isFinite(bar?.y)) {
+            return;
+          }
+
+          let fontSize;
+
+          if (activeView === 'phn') {
+            fontSize = fittedPhnFontSize(
+              String(label || ''),
+              phnAxisBaseFontSize()
+            );
+          } else {
+            fontSize = PFF.mobileLayout() ? 9 : 10;
+          }
+
+          context.font = `400 ${fontSize}px Lato, sans-serif`;
+          context.fillText(
+            String(label || ''),
+            geometry.left - yLabelPadding,
+            bar.y
+          );
+        });
+
+        for (let value = 0; value <= 100; value += 10) {
+          const x = xAxisPixel(geometry, value);
+          const major = value % 20 === 0;
+          const tickLength = major ? 6 : 2;
+
+          context.beginPath();
+          context.lineWidth = major ? 1 : 0.7;
+          context.moveTo(Math.round(x) + 0.5, geometry.bottom);
+          context.lineTo(
+            Math.round(x) + 0.5,
+            geometry.bottom + tickLength
+          );
+          context.stroke();
+        }
+
+        context.fillStyle = '#151515';
+        context.font = `400 ${tickFontSize}px Lato, sans-serif`;
+        context.textBaseline = 'top';
+
+        for (let value = 0; value <= 100; value += 20) {
+          const x = xAxisPixel(geometry, value);
+
+          context.textAlign = value === 0
+            ? 'left'
+            : value === 100
+              ? 'right'
+              : 'center';
+
+          context.fillText(
+            `${value}%`,
+            x,
+            geometry.bottom + 9
+          );
+        }
+
+        context.font = `700 ${titleFontSize}px Lato, sans-serif`;
+        context.textAlign = 'center';
+        context.textBaseline = 'alphabetic';
+        context.fillText(
+          'Proportion of practices (%)',
+          geometry.left + (geometry.right - geometry.left) / 2,
+          geometry.bottom + 42
         );
+
+        context.restore();
       }
     };
 
@@ -1908,12 +2029,57 @@
       );
     }
 
+    function handleChartClick(event, _elements, activeChart) {
+      if (!activeChart?.tooltip) {
+        return;
+      }
+
+      const nativeEvent = event?.native || event;
+      const isPie = activeView === 'all';
+      const mode = isPie ? 'nearest' : 'index';
+      const axis = isPie ? 'xy' : 'y';
+
+      const activeElements = activeChart.getElementsAtEventForMode(
+        nativeEvent,
+        mode,
+        {
+          axis,
+          intersect: true
+        },
+        false
+      );
+
+      if (!activeElements.length) {
+        activeChart.tooltip.setActiveElements(
+          [],
+          {
+            x: 0,
+            y: 0
+          }
+        );
+
+        activeChart.update('none');
+        return;
+      }
+
+      activeChart.tooltip.setActiveElements(
+        activeElements,
+        {
+          x: Number.isFinite(event?.x) ? event.x : 0,
+          y: Number.isFinite(event?.y) ? event.y : 0
+        }
+      );
+
+      activeChart.update('none');
+    }
+
     function pieOptions(model) {
       return PFFCharts.baseChartOptions({
         interaction: {
           mode: 'nearest',
           intersect: true
         },
+        onClick: handleChartClick,
         layout: {
           autoPadding: false,
           padding: {
@@ -1938,9 +2104,10 @@
         interaction: {
           mode: 'index',
           axis: 'y',
-          intersect: false,
+          intersect: true,
           includeInvisible: false
         },
+        onClick: handleChartClick,
         layout: {
           autoPadding: false,
           padding: {
@@ -1964,7 +2131,7 @@
             min: 0,
             max: 100,
             afterFit(scale) {
-              scale.height = 46;
+              scale.height = PFF.mobileLayout() ? 50 : 48;
             },
             afterBuildTicks(scale) {
               scale.ticks = Array.from(
@@ -1975,49 +2142,14 @@
               );
             },
             title: {
-              display: true,
-              text: 'Proportion of practices (%)',
-              color: '#151515',
-              padding: {
-                top: 7,
-                bottom: 2
-              },
-              font: {
-                family: 'Lato',
-                size: PFF.mobileLayout() ? 12 : 13,
-                weight: '700'
-              }
+              display: false
             },
             ticks: {
-              color: '#151515',
-              autoSkip: false,
-              maxRotation: 0,
-              minRotation: 0,
-              padding: 3,
-              font: {
-                family: 'Lato',
-                size: PFF.mobileLayout() ? 9 : 10,
-                weight: '400'
-              },
-              callback(value) {
-                const numericValue = Number(value);
-
-                return numericValue % 20 === 0
-                  ? `${Math.round(numericValue)}%`
-                  : '';
-              }
+              display: false,
+              autoSkip: false
             },
             grid: {
-              color(context) {
-                return Number(context.tick?.value) % 20 === 0
-                  ? 'rgba(105, 113, 138, 0.075)'
-                  : 'rgba(105, 113, 138, 0.035)';
-              },
-              lineWidth(context) {
-                return Number(context.tick?.value) % 20 === 0
-                  ? 1
-                  : 0.7;
-              },
+              drawOnChartArea: false,
               drawTicks: false
             },
             border: {
@@ -2036,6 +2168,7 @@
               scale.width = PFF.mobileLayout() ? 60 : 72;
             },
             ticks: {
+              display: false,
               color: '#151515',
               autoSkip: false,
               padding: activeView === 'phn' ? 3 : 5,
@@ -2104,7 +2237,7 @@
                 barOutlinePlugin,
                 valueLabelsPlugin,
                 constantSpinePlugin,
-                barAxisTickPlugin
+                barAxisPresentationPlugin
               ]
         }
       );
