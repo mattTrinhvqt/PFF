@@ -311,6 +311,10 @@
       sourceRange: 'B32:X',
       sourceColumnCount: 23,
       fetchTimeoutMs: 25000,
+      cacheFetchTimeoutMs: 15000,
+      appKey: 'pff-optom-practice-directory',
+      localCacheKey: 'pff-practice-ownership-rows-v1',
+      minimumRows: 100,
       spineTransitionMs: 220,
       columns: Object.freeze({
         practiceName: 0,
@@ -320,6 +324,12 @@
         phn: 22
       })
     });
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbx7MftpgGcsWY2uFvIt6BPXVWeCPLFjjGAeE4h1m46EG-xqFZ7_-wpYh0ccxo-yPmIG/exec';
+
+    /* Testing switch only. Leave false in production. */
+    const FORCE_CACHED_DATA = false;
 
     const EMPLOYER_TYPES = Object.freeze([
       'Corporate',
@@ -429,7 +439,6 @@
     );
 
     const app = document.getElementById('app');
-    const loadingState = document.getElementById('loadingState');
     const statusElement = document.getElementById('status');
     const dataSourceIndicator = document.getElementById('dataSourceIndicator');
     const dataSourceText = document.getElementById('dataSourceText');
@@ -463,6 +472,7 @@
     let tabsController = null;
     let dimensionMenuController = null;
     let legendController = null;
+    let chartInteractionController = null;
     let responsiveController = null;
     let chartSummary = null;
     let spineTransitionFrame = null;
@@ -509,27 +519,9 @@
     }
 
     function normaliseRurality(value) {
-      const text = PFF.cleanText(value).toUpperCase();
-
-      if (!text) {
-        return null;
-      }
-
-      const mmmMatch = text.match(/\bM{2,3}\s*([1-7])\b/);
-
-      if (mmmMatch) {
-        return `MM${mmmMatch[1]}`;
-      }
-
-      const normalised = PFF.normaliseMMM?.(text);
-      const fallbackMatch = String(normalised || '')
-        .toUpperCase()
-        .match(/\bM{2,3}\s*([1-7])\b/);
-
-      return fallbackMatch
-        ? `MM${fallbackMatch[1]}`
-        : null;
+      return PFF.normaliseMMM(value);
     }
+
 
     function phnLookupKey(value) {
       return PFF.cleanText(value)
@@ -559,14 +551,61 @@
       ) || text;
     }
 
-    function parseRows(table) {
+    function sourceRowsFromTable(table) {
       return (table?.rows || [])
-        .map((rawRow, sourceIndex) => {
+        .map(rawRow => {
           const cells = rawRow?.c || [];
-          const values = Array.from(
+
+          return Array.from(
             { length: CONFIG.sourceColumnCount },
-            (_, index) => PFF.cellValue(cells[index])
+            (_, index) => PFF.cleanText(
+              PFF.cellValue(cells[index])
+            )
           );
+        })
+        .filter(values =>
+          Boolean(
+            PFF.cleanText(
+              values[CONFIG.columns.practiceName]
+            )
+          )
+        );
+    }
+
+    function sourceRowsFromRemoteCache(payload) {
+      const rows = Array.isArray(payload?.data?.rows)
+        ? payload.data.rows
+        : [];
+
+      return rows
+        .filter(row =>
+          Array.isArray(row) &&
+          row.length >= CONFIG.sourceColumnCount
+        )
+        .map(row =>
+          Array.from(
+            { length: CONFIG.sourceColumnCount },
+            (_, index) => PFF.cleanText(row[index])
+          )
+        )
+        .filter(values =>
+          Boolean(
+            PFF.cleanText(
+              values[CONFIG.columns.practiceName]
+            )
+          )
+        );
+    }
+
+    function normaliseRows(rows) {
+      return (Array.isArray(rows) ? rows : [])
+        .map((values, sourceIndex) => {
+          if (
+            !Array.isArray(values) ||
+            values.length < CONFIG.sourceColumnCount
+          ) {
+            return null;
+          }
 
           const practiceName = PFF.cleanText(
             values[CONFIG.columns.practiceName]
@@ -595,6 +634,90 @@
         })
         .filter(Boolean);
     }
+
+    function setLoadedSourceIndicator(loaded) {
+      const source = loaded?.source;
+      const remote = Boolean(loaded?.remote);
+
+      if (source === 'live') {
+        PFF.setDataSourceIndicator('live', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+
+        dataSourceText.textContent = 'LIVE data';
+        return;
+      }
+
+      if (source === 'cached' && remote) {
+        PFF.setDataSourceIndicator('cached', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+
+        dataSourceText.textContent = 'BACKEND cache';
+        return;
+      }
+
+      if (source === 'cached') {
+        PFF.setDataSourceIndicator('cached', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+
+        dataSourceText.textContent = 'BROWSER cache';
+        return;
+      }
+
+      PFF.setDataSourceIndicator('unavailable', {
+        indicator: dataSourceIndicator,
+        text: dataSourceText
+      });
+    }
+
+    async function loadPracticeRows() {
+      return PFFCharts.loadLiveCacheFallback({
+        forceCached: FORCE_CACHED_DATA,
+        cacheKey: CONFIG.localCacheKey,
+        minRows: CONFIG.minimumRows,
+
+        loadLive: () =>
+          PFFCharts.loadGVizSheet({
+            sheetId: CONFIG.spreadsheetId,
+            sheetName: CONFIG.sheetName,
+            gid: CONFIG.sheetGid,
+            range: CONFIG.sourceRange,
+            headers: '1',
+            timeoutMs: CONFIG.fetchTimeoutMs
+          }),
+
+        parseLive: sourceRowsFromTable,
+
+        loadRemoteCache: () =>
+          PFFCharts.loadAppsScriptCache({
+            url: CACHE_WEB_APP_URL,
+            appKey: CONFIG.appKey,
+            timeoutMs: CONFIG.cacheFetchTimeoutMs
+          }),
+
+        parseRemoteCache: sourceRowsFromRemoteCache,
+
+        onLiveError(error) {
+          console.warn(
+            'Live practice-ownership data unavailable; trying Practice Directory backend cache.',
+            error
+          );
+        },
+
+        onRemoteCacheError(error) {
+          console.warn(
+            'Practice Directory backend cache unavailable; trying browser cache.',
+            error
+          );
+        }
+      });
+    }
+
 
     function emptyCounts() {
       return {
@@ -843,19 +966,11 @@
     }
 
     function formatPercent(value) {
-      const numeric = Number(value);
-
-      if (!Number.isFinite(numeric)) {
-        return '—';
-      }
-
-      const rounded = Math.round(numeric * 10) / 10;
-      const text = Number.isInteger(rounded)
-        ? String(Math.round(rounded))
-        : rounded.toFixed(1).replace(/\.0$/, '');
-
-      return `${text}%`;
+      return Number.isFinite(Number(value))
+        ? `${PFF.formatNumber(value, 1)}%`
+        : '—';
     }
+
 
     function headingDetailForView(view) {
       if (view === 'state') {
@@ -2552,6 +2667,12 @@
         false
       );
 
+      chartInteractionController =
+        PFFCharts.setupChartInteractions({
+          canvas: chartCanvas,
+          getChart: () => chart
+        });
+
       responsiveController = PFFCharts.createResponsiveController({
         getChart: () => chart,
         observe: [app, chartShell],
@@ -2588,20 +2709,13 @@
       });
     }
 
-    async function initialise() {
-      PFF.setStatus('', statusElement);
+    PFF.initialiseApp({
+      app,
+      status: statusElement,
+      load: loadPracticeRows,
 
-      try {
-        const table = await PFFCharts.loadGVizSheet({
-          sheetId: CONFIG.spreadsheetId,
-          sheetName: CONFIG.sheetName,
-          gid: CONFIG.sheetGid,
-          range: CONFIG.sourceRange,
-          headers: '1',
-          timeoutMs: CONFIG.fetchTimeoutMs
-        });
-
-        sourceRows = parseRows(table);
+      render(loaded) {
+        sourceRows = normaliseRows(loaded.rows);
 
         if (!sourceRows.length) {
           throw new Error(
@@ -2610,14 +2724,7 @@
         }
 
         initialiseSelections();
-
-        PFF.setDataSourceIndicator('live', {
-          indicator: dataSourceIndicator,
-          text: dataSourceText
-        });
-
-        dataSourceText.textContent = 'LIVE data';
-
+        setLoadedSourceIndicator(loaded);
         configureControls();
         renderView({ animate: false });
 
@@ -2632,28 +2739,20 @@
         );
 
         updateAccessibleSummary();
-        PFF.hideLoadingState(app);
-      } catch (error) {
-        console.error(error);
+        return chart;
+      },
 
+      onError() {
         PFF.setDataSourceIndicator('unavailable', {
           indicator: dataSourceIndicator,
           text: dataSourceText
         });
+      },
 
-        PFF.setStatus(
-          error?.message ||
-          'Unable to load practice ownership data.',
-          statusElement
-        );
+      errorMessage:
+        'Practice ownership data unavailable.'
+    });
 
-        PFF.hideLoadingState(app);
-      } finally {
-        app.setAttribute('aria-busy', 'false');
-      }
-    }
-
-    initialise();
   </script>
 </body>
 </html>
