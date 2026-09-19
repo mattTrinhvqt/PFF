@@ -371,6 +371,10 @@
       dimmedAggregateHoverOpacity: 0.60,
       rawPointRadius: 4,
 
+      bubbleYAxisMinimumSpan: 20,
+      bubbleYAxisPaddingPx: 6,
+      bubbleYAxisSnap: 5,
+
       minimumRate: 0,
       maximumRate: 500
     };
@@ -650,6 +654,88 @@
       majorStep: 10,
       minorStep: 5
     };
+
+    const displayedYAxisRange = {
+      minimum: yAxisModel.minimum,
+      maximum: yAxisModel.maximum
+    };
+
+    const yAxisRangeAnimation = {
+      token: 0,
+      raf: null
+    };
+
+    function fixedYAxisRange() {
+      return {
+        minimum: yAxisModel.minimum,
+        maximum: yAxisModel.maximum
+      };
+    }
+
+    function normaliseYAxisRange(range) {
+      const minimum = Number(range?.minimum);
+      const maximum = Number(range?.maximum);
+
+      if (
+        !Number.isFinite(minimum) ||
+        !Number.isFinite(maximum) ||
+        maximum <= minimum
+      ) {
+        return fixedYAxisRange();
+      }
+
+      return { minimum, maximum };
+    }
+
+    function copyDisplayedYAxisRange() {
+      return {
+        minimum: displayedYAxisRange.minimum,
+        maximum: displayedYAxisRange.maximum
+      };
+    }
+
+    function interpolateYAxisRange(
+      fromRange,
+      toRange,
+      progress
+    ) {
+      const from = normaliseYAxisRange(fromRange);
+      const to = normaliseYAxisRange(toRange);
+
+      return {
+        minimum:
+          from.minimum +
+          (to.minimum - from.minimum) * progress,
+
+        maximum:
+          from.maximum +
+          (to.maximum - from.maximum) * progress
+      };
+    }
+
+    function setDisplayedYAxisRange(range) {
+      const normalised = normaliseYAxisRange(range);
+
+      displayedYAxisRange.minimum =
+        normalised.minimum;
+
+      displayedYAxisRange.maximum =
+        normalised.maximum;
+    }
+
+    function rangesNearlyEqual(
+      first,
+      second,
+      tolerance = 0.0001
+    ) {
+      const a = normaliseYAxisRange(first);
+      const b = normaliseYAxisRange(second);
+
+      return (
+        Math.abs(a.minimum - b.minimum) <= tolerance &&
+        Math.abs(a.maximum - b.maximum) <= tolerance
+      );
+    }
 
     const xAxisFade = {
       active: false,
@@ -1520,12 +1606,6 @@
           );
         }
 
-        drawVariableAxisTicks(
-          activeChart.ctx,
-          activeChart.scales.y,
-          'y',
-          activeView
-        );
       }
     };
 
@@ -1789,6 +1869,7 @@
       return {
         min: yAxisModel.minimum,
         max: yAxisModel.maximum,
+
         afterFit(scale) {
           scale.width = window.matchMedia(
             '(max-width: 430px)'
@@ -1796,22 +1877,7 @@
             ? 64
             : 70;
         },
-        afterBuildTicks(scale) {
-          scale.ticks = Array.from(
-            {
-              length:
-                Math.round(
-                  (yAxisModel.maximum - yAxisModel.minimum) /
-                  yAxisModel.minorStep
-                ) + 1
-            },
-            (_, index) => ({
-              value:
-                yAxisModel.minimum +
-                index * yAxisModel.minorStep
-            })
-          );
-        },
+
         title: {
           display: true,
           text: 'Hourly rate ($)',
@@ -1822,47 +1888,19 @@
             weight: '700'
           }
         },
-        ticks: {
-          color: '#151515',
-          autoSkip: false,
-          padding: 3,
-          font: {
-            family: 'Lato',
-            size: 12,
-            weight: '400'
-          },
-          callback(value) {
-            return (
-              (Number(value) - yAxisModel.minimum) %
-              yAxisModel.majorStep === 0
-            )
-              ? formatNumber(value, 0)
-              : '';
-          }
-        },
-        grid: {
-          color(context) {
-            const major =
-              (Number(context.tick?.value) - yAxisModel.minimum) %
-              yAxisModel.majorStep === 0;
 
-            return major
-              ? 'rgba(105, 113, 138, 0.075)'
-              : 'rgba(105, 113, 138, 0.035)';
-          },
-          lineWidth(context) {
-            return (
-              (Number(context.tick?.value) - yAxisModel.minimum) %
-              yAxisModel.majorStep === 0
-            )
-              ? 1
-              : 0.7;
-          },
-          drawTicks: true,
-          tickLength: 5,
-          tickColor: 'rgba(21, 21, 21, 0)',
-          tickWidth: 0
+        ticks: {
+          display: false,
+          autoSkip: false,
+          padding: 3
         },
+
+        grid: {
+          display: false,
+          drawOnChartArea: false,
+          drawTicks: false
+        },
+
         border: {
           display: true,
           color: '#151515',
@@ -1870,6 +1908,235 @@
         }
       };
     }
+
+    function rateYAxisTicks() {
+      const range =
+        normaliseYAxisRange(
+          displayedYAxisRange
+        );
+
+      const first =
+        Math.ceil(
+          range.minimum /
+          yAxisModel.minorStep
+        ) *
+        yAxisModel.minorStep;
+
+      const last =
+        Math.floor(
+          range.maximum /
+          yAxisModel.minorStep
+        ) *
+        yAxisModel.minorStep;
+
+      const ticks = [];
+
+      for (
+        let value = first;
+        value <= last + 0.000001;
+        value += yAxisModel.minorStep
+      ) {
+        ticks.push({
+          value,
+          major:
+            Math.abs(
+              value /
+              yAxisModel.majorStep -
+              Math.round(
+                value /
+                yAxisModel.majorStep
+              )
+            ) <
+            1e-8
+        });
+      }
+
+      return ticks;
+    }
+
+    function rateYAxisPixel(
+      chartArea,
+      value
+    ) {
+      const range =
+        normaliseYAxisRange(
+          displayedYAxisRange
+        );
+
+      const span =
+        range.maximum -
+        range.minimum;
+
+      if (span <= 0) {
+        return chartArea.bottom;
+      }
+
+      return (
+        chartArea.bottom -
+        (
+          (value - range.minimum) /
+          span
+        ) *
+        chartArea.height
+      );
+    }
+
+    function rateYAxisTickOpacity(
+      chartArea,
+      value,
+      y
+    ) {
+      /*
+       * Y-axis transitions are positional slides, not fades.
+       * Any tick that remains inside the visible range stays
+       * fully opaque while it moves. Ticks entering or leaving
+       * the range naturally appear/disappear at the chart edge.
+       */
+      return (
+        y >= chartArea.top - 0.5 &&
+        y <= chartArea.bottom + 0.5
+      )
+        ? 1
+        : 0;
+    }
+
+    const rateYAxisPlugin = {
+      id: 'rateYAxisPlugin',
+
+      beforeDatasetsDraw(activeChart) {
+        const {
+          ctx,
+          chartArea
+        } = activeChart;
+
+        if (!chartArea) {
+          return;
+        }
+
+        const ticks =
+          rateYAxisTicks();
+
+        ctx.save();
+
+        ticks.forEach(tick => {
+          const y =
+            rateYAxisPixel(
+              chartArea,
+              tick.value
+            );
+
+          const opacity =
+            rateYAxisTickOpacity(
+              chartArea,
+              tick.value,
+              y
+            );
+
+          if (opacity <= 0.001) {
+            return;
+          }
+
+          ctx.globalAlpha = opacity;
+          ctx.beginPath();
+          ctx.strokeStyle =
+            tick.major
+              ? 'rgba(105, 113, 138, 0.075)'
+              : 'rgba(105, 113, 138, 0.035)';
+          ctx.lineWidth =
+            tick.major
+              ? 1
+              : 0.7;
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(y) + 0.5
+          );
+          ctx.lineTo(
+            chartArea.right,
+            Math.round(y) + 0.5
+          );
+          ctx.stroke();
+        });
+
+        ctx.restore();
+      },
+
+      afterDraw(activeChart) {
+        const {
+          ctx,
+          chartArea
+        } = activeChart;
+
+        if (!chartArea) {
+          return;
+        }
+
+        const ticks =
+          rateYAxisTicks();
+
+        ctx.save();
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.font = '400 12px Lato, sans-serif';
+        ctx.fillStyle = '#151515';
+
+        ticks.forEach(tick => {
+          const y =
+            rateYAxisPixel(
+              chartArea,
+              tick.value
+            );
+
+          const opacity =
+            rateYAxisTickOpacity(
+              chartArea,
+              tick.value,
+              y
+            );
+
+          if (opacity <= 0.001) {
+            return;
+          }
+
+          ctx.globalAlpha = opacity;
+          ctx.beginPath();
+          ctx.strokeStyle = '#151515';
+          ctx.lineWidth =
+            tick.major
+              ? 1.1
+              : 0.7;
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(y) + 0.5
+          );
+          ctx.lineTo(
+            chartArea.left -
+              (tick.major ? 5 : 2),
+            Math.round(y) + 0.5
+          );
+          ctx.stroke();
+
+          if (tick.major) {
+            const labelY =
+              clamp(
+                y,
+                chartArea.top + 7,
+                chartArea.bottom - 7
+              );
+
+            ctx.fillText(
+              formatNumber(
+                tick.value,
+                0
+              ),
+              chartArea.left - 8,
+              labelY
+            );
+          }
+        });
+
+        ctx.restore();
+      }
+    };
 
     function continuousView({
       availableRows,
@@ -2399,6 +2666,7 @@
         return {
           x: 21,
           y: stats.median,
+          rateY: stats.median,
           bubbleView: view,
           categoryKey,
           label: config.label(categoryKey),
@@ -2419,6 +2687,414 @@
         .sort((a, b) =>
           b.y - a.y ||
           b.baseRadius - a.baseRadius
+        );
+    }
+
+    function projectRateToBaseAxis(
+      rate,
+      range = displayedYAxisRange
+    ) {
+      const sourceRange =
+        normaliseYAxisRange(range);
+
+      const sourceSpan =
+        sourceRange.maximum -
+        sourceRange.minimum;
+
+      const baseSpan =
+        yAxisModel.maximum -
+        yAxisModel.minimum;
+
+      if (
+        !Number.isFinite(rate) ||
+        sourceSpan <= 0
+      ) {
+        return rate;
+      }
+
+      return (
+        yAxisModel.minimum +
+        (
+          (rate - sourceRange.minimum) /
+          sourceSpan
+        ) *
+        baseSpan
+      );
+    }
+
+    function applyBubbleAggregateRange(
+      view,
+      range
+    ) {
+      const store =
+        bubbleStores[view];
+
+      if (!store) {
+        return;
+      }
+
+      store.aggregates.forEach(
+        aggregate => {
+          const rate =
+            Number.isFinite(
+              aggregate.rateY
+            )
+              ? aggregate.rateY
+              : aggregate.y;
+
+          aggregate.y =
+            projectRateToBaseAxis(
+              rate,
+              range
+            );
+        }
+      );
+    }
+
+    function bubbleRadiusScale(
+      activeChart = chart
+    ) {
+      return Math.min(
+        clamp(
+          (
+            activeChart?.width ||
+            chartCanvas.clientWidth ||
+            520
+          ) /
+          520,
+          0.78,
+          1.05
+        ),
+
+        clamp(
+          (
+            activeChart?.height ||
+            chartCanvas.clientHeight ||
+            585
+          ) /
+          585,
+          0.68,
+          1.04
+        )
+      );
+    }
+
+    function bubbleChartAreaHeight() {
+      const measured =
+        Number(
+          chart?.chartArea?.height
+        );
+
+      if (
+        Number.isFinite(measured) &&
+        measured > 80
+      ) {
+        return measured;
+      }
+
+      return Math.max(
+        260,
+        (
+          chart?.height ||
+          chartCanvas.clientHeight ||
+          585
+        ) -
+        110
+      );
+    }
+
+    function deriveBubbleYAxisRange(view) {
+      const store =
+        bubbleStores[view];
+
+      if (
+        !store ||
+        !store.aggregates.length
+      ) {
+        return fixedYAxisRange();
+      }
+
+      const scale =
+        bubbleRadiusScale();
+
+      const height =
+        bubbleChartAreaHeight();
+
+      const extents =
+        store.aggregates
+          .map(aggregate => ({
+            rate:
+              Number(
+                aggregate.rateY
+              ),
+
+            radiusPx:
+              aggregate.baseRadius *
+              scale +
+              CONFIG.bubbleYAxisPaddingPx
+          }))
+          .filter(item =>
+            Number.isFinite(
+              item.rate
+            )
+          );
+
+      if (!extents.length) {
+        return fixedYAxisRange();
+      }
+
+      const centreMinimum =
+        Math.min(
+          ...extents.map(
+            item => item.rate
+          )
+        );
+
+      const centreMaximum =
+        Math.max(
+          ...extents.map(
+            item => item.rate
+          )
+        );
+
+      let minimum = centreMinimum;
+      let maximum = centreMaximum;
+
+      let span =
+        Math.max(
+          CONFIG.bubbleYAxisMinimumSpan,
+          maximum - minimum
+        );
+
+      for (
+        let iteration = 0;
+        iteration < 5;
+        iteration += 1
+      ) {
+        const unitsPerPixel =
+          span / height;
+
+        minimum =
+          Math.min(
+            ...extents.map(
+              item =>
+                item.rate -
+                item.radiusPx *
+                unitsPerPixel
+            )
+          );
+
+        maximum =
+          Math.max(
+            ...extents.map(
+              item =>
+                item.rate +
+                item.radiusPx *
+                unitsPerPixel
+            )
+          );
+
+        const requiredSpan =
+          maximum - minimum;
+
+        if (
+          requiredSpan <
+          CONFIG.bubbleYAxisMinimumSpan
+        ) {
+          const centre =
+            (minimum + maximum) / 2;
+
+          minimum =
+            centre -
+            CONFIG.bubbleYAxisMinimumSpan / 2;
+
+          maximum =
+            centre +
+            CONFIG.bubbleYAxisMinimumSpan / 2;
+        }
+
+        span = maximum - minimum;
+      }
+
+      const snap =
+        CONFIG.bubbleYAxisSnap;
+
+      minimum =
+        Math.floor(
+          minimum / snap
+        ) * snap;
+
+      maximum =
+        Math.ceil(
+          maximum / snap
+        ) * snap;
+
+      while (
+        maximum - minimum <
+        CONFIG.bubbleYAxisMinimumSpan
+      ) {
+        minimum -= snap;
+        maximum += snap;
+      }
+
+      minimum =
+        Math.max(
+          CONFIG.minimumRate,
+          minimum
+        );
+
+      maximum =
+        Math.min(
+          CONFIG.maximumRate,
+          maximum
+        );
+
+      const fitted =
+        normaliseYAxisRange({
+          minimum,
+          maximum
+        });
+
+      const fixed =
+        fixedYAxisRange();
+
+      if (
+        fitted.maximum - fitted.minimum >=
+        fixed.maximum - fixed.minimum
+      ) {
+        return fixed;
+      }
+
+      return fitted;
+    }
+
+    function yAxisTargetForView(view) {
+      if (
+        view === 'state' ||
+        view === 'employer'
+      ) {
+        const store =
+          bubbleStores[view];
+
+        if (store?.splitKeys.size) {
+          return fixedYAxisRange();
+        }
+
+        return deriveBubbleYAxisRange(
+          view
+        );
+      }
+
+      return fixedYAxisRange();
+    }
+
+    function cancelYAxisRangeAnimation() {
+      yAxisRangeAnimation.token += 1;
+
+      if (
+        yAxisRangeAnimation.raf !== null
+      ) {
+        cancelAnimationFrame(
+          yAxisRangeAnimation.raf
+        );
+
+        yAxisRangeAnimation.raf = null;
+      }
+    }
+
+    function animateDisplayedYAxisRange(
+      targetRange,
+      duration = CONFIG.transitionMs
+    ) {
+      const target =
+        normaliseYAxisRange(
+          targetRange
+        );
+
+      const start =
+        copyDisplayedYAxisRange();
+
+      cancelYAxisRangeAnimation();
+
+      if (
+        rangesNearlyEqual(
+          start,
+          target
+        )
+      ) {
+        setDisplayedYAxisRange(
+          target
+        );
+
+        chart?.draw();
+        return;
+      }
+
+      if (
+        PFF.reducedMotion() ||
+        duration <= 0
+      ) {
+        setDisplayedYAxisRange(
+          target
+        );
+
+        chart?.draw();
+        return;
+      }
+
+      const token =
+        ++yAxisRangeAnimation.token;
+
+      const startedAt =
+        performance.now();
+
+      function frame(now) {
+        if (
+          token !==
+          yAxisRangeAnimation.token
+        ) {
+          return;
+        }
+
+        const rawProgress =
+          Math.min(
+            (now - startedAt) /
+            duration,
+            1
+          );
+
+        const progress =
+          easeInOutCubic(
+            rawProgress
+          );
+
+        setDisplayedYAxisRange(
+          interpolateYAxisRange(
+            start,
+            target,
+            progress
+          )
+        );
+
+        chart?.draw();
+
+        if (rawProgress < 1) {
+          yAxisRangeAnimation.raf =
+            requestAnimationFrame(
+              frame
+            );
+        } else {
+          yAxisRangeAnimation.raf = null;
+          setDisplayedYAxisRange(
+            target
+          );
+          chart?.draw();
+        }
+      }
+
+      yAxisRangeAnimation.raf =
+        requestAnimationFrame(
+          frame
         );
     }
 
@@ -2451,12 +3127,12 @@
         return 0;
       }
 
-      const scale = Math.min(
-        clamp((context.chart.width || 520) / 520, 0.78, 1.05),
-        clamp((context.chart.height || 585) / 585, 0.68, 1.04)
+      return (
+        raw.baseRadius *
+        bubbleRadiusScale(
+          context.chart
+        )
       );
-
-      return raw.baseRadius * scale;
     }
 
     function bubbleView(view) {
@@ -4055,12 +4731,34 @@
           },
           plugins: [
             xAxisFadePlugin,
+            rateYAxisPlugin,
             variableAxisTickPlugin,
             bubbleLabelPlugin,
             interactionNotePlugin
           ]
         }
       );
+
+      const initialYAxisRange =
+        yAxisTargetForView(
+          activeView
+        );
+
+      setDisplayedYAxisRange(
+        initialYAxisRange
+      );
+
+      if (
+        activeView === 'state' ||
+        activeView === 'employer'
+      ) {
+        applyBubbleAggregateRange(
+          activeView,
+          initialYAxisRange
+        );
+
+        chart.update('none');
+      }
 
       updateLegend(model.legend, false);
       updateChartNote(model.note);
@@ -4080,6 +4778,21 @@
       activeView = nextView;
       lastBubbleClick = '';
       lastBubbleClickAt = 0;
+
+      const targetYAxisRange =
+        yAxisTargetForView(
+          activeView
+        );
+
+      if (
+        activeView === 'state' ||
+        activeView === 'employer'
+      ) {
+        applyBubbleAggregateRange(
+          activeView,
+          targetYAxisRange
+        );
+      }
 
       const model =
         viewModel(
@@ -4112,6 +4825,12 @@
       updateReaggregateButton();
 
       if (!animate) {
+        cancelYAxisRangeAnimation();
+
+        setDisplayedYAxisRange(
+          targetYAxisRange
+        );
+
         currentXAxisOptions =
           model.xScale;
 
@@ -4130,6 +4849,11 @@
         chart.update('none');
         return;
       }
+
+      animateDisplayedYAxisRange(
+        targetYAxisRange,
+        CONFIG.transitionMs
+      );
 
       animateViewMorph(
         model,
@@ -4154,12 +4878,20 @@
       if (
         currentStore?.splitKeys.size
       ) {
-        reaggregate(() => {
-          applyView(
-            nextView,
-            true
+        const nextYAxisRange =
+          yAxisTargetForView(
+            nextView
           );
-        });
+
+        reaggregate(
+          () => {
+            applyView(
+              nextView,
+              true
+            );
+          },
+          nextYAxisRange
+        );
 
         return;
       }
@@ -4304,6 +5036,14 @@
       }
 
       const shouldDim = store.splitKeys.size === 0;
+
+      const startYAxisRange =
+        copyDisplayedYAxisRange();
+
+      const targetYAxisRange =
+        fixedYAxisRange();
+
+      cancelYAxisRangeAnimation();
       interactionLocked = true;
       store.splitKeys.add(categoryKey);
       store.splitProgress.set(categoryKey, 0);
@@ -4320,8 +5060,24 @@
 
       animationController.run({
         duration: CONFIG.splitAnimationMs,
-        easing: easeOutCubic,
+        easing: easeInOutCubic,
         onFrame(progress) {
+          const currentYAxisRange =
+            interpolateYAxisRange(
+              startYAxisRange,
+              targetYAxisRange,
+              progress
+            );
+
+          setDisplayedYAxisRange(
+            currentYAxisRange
+          );
+
+          applyBubbleAggregateRange(
+            view,
+            currentYAxisRange
+          );
+
           store.splitProgress.set(categoryKey, progress);
 
           if (shouldDim) {
@@ -4340,6 +5096,15 @@
           chart.update('none');
         },
         onComplete() {
+          setDisplayedYAxisRange(
+            targetYAxisRange
+          );
+
+          applyBubbleAggregateRange(
+            view,
+            targetYAxisRange
+          );
+
           points.forEach(point => {
             point.x = point.targetX;
             point.y = point.targetY;
@@ -4358,7 +5123,10 @@
       });
     }
 
-    function reaggregate(callback = null) {
+    function reaggregate(
+      callback = null,
+      targetYAxisRangeOverride = null
+    ) {
       const store = bubbleStores[activeView];
 
       if (
@@ -4370,6 +5138,21 @@
         return;
       }
 
+      const view =
+        activeView;
+
+      const startYAxisRange =
+        copyDisplayedYAxisRange();
+
+      const targetYAxisRange =
+        normaliseYAxisRange(
+          targetYAxisRangeOverride ||
+          deriveBubbleYAxisRange(
+            view
+          )
+        );
+
+      cancelYAxisRangeAnimation();
       interactionLocked = true;
       store.mergeProgress = 0;
       store.splitKeys.forEach(key => store.mergingKeys.add(key));
@@ -4382,7 +5165,6 @@
         point.startX = point.x;
         point.startY = point.y;
         point.endX = aggregate?.x ?? point.x;
-        point.endY = aggregate?.y ?? point.y;
       });
 
       chart.update('none');
@@ -4392,21 +5174,55 @@
         duration: CONFIG.mergeAnimationMs,
         easing: easeInOutCubic,
         onFrame(progress) {
+          const currentYAxisRange =
+            interpolateYAxisRange(
+              startYAxisRange,
+              targetYAxisRange,
+              progress
+            );
+
+          setDisplayedYAxisRange(
+            currentYAxisRange
+          );
+
+          applyBubbleAggregateRange(
+            view,
+            currentYAxisRange
+          );
+
           store.mergeProgress = progress;
           store.dimProgress = 1 - progress;
 
           store.rawPoints.forEach(point => {
+            const aggregate = store.aggregates.find(
+              item => item.categoryKey === point.categoryKey
+            );
+
+            const currentTargetY =
+              aggregate?.y ??
+              point.startY;
+
             point.x =
               point.startX +
               (point.endX - point.startX) * progress;
+
             point.y =
               point.startY +
-              (point.endY - point.startY) * progress;
+              (currentTargetY - point.startY) * progress;
           });
 
           chart.update('none');
         },
         onComplete() {
+          setDisplayedYAxisRange(
+            targetYAxisRange
+          );
+
+          applyBubbleAggregateRange(
+            view,
+            targetYAxisRange
+          );
+
           store.rawPoints = [];
           chart.data.datasets[1].data = store.rawPoints;
           store.splitKeys.clear();
@@ -4484,6 +5300,35 @@
         applyResponsiveChartOptions:
           false,
         onRefresh() {
+          if (
+            chart &&
+            !interactionLocked &&
+            !viewMorphInProgress &&
+            (
+              activeView === 'state' ||
+              activeView === 'employer'
+            ) &&
+            !bubbleStores[
+              activeView
+            ]?.splitKeys.size
+          ) {
+            const targetYAxisRange =
+              deriveBubbleYAxisRange(
+                activeView
+              );
+
+            setDisplayedYAxisRange(
+              targetYAxisRange
+            );
+
+            applyBubbleAggregateRange(
+              activeView,
+              targetYAxisRange
+            );
+
+            chart.update('none');
+          }
+
           tabsController?.update();
           legendController?.refresh();
         }
