@@ -81,8 +81,8 @@
 
     .chart-note {
       position: absolute;
-      top: 5px;
       right: 5px;
+      bottom: 5px;
       z-index: 4;
       max-width: min(230px, calc(100% - 80px));
       padding: 5px 7px;
@@ -276,6 +276,10 @@
       dimmedAggregateOpacity: 0.48,
       dimmedAggregateHoverOpacity: 0.60,
       rawPointRadius: 4,
+
+      bubbleYAxisMinimumSpan: 40000,
+      bubbleYAxisPaddingPx: 6,
+      bubbleYAxisSnap: 5000,
 
       minimumSalary: 30000,
       maximumSalary: 500000
@@ -531,6 +535,103 @@
       majorStep: 20000,
       minorStep: 10000
     };
+
+    const displayedYAxisRange = {
+      minimum: yAxisModel.minimum,
+      maximum: yAxisModel.maximum
+    };
+
+    const yAxisRangeAnimation = {
+      token: 0,
+      raf: null
+    };
+
+    function fixedYAxisRange() {
+      return {
+        minimum: yAxisModel.minimum,
+        maximum: yAxisModel.maximum
+      };
+    }
+
+    function normaliseYAxisRange(range) {
+      const minimum =
+        Number(range?.minimum);
+
+      const maximum =
+        Number(range?.maximum);
+
+      if (
+        !Number.isFinite(minimum) ||
+        !Number.isFinite(maximum) ||
+        maximum <= minimum
+      ) {
+        return fixedYAxisRange();
+      }
+
+      return {
+        minimum,
+        maximum
+      };
+    }
+
+    function copyDisplayedYAxisRange() {
+      return {
+        minimum: displayedYAxisRange.minimum,
+        maximum: displayedYAxisRange.maximum
+      };
+    }
+
+    function interpolateYAxisRange(
+      fromRange,
+      toRange,
+      progress
+    ) {
+      const from =
+        normaliseYAxisRange(fromRange);
+
+      const to =
+        normaliseYAxisRange(toRange);
+
+      return {
+        minimum:
+          from.minimum +
+          (to.minimum - from.minimum) *
+          progress,
+
+        maximum:
+          from.maximum +
+          (to.maximum - from.maximum) *
+          progress
+      };
+    }
+
+    function setDisplayedYAxisRange(range) {
+      const normalised =
+        normaliseYAxisRange(range);
+
+      displayedYAxisRange.minimum =
+        normalised.minimum;
+
+      displayedYAxisRange.maximum =
+        normalised.maximum;
+    }
+
+    function rangesNearlyEqual(
+      first,
+      second,
+      tolerance = 0.5
+    ) {
+      const a =
+        normaliseYAxisRange(first);
+
+      const b =
+        normaliseYAxisRange(second);
+
+      return (
+        Math.abs(a.minimum - b.minimum) <= tolerance &&
+        Math.abs(a.maximum - b.maximum) <= tolerance
+      );
+    }
 
     const cleanText =
       PFF.cleanText;
@@ -1873,13 +1974,6 @@
             activeView
           );
         }
-
-        drawVariableAxisTicks(
-          activeChart.ctx,
-          activeChart.scales.y,
-          'y',
-          activeView
-        );
       }
     };
 
@@ -1896,30 +1990,6 @@
             : 70;
         },
 
-        afterBuildTicks(scale) {
-          const count =
-            Math.round(
-              (
-                yAxisModel.maximum -
-                yAxisModel.minimum
-              ) /
-              yAxisModel.minorStep
-            ) +
-            1;
-
-          scale.ticks = Array.from(
-            {
-              length: count
-            },
-            (_, index) => ({
-              value:
-                yAxisModel.minimum +
-                index *
-                yAxisModel.minorStep
-            })
-          );
-        },
-
         title: {
           display: true,
           text: 'FTE salary ($)',
@@ -1933,44 +2003,15 @@
         },
 
         ticks: {
-          color: '#151515',
+          display: false,
           autoSkip: false,
-          padding: 3,
-
-          font: {
-            family: 'Lato',
-            size: 12,
-            weight: '400'
-          },
-
-          callback(value) {
-            return isMajorYAxisTick(Number(value))
-              ? formatCompactSalary(Number(value))
-              : '';
-          }
+          padding: 3
         },
 
         grid: {
-          color(context) {
-            return isMajorYAxisTick(
-              Number(context.tick?.value)
-            )
-              ? 'rgba(105, 113, 138, 0.075)'
-              : 'rgba(105, 113, 138, 0.035)';
-          },
-
-          lineWidth(context) {
-            return isMajorYAxisTick(
-              Number(context.tick?.value)
-            )
-              ? 1
-              : 0.7;
-          },
-
-          drawTicks: true,
-          tickLength: 5,
-          tickColor: 'rgba(21, 21, 21, 0)',
-          tickWidth: 0
+          display: false,
+          drawOnChartArea: false,
+          drawTicks: false
         },
 
         border: {
@@ -1980,6 +2021,240 @@
         }
       };
     }
+
+    function salaryYAxisTicks() {
+      const range =
+        normaliseYAxisRange(
+          displayedYAxisRange
+        );
+
+      const first =
+        Math.ceil(
+          range.minimum /
+          yAxisModel.minorStep
+        ) *
+        yAxisModel.minorStep;
+
+      const last =
+        Math.floor(
+          range.maximum /
+          yAxisModel.minorStep
+        ) *
+        yAxisModel.minorStep;
+
+      const ticks = [];
+
+      for (
+        let value = first;
+        value <= last + 0.001;
+        value += yAxisModel.minorStep
+      ) {
+        ticks.push({
+          value,
+          major:
+            Math.abs(
+              value /
+              yAxisModel.majorStep -
+              Math.round(
+                value /
+                yAxisModel.majorStep
+              )
+            ) <
+            1e-8
+        });
+      }
+
+      return ticks;
+    }
+
+    function salaryYAxisPixel(
+      chartArea,
+      value
+    ) {
+      const range =
+        normaliseYAxisRange(
+          displayedYAxisRange
+        );
+
+      const span =
+        range.maximum -
+        range.minimum;
+
+      if (span <= 0) {
+        return chartArea.bottom;
+      }
+
+      return (
+        chartArea.bottom -
+        (
+          (value - range.minimum) /
+          span
+        ) *
+        chartArea.height
+      );
+    }
+
+    function salaryYAxisTickOpacity(
+      chartArea,
+      value,
+      y
+    ) {
+      /*
+       * Y-axis transitions are positional slides, not fades.
+       * Any tick that remains inside the visible range stays
+       * fully opaque while it moves. Ticks entering or leaving
+       * the range naturally appear/disappear at the chart edge.
+       * This avoids persistent values briefly fading and then
+       * reappearing when they become an endpoint tick.
+       */
+      return (
+        y >= chartArea.top - 0.5 &&
+        y <= chartArea.bottom + 0.5
+      )
+        ? 1
+        : 0;
+    }
+
+    const salaryYAxisPlugin = {
+      id: 'salaryYAxisPlugin',
+
+      beforeDatasetsDraw(activeChart) {
+        const {
+          ctx,
+          chartArea
+        } = activeChart;
+
+        if (!chartArea) {
+          return;
+        }
+
+        const ticks =
+          salaryYAxisTicks();
+
+        ctx.save();
+
+        ticks.forEach(tick => {
+          const y =
+            salaryYAxisPixel(
+              chartArea,
+              tick.value
+            );
+
+          const opacity =
+            salaryYAxisTickOpacity(
+              chartArea,
+              tick.value,
+              y
+            );
+
+          if (opacity <= 0.001) {
+            return;
+          }
+
+          ctx.globalAlpha =
+            opacity;
+
+          ctx.beginPath();
+          ctx.strokeStyle =
+            tick.major
+              ? 'rgba(105, 113, 138, 0.075)'
+              : 'rgba(105, 113, 138, 0.035)';
+          ctx.lineWidth =
+            tick.major
+              ? 1
+              : 0.7;
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(y) + 0.5
+          );
+          ctx.lineTo(
+            chartArea.right,
+            Math.round(y) + 0.5
+          );
+          ctx.stroke();
+        });
+
+        ctx.restore();
+      },
+
+      afterDraw(activeChart) {
+        const {
+          ctx,
+          chartArea
+        } = activeChart;
+
+        if (!chartArea) {
+          return;
+        }
+
+        const ticks =
+          salaryYAxisTicks();
+
+        ctx.save();
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.font = '400 12px Lato, sans-serif';
+        ctx.fillStyle = '#151515';
+
+        ticks.forEach(tick => {
+          const y =
+            salaryYAxisPixel(
+              chartArea,
+              tick.value
+            );
+
+          const opacity =
+            salaryYAxisTickOpacity(
+              chartArea,
+              tick.value,
+              y
+            );
+
+          if (opacity <= 0.001) {
+            return;
+          }
+
+          ctx.globalAlpha =
+            opacity;
+
+          ctx.beginPath();
+          ctx.strokeStyle = '#151515';
+          ctx.lineWidth =
+            tick.major
+              ? 1.1
+              : 0.7;
+          ctx.moveTo(
+            chartArea.left,
+            Math.round(y) + 0.5
+          );
+          ctx.lineTo(
+            chartArea.left -
+              (tick.major ? 5 : 2),
+            Math.round(y) + 0.5
+          );
+          ctx.stroke();
+
+          if (tick.major) {
+            const labelY =
+              clamp(
+                y,
+                chartArea.top + 7,
+                chartArea.bottom - 7
+              );
+
+            ctx.fillText(
+              formatCompactSalary(
+                tick.value
+              ),
+              chartArea.left - 8,
+              labelY
+            );
+          }
+        });
+
+        ctx.restore();
+      }
+    };
 
     function buildLegendItem(
       colour,
@@ -2851,6 +3126,7 @@
             return {
               x: 21,
               y: statistics.median,
+              salaryY: statistics.median,
               bubbleView: view,
               categoryKey,
               label: config.label(categoryKey),
@@ -2898,6 +3174,401 @@
       store.dimProgress = 0;
     }
 
+    function projectSalaryToBaseAxis(
+      salary,
+      range = displayedYAxisRange
+    ) {
+      const sourceRange =
+        normaliseYAxisRange(range);
+
+      const sourceSpan =
+        sourceRange.maximum -
+        sourceRange.minimum;
+
+      const baseSpan =
+        yAxisModel.maximum -
+        yAxisModel.minimum;
+
+      if (
+        !Number.isFinite(salary) ||
+        sourceSpan <= 0
+      ) {
+        return salary;
+      }
+
+      return (
+        yAxisModel.minimum +
+        (
+          (salary - sourceRange.minimum) /
+          sourceSpan
+        ) *
+        baseSpan
+      );
+    }
+
+    function applyBubbleAggregateRange(
+      view,
+      range
+    ) {
+      const store =
+        bubbleStores[view];
+
+      if (!store) {
+        return;
+      }
+
+      store.aggregates.forEach(
+        aggregate => {
+          const salary =
+            Number.isFinite(
+              aggregate.salaryY
+            )
+              ? aggregate.salaryY
+              : aggregate.y;
+
+          aggregate.y =
+            projectSalaryToBaseAxis(
+              salary,
+              range
+            );
+        }
+      );
+    }
+
+    function bubbleChartAreaHeight() {
+      const measured =
+        Number(
+          chart?.chartArea?.height
+        );
+
+      if (
+        Number.isFinite(measured) &&
+        measured > 80
+      ) {
+        return measured;
+      }
+
+      return Math.max(
+        260,
+        (
+          chart?.height ||
+          chartCanvas.clientHeight ||
+          585
+        ) -
+        110
+      );
+    }
+
+    function deriveBubbleYAxisRange(view) {
+      const store =
+        bubbleStores[view];
+
+      if (
+        !store ||
+        !store.aggregates.length
+      ) {
+        return fixedYAxisRange();
+      }
+
+      const scale =
+        bubbleRadiusScale();
+
+      const height =
+        bubbleChartAreaHeight();
+
+      const extents =
+        store.aggregates
+          .map(aggregate => ({
+            salary:
+              Number(
+                aggregate.salaryY
+              ),
+
+            radiusPx:
+              aggregate.baseRadius *
+              scale +
+              CONFIG.bubbleYAxisPaddingPx
+          }))
+          .filter(item =>
+            Number.isFinite(
+              item.salary
+            )
+          );
+
+      if (!extents.length) {
+        return fixedYAxisRange();
+      }
+
+      const centreMinimum =
+        Math.min(
+          ...extents.map(
+            item => item.salary
+          )
+        );
+
+      const centreMaximum =
+        Math.max(
+          ...extents.map(
+            item => item.salary
+          )
+        );
+
+      let minimum =
+        centreMinimum;
+
+      let maximum =
+        centreMaximum;
+
+      let span =
+        Math.max(
+          CONFIG.bubbleYAxisMinimumSpan,
+          maximum - minimum
+        );
+
+      for (
+        let iteration = 0;
+        iteration < 5;
+        iteration += 1
+      ) {
+        const unitsPerPixel =
+          span /
+          height;
+
+        minimum =
+          Math.min(
+            ...extents.map(
+              item =>
+                item.salary -
+                item.radiusPx *
+                unitsPerPixel
+            )
+          );
+
+        maximum =
+          Math.max(
+            ...extents.map(
+              item =>
+                item.salary +
+                item.radiusPx *
+                unitsPerPixel
+            )
+          );
+
+        const requiredSpan =
+          maximum - minimum;
+
+        if (
+          requiredSpan <
+          CONFIG.bubbleYAxisMinimumSpan
+        ) {
+          const centre =
+            (minimum + maximum) /
+            2;
+
+          minimum =
+            centre -
+            CONFIG.bubbleYAxisMinimumSpan /
+            2;
+
+          maximum =
+            centre +
+            CONFIG.bubbleYAxisMinimumSpan /
+            2;
+        }
+
+        span =
+          maximum - minimum;
+      }
+
+      const snap =
+        CONFIG.bubbleYAxisSnap;
+
+      minimum =
+        Math.floor(
+          minimum / snap
+        ) *
+        snap;
+
+      maximum =
+        Math.ceil(
+          maximum / snap
+        ) *
+        snap;
+
+      while (
+        maximum - minimum <
+        CONFIG.bubbleYAxisMinimumSpan
+      ) {
+        minimum -= snap;
+        maximum += snap;
+      }
+
+      minimum =
+        Math.max(
+          CONFIG.minimumSalary,
+          minimum
+        );
+
+      maximum =
+        Math.min(
+          CONFIG.maximumSalary,
+          maximum
+        );
+
+      const fitted =
+        normaliseYAxisRange({
+          minimum,
+          maximum
+        });
+
+      const fixed =
+        fixedYAxisRange();
+
+      if (
+        fitted.maximum - fitted.minimum >=
+        fixed.maximum - fixed.minimum
+      ) {
+        return fixed;
+      }
+
+      return fitted;
+    }
+
+    function yAxisTargetForView(view) {
+      if (
+        view === 'state' ||
+        view === 'employer'
+      ) {
+        const store =
+          bubbleStores[view];
+
+        if (store?.splitKeys.size) {
+          return fixedYAxisRange();
+        }
+
+        return deriveBubbleYAxisRange(
+          view
+        );
+      }
+
+      return fixedYAxisRange();
+    }
+
+    function cancelYAxisRangeAnimation() {
+      yAxisRangeAnimation.token += 1;
+
+      if (
+        yAxisRangeAnimation.raf !==
+        null
+      ) {
+        cancelAnimationFrame(
+          yAxisRangeAnimation.raf
+        );
+
+        yAxisRangeAnimation.raf =
+          null;
+      }
+    }
+
+    function animateDisplayedYAxisRange(
+      targetRange,
+      duration = CONFIG.transitionMs
+    ) {
+      const target =
+        normaliseYAxisRange(
+          targetRange
+        );
+
+      const start =
+        copyDisplayedYAxisRange();
+
+      cancelYAxisRangeAnimation();
+
+      if (
+        rangesNearlyEqual(
+          start,
+          target
+        )
+      ) {
+        setDisplayedYAxisRange(
+          target
+        );
+
+        chart?.draw();
+        return;
+      }
+
+      if (
+        PFF.reducedMotion() ||
+        duration <= 0
+      ) {
+        setDisplayedYAxisRange(
+          target
+        );
+
+        chart?.draw();
+        return;
+      }
+
+      const token =
+        ++yAxisRangeAnimation.token;
+
+      const startedAt =
+        performance.now();
+
+      function frame(now) {
+        if (
+          token !==
+          yAxisRangeAnimation.token
+        ) {
+          return;
+        }
+
+        const rawProgress =
+          Math.min(
+            (now - startedAt) /
+            duration,
+            1
+          );
+
+        const progress =
+          easeInOutCubic(
+            rawProgress
+          );
+
+        setDisplayedYAxisRange(
+          interpolateYAxisRange(
+            start,
+            target,
+            progress
+          )
+        );
+
+        chart?.draw();
+
+        if (rawProgress < 1) {
+          yAxisRangeAnimation.raf =
+            requestAnimationFrame(
+              frame
+            );
+        } else {
+          yAxisRangeAnimation.raf =
+            null;
+
+          setDisplayedYAxisRange(
+            target
+          );
+
+          chart?.draw();
+        }
+      }
+
+      yAxisRangeAnimation.raf =
+        requestAnimationFrame(
+          frame
+        );
+    }
+
     function bubbleVisibility(raw) {
       const store =
         bubbleStores[
@@ -2932,6 +3603,34 @@
         : 1;
     }
 
+    function bubbleRadiusScale(
+      activeChart = chart
+    ) {
+      return Math.min(
+        clamp(
+          (
+            activeChart?.width ||
+            chartCanvas.clientWidth ||
+            520
+          ) /
+          520,
+          0.78,
+          1.05
+        ),
+
+        clamp(
+          (
+            activeChart?.height ||
+            chartCanvas.clientHeight ||
+            585
+          ) /
+          585,
+          0.68,
+          1.04
+        )
+      );
+    }
+
     function displayedBubbleRadius(context) {
       const raw = context.raw;
 
@@ -2946,29 +3645,12 @@
         return 0;
       }
 
-      const scale = Math.min(
-        clamp(
-          (
-            context.chart.width ||
-            520
-          ) /
-          520,
-          0.78,
-          1.05
-        ),
-
-        clamp(
-          (
-            context.chart.height ||
-            585
-          ) /
-          585,
-          0.68,
-          1.04
+      return (
+        raw.baseRadius *
+        bubbleRadiusScale(
+          context.chart
         )
       );
-
-      return raw.baseRadius * scale;
     }
 
     function buildBubbleView(view) {
@@ -5181,12 +5863,34 @@
 
           plugins: [
             xAxisFadePlugin,
+            salaryYAxisPlugin,
             variableAxisTickPlugin,
             bubbleLabelPlugin,
             interactionNotePlugin
           ]
         }
       );
+
+      const initialYAxisRange =
+        yAxisTargetForView(
+          activeView
+        );
+
+      setDisplayedYAxisRange(
+        initialYAxisRange
+      );
+
+      if (
+        activeView === 'state' ||
+        activeView === 'employer'
+      ) {
+        applyBubbleAggregateRange(
+          activeView,
+          initialYAxisRange
+        );
+
+        chart.update('none');
+      }
 
       updateLegend(
         model.legendItems,
@@ -5212,6 +5916,21 @@
       activeView = nextView;
       lastBubbleClick = '';
       lastBubbleClickAt = 0;
+
+      const targetYAxisRange =
+        yAxisTargetForView(
+          activeView
+        );
+
+      if (
+        activeView === 'state' ||
+        activeView === 'employer'
+      ) {
+        applyBubbleAggregateRange(
+          activeView,
+          targetYAxisRange
+        );
+      }
 
       const model =
         buildViewModel(
@@ -5244,6 +5963,12 @@
       updateReaggregateButton();
 
       if (!animate) {
+        cancelYAxisRangeAnimation();
+
+        setDisplayedYAxisRange(
+          targetYAxisRange
+        );
+
         currentXAxisOptions =
           model.xScale;
 
@@ -5261,6 +5986,11 @@
         chart.update('none');
         return;
       }
+
+      animateDisplayedYAxisRange(
+        targetYAxisRange,
+        CONFIG.transitionMs
+      );
 
       animateViewMorph(
         model,
@@ -5285,12 +6015,20 @@
       if (
         currentStore?.splitKeys.size
       ) {
-        reaggregate(() => {
-          applyView(
-            nextView,
-            true
+        const nextYAxisRange =
+          yAxisTargetForView(
+            nextView
           );
-        });
+
+        reaggregate(
+          () => {
+            applyView(
+              nextView,
+              true
+            );
+          },
+          nextYAxisRange
+        );
 
         return;
       }
@@ -5492,6 +6230,13 @@
         store.splitKeys.size ===
         0;
 
+      const startYAxisRange =
+        copyDisplayedYAxisRange();
+
+      const targetYAxisRange =
+        fixedYAxisRange();
+
+      cancelYAxisRangeAnimation();
       interactionLocked = true;
 
       store.splitKeys.add(
@@ -5523,9 +6268,25 @@
           CONFIG.splitAnimationMs,
 
         easing:
-          easeOutCubic,
+          easeInOutCubic,
 
         onFrame(progress) {
+          const currentYAxisRange =
+            interpolateYAxisRange(
+              startYAxisRange,
+              targetYAxisRange,
+              progress
+            );
+
+          setDisplayedYAxisRange(
+            currentYAxisRange
+          );
+
+          applyBubbleAggregateRange(
+            view,
+            currentYAxisRange
+          );
+
           store.splitProgress.set(
             categoryKey,
             progress
@@ -5558,6 +6319,15 @@
         },
 
         onComplete() {
+          setDisplayedYAxisRange(
+            targetYAxisRange
+          );
+
+          applyBubbleAggregateRange(
+            view,
+            targetYAxisRange
+          );
+
           points.forEach(point => {
             point.x = point.targetX;
             point.y = point.targetY;
@@ -5579,7 +6349,8 @@
     }
 
     function reaggregate(
-      callback = null
+      callback = null,
+      targetYAxisRangeOverride = null
     ) {
       const store =
         bubbleStores[
@@ -5595,6 +6366,21 @@
         return;
       }
 
+      const view =
+        activeView;
+
+      const startYAxisRange =
+        copyDisplayedYAxisRange();
+
+      const targetYAxisRange =
+        normaliseYAxisRange(
+          targetYAxisRangeOverride ||
+          deriveBubbleYAxisRange(
+            view
+          )
+        );
+
+      cancelYAxisRangeAnimation();
       interactionLocked = true;
       store.mergeProgress = 0;
 
@@ -5619,10 +6405,6 @@
         point.endX =
           aggregate?.x ??
           point.x;
-
-        point.endY =
-          aggregate?.y ??
-          point.y;
       });
 
       chart.update('none');
@@ -5636,6 +6418,22 @@
           easeInOutCubic,
 
         onFrame(progress) {
+          const currentYAxisRange =
+            interpolateYAxisRange(
+              startYAxisRange,
+              targetYAxisRange,
+              progress
+            );
+
+          setDisplayedYAxisRange(
+            currentYAxisRange
+          );
+
+          applyBubbleAggregateRange(
+            view,
+            currentYAxisRange
+          );
+
           store.mergeProgress =
             progress;
 
@@ -5643,6 +6441,17 @@
             1 - progress;
 
           store.rawPoints.forEach(point => {
+            const aggregate =
+              store.aggregates.find(
+                item =>
+                  item.categoryKey ===
+                  point.categoryKey
+              );
+
+            const currentEndY =
+              aggregate?.y ??
+              point.startY;
+
             point.x =
               point.startX +
               (
@@ -5654,7 +6463,7 @@
             point.y =
               point.startY +
               (
-                point.endY -
+                currentEndY -
                 point.startY
               ) *
               progress;
@@ -5664,6 +6473,15 @@
         },
 
         onComplete() {
+          setDisplayedYAxisRange(
+            targetYAxisRange
+          );
+
+          applyBubbleAggregateRange(
+            view,
+            targetYAxisRange
+          );
+
           store.rawPoints = [];
 
           chart.data.datasets[1].data =
@@ -5756,6 +6574,35 @@
         applyResponsiveChartOptions:
           false,
         onRefresh() {
+          if (
+            chart &&
+            !interactionLocked &&
+            !viewMorphInProgress &&
+            (
+              activeView === 'state' ||
+              activeView === 'employer'
+            ) &&
+            !bubbleStores[
+              activeView
+            ]?.splitKeys.size
+          ) {
+            const targetYAxisRange =
+              deriveBubbleYAxisRange(
+                activeView
+              );
+
+            setDisplayedYAxisRange(
+              targetYAxisRange
+            );
+
+            applyBubbleAggregateRange(
+              activeView,
+              targetYAxisRange
+            );
+
+            chart.update('none');
+          }
+
           tabsController?.update();
           headingScroller?.update();
           legendController?.refresh();
