@@ -24,6 +24,7 @@
       --seek-pink: #e5007d;
       --indeed-blue: #2557a7;
       --essilux-blue: #49b7e8;
+      --facebook-blue: #1877f2;
 
       --corporate-text: #00b26f;
       --independent-text: #5a3be7;
@@ -1336,6 +1337,11 @@
     .data-table a.link-seek { color: var(--seek-pink); }
     .data-table a.link-indeed { color: var(--indeed-blue); }
     .data-table a.link-essilux { color: var(--essilux-blue); }
+    .data-table a.link-facebook,
+    .data-table td.link-facebook {
+      color: var(--facebook-blue);
+      font-weight: 700;
+    }
 
     .data-table tr.repeat-row td {
       background: var(--repeat-row-background);
@@ -1384,7 +1390,9 @@
     .data-table tr.delisted-row td a,
     .data-table tr.delisted-row td a.link-seek,
     .data-table tr.delisted-row td a.link-indeed,
-    .data-table tr.delisted-row td a.link-essilux {
+    .data-table tr.delisted-row td a.link-essilux,
+    .data-table tr.delisted-row td a.link-facebook,
+    .data-table tr.delisted-row td.link-facebook {
       color: var(--delisted-grey) !important;
     }
 
@@ -3351,7 +3359,8 @@
       sourceMarker,
       employerValue,
       suburbValue,
-      stateValue
+      stateValue,
+      facebookUrl = ''
     ) {
       const sourceMarkerText =
         cleanText(sourceMarker);
@@ -3365,6 +3374,33 @@
       const stateCode =
         cleanText(stateValue);
 
+      const normalisedSourceMarker =
+        normaliseText(
+          sourceMarkerText
+        );
+
+      const isFacebook =
+        normalisedSourceMarker
+          .endsWith('facebook|');
+
+      const isIndeed =
+        normalisedSourceMarker
+          .endsWith('indeed|');
+
+      if (isFacebook) {
+        return {
+          text: 'Facebook',
+
+          url:
+            cleanText(
+              facebookUrl
+            ),
+
+          className:
+            'link-facebook'
+        };
+      }
+
       if (
         !canBuildJobLink(
           employer,
@@ -3377,11 +3413,6 @@
 
       const keywords =
         `"Optometrist" ${employer}`;
-
-      const isIndeed =
-        normaliseText(
-          sourceMarkerText
-        ).endsWith('indeed|');
 
       const employerWithoutSpaces =
         employer
@@ -3485,6 +3516,11 @@
       const sourceRows =
         response?.table?.rows || [];
 
+      const facebookLinksBySourceMarker =
+        response
+          ?.facebookLinksBySourceMarker ||
+        {};
+
       const retainedDateCutoff =
         state.summaryLatestDate instanceof Date &&
         !Number.isNaN(
@@ -3580,6 +3616,14 @@
               ]
             );
 
+          const facebookUrl =
+            facebookLinksBySourceMarker[
+              cleanText(
+                sourceMarker
+              )
+            ] ||
+            '';
+
           const employerValue =
             getGvizCellDisplay(
               cells[
@@ -3660,7 +3704,8 @@
                   sourceMarker,
                   employerValue,
                   suburbValue,
-                  stateValue
+                  stateValue,
+                  facebookUrl
                 );
 
           const stateCodes =
@@ -4978,6 +5023,22 @@
           ? data.rows
           : [];
 
+      const facebookLinksBySourceMarker =
+        (
+          data
+            ?.facebookLinksBySourceMarker &&
+          typeof data
+            .facebookLinksBySourceMarker ===
+            'object' &&
+          !Array.isArray(
+            data
+              .facebookLinksBySourceMarker
+          )
+        )
+          ? data
+              .facebookLinksBySourceMarker
+          : {};
+
       if (
         headerLabels.length <
           CONFIG.LAST_COLUMN ||
@@ -5032,6 +5093,32 @@
                     )
                 );
             }
+          ),
+
+        facebookLinksBySourceMarker:
+          Object.fromEntries(
+            Object.entries(
+              facebookLinksBySourceMarker
+            )
+              .map(
+                ([
+                  key,
+                  value
+                ]) => [
+                  cleanText(key),
+                  cleanText(value)
+                ]
+              )
+              .filter(
+                ([
+                  key,
+                  value
+                ]) =>
+                  Boolean(key) &&
+                  /^https?:\/\//i.test(
+                    value
+                  )
+              )
           )
       };
     }
@@ -5047,6 +5134,10 @@
       return {
         status:
           'ok',
+
+        facebookLinksBySourceMarker:
+          validated
+            .facebookLinksBySourceMarker,
 
         table: {
           cols:
@@ -5131,8 +5222,35 @@
             'clinical job tracker'
         });
 
-      return normaliseLiveTableSnapshot(
-        table
+      let facebookLinksBySourceMarker =
+        {};
+
+      try {
+        const remote =
+          await loadRemoteTrackerSnapshot();
+
+        facebookLinksBySourceMarker =
+          remote
+            ?.snapshot
+            ?.facebookLinksBySourceMarker ||
+          {};
+      } catch (error) {
+        console.warn(
+          'Facebook job source hyperlinks could not be loaded.',
+          error
+        );
+      }
+
+      const snapshot =
+        normaliseLiveTableSnapshot(
+          table
+        );
+
+      snapshot.facebookLinksBySourceMarker =
+        facebookLinksBySourceMarker;
+
+      return validateTrackerSnapshot(
+        snapshot
       );
     }
 
@@ -5169,6 +5287,10 @@
           cacheVersion: 1,
           headerLabels:
             snapshot.headerLabels,
+          facebookLinksBySourceMarker:
+            snapshot
+              .facebookLinksBySourceMarker ||
+            {},
           ...metadata
         }
       );
@@ -5195,7 +5317,11 @@
             headerLabels:
               cached.headerLabels,
             rows:
-              cached.rows
+              cached.rows,
+            facebookLinksBySourceMarker:
+              cached
+                .facebookLinksBySourceMarker ||
+              {}
           }),
         cachedAt:
           cached.remoteCachedAt ||
@@ -5976,6 +6102,14 @@
         );
 
         return;
+      }
+
+      if (
+        cellModel.linkClass
+      ) {
+        cellElement.classList.add(
+          cellModel.linkClass
+        );
       }
 
       cellElement.textContent =
