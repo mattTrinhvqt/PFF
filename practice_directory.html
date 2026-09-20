@@ -3409,6 +3409,20 @@
     }
 
 
+    /* Unified nearby PHN scope wording */
+    .nearby-scope-text,
+    .nearby-section-link {
+      font-weight: 400;
+      line-height: 1;
+    }
+
+    .nearby-section-link {
+      color: var(--pff-purple);
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+
     /* Final typography, title spacing and mobile search refinements */
     .eat-tagline-phrase {
       display: inline-flex;
@@ -3434,8 +3448,7 @@
       }
 
       .nearby-scope-text,
-      .nearby-phn-descriptor,
-      .nearby-phn-descriptor .nearby-section-link {
+      .nearby-section-link {
         font-size: 10px;
       }
 
@@ -3465,8 +3478,7 @@
       }
 
       .nearby-scope-text,
-      .nearby-phn-descriptor,
-      .nearby-phn-descriptor .nearby-section-link {
+      .nearby-section-link {
         font-size: 7.7px;
       }
 
@@ -3580,6 +3592,7 @@
               class="search-input eat-search-input"
               type="text"
               autocomplete="off"
+              enterkeyhint="search"
               spellcheck="false"
               placeholder="Search practices, services or locations, e.g., Sydney or dry eye"
               aria-label="Search practices, services or locations"
@@ -3611,8 +3624,8 @@
               <div class="nearby-section-line">
                 <span class="nearby-kicker">Local eyecare access</span>
                 <span class="nearby-section-dot" aria-hidden="true">·</span>
-                <span id="nearbyScopeText" class="nearby-scope-text">by</span>
-                <span id="nearbySectionLink" class="nearby-phn-descriptor">Primary Health Network <a class="nearby-section-link" href="https://drive.google.com/file/d/12OEDqlmeEh-DM_b6UaH2WuQq48ad5AvG/view?usp=drive_link" target="_blank" rel="noopener">(PHN)</a></span>
+                <span id="nearbyScopeText" class="nearby-scope-text">by Primary Health Network</span>
+                <a id="nearbySectionLink" class="nearby-section-link" href="https://drive.google.com/file/d/12OEDqlmeEh-DM_b6UaH2WuQq48ad5AvG/view?usp=drive_link" target="_blank" rel="noopener">(PHN)</a>
               </div>
               <div id="practiceScopeSwitch" class="metric-switch practice-scope-switch" role="group" aria-label="Practice count area">
                 <button id="practiceScopePhn" class="metric-button is-active" type="button" aria-pressed="true" data-practice-scope="phn">PHN</button>
@@ -4289,6 +4302,10 @@
     let sortDirection = 'asc';
     let renderFrame = null;
     let searchTimer = null;
+    let locationSuggestionTimer = null;
+    let lastRenderedSearchKey = null;
+    const SEARCH_RENDER_DEBOUNCE_MS = 180;
+    const LOCATION_SUGGESTION_DEBOUNCE_MS = 70;
     let suggestionItems = [];
     let activeSuggestionIndex = -1;
     let tableAnimationToken = 0;
@@ -7079,7 +7096,7 @@
       nearbyScopeText.textContent =
         radiusMode
           ? 'by geodesic radius from selected locality'
-          : 'by';
+          : 'by Primary Health Network';
 
       nearbySectionLink.hidden =
         radiusMode;
@@ -7240,6 +7257,7 @@
       sortDirection = 'asc';
 
       prepareActiveLocationDistances();
+      warmNearbyPercentileCache();
       nearbyUnfilteredCount =
         activeRadiusCounts[
           Math.max(
@@ -8875,6 +8893,58 @@
       );
     }
 
+    function currentSearchRenderKey() {
+      return [
+        activeServiceType,
+        activeIntent,
+        normaliseSearchText(searchInput.value)
+      ].join('|');
+    }
+
+    function scheduleDirectorySearchRender() {
+      clearTimeout(searchTimer);
+
+      const searchKey =
+        currentSearchRenderKey();
+
+      if (searchKey === lastRenderedSearchKey) {
+        return;
+      }
+
+      searchTimer =
+        setTimeout(
+          () => {
+            lastRenderedSearchKey = searchKey;
+            scheduleRender(false);
+          },
+          SEARCH_RENDER_DEBOUNCE_MS
+        );
+    }
+
+    function commitDirectorySearchNow() {
+      clearTimeout(searchTimer);
+
+      const searchKey =
+        currentSearchRenderKey();
+
+      if (searchKey === lastRenderedSearchKey) {
+        return;
+      }
+
+      lastRenderedSearchKey = searchKey;
+      scheduleRender(false);
+    }
+
+    function scheduleLocationSuggestions() {
+      clearTimeout(locationSuggestionTimer);
+
+      locationSuggestionTimer =
+        setTimeout(
+          renderLocationSuggestions,
+          LOCATION_SUGGESTION_DEBOUNCE_MS
+        );
+    }
+
     function scheduleRender(animate = true) {
       if (renderFrame !== null) {
         cancelAnimationFrame(renderFrame);
@@ -9464,14 +9534,11 @@
           radiusPercentileBusy = false;
           setViewBusy(false);
 
-          if (activeIntent === 'nearby') {
-            warmNearbyPercentileCache();
-          }
-
           if (
             activeIntent === 'nearby' &&
             activeLocation
           ) {
+            warmNearbyPercentileCache();
             prepareActiveLocationDistances();
             sortKey = 'distanceKm';
             sortDirection = 'asc';
@@ -9599,43 +9666,67 @@
             Boolean(searchInput.value)
           );
 
-          clearTimeout(
-            searchTimer
-          );
+          clearTimeout(searchTimer);
+          clearTimeout(locationSuggestionTimer);
 
           if (
             activeIntent === 'nearby' &&
             activeServiceType === 'optometry'
           ) {
-            if (
-              activeLocation &&
-              searchInput.value !==
-                locationDisplayLabel(activeLocation)
-            ) {
-              activeLocation = null;
-            }
-
-            renderLocationSuggestions();
+            scheduleLocationSuggestions();
+            return;
           }
 
-          searchTimer =
-            setTimeout(
-              () => scheduleRender(),
-              40
-            );
+          scheduleDirectorySearchRender();
         }
       );
 
       searchInput.addEventListener(
         'keydown',
         event => {
-          if (
-            activeIntent !== 'nearby' ||
-            activeServiceType !== 'optometry' ||
-            !locationSuggestions.classList.contains(
+          if (event.isComposing) {
+            return;
+          }
+
+          const isNearbySearch =
+            activeIntent === 'nearby' &&
+            activeServiceType === 'optometry';
+
+          const suggestionsVisible =
+            isNearbySearch &&
+            locationSuggestions.classList.contains(
               'is-visible'
-            )
-          ) {
+            );
+
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            clearTimeout(locationSuggestionTimer);
+
+            if (suggestionsVisible) {
+              const index =
+                activeSuggestionIndex >= 0
+                  ? activeSuggestionIndex
+                  : 0;
+
+              const row =
+                suggestionItems[index];
+
+              if (row) {
+                selectLocation(row);
+                return;
+              }
+            }
+
+            if (!isNearbySearch) {
+              commitDirectorySearchNow();
+            }
+
+            hideLocationSuggestions();
+            searchInput.blur();
+            return;
+          }
+
+          if (!suggestionsVisible) {
             return;
           }
 
@@ -9657,24 +9748,9 @@
             return;
           }
 
-          if (event.key === 'Enter') {
-            const index =
-              activeSuggestionIndex >= 0
-                ? activeSuggestionIndex
-                : 0;
-
-            const row =
-              suggestionItems[index];
-
-            if (row) {
-              event.preventDefault();
-              selectLocation(row);
-            }
-            return;
-          }
-
           if (event.key === 'Escape') {
             hideLocationSuggestions();
+            searchInput.blur();
           }
         }
       );
@@ -9720,6 +9796,8 @@
       searchClear.addEventListener(
         'click',
         () => {
+          clearTimeout(searchTimer);
+          clearTimeout(locationSuggestionTimer);
           searchInput.value = '';
           searchValuesByView[currentViewKey()] = '';
 
@@ -9734,7 +9812,8 @@
           );
 
           searchInput.focus();
-          scheduleRender();
+          lastRenderedSearchKey = currentSearchRenderKey();
+          scheduleRender(false);
         }
       );
 
