@@ -2409,6 +2409,64 @@
       .nearby-metrics.is-radius-mode .nearby-metric:not(.nearby-metric-primary) { flex-basis:0; max-width:0; }
     }
 
+
+
+    /* ============================================================
+     * Final distance + scope-transition refinements
+     * ============================================================ */
+    .nearby-section-link {
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+
+    .practice-radius-control {
+      max-height: 0;
+      min-height: 0;
+      margin-top: 0;
+      margin-bottom: 0;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(-4px);
+      pointer-events: none;
+      transition:
+        max-height 280ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        min-height 280ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        opacity 180ms ease,
+        transform 260ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        margin 260ms ease;
+    }
+
+    .nearby-metrics.is-radius-mode .practice-radius-control {
+      max-height: 36px;
+      min-height: 28px;
+      margin: -1px 4px 0;
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .nearby-metric {
+      transition:
+        flex-basis 280ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        max-width 280ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        min-height 260ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        opacity 180ms ease,
+        transform 260ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        padding 240ms ease;
+    }
+
+    .percentile-current {
+      left: var(--percentile-label-left, var(--percentile));
+    }
+
+    @media (max-width: 700px) {
+      .nearby-metrics.is-radius-mode .practice-radius-control {
+        margin-right: 2px;
+        margin-left: 2px;
+      }
+    }
+
 </style>
 </head>
 
@@ -2557,7 +2615,7 @@
           <article class="nearby-metric nearby-metric-primary">
             <div class="nearby-metric-label">No. of practices</div>
 
-            <div id="practiceRadiusControl" class="practice-radius-control" hidden>
+            <div id="practiceRadiusControl" class="practice-radius-control" aria-hidden="true">
               <div class="practice-radius-topline">
                 <span id="radiusValue">within 10 km radius</span>
               </div>
@@ -4438,6 +4496,43 @@
         </div>
       `;
 
+      requestAnimationFrame(
+        () => {
+          const labelRow =
+            element.querySelector('.percentile-label-row');
+          const currentLabel =
+            element.querySelector('.percentile-current');
+
+          if (
+            !labelRow ||
+            !currentLabel ||
+            labelRow.clientWidth <= 0
+          ) {
+            return;
+          }
+
+          const rowWidth =
+            labelRow.clientWidth;
+          const markerX =
+            rowWidth * clamped / 100;
+          const halfLabel =
+            currentLabel.offsetWidth / 2;
+          const safeLeft =
+            Math.max(
+              halfLabel,
+              Math.min(
+                rowWidth - halfLabel,
+                markerX
+              )
+            );
+
+          currentLabel.style.setProperty(
+            '--percentile-label-left',
+            `${safeLeft}px`
+          );
+        }
+      );
+
       return clamped;
     }
 
@@ -5125,9 +5220,26 @@
         );
     }
 
-    function formatDistance(value) {
+    function distanceNumber(value) {
+      if (
+        value === null ||
+        value === undefined ||
+        value === ''
+      ) {
+        return null;
+      }
+
       const number =
         Number(value);
+
+      return Number.isFinite(number)
+        ? number
+        : null;
+    }
+
+    function formatDistance(value) {
+      const number =
+        distanceNumber(value);
 
       if (!Number.isFinite(number)) {
         return '–';
@@ -5593,6 +5705,21 @@
       );
     }
 
+    let nearbyMetricFitTimer =
+      null;
+
+    function scheduleNearbyMetricFit() {
+      fitNearbyMetricText();
+
+      clearTimeout(nearbyMetricFitTimer);
+
+      nearbyMetricFitTimer =
+        setTimeout(
+          fitNearbyMetricText,
+          340
+        );
+    }
+
     function syncPracticeScopeUi() {
       const radiusMode =
         practiceCountScope === 'radius';
@@ -5622,8 +5749,10 @@
         radiusMode ? '1' : '0'
       );
 
-      practiceRadiusControl.hidden =
-        !radiusMode;
+      practiceRadiusControl.setAttribute(
+        'aria-hidden',
+        String(!radiusMode)
+      );
 
       nearbyMetrics.classList.toggle(
         'is-radius-mode',
@@ -5643,6 +5772,8 @@
 
       practiceGuidance.hidden =
         radiusMode;
+
+      scheduleNearbyMetricFit();
     }
 
     function updateNearbyMetrics() {
@@ -5759,7 +5890,7 @@
 
       updateCoverageBenchmarks(peoplePerClinician);
       nearbyContext.innerHTML = '';
-      fitNearbyMetricText();
+      scheduleNearbyMetricFit();
     }
 
     function selectLocation(row) {
@@ -6411,10 +6542,10 @@
     ) {
       if (key === 'distanceKm') {
         const firstDistance =
-          Number(first.distanceKm);
+          distanceNumber(first.distanceKm);
 
         const secondDistance =
-          Number(second.distanceKm);
+          distanceNumber(second.distanceKm);
 
         if (
           Number.isFinite(firstDistance) &&
@@ -6583,16 +6714,17 @@
               if (
                 activeIntent === 'nearby' &&
                 activeServiceType === 'optometry' &&
-                activeLocation &&
-                (
-                  !Number.isFinite(
-                    Number(row.distanceKm)
-                  ) ||
-                  Number(row.distanceKm) >
-                    radiusKm
-                )
+                activeLocation
               ) {
-                return false;
+                const rowDistance =
+                  distanceNumber(row.distanceKm);
+
+                if (
+                  !Number.isFinite(rowDistance) ||
+                  rowDistance > radiusKm
+                ) {
+                  return false;
+                }
               }
 
               if (
