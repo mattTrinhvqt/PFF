@@ -314,6 +314,9 @@
       axisTransitionMs:
         700,
 
+      locationTransitionMs:
+        700,
+
       columns: Object.freeze({
         practiceName: 0,
         suburb: 2,
@@ -449,6 +452,15 @@
     let chartSummary = null;
     let spineTransitionFrame = null;
     let axisTransitionFrame = null;
+
+    const locationTransitionAnimator =
+      PFFCharts.createAnimationController();
+
+    const locationReorderState = {
+      active: false,
+      progress: 1,
+      fromYByKey: new Map()
+    };
 
     const spineTransitionState = {
       active: false,
@@ -705,6 +717,7 @@
 
         if (!groups.has(key)) {
           groups.set(key, {
+            key: `suburb:${key}`,
             label: row.suburb,
             state: row.state,
             count: 0
@@ -756,6 +769,7 @@
 
         if (!groups.has(key)) {
           groups.set(key, {
+            key: `brand:${key}`,
             label,
             count: 0
           });
@@ -1088,7 +1102,15 @@
             return;
           }
 
-          const text = valueText(group);
+          const animatedValue =
+            locationReorderState.active
+              ? Number(
+                  chartInstance.data.datasets?.[0]?.data?.[index]
+                )
+              : NaN;
+          const text = Number.isFinite(animatedValue)
+            ? PFF.formatInteger(Math.round(animatedValue))
+            : valueText(group);
           const width = ctx.measureText(text).width;
           const proposedX = properties.x + 5;
 
@@ -1102,6 +1124,80 @@
         });
 
         ctx.restore();
+      }
+    };
+
+    function captureGroupYPositions(model) {
+      const positions = new Map();
+
+      if (!chart || !model?.groups?.length) {
+        return positions;
+      }
+
+      const elements = chart.getDatasetMeta(0)?.data || [];
+
+      model.groups.forEach((group, index) => {
+        const y = elements[index]?.y;
+
+        if (group?.key && Number.isFinite(y)) {
+          positions.set(group.key, y);
+        }
+      });
+
+      return positions;
+    }
+
+    function animatedGroupY(chartInstance, group, index) {
+      const targetY = chartInstance?.scales?.y?.getPixelForValue(index);
+
+      if (
+        !Number.isFinite(targetY) ||
+        !locationReorderState.active
+      ) {
+        return targetY;
+      }
+
+      const fromY = locationReorderState.fromYByKey.get(
+        group?.key
+      );
+
+      if (!Number.isFinite(fromY)) {
+        return targetY;
+      }
+
+      return fromY +
+        (targetY - fromY) *
+        Math.max(0, Math.min(locationReorderState.progress, 1));
+    }
+
+    const locationReorderGeometryPlugin = {
+      id: 'pffPracticeLandscapeLocationReorder',
+
+      beforeDatasetsDraw(chartInstance) {
+        if (
+          !locationReorderState.active ||
+          !activeModel?.groups?.length
+        ) {
+          return;
+        }
+
+        chartInstance.data.datasets.forEach((_dataset, datasetIndex) => {
+          const elements =
+            chartInstance.getDatasetMeta(datasetIndex)?.data || [];
+
+          elements.forEach((element, index) => {
+            const group = activeModel.groups[index];
+            const y = animatedGroupY(
+              chartInstance,
+              group,
+              index
+            );
+
+            if (Number.isFinite(y)) {
+              element.y = y;
+            }
+          });
+        });
       }
     };
 
@@ -1671,6 +1767,7 @@
           data: chartData(model),
           options: chartOptions(model),
           plugins: [
+            locationReorderGeometryPlugin,
             barAxisPresentationPlugin,
             constantSpinePlugin,
             barValueLabelsPlugin
@@ -1682,8 +1779,43 @@
     }
 
     function updateChart(model, animate = true) {
+      const previousModel = activeModel;
       const previousArea = copyChartArea(chart?.chartArea);
-      const previousMaximum = activeAxisSpec?.max;
+      const previousMaximum = Number(
+        chart?.options?.scales?.x?.max ??
+        axisTransitionState.max ??
+        activeAxisSpec?.max
+      );
+      const shouldAnimateLocationReorder = Boolean(
+        chart &&
+        previousModel &&
+        previousModel.view === model.view &&
+        previousModel.area !== model.area &&
+        animate &&
+        !PFF.reducedMotion()
+      );
+
+      const previousYByKey = shouldAnimateLocationReorder
+        ? captureGroupYPositions(previousModel)
+        : new Map();
+      const previousIndexByKey = shouldAnimateLocationReorder
+        ? new Map(
+            previousModel.groups.map((group, index) => [
+              group.key,
+              index
+            ])
+          )
+        : new Map();
+      const currentValues = shouldAnimateLocationReorder
+        ? (chart.data.datasets?.[0]?.data || []).map(
+            value => Number(value) || 0
+          )
+        : [];
+
+      locationTransitionAnimator.cancel();
+      locationReorderState.active = false;
+      locationReorderState.progress = 1;
+      locationReorderState.fromYByKey = new Map();
 
       activeModel = model;
       activeAxisSpec = axisSpecFor(model);
@@ -1691,6 +1823,98 @@
 
       if (!chart) {
         createChart(model);
+        return;
+      }
+
+      if (shouldAnimateLocationReorder) {
+        if (axisTransitionFrame !== null) {
+          cancelAnimationFrame(axisTransitionFrame);
+          axisTransitionFrame = null;
+        }
+
+        const targetData = chartData(model);
+        const targetDataset = targetData.datasets[0];
+        const startValues = model.groups.map(group => {
+          const previousIndex = previousIndexByKey.get(group.key);
+
+          return previousIndex === undefined
+            ? 0
+            : currentValues[previousIndex] || 0;
+        });
+        const targetValues = model.values.map(
+          value => Number(value) || 0
+        );
+        const startMaximum =
+          Number.isFinite(previousMaximum) && previousMaximum > 0
+            ? previousMaximum
+            : activeAxisSpec.max;
+        const targetMaximum = activeAxisSpec.max;
+        const dataset = chart.data.datasets[0];
+
+        chart.data.labels = targetData.labels;
+
+        Object.keys(targetDataset).forEach(key => {
+          if (key !== 'data') {
+            dataset[key] = targetDataset[key];
+          }
+        });
+        dataset.data = startValues.slice();
+
+        chart.options = chartOptions(model);
+        chart.options.scales.x.max = startMaximum;
+
+        locationReorderState.active = true;
+        locationReorderState.progress = 0;
+        locationReorderState.fromYByKey = previousYByKey;
+
+        axisTransitionState.active = true;
+        axisTransitionState.max = startMaximum;
+
+        chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+        chart.update('none');
+
+        const nextArea = copyChartArea(chart.chartArea);
+        animateSpineGeometry(previousArea, nextArea);
+
+        locationTransitionAnimator.run({
+          duration: CONFIG.locationTransitionMs,
+          easing: PFFCharts.easeInOutCubic,
+
+          onFrame(progress) {
+            locationReorderState.progress = progress;
+
+            dataset.data = targetValues.map((targetValue, index) => {
+              const startValue = startValues[index] || 0;
+
+              return startValue +
+                (targetValue - startValue) * progress;
+            });
+
+            const displayedMaximum =
+              startMaximum +
+              (targetMaximum - startMaximum) * progress;
+
+            chart.options.scales.x.max = displayedMaximum;
+            axisTransitionState.max = displayedMaximum;
+            chart.update('none');
+          },
+
+          onComplete() {
+            dataset.data = targetValues.slice();
+            chart.options.scales.x.max = targetMaximum;
+
+            locationReorderState.active = false;
+            locationReorderState.progress = 1;
+            locationReorderState.fromYByKey = new Map();
+
+            axisTransitionState.active = false;
+            axisTransitionState.max = targetMaximum;
+
+            chart.update('none');
+            setSpineGeometry(chart.chartArea);
+          }
+        });
+
         return;
       }
 
@@ -1817,10 +2041,21 @@
               return;
             }
 
+            locationTransitionAnimator.cancel();
+            locationReorderState.active = false;
+            locationReorderState.progress = 1;
+            locationReorderState.fromYByKey = new Map();
+
+            if (axisTransitionFrame !== null) {
+              cancelAnimationFrame(axisTransitionFrame);
+              axisTransitionFrame = null;
+            }
+
             updateStageGeometry(activeModel, false);
             activeAxisSpec = axisSpecFor(activeModel);
             axisTransitionState.active = false;
             axisTransitionState.max = activeAxisSpec.max;
+            chart.data = chartData(activeModel);
             chart.options = chartOptions(activeModel);
             chart.resize();
             chart.update('none');
