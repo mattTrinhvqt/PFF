@@ -3882,7 +3882,84 @@
       }
     }
 
-</style>
+
+    /* Final integrated search-location token and radius alignment */
+    .eat-search-control {
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: center;
+    }
+
+    .eat-search-control .selected-location-chip {
+      display: inline-flex;
+      width: max-content;
+      max-width: min(48%, 360px);
+      min-height: 30px;
+      flex: 0 1 auto;
+      align-items: center;
+      gap: 3px;
+      margin: 0 6px 0 0;
+      padding: 2px 3px 2px 7px;
+      overflow: hidden;
+      color: var(--pff-ink);
+      background: rgba(102, 0, 255, 0.055);
+      border: 1px solid rgba(102, 0, 255, 0.20);
+      border-radius: 5px;
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .eat-search-control .selected-location-chip[hidden] {
+      display: none;
+    }
+
+    .eat-search-control .selected-location-chip-text {
+      min-width: 0;
+      overflow: hidden;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .eat-search-control .selected-location-clear {
+      width: 19px;
+      height: 19px;
+      flex: 0 0 19px;
+      font-size: 14px;
+    }
+
+    .eat-search-control .eat-search-input {
+      width: auto;
+      min-width: 72px;
+      flex: 1 1 160px;
+    }
+
+    .practice-radius-control .radius-slider-wrap {
+      width: calc(100% - 12px);
+      margin-right: 6px;
+      margin-left: 6px;
+      box-sizing: border-box;
+    }
+
+    .practice-radius-control .radius-slider-wrap::before,
+    .practice-radius-control .radius-ticks {
+      right: 0;
+      left: 0;
+    }
+
+    @media (max-width: 700px) {
+      .eat-search-control .selected-location-chip {
+        max-width: 52%;
+        min-height: 27px;
+        font-size: 9px;
+      }
+
+      .eat-search-control .eat-search-input {
+        min-width: 54px;
+      }
+    }
+
+  </style>
 </head>
 
 <body>
@@ -3920,7 +3997,8 @@
             </div>
             <div class="eat-title-rule" aria-hidden="true"></div>
             <div class="eat-data-note">
-              <span>Data last updated 13/05/2026 from Google Places. Data must appear on Google Maps before here.</span>
+              <span>Data last updated 13/05/2026 from Google Places (Google Maps).</span>
+              <span>Data must appear on Google Maps before here.</span>
               <span>Does something need updating? Contact <a href="mailto:admin@phoropterfreefridays.org">admin@phoropterfreefridays.org</a></span>
             </div>
           </div>
@@ -3973,6 +4051,10 @@
         <div id="searchWrap" class="eat-search-wrap">
           <div class="search-control eat-search-control">
             <span class="search-icon" aria-hidden="true">⌕</span>
+            <div id="selectedLocationChip" class="selected-location-chip" hidden>
+              <span id="selectedLocationChipText" class="selected-location-chip-text"></span>
+              <button id="selectedLocationClear" class="selected-location-clear" type="button" aria-label="Remove selected location">×</button>
+            </div>
             <input
               id="searchInput"
               class="search-input eat-search-input"
@@ -3997,12 +4079,6 @@
             role="listbox"
             aria-label="Matching suburbs and postcodes"
           ></div>
-
-          <div id="selectedLocationChip" class="selected-location-chip" hidden>
-            <span class="selected-location-icon" aria-hidden="true">⌖</span>
-            <span id="selectedLocationChipText" class="selected-location-chip-text"></span>
-            <button id="selectedLocationClear" class="selected-location-clear" type="button" aria-label="Remove selected location">×</button>
-          </div>
         </div>
 
       </section>
@@ -4054,7 +4130,7 @@
                   type="range"
                   min="3"
                   max="200"
-                  step="1"
+                  step="any"
                   value="10"
                   aria-label="Nearby practice search radius"
                   aria-valuetext="10 km"
@@ -7536,7 +7612,7 @@
         radiusKm;
 
       const practiceCount =
-        nearbyUnfilteredCount;
+        filteredRows.length;
 
       if (
         activeIntent !== 'nearby' ||
@@ -7594,7 +7670,7 @@
                 renderPercentile(
                   nearbyPracticePercentile,
                   distribution,
-                  nearbyUnfilteredCount
+                  filteredRows.length
                 );
 
                 radiusPercentileBusy = false;
@@ -7882,6 +7958,11 @@
     }
 
     function renderLocationSuggestions() {
+      if (activeLocation) {
+        hideLocationSuggestions();
+        return;
+      }
+
       suggestionItems =
         locationSuggestionsForQuery(
           searchInput.value
@@ -7900,8 +7981,8 @@
             (item, index) => {
               const row = item.row;
               const actionText = item.remainingQuery
-                ? `Set location · keep “${item.remainingQuery}”`
-                : 'Set as location';
+                ? `Set location AND continue searching “${item.remainingQuery}”`
+                : 'Set location';
 
               return `
                 <button
@@ -8360,9 +8441,12 @@
           ? (phnPracticeCountMap.get(selectedPhn) || 0)
           : null;
 
+      const displayedPracticeCount =
+        filteredRows.length;
+
       if (practiceCountScope === 'radius') {
         nearbyPracticeCount.textContent =
-          PFF.formatInteger(nearbyUnfilteredCount);
+          PFF.formatInteger(displayedPracticeCount);
 
         scheduleNearbyPracticePercentile();
       } else {
@@ -8371,14 +8455,12 @@
         radiusPercentileBusy = false;
 
         nearbyPracticeCount.textContent =
-          Number.isFinite(phnPracticeCount)
-            ? PFF.formatInteger(phnPracticeCount)
-            : '–';
+          PFF.formatInteger(displayedPracticeCount);
 
         renderPercentile(
           nearbyPracticePercentile,
           phnPracticePercentileReference,
-          phnPracticeCount
+          displayedPracticeCount
         );
       }
 
@@ -8794,9 +8876,17 @@
       searchInput.disabled = false;
       statusElement.textContent = '';
       searchInput.placeholder =
-        isOphthalmology
-          ? 'Search practices, locations or specialties, e.g. Sydney neuro'
-          : 'Search practices, locations or specialties, e.g. Sydney dry';
+        activeLocation
+          ? (
+              isOphthalmology
+                ? 'Continue searching, e.g. neuro'
+                : 'Continue searching, e.g. dry'
+            )
+          : (
+              isOphthalmology
+                ? 'Search practices, locations or specialties, e.g. Sydney neuro'
+                : 'Search practices, locations or specialties, e.g. Sydney dry'
+            );
       searchInput.setAttribute(
         'aria-label',
         'Search practices, locations or specialties'
@@ -11273,6 +11363,17 @@
               'is-visible'
             );
 
+          if (
+            activeLocation &&
+            !searchInput.value &&
+            (event.key === 'Backspace' || event.key === 'Delete')
+          ) {
+            event.preventDefault();
+            clearSelectedLocation({ keepSearch: true });
+            searchInput.focus();
+            return;
+          }
+
           if (event.key === 'Enter') {
             event.preventDefault();
             clearTimeout(locationSuggestionTimer);
@@ -11404,8 +11505,39 @@
 
       radiusSlider.addEventListener(
         'keydown',
-        () => {
+        event => {
           radiusSliderWrap.classList.add('has-been-dragged');
+
+          const direction =
+            event.key === 'ArrowRight' || event.key === 'ArrowUp'
+              ? 1
+              : event.key === 'ArrowLeft' || event.key === 'ArrowDown'
+                ? -1
+                : 0;
+
+          if (!direction) {
+            return;
+          }
+
+          event.preventDefault();
+
+          const currentIndex =
+            Math.max(
+              0,
+              RADIUS_OPTIONS.indexOf(radiusKm)
+            );
+
+          radiusKm =
+            RADIUS_OPTIONS[
+              PFF.clamp(
+                currentIndex + direction,
+                0,
+                RADIUS_OPTIONS.length - 1
+              )
+            ];
+
+          updateRadiusUi();
+          scheduleImmediateRender();
         }
       );
 
@@ -11417,7 +11549,7 @@
           const rawRadius =
             Number(radiusSlider.value) || RADIUS_OPTIONS[0];
 
-          radiusKm =
+          let nextRadius =
             RADIUS_OPTIONS.reduce(
               (nearest, option) =>
                 Math.abs(option - rawRadius) < Math.abs(nearest - rawRadius)
@@ -11425,6 +11557,31 @@
                   : nearest,
               RADIUS_OPTIONS[0]
             );
+
+          if (nextRadius === radiusKm && rawRadius !== radiusKm) {
+            const currentIndex =
+              RADIUS_OPTIONS.indexOf(radiusKm);
+
+            if (rawRadius > radiusKm) {
+              nextRadius =
+                RADIUS_OPTIONS[
+                  Math.min(
+                    RADIUS_OPTIONS.length - 1,
+                    currentIndex + 1
+                  )
+                ];
+            } else {
+              nextRadius =
+                RADIUS_OPTIONS[
+                  Math.max(
+                    0,
+                    currentIndex - 1
+                  )
+                ];
+            }
+          }
+
+          radiusKm = nextRadius;
 
           updateRadiusUi();
           scheduleImmediateRender();
