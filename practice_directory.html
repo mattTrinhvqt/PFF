@@ -3716,6 +3716,46 @@
       }
     }
 
+
+    /* Shared service transitions */
+    .filter-control,
+    .reset-button,
+    .nearby-section-line,
+    .nearby-title,
+    .nearby-metric,
+    .practice-guidance {
+      will-change: transform, opacity;
+    }
+
+    .nearby-metric,
+    .practice-guidance {
+      transition:
+        flex-basis 220ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        max-width 220ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+        opacity 150ms ease,
+        transform 200ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1));
+    }
+
+    .practice-guidance-lead {
+      font-weight: 400 !important;
+    }
+
+    .practice-guidance-lead strong {
+      font-weight: 700;
+    }
+
+    .eat-tagline {
+      gap: 5px;
+      letter-spacing: 0.03em;
+    }
+
+    @media (max-width: 700px) {
+      .eat-tagline {
+        gap: 4.5px;
+        letter-spacing: 0.03em;
+      }
+    }
+
 </style>
 </head>
 
@@ -3932,7 +3972,7 @@
         </div>
 
         <div id="practiceGuidance" class="practice-guidance">
-          <div class="practice-guidance-lead">Opening a practice? Areas with greater service opportunity tend to have:</div>
+          <div class="practice-guidance-lead"><strong>Opening a practice?</strong> Areas with greater service opportunity tend to have:</div>
           <div><span class="guidance-low"><span class="guidance-arrow" aria-hidden="true">↓</span> Lower</span> <span id="practiceGuidanceLowText">percentiles of no. of practices and no. of clinically active optoms</span></div>
           <div><span class="guidance-high"><span class="guidance-arrow" aria-hidden="true">↑</span> Higher</span> <span id="practiceGuidanceHighText">percentiles of population and population coverage</span></div>
         </div>
@@ -8296,6 +8336,140 @@
         );
     }
 
+    function sharedServiceTransitionElements() {
+      return [
+        resetFiltersButton,
+        document.getElementById('stateControl'),
+        document.getElementById('ruralityControl'),
+        document.getElementById('phnControl'),
+        document.getElementById('specialtyControl'),
+        nearbyPanel,
+        nearbyLocationTitle,
+        nearbyMetrics,
+        practiceGuidance,
+        ...Array.from(nearbyMetrics.querySelectorAll('.nearby-metric'))
+      ].filter(Boolean);
+    }
+
+    function captureSharedServiceLayout() {
+      const positions = new Map();
+
+      sharedServiceTransitionElements().forEach(element => {
+        if (element.hidden) {
+          return;
+        }
+
+        const rect = element.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          positions.set(element, rect);
+        }
+      });
+
+      return positions;
+    }
+
+    function animateSharedServiceLayout(previousPositions) {
+      if (
+        !previousPositions ||
+        PFF.reducedMotion()
+      ) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        sharedServiceTransitionElements().forEach(element => {
+          if (
+            element.hidden ||
+            typeof element.animate !== 'function'
+          ) {
+            return;
+          }
+
+          const previous = previousPositions.get(element);
+          if (!previous) {
+            return;
+          }
+
+          const current = element.getBoundingClientRect();
+          if (!(current.width > 0 && current.height > 0)) {
+            return;
+          }
+
+          const deltaX = previous.left - current.left;
+          const deltaY = previous.top - current.top;
+          const scaleX = previous.width / current.width;
+          const scaleY = previous.height / current.height;
+
+          const moved =
+            Math.abs(deltaX) > 0.5 ||
+            Math.abs(deltaY) > 0.5;
+          const resized =
+            Math.abs(scaleX - 1) > 0.015 ||
+            Math.abs(scaleY - 1) > 0.015;
+
+          if (!moved && !resized) {
+            return;
+          }
+
+          element.animate(
+            [
+              {
+                transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`,
+                opacity: 0.9,
+                transformOrigin: 'top left'
+              },
+              {
+                transform: 'translate(0, 0) scale(1, 1)',
+                opacity: 1,
+                transformOrigin: 'top left'
+              }
+            ],
+            {
+              duration: 220,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+            }
+          );
+        });
+      });
+    }
+
+    function animateSharedServiceContent() {
+      if (PFF.reducedMotion()) {
+        return;
+      }
+
+      [
+        searchInput.closest('.eat-search-control'),
+        resetFiltersButton,
+        document.getElementById('stateControl'),
+        document.getElementById('ruralityControl'),
+        document.getElementById('phnControl'),
+        document.getElementById('specialtyControl'),
+        nearbyScopeText,
+        practiceScopeSwitch,
+        nearbyLocationTitle,
+        practiceGuidance,
+        ...Array.from(nearbyMetrics.querySelectorAll('.nearby-metric:not([hidden])'))
+      ]
+        .filter(Boolean)
+        .forEach(element => {
+          if (typeof element.animate !== 'function') {
+            return;
+          }
+
+          element.animate(
+            [
+              { opacity: 0.82, transform: 'translateY(1px)' },
+              { opacity: 1, transform: 'translateY(0)' }
+            ],
+            {
+              duration: 180,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+            }
+          );
+        });
+    }
+
     function arrangeServiceControls() {
       const specialtyControl = document.getElementById('specialtyControl');
       const ownershipControl = document.getElementById('ownershipControl');
@@ -8484,12 +8658,16 @@
           : 'Loading ophthalmology...';
 
       /*
-       * Update the controls first so the service toggle and service-specific
-       * controls can paint before the heavier table/spatial work begins.
+       * Update shared controls immediately, then smoothly interpolate their
+       * positions while the heavier table/spatial work follows.
        */
+      const sharedLayoutBefore =
+        captureSharedServiceLayout();
+
       syncIntentUi();
       arrangeServiceControls();
       syncNearbyServiceCards();
+      animateSharedServiceLayout(sharedLayoutBefore);
       document.getElementById('ownershipControl').hidden =
         activeServiceType === 'ophthalmology';
       radiusPercentileBusy = false;
@@ -8532,6 +8710,7 @@
                 searchValuesByView[currentViewKey()] || '';
 
               applyViewUi();
+              animateSharedServiceContent();
               scheduleImmediateRender(
                 true,
                 busyMessage
@@ -10783,26 +10962,11 @@
 
       practiceScopeSwitch.addEventListener(
         'click',
-        event => {
-          const button =
-            event.target.closest('[data-practice-scope]');
-
-          if (!button) {
-            return;
-          }
-
-          const requested =
-            button.dataset.practiceScope;
-
-          if (
-            requested !== 'phn' &&
-            requested !== 'radius'
-          ) {
-            return;
-          }
-
+        () => {
           practiceCountScope =
-            requested;
+            practiceCountScope === 'phn'
+              ? 'radius'
+              : 'phn';
 
           if (
             activeIntent === 'nearby' &&
