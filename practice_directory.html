@@ -1062,10 +1062,10 @@
 
 
     .view-busy {
-      position: fixed;
-      top: 92px;
+      position: absolute;
+      top: 38px;
       left: 50%;
-      z-index: 1400;
+      z-index: 28;
       display: flex;
       min-width: 58px;
       flex-direction: column;
@@ -3821,7 +3821,7 @@
               autocomplete="off"
               enterkeyhint="search"
               spellcheck="false"
-              placeholder="Search practices, services or locations, e.g., Sydney or dry eye"
+              placeholder="Search practices, locations, or specialties, e.g. Sydney or dry eye"
               aria-label="Search practices, services or locations"
             >
             <button
@@ -4641,11 +4641,22 @@
     let practiceHeaderAnimationToken = 0;
     let activeDistanceLocationKey = '';
     let activeRadiusCounts = new Uint32Array(201);
+    let progressiveTableToken = 0;
+    let progressiveTableHandle = null;
+    let progressiveTableBusy = false;
+    let lastFilterSignature = '';
+    let lastSortSignature = '';
+    let activeRadiusWorker = null;
+    let warmRadiusWorker = null;
+    let radiusWorkerLocationCoordinates = [];
 
+    const TABLE_INITIAL_ROW_COUNT = 60;
+    const TABLE_CHUNK_ROW_COUNT = 180;
     const SPATIAL_CELL_DEGREES = 1;
-    const practiceSpatialIndex = new Map();
-    const nearbyPercentileCache = new Map();
-    const phnPracticeCountMap = new Map();
+    const servicePreparedState = new Map();
+    let practiceSpatialIndex = new Map();
+    let nearbyPercentileCache = new Map();
+    let phnPracticeCountMap = new Map();
 
     const searchValuesByView = {
       'optometry:refer': '',
@@ -6313,6 +6324,375 @@
       return `${latCell}:${lonCell}`;
     }
 
+    function sortedPhnValuesForRows(rows) {
+      const values = Array.from(
+        new Set(
+          (rows || [])
+            .map(row => cleanText(row.phnCode))
+            .filter(Boolean)
+        )
+      );
+
+      values.sort(
+        (first, second) => {
+          const firstIndex = phnSortIndex(first);
+          const secondIndex = phnSortIndex(second);
+
+          if (firstIndex !== secondIndex) {
+            return firstIndex - secondIndex;
+          }
+
+          return first.localeCompare(
+            second,
+            'en-AU',
+            { numeric: true, sensitivity: 'base' }
+          );
+        }
+      );
+
+      return values;
+    }
+
+    function buildPreparedServiceState(service) {
+      const rows =
+        service === 'ophthalmology'
+          ? ophthalmologyRows
+          : optometryRows;
+
+      const rowsPracticeAsc =
+        service === 'ophthalmology'
+          ? ophthalmologyRowsPracticeAsc
+          : optometryRowsPracticeAsc;
+
+      const spatialIndex = new Map();
+      const phnCountMap = new Map();
+      const filterCounts = {
+        state: countBy(rows, row => row.stateCode),
+        ownership: countBy(rows, row => row.ownershipCode),
+        mmm: countBy(rows, row => row.mmmCode),
+        phn: countBy(rows, row => row.phnCode),
+        specialty: new Map()
+      };
+
+      const specialtyDefinitions =
+        service === 'ophthalmology'
+          ? OPHTHALMOLOGY_SPECIALTIES
+          : OPTOMETRY_SPECIALTIES;
+
+      specialtyDefinitions.forEach(
+        definition => {
+          let count = 0;
+          rows.forEach(row => {
+            if (row.specialties?.[definition.key]) {
+              count += 1;
+            }
+          });
+          filterCounts.specialty.set(definition.key, count);
+        }
+      );
+
+      const practiceCoordinates = [];
+
+      rows.forEach(
+        row => {
+          const phn = cleanText(row.phnCode);
+
+          if (phn) {
+            phnCountMap.set(
+              phn,
+              (phnCountMap.get(phn) || 0) + 1
+            );
+          }
+
+          if (
+            !Number.isFinite(row.latitudeNumber) ||
+            !Number.isFinite(row.longitudeNumber)
+          ) {
+            return;
+          }
+
+          practiceCoordinates.push([
+            row.latitudeNumber,
+            row.longitudeNumber
+          ]);
+
+          const key = spatialCellKey(
+            row.latitudeNumber,
+            row.longitudeNumber
+          );
+
+          if (!spatialIndex.has(key)) {
+            spatialIndex.set(key, []);
+          }
+
+          spatialIndex.get(key).push(row);
+        }
+      );
+
+      const phnValuesPrepared =
+        sortedPhnValuesForRows(rows);
+
+      const phnsInLocationData = Array.from(
+        new Set(
+          locationRows
+            .map(row => cleanText(row.phn))
+            .filter(Boolean)
+        )
+      );
+
+      const phnPercentileReference = uniqueNumericValues(
+        phnsInLocationData.map(
+          phn => phnCountMap.get(phn) || 0
+        )
+      );
+
+      const prepared = {
+        service,
+        rows,
+        rowsPracticeAsc,
+        phnValues: phnValuesPrepared,
+        spatialIndex,
+        phnCountMap,
+        phnPercentileReference,
+        filterCounts,
+        practiceCoordinates,
+        nearbyPercentileCache: new Map(),
+        workerWarmupStarted: false,
+        workerWarmupComplete: false
+      };
+
+      servicePreparedState.set(service, prepared);
+      return prepared;
+    }
+
+    function ensureServicePrepared(service) {
+      return servicePreparedState.get(service) ||
+        buildPreparedServiceState(service);
+    }
+
+    function prepareInactiveServiceWhenIdle() {
+      const inactiveService =
+        activeServiceType === 'optometry'
+          ? 'ophthalmology'
+          : 'optometry';
+
+      if (servicePreparedState.has(inactiveService)) {
+        return;
+      }
+
+      idleWork(
+        () => {
+          if (progressiveTableBusy) {
+            prepareInactiveServiceWhenIdle();
+            return;
+          }
+
+          if (!servicePreparedState.has(inactiveService)) {
+            ensureServicePrepared(inactiveService);
+          }
+        }
+      );
+    }
+
+    const RADIUS_WORKER_SOURCE = `
+      const toRadians = value => Number(value) * Math.PI / 180;
+      const haversine = (lat1, lon1, lat2, lon2) => {
+        const dLat = toRadians(lat2 - lat1);
+        const dLon = toRadians(lon2 - lon1);
+        const firstLat = toRadians(lat1);
+        const secondLat = toRadians(lat2);
+        const a = Math.sin(dLat / 2) ** 2 +
+          Math.cos(firstLat) * Math.cos(secondLat) *
+          Math.sin(dLon / 2) ** 2;
+        return 6371 * 2 * Math.asin(Math.sqrt(Math.min(1, a)));
+      };
+      const cellKey = (lat, lon, cellDegrees) =>
+        Math.floor(lat / cellDegrees) + ':' + Math.floor(lon / cellDegrees);
+
+      self.onmessage = event => {
+        const data = event.data || {};
+        const practices = Array.isArray(data.practices) ? data.practices : [];
+        const locations = Array.isArray(data.locations) ? data.locations : [];
+        const radii = Array.isArray(data.radii) ? data.radii.slice().sort((a,b) => a-b) : [];
+        const cellDegrees = Number(data.cellDegrees) || 1;
+        const maxRadius = radii.length ? radii[radii.length - 1] : 0;
+
+        try {
+          const spatial = new Map();
+          practices.forEach(point => {
+            const lat = Number(point?.[0]);
+            const lon = Number(point?.[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            const key = cellKey(lat, lon, cellDegrees);
+            if (!spatial.has(key)) spatial.set(key, []);
+            spatial.get(key).push([lat, lon]);
+          });
+
+          const countsByRadius = {};
+          radii.forEach(radius => {
+            countsByRadius[radius] = new Uint32Array(locations.length);
+          });
+
+          locations.forEach((point, locationIndex) => {
+            const lat = Number(point?.[0]);
+            const lon = Number(point?.[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon) || maxRadius <= 0) return;
+
+            const latDelta = maxRadius / 111.32;
+            const cosine = Math.max(0.18, Math.abs(Math.cos(lat * Math.PI / 180)));
+            const lonDelta = maxRadius / (111.32 * cosine);
+            const minLatCell = Math.floor((lat - latDelta) / cellDegrees);
+            const maxLatCell = Math.floor((lat + latDelta) / cellDegrees);
+            const minLonCell = Math.floor((lon - lonDelta) / cellDegrees);
+            const maxLonCell = Math.floor((lon + lonDelta) / cellDegrees);
+            const localCounts = new Uint32Array(radii.length);
+
+            for (let latCell = minLatCell; latCell <= maxLatCell; latCell += 1) {
+              for (let lonCell = minLonCell; lonCell <= maxLonCell; lonCell += 1) {
+                const bucket = spatial.get(latCell + ':' + lonCell);
+                if (!bucket) continue;
+
+                for (const practice of bucket) {
+                  const distance = haversine(lat, lon, practice[0], practice[1]);
+                  if (!Number.isFinite(distance) || distance > maxRadius) continue;
+                  for (let radiusIndex = 0; radiusIndex < radii.length; radiusIndex += 1) {
+                    if (distance <= radii[radiusIndex]) {
+                      localCounts[radiusIndex] += 1;
+                    }
+                  }
+                }
+              }
+            }
+
+            radii.forEach((radius, radiusIndex) => {
+              countsByRadius[radius][locationIndex] = localCounts[radiusIndex];
+            });
+          });
+
+          const distributions = {};
+          radii.forEach(radius => {
+            distributions[radius] = Array.from(new Set(Array.from(countsByRadius[radius])))
+              .filter(Number.isFinite)
+              .sort((a,b) => a-b);
+          });
+
+          self.postMessage({ ok: true, distributions });
+        } catch (error) {
+          self.postMessage({ ok: false, error: String(error?.message || error) });
+        }
+      };
+    `;
+
+    function createRadiusWorker() {
+      if (
+        typeof Worker !== 'function' ||
+        typeof Blob !== 'function' ||
+        !URL?.createObjectURL
+      ) {
+        return null;
+      }
+
+      try {
+        const blob = new Blob(
+          [RADIUS_WORKER_SOURCE],
+          { type: 'text/javascript' }
+        );
+        const url = URL.createObjectURL(blob);
+        const worker = new Worker(url);
+        URL.revokeObjectURL(url);
+        return worker;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function cancelRadiusWorker(kind = 'active') {
+      const worker = kind === 'warm'
+        ? warmRadiusWorker
+        : activeRadiusWorker;
+
+      worker?.terminate?.();
+
+      if (kind === 'warm') {
+        warmRadiusWorker = null;
+        servicePreparedState.forEach(
+          prepared => {
+            prepared.workerWarmupStarted = false;
+          }
+        );
+      } else {
+        activeRadiusWorker = null;
+      }
+    }
+
+    function radiusWorkerInputs(service = activeServiceType) {
+      const prepared = ensureServicePrepared(service);
+      return {
+        practices: prepared.practiceCoordinates,
+        locations: radiusWorkerLocationCoordinates
+      };
+    }
+
+    function calculateRadiusDistributionsInWorker(
+      radii,
+      service,
+      kind,
+      onComplete,
+      onError
+    ) {
+      cancelRadiusWorker(kind);
+
+      const worker = createRadiusWorker();
+      if (!worker) {
+        return false;
+      }
+
+      if (kind === 'warm') {
+        warmRadiusWorker = worker;
+      } else {
+        activeRadiusWorker = worker;
+      }
+
+      const inputs = radiusWorkerInputs(service);
+
+      worker.onmessage = event => {
+        const payload = event.data || {};
+        worker.terminate();
+
+        if (kind === 'warm') {
+          if (warmRadiusWorker === worker) warmRadiusWorker = null;
+        } else if (activeRadiusWorker === worker) {
+          activeRadiusWorker = null;
+        }
+
+        if (!payload.ok) {
+          onError?.(new Error(payload.error || 'Radius worker failed'));
+          return;
+        }
+
+        onComplete?.(payload.distributions || {});
+      };
+
+      worker.onerror = () => {
+        worker.terminate();
+        if (kind === 'warm') {
+          if (warmRadiusWorker === worker) warmRadiusWorker = null;
+        } else if (activeRadiusWorker === worker) {
+          activeRadiusWorker = null;
+        }
+        onError?.(new Error('Radius worker failed'));
+      };
+
+      worker.postMessage({
+        practices: inputs.practices,
+        locations: inputs.locations,
+        radii,
+        cellDegrees: SPATIAL_CELL_DEGREES
+      });
+
+      return true;
+    }
+
     function buildPracticeSpatialIndex() {
       practiceSpatialIndex.clear();
       nearbyPercentileCache.clear();
@@ -6644,6 +7024,71 @@
 
     function warmNearbyPercentileCache() {
       if (
+        activeIntent !== 'nearby' ||
+        !activeLocation ||
+        !locationRows.length ||
+        RADIUS_OPTIONS.every(radius => nearbyPercentileCache.has(radius))
+      ) {
+        return;
+      }
+
+      const service = activeServiceType;
+      const prepared = ensureServicePrepared(service);
+
+      if (prepared.workerWarmupStarted) {
+        return;
+      }
+
+      prepared.workerWarmupStarted = true;
+
+      const missingRadii = RADIUS_OPTIONS.filter(
+        radius => !prepared.nearbyPercentileCache.has(radius)
+      );
+
+      const started = calculateRadiusDistributionsInWorker(
+        missingRadii,
+        service,
+        'warm',
+        distributions => {
+          prepared.workerWarmupStarted = false;
+          prepared.workerWarmupComplete = true;
+
+          Object.entries(distributions).forEach(
+            ([radius, values]) => {
+              prepared.nearbyPercentileCache.set(
+                Number(radius),
+                Array.isArray(values) ? values : []
+              );
+            }
+          );
+
+          if (service === activeServiceType) {
+            nearbyPercentileCache = prepared.nearbyPercentileCache;
+
+            if (
+              activeIntent === 'nearby' &&
+              activeLocation &&
+              practiceCountScope === 'radius'
+            ) {
+              scheduleNearbyPracticePercentile();
+            }
+          }
+        },
+        () => {
+          prepared.workerWarmupStarted = false;
+          if (service === activeServiceType) {
+            warmNearbyPercentileCacheFallback();
+          }
+        }
+      );
+
+      if (!started) {
+        prepared.workerWarmupStarted = false;
+      }
+    }
+
+    function warmNearbyPercentileCacheFallback() {
+      if (
         !locationRows.length ||
         RADIUS_OPTIONS.every(radius => nearbyPercentileCache.has(radius)) ||
         nearbyWarmupInProgress
@@ -6801,6 +7246,60 @@
       token,
       onComplete
     ) {
+      const service = activeServiceType;
+      const prepared = ensureServicePrepared(service);
+
+      const started = calculateRadiusDistributionsInWorker(
+        [radius],
+        service,
+        'active',
+        distributions => {
+          if (token !== nearbyPercentileToken) {
+            return;
+          }
+
+          const distribution =
+            Array.isArray(distributions?.[radius])
+              ? distributions[radius]
+              : [];
+
+          prepared.nearbyPercentileCache.set(
+            radius,
+            distribution
+          );
+
+          if (service === activeServiceType) {
+            nearbyPercentileCache = prepared.nearbyPercentileCache;
+          }
+
+          onComplete?.(distribution);
+        },
+        () => {
+          if (token !== nearbyPercentileToken) {
+            return;
+          }
+          calculateNearbyPercentileDistributionFallback(
+            radius,
+            token,
+            onComplete
+          );
+        }
+      );
+
+      if (!started) {
+        calculateNearbyPercentileDistributionFallback(
+          radius,
+          token,
+          onComplete
+        );
+      }
+    }
+
+    function calculateNearbyPercentileDistributionFallback(
+      radius,
+      token,
+      onComplete
+    ) {
       const counts = [];
       let index = 0;
 
@@ -6904,6 +7403,8 @@
 
       radiusPercentileBusy = true;
 
+      cancelRadiusWorker('active');
+
       const token =
         ++nearbyPercentileToken;
 
@@ -6931,7 +7432,9 @@
                 );
 
                 radiusPercentileBusy = false;
-                setViewBusy(false);
+                if (!progressiveTableBusy) {
+                  setViewBusy(false);
+                }
                 warmNearbyPercentileCache();
               }
             );
@@ -7624,7 +8127,6 @@
         clearTimeout(nearbyPercentileTimer);
         nearbyPercentileToken += 1;
         radiusPercentileBusy = false;
-        setViewBusy(false);
 
         nearbyPracticeCount.textContent =
           Number.isFinite(phnPracticeCount)
@@ -7719,7 +8221,6 @@
       sortDirection = 'asc';
 
       prepareActiveLocationDistances();
-      warmNearbyPercentileCache();
       nearbyUnfilteredCount =
         activeRadiusCounts[
           Math.max(
@@ -7816,13 +8317,15 @@
     }
 
     function activateServiceDataset(service = activeServiceType, arrangeControls = true) {
-      if (service === 'ophthalmology') {
-        sourceRows = ophthalmologyRows;
-        sourceRowsPracticeAsc = ophthalmologyRowsPracticeAsc;
-      } else {
-        sourceRows = optometryRows;
-        sourceRowsPracticeAsc = optometryRowsPracticeAsc;
-      }
+      const prepared = ensureServicePrepared(service);
+
+      sourceRows = prepared.rows;
+      sourceRowsPracticeAsc = prepared.rowsPracticeAsc;
+      phnValues = [...prepared.phnValues];
+      practiceSpatialIndex = prepared.spatialIndex;
+      nearbyPercentileCache = prepared.nearbyPercentileCache;
+      phnPracticeCountMap = prepared.phnCountMap;
+      phnPracticePercentileReference = prepared.phnPercentileReference;
 
       activeDistanceLocationKey = '';
       activeRadiusCounts = new Uint32Array(201);
@@ -7830,12 +8333,15 @@
       nearbyPercentileToken += 1;
       nearbyWarmupToken += 1;
       nearbyWarmupInProgress = false;
+      lastFilterSignature = '';
+      lastSortSignature = '';
 
-      derivePHNValues();
+      selectedPHNs.clear();
+      phnValues.forEach(value => selectedPHNs.add(value));
+
       renderPHNOptions();
       renderSpecialtyOptions();
       syncSelectedSetsFromControls();
-      buildPracticeSpatialIndex();
       updateFilterCounts();
 
       if (arrangeControls) {
@@ -7905,8 +8411,8 @@
           ? 'Enter a suburb or postcode, e.g., Sydney or 2000'
           : (
               isOphthalmology
-                ? 'Search ophthalmology practices, specialties or locations, e.g., Sydney or retina'
-                : 'Search practices, services or locations, e.g., Sydney or dry eye'
+                ? 'Search practices, locations, or specialties, e.g. Sydney or neuro'
+                : 'Search practices, locations, or specialties, e.g. Sydney or dry eye'
             );
       searchInput.setAttribute(
         'aria-label',
@@ -7914,8 +8420,8 @@
           ? 'Enter a suburb or postcode'
           : (
               isOphthalmology
-                ? 'Search ophthalmology practices, specialties or locations'
-                : 'Search practices, services or locations'
+                ? 'Search practices, locations, or specialties'
+                : 'Search practices, locations, or specialties'
             )
       );
 
@@ -7941,7 +8447,9 @@
       syncIntentUi();
       syncPracticeScopeUi();
       syncNearbyServiceCards();
-      updateNearbyMetrics();
+      if (isNearby) {
+        updateNearbyMetrics();
+      }
     }
 
 
@@ -7985,7 +8493,10 @@
       document.getElementById('ownershipControl').hidden =
         activeServiceType === 'ophthalmology';
       radiusPercentileBusy = false;
+      cancelRadiusWorker('active');
+      cancelRadiusWorker('warm');
       setViewBusy(true, busyMessage);
+      setNearbyMetricsBusy(true, busyMessage);
 
       requestAnimationFrame(
         () => {
@@ -8006,7 +8517,6 @@
 
               if (activeLocation && activeIntent === 'nearby') {
                 prepareActiveLocationDistances();
-                warmNearbyPercentileCache();
               }
 
               if (
@@ -8026,6 +8536,7 @@
                 true,
                 busyMessage
               );
+
             }
           );
         }
@@ -8160,10 +8671,12 @@
     }
 
     function updateFilterCounts() {
-      const stateCounts = countBy(sourceRows, row => row.stateCode);
-      const ownershipCounts = countBy(sourceRows, row => row.ownershipCode);
-      const mmmCounts = countBy(sourceRows, row => row.mmmCode);
-      const phnCounts = countBy(sourceRows, row => row.phnCode);
+      const prepared = servicePreparedState.get(activeServiceType);
+      const stateCounts = prepared?.filterCounts?.state || countBy(sourceRows, row => row.stateCode);
+      const ownershipCounts = prepared?.filterCounts?.ownership || countBy(sourceRows, row => row.ownershipCode);
+      const mmmCounts = prepared?.filterCounts?.mmm || countBy(sourceRows, row => row.mmmCode);
+      const phnCounts = prepared?.filterCounts?.phn || countBy(sourceRows, row => row.phnCode);
+      const specialtyCounts = prepared?.filterCounts?.specialty || new Map();
 
       STATES.forEach(
         value => setCountText(
@@ -8201,9 +8714,9 @@
         definition => {
           setCountText(
             `[data-count-for="specialty:${definition.key}"]`,
-            sourceRows.filter(
-              row => row.specialties?.[definition.key]
-            ).length
+            specialtyCounts.has(definition.key)
+              ? specialtyCounts.get(definition.key)
+              : sourceRows.filter(row => row.specialties?.[definition.key]).length
           );
         }
       );
@@ -8523,6 +9036,47 @@
       );
     }
 
+    function currentFilterSignature() {
+      const locationKey = activeLocation
+        ? [
+            activeLocation.latitudeNumber,
+            activeLocation.longitudeNumber,
+            cleanText(activeLocation.postcode),
+            cleanText(activeLocation.suburb)
+          ].join('|')
+        : '';
+
+      return JSON.stringify([
+        activeServiceType,
+        activeIntent,
+        normaliseSearchText(searchInput.value),
+        locationKey,
+        practiceCountScope,
+        radiusKm,
+        Array.from(selectedStates).sort(),
+        Array.from(selectedOwnershipTypes).sort(),
+        Array.from(selectedMMM).sort(),
+        Array.from(selectedPHNs).sort(),
+        Array.from(requiredSpecialties).sort()
+      ]);
+    }
+
+    function sortFilteredRowsInPlace() {
+      filteredRows.sort(
+        (first, second) => {
+          const comparison = compareValues(first, second, sortKey);
+
+          if (comparison !== 0) {
+            return sortDirection === 'asc'
+              ? comparison
+              : -comparison;
+          }
+
+          return first.sourceIndex - second.sourceIndex;
+        }
+      );
+    }
+
     function applyFilters() {
       nearbyUnfilteredCount = 0;
 
@@ -8542,136 +9096,106 @@
           activeRadiusCounts[
             Math.max(
               RADIUS_OPTIONS[0],
-              Math.min(
-                200,
-                Math.round(radiusKm)
-              )
+              Math.min(200, Math.round(radiusKm))
             )
           ] || 0;
       }
 
-      const referSearchContext =
-        buildReferSearchContext();
+      const filterSignature = currentFilterSignature();
+      const sortSignature = `${sortKey}|${sortDirection}`;
+      const filtersChanged = filterSignature !== lastFilterSignature;
+      const sortChanged = sortSignature !== lastSortSignature;
 
-      const defaultPracticeSort =
-        sortKey === 'practiceName' &&
-        sortDirection === 'asc';
+      if (filtersChanged) {
+        const referSearchContext = buildReferSearchContext();
+        const defaultPracticeSort =
+          sortKey === 'practiceName' &&
+          sortDirection === 'asc';
 
-      const filterSource =
-        defaultPracticeSort
-          ? sourceRowsPracticeAsc
-          : sourceRows;
+        const filterSource =
+          defaultPracticeSort
+            ? sourceRowsPracticeAsc
+            : sourceRows;
 
-      filteredRows =
-        filterSource
-          .filter(
-            row => {
-              if (
-                (
-                  activeIntent === 'refer' ||
-                  !activeLocation
-                ) &&
-                !rowMatchesReferSearch(
-                  row,
-                  referSearchContext
-                )
-              ) {
-                return false;
-              }
+        filteredRows = filterSource.filter(
+          row => {
+            if (
+              (
+                activeIntent === 'refer' ||
+                !activeLocation
+              ) &&
+              !rowMatchesReferSearch(row, referSearchContext)
+            ) {
+              return false;
+            }
 
-              if (isNearbyLocation) {
-                if (practiceCountScope === 'radius') {
-                  const rowDistance =
-                    distanceNumber(row.distanceKm);
+            if (isNearbyLocation) {
+              if (practiceCountScope === 'radius') {
+                const rowDistance = distanceNumber(row.distanceKm);
 
-                  if (
-                    !Number.isFinite(rowDistance) ||
-                    rowDistance > radiusKm
-                  ) {
-                    return false;
-                  }
-                } else if (
-                  !selectedNearbyPhn ||
-                  cleanText(row.phnCode) !== selectedNearbyPhn
+                if (
+                  !Number.isFinite(rowDistance) ||
+                  rowDistance > radiusKm
                 ) {
                   return false;
                 }
-              }
-
-              if (
-                !isNearbyLocation &&
-                selectedStates.size !==
-                  STATES.length &&
-                !selectedStates.has(
-                  row.stateCode
-                )
+              } else if (
+                !selectedNearbyPhn ||
+                cleanText(row.phnCode) !== selectedNearbyPhn
               ) {
                 return false;
               }
-
-              if (
-                activeServiceType === 'optometry' &&
-                selectedOwnershipTypes.size !==
-                  OWNERSHIP_TYPES.length &&
-                !selectedOwnershipTypes.has(
-                  row.ownershipCode
-                )
-              ) {
-                return false;
-              }
-
-              if (
-                selectedMMM.size !==
-                  MMM_VALUES.length &&
-                !selectedMMM.has(
-                  row.mmmCode
-                )
-              ) {
-                return false;
-              }
-
-              if (
-                !isNearbyLocation &&
-                selectedPHNs.size !==
-                  phnValues.length &&
-                !selectedPHNs.has(
-                  row.phnCode
-                )
-              ) {
-                return false;
-              }
-
-              return specialtyRequirementsMet(
-                row
-              );
-            }
-          );
-
-      if (!defaultPracticeSort) {
-        filteredRows.sort(
-          (first, second) => {
-            const comparison =
-              compareValues(
-                first,
-                second,
-                sortKey
-              );
-
-            if (comparison !== 0) {
-              return sortDirection === 'asc'
-                ? comparison
-                : -comparison;
             }
 
-            return (
-              first.sourceIndex -
-              second.sourceIndex
-            );
+            if (
+              !isNearbyLocation &&
+              selectedStates.size !== STATES.length &&
+              !selectedStates.has(row.stateCode)
+            ) {
+              return false;
+            }
+
+            if (
+              activeServiceType === 'optometry' &&
+              selectedOwnershipTypes.size !== OWNERSHIP_TYPES.length &&
+              !selectedOwnershipTypes.has(row.ownershipCode)
+            ) {
+              return false;
+            }
+
+            if (
+              selectedMMM.size !== MMM_VALUES.length &&
+              !selectedMMM.has(row.mmmCode)
+            ) {
+              return false;
+            }
+
+            if (
+              !isNearbyLocation &&
+              selectedPHNs.size !== phnValues.length &&
+              !selectedPHNs.has(row.phnCode)
+            ) {
+              return false;
+            }
+
+            return specialtyRequirementsMet(row);
           }
         );
+
+        if (!defaultPracticeSort) {
+          sortFilteredRowsInPlace();
+        }
+
+        lastFilterSignature = filterSignature;
+        lastSortSignature = sortSignature;
+      } else if (sortChanged) {
+        sortFilteredRowsInPlace();
+        lastSortSignature = sortSignature;
       }
 
-      updateNearbyMetrics();
+      if (activeIntent === 'nearby') {
+        updateNearbyMetrics();
+      }
     }
 
     function ownershipClass(value) {
@@ -9167,57 +9691,72 @@
       animatePracticeHeaderCount();
     }
 
+    function tableRowHtml(row, columns) {
+      return `
+        <tr>
+          ${columns.map(
+            column => {
+              const raw =
+                column.key === 'mmm'
+                  ? (row.mmmCode || row.mmm || '')
+                  : column.key === 'employerType'
+                    ? (row.ownershipCode || row.employerType || '')
+                    : column.key === 'distanceKm'
+                      ? formatDistance(row.distanceKm)
+                      : row[column.key] || '';
+
+              const fullText = cleanText(raw);
+              const popoverAttrs = fullText
+                ? ` class="has-full-text" tabindex="0" data-full-text="${escapeHtml(fullText)}" title="${escapeHtml(fullText)}"`
+                : '';
+
+              return `
+                <td data-key="${column.key}" ${popoverAttrs}>${formatCell(row, column)}</td>
+              `;
+            }
+          ).join('')}
+        </tr>
+      `;
+    }
+
+    function cancelProgressiveTableRender() {
+      progressiveTableToken += 1;
+      progressiveTableBusy = false;
+
+      if (progressiveTableHandle !== null) {
+        if ('cancelIdleCallback' in window) {
+          window.cancelIdleCallback(progressiveTableHandle);
+        } else {
+          clearTimeout(progressiveTableHandle);
+        }
+        progressiveTableHandle = null;
+      }
+    }
+
+    function queueProgressiveTableWork(callback) {
+      if ('requestIdleCallback' in window) {
+        progressiveTableHandle = window.requestIdleCallback(
+          callback,
+          { timeout: 90 }
+        );
+      } else {
+        progressiveTableHandle = window.setTimeout(
+          () => callback({ didTimeout: true, timeRemaining: () => 8 }),
+          0
+        );
+      }
+    }
+
     function renderRows(columns) {
-      tableBody.innerHTML =
-        filteredRows
-          .map(
-            row => `
-              <tr>
-                ${columns.map(
-                  column => {
-                    const raw =
-                      column.key === 'mmm'
-                        ? (row.mmmCode || row.mmm || '')
-                        : column.key === 'employerType'
-                          ? (row.ownershipCode || row.employerType || '')
-                          : column.key === 'distanceKm'
-                            ? formatDistance(row.distanceKm)
-                            : row[column.key] || '';
+      cancelProgressiveTableRender();
+      const token = ++progressiveTableToken;
+      const totalRows = filteredRows.length;
+      const hasRows = totalRows > 0;
 
-                    const fullText =
-                      cleanText(raw);
-
-                    const popoverAttrs =
-                      fullText
-                        ? (
-                            ` class="has-full-text" tabindex="0" data-full-text="${escapeHtml(fullText)}" title="${escapeHtml(fullText)}"`
-                          )
-                        : '';
-
-                    return `
-                      <td
-                        data-key="${column.key}"
-                        ${popoverAttrs}
-                      >${formatCell(row, column)}</td>
-                    `;
-                  }
-                ).join('')}
-              </tr>
-            `
-          )
-          .join('');
-
-      const hasRows =
-        filteredRows.length > 0;
-
-      tableScroll.style.display =
-        hasRows
-          ? ''
-          : 'none';
+      tableScroll.style.display = hasRows ? '' : 'none';
 
       emptyState.textContent =
-        activeIntent === 'nearby' &&
-        activeLocation
+        activeIntent === 'nearby' && activeLocation
           ? (
               practiceCountScope === 'radius'
                 ? 'No practices match the current radius and filters'
@@ -9225,10 +9764,79 @@
             )
           : 'No practices match the current search and filters';
 
-      emptyState.classList.toggle(
-        'is-visible',
-        !hasRows
+      emptyState.classList.toggle('is-visible', !hasRows);
+
+      if (!hasRows) {
+        tableBody.innerHTML = '';
+        setViewBusy(false);
+        return;
+      }
+
+      const firstEnd = Math.min(TABLE_INITIAL_ROW_COUNT, totalRows);
+      tableBody.innerHTML = filteredRows
+        .slice(0, firstEnd)
+        .map(row => tableRowHtml(row, columns))
+        .join('');
+
+      if (firstEnd >= totalRows) {
+        progressiveTableBusy = false;
+        setViewBusy(false);
+        return;
+      }
+
+      progressiveTableBusy = true;
+      setViewBusy(
+        true,
+        `Loading practices… ${PFF.formatInteger(firstEnd)} / ${PFF.formatInteger(totalRows)}`
       );
+
+      let index = firstEnd;
+
+      const appendChunk = deadline => {
+        if (token !== progressiveTableToken) {
+          return;
+        }
+
+        const startedAt = performance.now();
+        const chunks = [];
+
+        while (
+          index < totalRows &&
+          chunks.length < TABLE_CHUNK_ROW_COUNT &&
+          (
+            deadline?.didTimeout ||
+            deadline?.timeRemaining?.() > 2 ||
+            performance.now() - startedAt < 6
+          )
+        ) {
+          chunks.push(tableRowHtml(filteredRows[index], columns));
+          index += 1;
+        }
+
+        if (token !== progressiveTableToken) {
+          return;
+        }
+
+        if (chunks.length) {
+          tableBody.insertAdjacentHTML('beforeend', chunks.join(''));
+        }
+
+        if (index < totalRows) {
+          setViewBusy(
+            true,
+            `Loading practices… ${PFF.formatInteger(index)} / ${PFF.formatInteger(totalRows)}`
+          );
+          queueProgressiveTableWork(appendChunk);
+          return;
+        }
+
+        progressiveTableHandle = null;
+        progressiveTableBusy = false;
+        setViewBusy(false);
+        requestAnimationFrame(syncStickyHeaderGeometry);
+      };
+
+      queueProgressiveTableWork(appendChunk);
     }
 
     function syncStickyHeaderGeometry() {
@@ -9312,69 +9920,47 @@
     }
 
     function renderTableAnimated(animate = true) {
-      const reducedMotion =
-        Boolean(PFF.reducedMotion());
-
-      const token =
-        ++tableAnimationToken;
+      const reducedMotion = Boolean(PFF.reducedMotion());
+      const token = ++tableAnimationToken;
 
       tableBody.getAnimations?.().forEach(
         animation => animation.cancel()
       );
 
+      /*
+       * Render immediately. Any animation happens after the new content exists,
+       * so it never delays acknowledgement of the user's action.
+       */
+      renderTable();
+
       if (
         !animate ||
         reducedMotion ||
-        !tableBody.children.length ||
-        typeof tableBody.animate !== 'function'
+        typeof tableBody.animate !== 'function' ||
+        !tableBody.children.length
       ) {
-        renderTable();
         return;
       }
 
-      const fadeOut =
-        tableBody.animate(
-          [
-            { opacity: 1, transform: 'translateY(0)' },
-            { opacity: 0.60, transform: 'translateY(-2px)' }
-          ],
-          {
-            duration: 180,
-            easing: 'ease-out',
-            fill: 'forwards'
-          }
-        );
+      const fadeIn = tableBody.animate(
+        [
+          { opacity: 0.86, transform: 'translateY(1px)' },
+          { opacity: 1, transform: 'translateY(0)' }
+        ],
+        {
+          duration: 150,
+          easing: 'ease-out',
+          fill: 'both'
+        }
+      );
 
-      fadeOut.finished
+      fadeIn.finished
         .catch(() => null)
         .then(() => {
-          if (token !== tableAnimationToken) {
-            return;
+          if (token === tableAnimationToken) {
+            tableBody.style.opacity = '';
+            tableBody.style.transform = '';
           }
-
-          renderTable();
-
-          const fadeIn =
-            tableBody.animate(
-              [
-                { opacity: 0.60, transform: 'translateY(-2px)' },
-                { opacity: 1, transform: 'translateY(0)' }
-              ],
-              {
-                duration: 280,
-                easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
-                fill: 'both'
-              }
-            );
-
-          fadeIn.finished
-            .catch(() => null)
-            .then(() => {
-              if (token === tableAnimationToken) {
-                tableBody.style.opacity = '';
-                tableBody.style.transform = '';
-              }
-            });
         });
     }
 
@@ -9383,26 +9969,25 @@
       message = 'Updating results...'
     ) {
       if (viewBusyText && isBusy) {
-        viewBusyText.textContent =
-          message;
+        viewBusyText.textContent = message;
       }
 
       if (viewBusy) {
-        viewBusy.hidden =
-          !isBusy;
+        viewBusy.hidden = !isBusy;
       }
+    }
 
-      const showNearbyBusy =
-        isBusy && activeIntent === 'nearby';
-
-      if (nearbyMetricsBusyText && showNearbyBusy) {
-        nearbyMetricsBusyText.textContent =
-          message;
+    function setNearbyMetricsBusy(
+      isBusy,
+      message = 'Updating local access...'
+    ) {
+      if (nearbyMetricsBusyText && isBusy) {
+        nearbyMetricsBusyText.textContent = message;
       }
 
       if (nearbyMetricsBusy) {
         nearbyMetricsBusy.hidden =
-          !showNearbyBusy;
+          !(isBusy && activeIntent === 'nearby');
       }
     }
 
@@ -9410,6 +9995,8 @@
       showBusy = false,
       busyMessage = 'Updating results...'
     ) {
+      cancelProgressiveTableRender();
+
       if (renderFrame !== null) {
         cancelAnimationFrame(renderFrame);
         renderFrame = null;
@@ -9429,10 +10016,11 @@
         }
 
         applyFilters();
+        setNearbyMetricsBusy(false);
         renderTableAnimated(false);
         scheduleAutomaticViewSave();
 
-        if (!radiusPercentileBusy) {
+        if (!progressiveTableBusy) {
           setViewBusy(false);
         }
       };
@@ -9502,6 +10090,8 @@
     }
 
     function scheduleRender(animate = true) {
+      cancelProgressiveTableRender();
+
       if (renderFrame !== null) {
         cancelAnimationFrame(renderFrame);
       }
@@ -9873,6 +10463,25 @@
       specialtyAll.indeterminate = false;
     }
 
+    function savedServiceTypeHint() {
+      try {
+        const saved = JSON.parse(
+          localStorage.getItem(SAVED_VIEW_KEY) || 'null'
+        );
+
+        if (
+          saved?.version === 4 &&
+          SERVICE_ORDER.includes(saved.serviceType)
+        ) {
+          return saved.serviceType;
+        }
+      } catch (_) {
+        // View persistence is optional.
+      }
+
+      return 'optometry';
+    }
+
     function restoreSavedView() {
       let saved = null;
 
@@ -10025,6 +10634,9 @@
       clearTimeout(searchTimer);
       clearTimeout(locationSuggestionTimer);
       clearTimeout(automaticViewSaveTimer);
+      cancelProgressiveTableRender();
+      cancelRadiusWorker('active');
+      cancelRadiusWorker('warm');
 
       activeServiceType = 'optometry';
       activeIntent = 'refer';
@@ -10035,6 +10647,8 @@
       sortDirection = 'asc';
       lastRenderedSearchKey = null;
       radiusPercentileBusy = false;
+      lastFilterSignature = '';
+      lastSortSignature = '';
 
       Object.keys(searchValuesByView)
         .forEach(key => {
@@ -10146,7 +10760,7 @@
               : 'refer';
 
           radiusPercentileBusy = false;
-          setViewBusy(false);
+          setNearbyMetricsBusy(false);
 
           if (
             activeIntent === 'nearby' &&
@@ -10531,7 +11145,11 @@
 
       window.addEventListener(
         'pagehide',
-        persistCurrentView
+        () => {
+          persistCurrentView();
+          cancelRadiusWorker('active');
+          cancelRadiusWorker('warm');
+        }
       );
     }
 
@@ -10664,6 +11282,13 @@
           );
 
         locationRows = restored.locations;
+        radiusWorkerLocationCoordinates = locationRows
+          .filter(
+            row =>
+              Number.isFinite(row.latitudeNumber) &&
+              Number.isFinite(row.longitudeNumber)
+          )
+          .map(row => [row.latitudeNumber, row.longitudeNumber]);
 
         if (
           optometryRows.length < CONFIG.minimumRows ||
@@ -10674,6 +11299,7 @@
           );
         }
 
+        activeServiceType = savedServiceTypeHint();
         activateServiceDataset(activeServiceType);
 
         if (!locationRows.length) {
@@ -10711,6 +11337,7 @@
         automaticViewPersistenceReady = true;
         updateFilterCounts();
         scheduleRender(false);
+        prepareInactiveServiceWhenIdle();
 
         requestAnimationFrame(
           () => {
