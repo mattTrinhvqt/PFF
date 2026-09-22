@@ -1390,7 +1390,7 @@
     }
 
     .radius-slider-wrap {
-      --slider-progress: 9.55%;
+      --slider-progress: 33.3333%;
       position: relative;
       width: 100%;
       min-height: 23px;
@@ -3988,6 +3988,40 @@
       }
     }
 
+    /* Final search stacking + radius alignment refinements */
+    .eat-hero {
+      z-index: 100;
+    }
+
+    .controls-scroll-shell {
+      z-index: 90;
+    }
+
+    .controls-scroll-shell:has(.filter-menu.is-open) {
+      z-index: 140;
+    }
+
+    .location-suggestions {
+      z-index: 220;
+    }
+
+    .practice-radius-control .radius-slider-wrap {
+      width: calc(100% - 12px);
+      margin-right: 6px;
+      margin-left: 6px;
+      box-sizing: border-box;
+    }
+
+    .practice-radius-control .radius-slider-wrap::before,
+    .practice-radius-control .radius-ticks {
+      right: 5px;
+      left: 5px;
+    }
+
+    .radius-drag-cue {
+      top: -11px;
+    }
+
   </style>
 </head>
 
@@ -4056,16 +4090,16 @@
           >
             <button
               id="intentNearby"
-              class="metric-button is-active"
+              class="metric-button"
               type="button"
-              aria-pressed="true"
+              aria-pressed="false"
               data-service="optometry"
             ><span class="intent-service-name">OPTOMETRY</span></button>
             <button
               id="intentOphthalmology"
-              class="metric-button"
+              class="metric-button is-active"
               type="button"
-              aria-pressed="false"
+              aria-pressed="true"
               data-service="ophthalmology"
             ><span class="intent-service-name">OPHTHALMOLOGY</span></button>
           </div>
@@ -4090,7 +4124,7 @@
               autocomplete="off"
               enterkeyhint="search"
               spellcheck="false"
-              placeholder="Search practices, locations or specialties, e.g. Sydney dry"
+              placeholder="Search practices, locations or specialties, e.g. Sydney neuro"
               aria-label="Search practices, locations or specialties"
             >
             <button
@@ -4156,10 +4190,10 @@
                   id="radiusSlider"
                   class="radius-range"
                   type="range"
-                  min="3"
-                  max="200"
-                  step="any"
-                  value="10"
+                  min="0"
+                  max="9"
+                  step="1"
+                  value="3"
                   aria-label="Nearby practice search radius"
                   aria-valuetext="10 km"
                 >
@@ -4881,7 +4915,7 @@
     ]);
 
     let activeIntent = 'nearby';
-    let activeServiceType = 'optometry';
+    let activeServiceType = 'ophthalmology';
     let activeLocation = null;
     let radiusKm = 10;
     let practiceCountScope = 'radius';
@@ -5515,9 +5549,33 @@
           ].join(' ')
         );
 
+      /*
+       * Once a locality is selected, free-text search should describe the
+       * practice rather than repeat geographic fields already represented by
+       * the selected location and filters. Keep useful organisation fields
+       * plus specialty synonyms, but exclude address/suburb/state/postcode,
+       * coordinates, PHN/MMM, source/audit columns and contact details.
+       */
+      row.focusedSearchText =
+        PFF.normaliseText(
+          [
+            row.practiceName,
+            row.brandParent,
+            row.employer,
+            row.employerType,
+            row.ownershipCode,
+            ...specialtySearchTerms
+          ].join(' ')
+        );
+
       row.compactSearchText =
         normaliseSearchText(
           row.searchText
+        );
+
+      row.compactFocusedSearchText =
+        normaliseSearchText(
+          row.focusedSearchText
         );
 
       row.distanceKm =
@@ -5590,8 +5648,18 @@
           ].join(' ')
         );
 
+      row.focusedSearchText =
+        PFF.normaliseText(
+          [
+            row.practiceName,
+            ...specialtySearchTerms
+          ].join(' ')
+        );
+
       row.compactSearchText =
         normaliseSearchText(row.searchText);
+      row.compactFocusedSearchText =
+        normaliseSearchText(row.focusedSearchText);
       row.distanceKm = null;
 
       return row;
@@ -6741,26 +6809,24 @@
         buildPreparedServiceState(service);
     }
 
-    function prepareInactiveServiceWhenIdle() {
+    function prepareInactiveServiceWhenIdle(onReady = null) {
       const inactiveService =
         activeServiceType === 'optometry'
           ? 'ophthalmology'
           : 'optometry';
 
       if (servicePreparedState.has(inactiveService)) {
+        onReady?.();
         return;
       }
 
       idleWork(
         () => {
-          if (progressiveTableBusy) {
-            prepareInactiveServiceWhenIdle();
-            return;
-          }
-
           if (!servicePreparedState.has(inactiveService)) {
             ensureServicePrepared(inactiveService);
           }
+
+          onReady?.();
         }
       );
     }
@@ -7771,9 +7837,14 @@
 
     function searchTokens(value) {
       return PFF.normaliseText(value)
+        .replace(/[,&/+]+/g, ' ')
         .split(/\s+/)
         .map(token => token.trim())
-        .filter(Boolean);
+        .filter(
+          token =>
+            Boolean(token) &&
+            token !== 'and'
+        );
     }
 
     function buildReferSearchContext() {
@@ -7784,14 +7855,18 @@
         return null;
       }
 
+      const tokens =
+        searchTokens(query);
+
       return {
-        tokens: searchTokens(query).map(
+        tokens: tokens.map(
           token => ({
             normal: token,
             compact: normaliseSearchText(token)
           })
         ),
-        compactQuery: normaliseSearchText(query)
+        compactQuery: normaliseSearchText(tokens.join(' ')),
+        focused: Boolean(activeLocation)
       };
     }
 
@@ -7800,21 +7875,33 @@
         return true;
       }
 
+      const normalText =
+        context.focused
+          ? (row.focusedSearchText || '')
+          : row.searchText;
+
+      const compactText =
+        context.focused
+          ? (row.compactFocusedSearchText || '')
+          : row.compactSearchText;
+
       if (
         context.compactQuery &&
-        row.compactSearchText.includes(
+        compactText.includes(
           context.compactQuery
         )
       ) {
         return true;
       }
 
+      /* Every meaningful term must match. This allows queries such as
+       * "neuro and retina" or "dry contact" while keeping AND semantics. */
       return context.tokens.every(
         token => (
-          row.searchText.includes(token.normal) ||
+          normalText.includes(token.normal) ||
           (
             token.compact &&
-            row.compactSearchText.includes(
+            compactText.includes(
               token.compact
             )
           )
@@ -8124,10 +8211,11 @@
         new Set([10, 50, 100, 200]);
 
       RADIUS_OPTIONS.forEach(
-        value => {
+        (value, index) => {
           const percentage =
-            (value - RADIUS_OPTIONS[0]) /
-            (RADIUS_OPTIONS[RADIUS_OPTIONS.length - 1] - RADIUS_OPTIONS[0]) * 100;
+            RADIUS_OPTIONS.length > 1
+              ? index / (RADIUS_OPTIONS.length - 1) * 100
+              : 0;
 
           const tick =
             document.createElement('span');
@@ -8187,12 +8275,19 @@
     }
 
     function updateRadiusUi() {
+      const radiusIndex =
+        Math.max(
+          0,
+          RADIUS_OPTIONS.indexOf(radiusKm)
+        );
+
       const percentage =
-        (radiusKm - RADIUS_OPTIONS[0]) /
-        (RADIUS_OPTIONS[RADIUS_OPTIONS.length - 1] - RADIUS_OPTIONS[0]) * 100;
+        RADIUS_OPTIONS.length > 1
+          ? radiusIndex / (RADIUS_OPTIONS.length - 1) * 100
+          : 0;
 
       radiusSlider.value =
-        String(radiusKm);
+        String(radiusIndex);
 
       radiusSliderWrap.style.setProperty(
         '--slider-progress',
@@ -8921,8 +9016,8 @@
         activeLocation
           ? (
               isOphthalmology
-                ? 'Continue searching, e.g. neuro'
-                : 'Continue searching, e.g. dry'
+                ? 'Search practices or specialties, e.g. neuro retina'
+                : 'Search practices or specialties, e.g. dry contact'
             )
           : (
               isOphthalmology
@@ -8975,16 +9070,21 @@
             ]
           : requestedService;
 
+      const targetAlreadyPrepared =
+        servicePreparedState.has(nextService);
+
       activeServiceType =
         nextService;
+
+      cancelProgressiveTableRender();
 
       const switchToken =
         ++serviceSwitchToken;
 
       const busyMessage =
         activeServiceType === 'optometry'
-          ? 'Loading optometry...'
-          : 'Loading ophthalmology...';
+          ? 'Preparing optometry...'
+          : 'Preparing ophthalmology...';
 
       /*
        * Update shared controls immediately, then smoothly interpolate their
@@ -9002,8 +9102,11 @@
       radiusPercentileBusy = false;
       cancelRadiusWorker('active');
       cancelRadiusWorker('warm');
-      setViewBusy(true, busyMessage);
-      setNearbyMetricsBusy(true, busyMessage);
+      setViewBusy(!targetAlreadyPrepared, busyMessage);
+      setNearbyMetricsBusy(
+        !targetAlreadyPrepared && Boolean(activeLocation),
+        busyMessage
+      );
 
       requestAnimationFrame(
         () => {
@@ -9032,7 +9135,7 @@
               applyViewUi();
               animateSharedServiceContent();
               scheduleImmediateRender(
-                true,
+                !targetAlreadyPrepared,
                 busyMessage
               );
 
@@ -10264,18 +10367,17 @@
         .map(row => tableRowHtml(row, columns))
         .join('');
 
+      /* The first screenful is the user-facing ready state. Everything below
+       * it is low-priority background work and must never block interaction. */
+      setViewBusy(false);
+
       if (firstEnd >= totalRows) {
         progressiveTableBusy = false;
-        setViewBusy(false);
+        prepareInactiveServiceWhenIdle();
         return;
       }
 
       progressiveTableBusy = true;
-      setViewBusy(
-        true,
-        `Loading practices… ${PFF.formatInteger(firstEnd)} / ${PFF.formatInteger(totalRows)}`
-      );
-
       let index = firstEnd;
 
       const appendChunk = deadline => {
@@ -10308,21 +10410,27 @@
         }
 
         if (index < totalRows) {
-          setViewBusy(
-            true,
-            `Loading practices… ${PFF.formatInteger(index)} / ${PFF.formatInteger(totalRows)}`
-          );
           queueProgressiveTableWork(appendChunk);
           return;
         }
 
         progressiveTableHandle = null;
         progressiveTableBusy = false;
-        setViewBusy(false);
         requestAnimationFrame(syncStickyHeaderGeometry);
       };
 
-      queueProgressiveTableWork(appendChunk);
+      const startBackgroundRowFill = () => {
+        if (token !== progressiveTableToken) {
+          return;
+        }
+        queueProgressiveTableWork(appendChunk);
+      };
+
+      /* Prepare the other service before spending idle time drawing rows that
+       * are currently off-screen. Then quietly continue completing this table. */
+      prepareInactiveServiceWhenIdle(
+        startBackgroundRowFill
+      );
     }
 
     function syncStickyHeaderGeometry() {
@@ -10955,22 +11063,9 @@
     }
 
     function savedServiceTypeHint() {
-      try {
-        const saved = JSON.parse(
-          localStorage.getItem(SAVED_VIEW_KEY) || 'null'
-        );
-
-        if (
-          [4, 5].includes(saved?.version) &&
-          SERVICE_ORDER.includes(saved.serviceType)
-        ) {
-          return saved.serviceType;
-        }
-      } catch (_) {
-        // View persistence is optional.
-      }
-
-      return 'optometry';
+      /* Ophthalmology is the deliberate entry/default view. Automatic view
+       * persistence must not silently override that on the next page load. */
+      return 'ophthalmology';
     }
 
     function restoreSavedView() {
@@ -11008,11 +11103,14 @@
         return false;
       }
 
-      activeServiceType =
-        current
-          ? saved.serviceType
-          : 'optometry';
+      /* Preserve saved settings only when they belong to the default
+       * Ophthalmology view. A previously persisted Optometry tab should not
+       * make Optometry replace the requested default on reload. */
+      if (current && saved.serviceType !== 'ophthalmology') {
+        return false;
+      }
 
+      activeServiceType = 'ophthalmology';
       activateServiceDataset(activeServiceType);
 
       activeIntent = 'nearby';
@@ -11140,9 +11238,9 @@
       cancelRadiusWorker('active');
 
       const serviceChanged =
-        activeServiceType !== 'optometry';
+        activeServiceType !== 'ophthalmology';
 
-      activeServiceType = 'optometry';
+      activeServiceType = 'ophthalmology';
       activeIntent = 'nearby';
       activeLocation = null;
       activeDistanceLocationKey = '';
@@ -11175,7 +11273,7 @@
       }
 
       if (serviceChanged) {
-        activateServiceDataset('optometry');
+        activateServiceDataset('ophthalmology');
       } else {
         selectedPHNs.clear();
         phnValues.forEach(value => selectedPHNs.add(value));
@@ -11538,8 +11636,54 @@
 
       radiusSlider.addEventListener(
         'pointerdown',
-        () => {
+        event => {
           radiusSliderWrap.classList.add('has-been-dragged');
+
+          const rect =
+            radiusSlider.getBoundingClientRect();
+
+          const currentIndex =
+            Math.max(
+              0,
+              RADIUS_OPTIONS.indexOf(radiusKm)
+            );
+
+          const trackInset = 5;
+          const trackWidth =
+            Math.max(1, rect.width - trackInset * 2);
+          const currentX =
+            rect.left +
+            trackInset +
+            trackWidth *
+              currentIndex /
+              Math.max(1, RADIUS_OPTIONS.length - 1);
+
+          /* Clicking anywhere clearly to either side of the thumb moves one
+           * discrete radius step. Clicking the thumb itself preserves drag. */
+          if (Math.abs(event.clientX - currentX) > 6) {
+            event.preventDefault();
+
+            const direction =
+              event.clientX > currentX
+                ? 1
+                : -1;
+
+            const nextIndex =
+              PFF.clamp(
+                currentIndex + direction,
+                0,
+                RADIUS_OPTIONS.length - 1
+              );
+
+            if (nextIndex !== currentIndex) {
+              radiusKm =
+                RADIUS_OPTIONS[nextIndex];
+              updateRadiusUi();
+              scheduleImmediateRender();
+            }
+
+            radiusSlider.focus({ preventScroll: true });
+          }
         }
       );
 
@@ -11586,44 +11730,25 @@
         () => {
           radiusSliderWrap.classList.add('has-been-dragged');
 
-          const rawRadius =
-            Number(radiusSlider.value) || RADIUS_OPTIONS[0];
-
-          let nextRadius =
-            RADIUS_OPTIONS.reduce(
-              (nearest, option) =>
-                Math.abs(option - rawRadius) < Math.abs(nearest - rawRadius)
-                  ? option
-                  : nearest,
-              RADIUS_OPTIONS[0]
+          const nextIndex =
+            PFF.clamp(
+              Math.round(Number(radiusSlider.value) || 0),
+              0,
+              RADIUS_OPTIONS.length - 1
             );
 
-          if (nextRadius === radiusKm && rawRadius !== radiusKm) {
-            const currentIndex =
-              RADIUS_OPTIONS.indexOf(radiusKm);
+          radiusKm =
+            RADIUS_OPTIONS[nextIndex];
 
-            if (rawRadius > radiusKm) {
-              nextRadius =
-                RADIUS_OPTIONS[
-                  Math.min(
-                    RADIUS_OPTIONS.length - 1,
-                    currentIndex + 1
-                  )
-                ];
-            } else {
-              nextRadius =
-                RADIUS_OPTIONS[
-                  Math.max(
-                    0,
-                    currentIndex - 1
-                  )
-                ];
-            }
-          }
-
-          radiusKm = nextRadius;
-
+          /* Keep the thumb/label stable during touch drag. Expensive table and
+           * metric recalculation waits until the drag is committed. */
           updateRadiusUi();
+        }
+      );
+
+      radiusSlider.addEventListener(
+        'change',
+        () => {
           scheduleImmediateRender();
         }
       );
