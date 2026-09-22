@@ -5111,6 +5111,7 @@
     let selectedTableRow = null;
     let lastFilterSignature = '';
     let lastSortSignature = '';
+    let lastFilterCountSignature = '';
     let activeRadiusWorker = null;
     let warmRadiusWorker = null;
     let radiusWorkerLocationCoordinates = [];
@@ -5458,10 +5459,17 @@
     }
 
     async function copyTextToClipboard(
-      text
+      text,
+      preserveLineBreaks = false
     ) {
-      const value =
-        cleanText(text);
+      const value = preserveLineBreaks
+        ? String(text ?? '')
+            .replace(/\r\n?/g, '\n')
+            .split('\n')
+            .map(line => cleanText(line))
+            .filter(Boolean)
+            .join('\n')
+        : cleanText(text);
 
       if (!value) {
         return false;
@@ -9367,6 +9375,7 @@
       nearbyWarmupInProgress = false;
       lastFilterSignature = '';
       lastSortSignature = '';
+      lastFilterCountSignature = '';
 
       selectedPHNs.clear();
       phnValues.forEach(value => selectedPHNs.add(value));
@@ -9788,13 +9797,156 @@
         ).join('');
     }
 
-    function updateFilterCounts() {
-      const prepared = servicePreparedState.get(activeServiceType);
-      const stateCounts = prepared?.filterCounts?.state || countBy(sourceRows, row => row.stateCode);
-      const ownershipCounts = prepared?.filterCounts?.ownership || countBy(sourceRows, row => row.ownershipCode);
-      const mmmCounts = prepared?.filterCounts?.mmm || countBy(sourceRows, row => row.mmmCode);
-      const phnCounts = prepared?.filterCounts?.phn || countBy(sourceRows, row => row.phnCode);
-      const specialtyCounts = prepared?.filterCounts?.specialty || new Map();
+    function updateFilterCounts(force = false) {
+      const countSignature = currentFilterSignature();
+
+      if (
+        !force &&
+        countSignature === lastFilterCountSignature
+      ) {
+        return;
+      }
+
+      lastFilterCountSignature = countSignature;
+
+      const stateCounts = new Map();
+      const ownershipCounts = new Map();
+      const mmmCounts = new Map();
+      const phnCounts = new Map();
+      const specialtyCounts = new Map();
+      const specialtyDefinitions = activeSpecialtyDefinitions();
+
+      let stateAllCount = 0;
+      let ownershipAllCount = 0;
+      let mmmAllCount = 0;
+      let phnAllCount = 0;
+      let specialtyAllCount = 0;
+
+      const referSearchContext = buildReferSearchContext();
+      const isNearbyLocation = Boolean(activeLocation);
+      const selectedNearbyPhn = isNearbyLocation
+        ? cleanText(activeLocation.phn)
+        : '';
+
+      if (isNearbyLocation) {
+        prepareActiveLocationDistances();
+      }
+
+      const increment = (map, key) => {
+        if (!key) {
+          return;
+        }
+
+        map.set(
+          key,
+          (map.get(key) || 0) + 1
+        );
+      };
+
+      sourceRows.forEach(
+        row => {
+          if (!rowMatchesReferSearch(row, referSearchContext)) {
+            return;
+          }
+
+          if (isNearbyLocation) {
+            if (practiceCountScope === 'radius') {
+              const rowDistance = distanceNumber(row.distanceKm);
+
+              if (
+                !Number.isFinite(rowDistance) ||
+                rowDistance > radiusKm
+              ) {
+                return;
+              }
+            } else if (
+              !selectedNearbyPhn ||
+              cleanText(row.phnCode) !== selectedNearbyPhn
+            ) {
+              return;
+            }
+          }
+
+          const statePass =
+            selectedStates.size === STATES.length ||
+            selectedStates.has(row.stateCode);
+
+          const ownershipPass =
+            activeServiceType !== 'optometry' ||
+            selectedOwnershipTypes.size === OWNERSHIP_TYPES.length ||
+            selectedOwnershipTypes.has(row.ownershipCode);
+
+          const mmmPass =
+            selectedMMM.size === MMM_VALUES.length ||
+            selectedMMM.has(row.mmmCode);
+
+          const phnPass =
+            selectedPHNs.size === phnValues.length ||
+            selectedPHNs.has(row.phnCode);
+
+          const specialtyPass =
+            specialtyRequirementsMet(row);
+
+          // Each facet ignores only its own current selection, while all
+          // other active search/location/filter constraints remain applied.
+          if (
+            ownershipPass &&
+            mmmPass &&
+            phnPass &&
+            specialtyPass
+          ) {
+            stateAllCount += 1;
+            increment(stateCounts, row.stateCode);
+          }
+
+          if (
+            statePass &&
+            mmmPass &&
+            phnPass &&
+            specialtyPass
+          ) {
+            ownershipAllCount += 1;
+            increment(ownershipCounts, row.ownershipCode);
+          }
+
+          if (
+            statePass &&
+            ownershipPass &&
+            phnPass &&
+            specialtyPass
+          ) {
+            mmmAllCount += 1;
+            increment(mmmCounts, row.mmmCode);
+          }
+
+          if (
+            statePass &&
+            ownershipPass &&
+            mmmPass &&
+            specialtyPass
+          ) {
+            phnAllCount += 1;
+            increment(phnCounts, row.phnCode);
+          }
+
+          if (
+            statePass &&
+            ownershipPass &&
+            mmmPass &&
+            phnPass
+          ) {
+            specialtyAllCount += 1;
+
+            specialtyDefinitions.forEach(
+              definition => {
+                if (row.specialties?.[definition.key]) {
+                  increment(specialtyCounts, definition.key);
+                }
+              }
+            );
+          }
+        }
+      );
 
       STATES.forEach(
         value => setCountText(
@@ -9828,23 +9980,25 @@
           }
         );
 
-      activeSpecialtyDefinitions().forEach(
+      specialtyDefinitions.forEach(
         definition => {
           setCountText(
             `[data-count-for="specialty:${definition.key}"]`,
-            specialtyCounts.has(definition.key)
-              ? specialtyCounts.get(definition.key)
-              : sourceRows.filter(row => row.specialties?.[definition.key]).length
+            specialtyCounts.get(definition.key) || 0
           );
         }
       );
 
-      const total = PFF.formatInteger(sourceRows.length);
-      document.getElementById('state-all-count').textContent = total;
-      document.getElementById('ownership-all-count').textContent = total;
-      document.getElementById('rurality-all-count').textContent = total;
-      document.getElementById('phn-all-count').textContent = total;
-      document.getElementById('specialty-all-count').textContent = total;
+      document.getElementById('state-all-count').textContent =
+        PFF.formatInteger(stateAllCount);
+      document.getElementById('ownership-all-count').textContent =
+        PFF.formatInteger(ownershipAllCount);
+      document.getElementById('rurality-all-count').textContent =
+        PFF.formatInteger(mmmAllCount);
+      document.getElementById('phn-all-count').textContent =
+        PFF.formatInteger(phnAllCount);
+      document.getElementById('specialty-all-count').textContent =
+        PFF.formatInteger(specialtyAllCount);
     }
 
 
@@ -11303,6 +11457,7 @@
           () => {
             renderFrame = null;
             applyFilters();
+            updateFilterCounts();
             renderTableAnimated(animate);
             scheduleAutomaticViewSave();
           }
@@ -12622,7 +12777,10 @@
           }
 
           const copied =
-            await copyTextToClipboard(textToCopy);
+            await copyTextToClipboard(
+              textToCopy,
+              !isAddress
+            );
 
           if (copied) {
             showCopySuccess(
