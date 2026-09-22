@@ -10,6 +10,107 @@
     rel="stylesheet"
   >
 
+  <script>
+    (() => {
+      const STARTUP_TIMEOUT_MS = 65000;
+      let startupTimer = null;
+      let completed = false;
+      let pendingFailure = '';
+
+      function clearStartupGuard() {
+        completed = true;
+        pendingFailure = '';
+        if (startupTimer !== null) {
+          clearTimeout(startupTimer);
+          startupTimer = null;
+        }
+      }
+
+      function showStartupFailure(message) {
+        if (completed) {
+          return;
+        }
+
+        const app = document.getElementById('app');
+        const loadingState = document.getElementById('loadingState');
+
+        if (!app || !loadingState) {
+          pendingFailure = message;
+          return;
+        }
+
+        clearStartupGuard();
+        app.setAttribute('aria-busy', 'false');
+        loadingState.classList.add('is-startup-error');
+        loadingState.setAttribute('aria-label', 'Unable to load eyecare access data');
+
+        const loaderText = loadingState.querySelector('.loader-text');
+        if (loaderText) {
+          loaderText.textContent =
+            message || 'Unable to load the Eyecare Access Tool. Refresh to try again.';
+        }
+      }
+
+      function armStartupGuard() {
+        if (completed) {
+          return;
+        }
+
+        if (pendingFailure) {
+          showStartupFailure(pendingFailure);
+          return;
+        }
+
+        startupTimer = window.setTimeout(
+          () => {
+            const app = document.getElementById('app');
+            if (app && app.classList.contains('is-loading')) {
+              showStartupFailure(
+                'The Eyecare Access Tool is taking too long to load. Refresh to try again.'
+              );
+            } else {
+              clearStartupGuard();
+            }
+          },
+          STARTUP_TIMEOUT_MS
+        );
+      }
+
+      function recordStartupFailure(event) {
+        if (completed) {
+          return;
+        }
+
+        const target = event && event.target;
+        if (
+          target &&
+          target !== window &&
+          target.tagName !== 'SCRIPT'
+        ) {
+          return;
+        }
+
+        const message =
+          'Unable to load the Eyecare Access Tool. Refresh to try again.';
+
+        if (document.readyState === 'loading') {
+          pendingFailure = message;
+        } else {
+          showStartupFailure(message);
+        }
+      }
+
+      window.EATStartupGuard = Object.freeze({
+        clear: clearStartupGuard,
+        fail: showStartupFailure
+      });
+
+      window.addEventListener('error', recordStartupFailure, true);
+      window.addEventListener('unhandledrejection', recordStartupFailure);
+      document.addEventListener('DOMContentLoaded', armStartupGuard, { once: true });
+    })();
+  </script>
+
   <script src="./assets/pff_chart_core.js?v=1.2.11-20260919a"></script>
 
   <style>
@@ -33,13 +134,9 @@
       --eat-table-cell-padding-inline: 3px;
       --eat-table-header-font-size: 12px;
       --eat-table-body-font-size: 12px;
-      --eat-specialty-cell-padding-inline: 6px;
-      --eat-action-cell-padding-inline: 3px;
-      --eat-action-header-padding-inline: 6px;
       --eat-action-button-width: 15px;
       --eat-action-button-height: 19px;
       --eat-chip-clear-size: 19px;
-      --eat-narrow-cell-padding-inline: 3px;
       --eat-chip-height: 30px;
       --eat-chip-font-size: 10px;
       --eat-motion-fast: 140ms;
@@ -52,6 +149,8 @@
 
     body {
       overflow-x: hidden;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     #app {
@@ -70,6 +169,19 @@
 
     #status:empty {
       display: none;
+    }
+
+    .app-loading.is-startup-error .cone-loader {
+      display: none;
+    }
+
+    .app-loading.is-startup-error .loader-text {
+      max-width: min(330px, calc(100vw - 32px));
+      color: var(--pff-error, #b42318);
+      font-weight: 700;
+      line-height: 1.35;
+      text-align: center;
+      white-space: normal;
     }
 
     .directory-topbar {
@@ -210,10 +322,11 @@
 
     .controls-scroll-shell {
       position: relative;
+      z-index: 90;
       width: min(100%, var(--directory-current-table-width));
       min-width: 0;
       padding: 0 3px 5px;
-      border-bottom: 1px solid var(--pff-track);
+      border-bottom: 0;
     }
 
     .controls-scroller {
@@ -526,6 +639,9 @@
         rgba(21, 21, 21, 0.16) 78%,
         #fff 100%
       );
+      transition:
+        box-shadow var(--eat-motion-frozen) ease,
+        opacity var(--eat-motion-frozen) ease;
     }
 
     .table-scroll {
@@ -826,9 +942,6 @@
         --eat-table-cell-padding-block: 5px;
         --eat-table-header-font-size: 11px;
         --eat-table-body-font-size: 11px;
-        --eat-specialty-cell-padding-inline: 5px;
-        --eat-action-header-padding-inline: 5px;
-        --eat-narrow-cell-padding-inline: 2px;
         --eat-chip-height: 27px;
         --eat-chip-font-size: 9px;
       }
@@ -882,11 +995,6 @@
     /* ============================================================
      * E.A.T. hero + access workflow
      * ============================================================ */
-    body {
-      -webkit-user-select: none;
-      user-select: none;
-    }
-
     input,
     select,
     textarea {
@@ -897,6 +1005,7 @@
 
     .eat-hero {
       position: relative;
+      z-index: 100;
       width: 100%;
       padding: 8px 3px 10px;
       background: radial-gradient(ellipse at 0 0, rgba(102, 0, 255, 0.085) 0%, rgba(102, 0, 255, 0.040) 30%, transparent 68%),
@@ -1161,6 +1270,7 @@
 
     .location-suggestions {
       position: absolute;
+      z-index: 220;
       top: calc(100% + 4px);
       right: 0;
       left: 0;
@@ -1829,14 +1939,6 @@
       text-align: center;
     }
 
-    .controls-scroll-shell {
-      border-bottom: 0;
-    }
-
-    .table-shell {
-      border-top: 0 !important;
-    }
-
     .practice-cell {
       display: flex;
       min-width: 0;
@@ -2046,111 +2148,6 @@
     }
 
     
-    .data-table th[data-key="referActions"] {
-      box-shadow: none;
-      border-bottom: 1px solid var(--pff-ink);
-    }
-
-    .address-cell {
-      display: flex;
-    }
-
-    
-
-    .address-text {
-      text-overflow: ellipsis;
-    }
-
-    
-
-    .nearby-section-topline {
-      display: flex;
-    }
-
-    
-
-    .practice-scope-switch {
-      --pff-metric-columns: 2;
-      --pff-metric-index: 0;
-      position: relative;
-    }
-
-    
-
-    
-
-    
-
-    .practice-radius-control[hidden] {
-      display: none !important;
-    }
-
-    .nearby-metrics {
-      display: flex;
-      transition: gap 240ms ease;
-    }
-
-    .nearby-metric {
-      transition: flex-basis 260ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-        max-width 260ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-        opacity 180ms ease,
-        transform 240ms var(--pff-motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
-        padding 220ms ease;
-    }
-
-    
-
-    
-
-    
-
-    
-
-    .practice-guidance {
-      display: grid;
-    }
-
-    
-
-    .practice-guidance[hidden] {
-      display: none;
-    }
-
-    @media (max-width: 700px) {
-      .nearby-section-topline { gap: 4px; }
-      .nearby-section-topline .nearby-section-line {
-        overflow: hidden;
-        white-space: nowrap;
-      }
-      .practice-scope-switch {
-      flex-basis: 64px;
-    }
-      .practice-scope-switch .metric-button {
-      padding-right: 2px;
-      padding-left: 2px;
-    }
-      .nearby-metrics {
-        flex-wrap: wrap;
-        gap: 4px 8px;
-      }
-      .nearby-metric {
-      flex: 1 1 calc(50% - 4px);
-      max-width: calc(50% - 4px);
-    }
-      .nearby-metrics.is-radius-mode {
-        flex-wrap: nowrap;
-        gap: 0;
-      }
-      .nearby-metrics.is-radius-mode .nearby-metric-primary {
-        flex-basis: 100%;
-        max-width: 100%;
-      }
-      .nearby-metrics.is-radius-mode .nearby-metric:not(.nearby-metric-primary) {
-        flex-basis: 0;
-        max-width: 0;
-      }
-    }
-
     @media (prefers-reduced-motion: reduce) {
       .eat-title-main,
       .eat-acronym span,
@@ -2309,13 +2306,6 @@
     }
 
 
-
-
-
-
-
-
-
     .reset-all-button {
       display: inline-flex;
       min-height: var(--eat-control-height);
@@ -2354,21 +2344,9 @@
 
     
 
-    .practice-scope-switch {
-      --pff-metric-columns: 2;
-      --pff-metric-index: 0;
-      position: absolute;
-    }
-
     
 
     
-
-    .practice-radius-control[hidden] {
-      display: block;
-      visibility: hidden;
-      pointer-events: none;
-    }
 
     .practice-radius-topline {
       display: flex;
@@ -2457,9 +2435,6 @@
     }
       .reset-all-button .reset-icon { font-size: 11px; }
       .nearby-metric-primary .nearby-metric-label { padding-right: 66px; padding-left: 66px; }
-      .practice-scope-switch { width: 62px; }
-      .practice-scope-switch .metric-button { font-size: 6.4px; }
-      .practice-radius-control { margin-right: 2px; margin-left: 2px; }
     }
 
     @media (max-width: 410px) {
@@ -2473,7 +2448,6 @@
     }
 
     
-    .data-table th[data-key="referActions"] { box-shadow: none; border-bottom: 1px solid var(--pff-ink); }
     .address-cell { display:flex; width:100%; min-width:0; align-items:center; gap:3px; }
     .address-text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .nearby-heading-row > div { width:100%; min-width:0; }
@@ -2497,7 +2471,6 @@
       flex: 1 1 0;
       max-width: 25%;
       overflow: hidden;
-      transition: flex-basis 260ms var(--pff-motion-ease, cubic-bezier(0.22,1,0.36,1)), max-width 260ms var(--pff-motion-ease, cubic-bezier(0.22,1,0.36,1)), opacity 180ms ease, transform 240ms var(--pff-motion-ease, cubic-bezier(0.22,1,0.36,1)), padding 220ms ease;
     }
     .nearby-metrics.is-radius-mode { gap:0; }
     .nearby-metrics.is-radius-mode .nearby-metric-primary { flex-basis:100%; max-width:100%; min-height:105px; }
@@ -2523,7 +2496,6 @@
       .nearby-metrics.is-radius-mode .nearby-metric-primary { flex-basis:100%; max-width:100%; }
       .nearby-metrics.is-radius-mode .nearby-metric:not(.nearby-metric-primary) { flex-basis:0; max-width:0; }
     }
-
 
 
     
@@ -2579,7 +2551,6 @@
         margin-left: 2px;
       }
     }
-
 
 
     
@@ -2685,7 +2656,6 @@
 
       
     }
-
 
 
     
@@ -3091,12 +3061,6 @@
       text-align: left;
     }
 
-    .data-table th[data-key="referActions"],
-    .data-table td[data-key="referActions"] {
-      padding-right: var(--eat-action-cell-padding-inline);
-      padding-left: var(--eat-action-cell-padding-inline);
-    }
-
     .data-table td[data-key="state"],
     .data-table td[data-key="postcode"],
     .data-table td[data-key="employerType"],
@@ -3106,25 +3070,6 @@
     .data-table td[data-key="paediatric"] {
       text-align: left;
     }
-
-    .data-table th[data-key="state"],
-    .data-table td[data-key="state"],
-    .data-table th[data-key="postcode"],
-    .data-table td[data-key="postcode"],
-    .data-table th[data-key="employerType"],
-    .data-table td[data-key="employerType"],
-    .data-table th[data-key="mmm"],
-    .data-table td[data-key="mmm"],
-    .data-table th[data-key="dryEye"],
-    .data-table td[data-key="dryEye"],
-    .data-table th[data-key="contactLenses"],
-    .data-table td[data-key="contactLenses"],
-    .data-table th[data-key="paediatric"],
-    .data-table td[data-key="paediatric"] {
-      padding-right: var(--eat-narrow-cell-padding-inline);
-      padding-left: var(--eat-narrow-cell-padding-inline);
-    }
-
 
 
     .nearby-section-topline {
@@ -3267,33 +3212,6 @@
       overflow: visible;
     }
 
-    .data-table th[data-key="state"] .sort-button,
-    .data-table th[data-key="postcode"] .sort-button,
-    .data-table th[data-key="employerType"] .sort-button,
-    .data-table th[data-key="brandParent"] .sort-button,
-    .data-table th[data-key="mmm"] .sort-button,
-    .data-table th[data-key="dryEye"] .sort-button,
-    .data-table th[data-key="contactLenses"] .sort-button,
-    .data-table th[data-key="paediatric"] .sort-button {
-      min-width: 0;
-      gap: 1px;
-    }
-
-    .data-table th[data-key="state"] .sort-label,
-    .data-table th[data-key="postcode"] .sort-label,
-    .data-table th[data-key="employerType"] .sort-label,
-    .data-table th[data-key="brandParent"] .sort-label,
-    .data-table th[data-key="mmm"] .sort-label,
-    .data-table th[data-key="dryEye"] .sort-label,
-    .data-table th[data-key="contactLenses"] .sort-label,
-    .data-table th[data-key="paediatric"] .sort-label {
-      min-width: 0;
-      overflow: visible;
-      white-space: normal;
-      line-height: 1;
-      text-overflow: clip;
-    }
-
     @media (max-width: 700px) {
       
 
@@ -3371,6 +3289,7 @@
     .data-table th[data-key="dryEye"] .sort-button,
     .data-table th[data-key="contactLenses"] .sort-button,
     .data-table th[data-key="paediatric"] .sort-button {
+      min-width: 0;
       gap: 3px;
     }
 
@@ -3947,20 +3866,8 @@
     }
 
     
-    .eat-hero {
-      z-index: 100;
-    }
-
-    .controls-scroll-shell {
-      z-index: 90;
-    }
-
     .controls-scroll-shell:has(.filter-menu.is-open) {
       z-index: 140;
-    }
-
-    .location-suggestions {
-      z-index: 220;
     }
 
     .practice-radius-control .radius-slider-wrap {
@@ -3984,14 +3891,7 @@
     }
 
 
-
-
     /* Final header-fit and nearby-scope refinements. */
-    .data-table th[data-key="referActions"] {
-      padding-right: var(--eat-action-header-padding-inline) !important;
-      padding-left: var(--eat-action-header-padding-inline) !important;
-    }
-
     @media (min-width: 701px) {
       .practice-scope-switch {
         width: 104px;
@@ -4023,13 +3923,7 @@
     }
 
 
-    /* Compact specialty columns keep normal table padding while fitting headers. */
-    .data-table th.specialty-column-header,
-    .data-table td[data-specialty-column="true"] {
-      padding-right: var(--eat-specialty-cell-padding-inline) !important;
-      padding-left: var(--eat-specialty-cell-padding-inline) !important;
-    }
-
+    /* Compact specialty headers fit within the shared 3px cell padding. */
     .data-table th.specialty-column-header .sort-label {
       font-size: var(--specialty-header-font-size-desktop, var(--eat-table-header-font-size)) !important;
       line-height: 1.02;
@@ -4095,11 +3989,6 @@
     .data-table tbody,
     .data-table tbody tr {
       transition: none;
-    }
-
-    /* Strengthen the frozen-column boundary only once the table has moved. */
-    .table-shell::after {
-      transition: box-shadow var(--eat-motion-frozen) ease, opacity var(--eat-motion-frozen) ease;
     }
 
     .table-shell.is-horizontally-scrolled::after {
@@ -12956,6 +12845,7 @@
         updateFilterCounts();
         scheduleRender(false);
         prepareInactiveServiceWhenIdle();
+        window.EATStartupGuard?.clear();
 
         requestAnimationFrame(
           () => {
