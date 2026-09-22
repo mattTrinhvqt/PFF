@@ -1143,10 +1143,19 @@
       border: 1px solid var(--pff-track);
       border-radius: 5px;
       box-shadow: 0 8px 22px rgba(21, 21, 21, 0.13);
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+      -webkit-overflow-scrolling: touch;
     }
 
     .location-suggestions.is-visible {
       display: block;
+    }
+
+    @media (max-width: 700px) {
+      .location-suggestions {
+        max-height: 232px;
+      }
     }
 
 
@@ -3756,7 +3765,7 @@
       margin-top: 4px;
       color: var(--pff-error, #b42318);
       font-size: 10.5px;
-      font-weight: 700;
+      font-weight: 400;
       line-height: 1.15;
     }
 
@@ -4826,6 +4835,8 @@
     const LOCATION_SUGGESTION_DEBOUNCE_MS = 70;
     let suggestionItems = [];
     let activeSuggestionIndex = -1;
+    let suggestionViewportFrame = null;
+    let suggestionPointerState = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
     let automaticViewPersistenceReady = false;
@@ -7995,14 +8006,55 @@
         .sort((a, b) => a.score - b.score || a.definition.label.localeCompare(b.definition.label, 'en-AU'));
     }
 
+    function updateSearchSuggestionViewport() {
+      if (!locationSuggestions.classList.contains('is-visible')) {
+        return;
+      }
+
+      if (!window.matchMedia('(max-width: 700px)').matches) {
+        locationSuggestions.style.removeProperty('max-height');
+        return;
+      }
+
+      const viewport = window.visualViewport;
+      const viewportHeight = viewport?.height || window.innerHeight;
+      const viewportOffsetTop = viewport?.offsetTop || 0;
+      const rect = locationSuggestions.getBoundingClientRect();
+      const topWithinVisualViewport = rect.top - viewportOffsetTop;
+      const availableHeight = Math.max(0, viewportHeight - topWithinVisualViewport - 8);
+
+      /* Keep roughly 5-6 options visible at most, while never extending
+       * underneath the mobile on-screen keyboard. */
+      locationSuggestions.style.maxHeight =
+        `${Math.min(232, Math.floor(availableHeight))}px`;
+    }
+
+    function scheduleSearchSuggestionViewportUpdate() {
+      if (suggestionViewportFrame !== null) {
+        cancelAnimationFrame(suggestionViewportFrame);
+      }
+
+      suggestionViewportFrame = requestAnimationFrame(() => {
+        suggestionViewportFrame = null;
+        updateSearchSuggestionViewport();
+      });
+    }
+
     function hideLocationSuggestions() {
       locationSuggestions.classList.remove(
         'is-visible'
       );
 
+      if (suggestionViewportFrame !== null) {
+        cancelAnimationFrame(suggestionViewportFrame);
+        suggestionViewportFrame = null;
+      }
+
+      locationSuggestions.style.removeProperty('max-height');
       locationSuggestions.innerHTML = '';
       suggestionItems = [];
       activeSuggestionIndex = -1;
+      suggestionPointerState = null;
     }
 
     function suggestionButtonHtml(item, index) {
@@ -8083,6 +8135,7 @@
 
       locationSuggestions.innerHTML = sections.join('');
       locationSuggestions.classList.add('is-visible');
+      scheduleSearchSuggestionViewportUpdate();
     }
 
     function syncSelectedLocationChip() {
@@ -11679,25 +11732,83 @@
       locationSuggestions.addEventListener(
         'pointerdown',
         event => {
-          const button =
-            event.target.closest(
-              '[data-suggestion-index]'
-            );
+          const button = event.target.closest('[data-suggestion-index]');
+
+          if (!button || (event.pointerType === 'mouse' && event.button !== 0)) {
+            suggestionPointerState = null;
+            return;
+          }
+
+          /* Do not preventDefault here. The browser must be free to interpret
+           * a finger movement as vertical scrolling. */
+          suggestionPointerState = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            moved: false
+          };
+        }
+      );
+
+      locationSuggestions.addEventListener(
+        'pointermove',
+        event => {
+          if (
+            !suggestionPointerState ||
+            suggestionPointerState.pointerId !== event.pointerId
+          ) {
+            return;
+          }
+
+          const deltaX = event.clientX - suggestionPointerState.startX;
+          const deltaY = event.clientY - suggestionPointerState.startY;
+
+          if (Math.hypot(deltaX, deltaY) > 10) {
+            suggestionPointerState.moved = true;
+          }
+        }
+      );
+
+      locationSuggestions.addEventListener(
+        'pointercancel',
+        () => {
+          suggestionPointerState = null;
+        }
+      );
+
+      locationSuggestions.addEventListener(
+        'pointerup',
+        event => {
+          const pointerId = event.pointerId;
+          window.setTimeout(() => {
+            if (suggestionPointerState?.pointerId === pointerId) {
+              suggestionPointerState = null;
+            }
+          }, 350);
+        }
+      );
+
+      locationSuggestions.addEventListener(
+        'click',
+        event => {
+          const button = event.target.closest('[data-suggestion-index]');
 
           if (!button) {
             return;
           }
 
+          if (suggestionPointerState?.moved) {
+            event.preventDefault();
+            event.stopPropagation();
+            suggestionPointerState = null;
+            return;
+          }
+
           event.preventDefault();
 
-          const index =
-            Number(
-              button.dataset.suggestionIndex
-            );
-
-          selectSearchSuggestion(
-            suggestionItems[index]
-          );
+          const index = Number(button.dataset.suggestionIndex);
+          suggestionPointerState = null;
+          selectSearchSuggestion(suggestionItems[index]);
         }
       );
 
@@ -11751,6 +11862,23 @@
           clearSelectedLocation({ keepSearch: true });
           searchInput.focus();
         }
+      );
+
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener(
+          'resize',
+          scheduleSearchSuggestionViewportUpdate
+        );
+
+        window.visualViewport.addEventListener(
+          'scroll',
+          scheduleSearchSuggestionViewportUpdate
+        );
+      }
+
+      window.addEventListener(
+        'resize',
+        scheduleSearchSuggestionViewportUpdate
       );
 
       radiusSlider.addEventListener(
