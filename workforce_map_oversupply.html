@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PFF Extra Clinicians</title>
+  <title>PFF Excess Clinicians</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
 
   <style>
     :root {
-      --extra-purple: #6600ff;
+      --excess-purple: #6600ff;
       --supply-gold: #f1b916;
       --medicare-green: #00a651;
     }
@@ -135,8 +135,8 @@
                 <span>Medicare-billed hours</span>
               </span>
               <span class="legend-item">
-                <span class="legend-line is-gap" style="--legend-colour: var(--extra-purple)"></span>
-                <span>Extra clinicians</span>
+                <span class="legend-line is-gap" style="--legend-colour: var(--excess-purple)"></span>
+                <span>Excess clinicians</span>
               </span>
             </div>
           </div>
@@ -146,13 +146,13 @@
       <div id="chartShell" class="chart-shell">
         <canvas
           id="oversupplyChart"
-          aria-label="Australian optometry clinician supply compared with Medicare-billed service demand, with the shaded gap measured as extra clinicians"
+          aria-label="Australian optometry clinician supply compared with Medicare-billed service demand, with the shaded gap measured as excess clinicians"
           role="img"
         ></canvas>
       </div>
 
       <p class="method-note">
-        Extra clinicians = active clinical workforce capacity above Medicare-billed service demand, expressed using observed average clinical hours per active clinician
+        Excess clinicians = active clinical workforce capacity above Medicare-billed service demand, expressed using observed average clinical hours per active clinician
       </p>
     </main>
   </div>
@@ -207,7 +207,7 @@
     const COLOURS = Object.freeze({
       supply: '#f1b916',
       medicare: '#00a651',
-      extra: '#6600ff'
+      excess: '#6600ff'
     });
 
     // ============================================================
@@ -230,6 +230,8 @@
     let chartSummary = null;
     let hoursScale = null;
     let leftAxisController = null;
+    let pinnedGapIndex = null;
+    let gapInteractionCleanup = null;
 
     // ============================================================
     // DATA HELPERS
@@ -450,7 +452,7 @@
 
           const gapHours = clinicalHours - medicareHours;
           const averageAnnualClinicalHours = clinicalHours / cliniciansWithHours;
-          const extraClinicians = gapHours / averageAnnualClinicalHours;
+          const excessClinicians = gapHours / averageAnnualClinicalHours;
 
           return {
             year: Number(row.year),
@@ -458,7 +460,7 @@
             medicareHours,
             gapHours,
             averageAnnualClinicalHours,
-            extraClinicians,
+            excessClinicians,
             clinicalHoursM: clinicalHours / 1e6,
             medicareHoursM: medicareHours / 1e6,
             gapHoursM: gapHours / 1e6
@@ -562,14 +564,14 @@
     // ============================================================
 
     const yearTicksPlugin = PFFCharts.createYearTickMarksPlugin({
-      id: 'pffExtraCliniciansYearTicks',
+      id: 'pffExcessCliniciansYearTicks',
       getValue({ index }) {
         return displayRows[index]?.year;
       }
     });
 
     const gapMeasurementPlugin = {
-      id: 'pffExtraCliniciansGapMeasurement',
+      id: 'pffExcessCliniciansGapMeasurement',
       afterDatasetsDraw(chartInstance) {
         if (!displayRows.length) return;
 
@@ -586,9 +588,11 @@
           item => Number.isInteger(item?.index)
         )?.index;
 
-        const index = Number.isInteger(hoveredIndex)
-          ? hoveredIndex
-          : displayRows.length - 1;
+        const index = Number.isInteger(pinnedGapIndex)
+          ? pinnedGapIndex
+          : Number.isInteger(hoveredIndex)
+            ? hoveredIndex
+            : displayRows.length - 1;
 
         const row = displayRows[index];
         const supplyPoint = supplyMeta.data[index];
@@ -611,7 +615,7 @@
         const fontSize = mobile ? 8.7 : 9.5;
         const boxHeight = mobile ? 16 : 17;
         const padX = mobile ? 5 : 6;
-        const label = `${PFFCharts.formatInteger(Math.round(row.extraClinicians))} extra clinicians`;
+        const label = `${PFFCharts.formatInteger(Math.round(row.excessClinicians))} excess clinicians`;
 
         ctx.save();
 
@@ -671,12 +675,167 @@
         ctx.lineWidth = 0.7;
         ctx.stroke();
 
-        ctx.fillStyle = COLOURS.extra;
+        ctx.fillStyle = COLOURS.excess;
         ctx.fillText(label, left + padX, top + boxHeight / 2 + 0.2);
 
         ctx.restore();
       }
     };
+
+    // ============================================================
+    // GAP TOUCH / POINTER INTERACTION
+    // ============================================================
+
+    function eventPointInChart(event) {
+      if (!chart || !chartCanvas) return null;
+
+      const source = event?.touches?.[0] || event?.changedTouches?.[0] || event;
+      const clientX = Number(source?.clientX);
+      const clientY = Number(source?.clientY);
+      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+
+      const rect = chartCanvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+
+      return {
+        x: (clientX - rect.left) * (chart.width / rect.width),
+        y: (clientY - rect.top) * (chart.height / rect.height)
+      };
+    }
+
+    function gapGeometryAtX(x) {
+      if (!chart || !displayRows.length) return null;
+
+      const supplyMeta = chart.getDatasetMeta(0);
+      const medicareMeta = chart.getDatasetMeta(1);
+      const supplyPoints = supplyMeta?.data || [];
+      const medicarePoints = medicareMeta?.data || [];
+
+      if (!supplyPoints.length || supplyPoints.length !== medicarePoints.length) {
+        return null;
+      }
+
+      const firstX = supplyPoints[0]?.x;
+      const lastX = supplyPoints[supplyPoints.length - 1]?.x;
+      if (!Number.isFinite(firstX) || !Number.isFinite(lastX)) return null;
+
+      const clampedX = PFFCharts.clamp(x, firstX, lastX);
+      let rightIndex = supplyPoints.findIndex(point => Number.isFinite(point?.x) && point.x >= clampedX);
+      if (rightIndex < 0) rightIndex = supplyPoints.length - 1;
+      const leftIndex = Math.max(0, rightIndex - 1);
+
+      const leftSupply = supplyPoints[leftIndex];
+      const rightSupply = supplyPoints[rightIndex];
+      const leftMedicare = medicarePoints[leftIndex];
+      const rightMedicare = medicarePoints[rightIndex];
+
+      if (![leftSupply?.x, leftSupply?.y, rightSupply?.x, rightSupply?.y,
+            leftMedicare?.y, rightMedicare?.y].every(Number.isFinite)) {
+        return null;
+      }
+
+      const span = rightSupply.x - leftSupply.x;
+      const t = span > 0
+        ? PFFCharts.clamp((clampedX - leftSupply.x) / span, 0, 1)
+        : 0;
+
+      const supplyY = leftSupply.y + (rightSupply.y - leftSupply.y) * t;
+      const medicareY = leftMedicare.y + (rightMedicare.y - leftMedicare.y) * t;
+
+      return {
+        yTop: Math.min(supplyY, medicareY),
+        yBottom: Math.max(supplyY, medicareY),
+        firstX,
+        lastX
+      };
+    }
+
+    function nearestGapYearIndex(x) {
+      const supplyPoints = chart?.getDatasetMeta(0)?.data || [];
+      let bestIndex = -1;
+      let bestDistance = Infinity;
+
+      supplyPoints.forEach((point, index) => {
+        if (!Number.isFinite(point?.x)) return;
+        const distance = Math.abs(point.x - x);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      });
+
+      return bestIndex;
+    }
+
+    function activateGapYear(index) {
+      if (!chart || !Number.isInteger(index) || !displayRows[index]) return;
+
+      const supplyPoint = chart.getDatasetMeta(0)?.data?.[index];
+      const medicarePoint = chart.getDatasetMeta(1)?.data?.[index];
+      if (!supplyPoint || !medicarePoint) return;
+
+      pinnedGapIndex = index;
+
+      const active = [
+        { datasetIndex: 0, index },
+        { datasetIndex: 1, index }
+      ];
+
+      chart.setActiveElements(active);
+
+      const anchorY = (supplyPoint.y + medicarePoint.y) / 2;
+      chart.tooltip?.setActiveElements(
+        active,
+        { x: supplyPoint.x, y: anchorY }
+      );
+
+      chart.draw();
+    }
+
+    function setupGapInteractions() {
+      gapInteractionCleanup?.();
+
+      const tolerance = () => PFFCharts.mobileLayout() ? 14 : 10;
+
+      const handleGapPress = event => {
+        if (!chart?.chartArea) return;
+
+        const point = eventPointInChart(event);
+        if (!point) return;
+
+        const geometry = gapGeometryAtX(point.x);
+        if (!geometry) return;
+
+        const hitTolerance = tolerance();
+        const insideHorizontal =
+          point.x >= geometry.firstX - hitTolerance &&
+          point.x <= geometry.lastX + hitTolerance;
+        const insideGap =
+          point.y >= geometry.yTop - hitTolerance &&
+          point.y <= geometry.yBottom + hitTolerance;
+
+        if (!insideHorizontal || !insideGap) return;
+
+        if (event.cancelable) {
+          event.preventDefault();
+        }
+
+        const index = nearestGapYearIndex(point.x);
+        if (index < 0) return;
+
+        // Apply after Chart.js has processed the same native event so the
+        // selected historical year remains pinned after the finger is lifted.
+        requestAnimationFrame(() => activateGapYear(index));
+      };
+
+      chartCanvas.addEventListener('pointerdown', handleGapPress, { passive: false });
+      chartCanvas.addEventListener('touchstart', handleGapPress, { passive: false });
+
+      gapInteractionCleanup = () => {
+        chartCanvas.removeEventListener('pointerdown', handleGapPress);
+        chartCanvas.removeEventListener('touchstart', handleGapPress);
+      };
+    }
 
     // ============================================================
     // CHART
@@ -750,7 +909,8 @@
             return [
               `Clinical hours worked: ${row.clinicalHoursM.toFixed(2)} million`,
               `Medicare-billed hours: ${row.medicareHoursM.toFixed(2)} million`,
-              `Supply − service demand: ${row.gapHoursM.toFixed(2)} million hours`
+              `Supply − service demand: ${row.gapHoursM.toFixed(2)} million hours`,
+              `Excess clinicians: ${PFFCharts.formatInteger(Math.round(row.excessClinicians))}`
             ];
           }
         }
@@ -786,7 +946,7 @@
       computeScales();
 
       leftAxisController = PFFCharts.createUnifiedYAxis({
-        id: 'pffExtraCliniciansHoursAxis',
+        id: 'pffExcessCliniciansHoursAxis',
         getChart() {
           return chart;
         },
@@ -820,6 +980,7 @@
         ]
       });
 
+      setupGapInteractions();
       updateAccessibleSummary();
     }
 
@@ -828,7 +989,7 @@
       const latest = displayRows[displayRows.length - 1];
 
       PFFCharts.updateChartSummary(
-        `Clinician supply minus Medicare service demand, ${displayRows[0].year} to ${latest.year}. In ${latest.year}, clinical hours worked were ${latest.clinicalHoursM.toFixed(2)} million, Medicare-billed hours were ${latest.medicareHoursM.toFixed(2)} million, and the shaded gap represented ${PFFCharts.formatInteger(Math.round(latest.extraClinicians))} extra clinicians.`,
+        `Clinician supply minus Medicare service demand, ${displayRows[0].year} to ${latest.year}. In ${latest.year}, clinical hours worked were ${latest.clinicalHoursM.toFixed(2)} million, Medicare-billed hours were ${latest.medicareHoursM.toFixed(2)} million, and the shaded gap represented ${PFFCharts.formatInteger(Math.round(latest.excessClinicians))} excess clinicians.`,
         chartSummary
       );
     }
@@ -938,6 +1099,7 @@
 
         sourceData = data;
         displayRows = deriveDisplayRows(sourceData);
+        pinnedGapIndex = null;
 
         if (displayRows.length < 3) {
           throw new Error('There were not enough overlapping supply and Medicare years to plot.');
@@ -955,7 +1117,7 @@
         updateAccessibleSummary();
       },
 
-      errorMessage: 'Unable to render Extra clinicians chart'
+      errorMessage: 'Unable to render Excess clinicians chart'
     });
   </script>
 </body>
