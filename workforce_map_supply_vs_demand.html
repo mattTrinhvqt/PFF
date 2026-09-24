@@ -668,6 +668,17 @@
       }
     });
 
+    // The custom unified y-axis draws in afterDraw, so redraw the tooltip last
+    // to keep it visually above axis ticks/titles on narrow/mobile layouts.
+    const tooltipTopLayerPlugin = {
+      id: 'pffExcessCliniciansTooltipTopLayer',
+      afterDraw(chartInstance) {
+        const tooltip = chartInstance?.tooltip;
+        if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
+        tooltip.draw(chartInstance.ctx);
+      }
+    };
+
     function rectanglesOverlap(first, second, padding = 0) {
       if (!first || !second) return false;
       return !(
@@ -1188,14 +1199,26 @@
       return bestIndex;
     }
 
-    function activateGapYear(index) {
+    function clearGapSelection() {
+      if (!chart) return;
+
+      pinnedGapIndex = null;
+      chart.setActiveElements([]);
+      chart.tooltip?.setActiveElements(
+        [],
+        { x: 0, y: 0 }
+      );
+      chart.draw();
+    }
+
+    function activateGapYear(index, { pin = false } = {}) {
       if (!chart || !Number.isInteger(index) || !displayRows[index]) return;
 
       const supplyPoint = chart.getDatasetMeta(0)?.data?.[index];
       const medicarePoint = chart.getDatasetMeta(1)?.data?.[index];
       if (!supplyPoint || !medicarePoint) return;
 
-      pinnedGapIndex = index;
+      pinnedGapIndex = pin ? index : null;
 
       const active = [
         { datasetIndex: 0, index },
@@ -1213,48 +1236,87 @@
       chart.draw();
     }
 
+    function gapHitAtPoint(point, hitTolerance = 0) {
+      if (!point) return null;
+
+      const geometry = gapGeometryAtX(point.x);
+      if (!geometry) return null;
+
+      const insideHorizontal =
+        point.x >= geometry.firstX - hitTolerance &&
+        point.x <= geometry.lastX + hitTolerance;
+      const insideGap =
+        point.y >= geometry.yTop - hitTolerance &&
+        point.y <= geometry.yBottom + hitTolerance;
+
+      if (!insideHorizontal || !insideGap) return null;
+
+      const index = nearestGapYearIndex(point.x);
+      return index >= 0 ? index : null;
+    }
+
     function setupGapInteractions() {
       gapInteractionCleanup?.();
 
-      const tolerance = () => PFFCharts.mobileLayout() ? 14 : 10;
+      const pressTolerance = () => PFFCharts.mobileLayout() ? 14 : 10;
+      const hoverTolerance = () => PFFCharts.mobileLayout() ? 6 : 4;
+      let hoverRafId = null;
+
+      const handleGapHover = event => {
+        if (!chart?.chartArea || event.pointerType === 'touch') return;
+
+        const point = eventPointInChart(event);
+        const index = gapHitAtPoint(point, hoverTolerance());
+        if (!Number.isInteger(index)) return;
+
+        if (hoverRafId) cancelAnimationFrame(hoverRafId);
+        hoverRafId = requestAnimationFrame(() => {
+          hoverRafId = null;
+          activateGapYear(index, { pin: false });
+        });
+      };
 
       const handleGapPress = event => {
         if (!chart?.chartArea) return;
 
         const point = eventPointInChart(event);
-        if (!point) return;
+        const index = gapHitAtPoint(point, pressTolerance());
 
-        const geometry = gapGeometryAtX(point.x);
-        if (!geometry) return;
+        if (Number.isInteger(index)) {
+          if (event.cancelable) event.preventDefault();
 
-        const hitTolerance = tolerance();
-        const insideHorizontal =
-          point.x >= geometry.firstX - hitTolerance &&
-          point.x <= geometry.lastX + hitTolerance;
-        const insideGap =
-          point.y >= geometry.yTop - hitTolerance &&
-          point.y <= geometry.yBottom + hitTolerance;
-
-        if (!insideHorizontal || !insideGap) return;
-
-        if (event.cancelable) {
-          event.preventDefault();
+          // Apply after Chart.js handles the same native event so the chosen
+          // year remains pinned until the next tap outside the shaded gap.
+          requestAnimationFrame(() => activateGapYear(index, { pin: true }));
+          return;
         }
 
-        const index = nearestGapYearIndex(point.x);
-        if (index < 0) return;
-
-        // Apply after Chart.js has processed the same native event so the
-        // selected historical year remains pinned after the finger is lifted.
-        requestAnimationFrame(() => activateGapYear(index));
+        // Any press on the canvas outside the shaded gap dismisses the tooltip
+        // and returns the gap measurement to its default latest-year position.
+        requestAnimationFrame(clearGapSelection);
       };
 
+      const handlePointerLeave = () => {
+        if (Number.isInteger(pinnedGapIndex)) return;
+        requestAnimationFrame(clearGapSelection);
+      };
+
+      const handleOutsidePress = event => {
+        if (event.target === chartCanvas || chartCanvas.contains(event.target)) return;
+        requestAnimationFrame(clearGapSelection);
+      };
+
+      chartCanvas.addEventListener('pointermove', handleGapHover, { passive: true });
       chartCanvas.addEventListener('pointerdown', handleGapPress, { passive: false });
-      chartCanvas.addEventListener('touchstart', handleGapPress, { passive: false });
+      chartCanvas.addEventListener('pointerleave', handlePointerLeave, { passive: true });
+      document.addEventListener('pointerdown', handleOutsidePress);
 
       gapInteractionCleanup = () => {
+        if (hoverRafId) cancelAnimationFrame(hoverRafId);
+        chartCanvas.removeEventListener('pointermove', handleGapHover);
         chartCanvas.removeEventListener('pointerdown', handleGapPress);
-        chartCanvas.removeEventListener('touchstart', handleGapPress);
+        chartCanvas.removeEventListener('pointerleave', handlePointerLeave);
+        document.removeEventListener('pointerdown', handleOutsidePress);
       };
     }
 
@@ -1314,7 +1376,7 @@
     function tooltipOptions() {
       return PFFCharts.tooltipOptions({
         mode: 'index',
-        intersect: false,
+        intersect: true,
         filter(item) {
           return item.datasetIndex === 0;
         },
@@ -1357,8 +1419,8 @@
         },
         interaction: {
           mode: 'index',
-          intersect: false,
-          axis: 'x'
+          intersect: true,
+          axis: 'xy'
         },
         plugins: {
           tooltip: tooltipOptions()
@@ -1405,7 +1467,8 @@
           leftAxisController.plugin,
           yearTicksPlugin,
           fixedTrendPillsPlugin,
-          gapMeasurementPlugin
+          gapMeasurementPlugin,
+          tooltipTopLayerPlugin
         ]
       });
 
