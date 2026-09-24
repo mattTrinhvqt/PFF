@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Extra Clinicians</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
+
+  <style>
+    :root {
+      --extra-purple: #6600ff;
+      --supply-gold: #f1b916;
+      --medicare-green: #00a651;
+    }
+
+    .single-tab-shell .tab-list {
+      min-width: 0;
+    }
+
+    .single-tab-shell .chart-tab {
+      cursor: default;
+    }
+
+    .chart-heading-row {
+      align-items: center;
+    }
+
+    .chart-heading {
+      white-space: nowrap;
+    }
+
+    .chart-options-row {
+      min-height: 25px;
+    }
+
+    .chart-legend .legend-item {
+      color: var(--pff-muted);
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .chart-legend .legend-item:hover {
+      color: var(--pff-muted);
+    }
+
+    .legend-line.is-gap {
+      height: 7px;
+      border: 1px solid rgba(102, 0, 255, 0.22);
+      background: rgba(102, 0, 255, 0.08) !important;
+    }
+
+    .method-note {
+      margin: 1px 2px 0;
+      color: var(--pff-muted);
+      font-size: 8.5px;
+      line-height: 1.25;
+      text-align: center;
+    }
+
+    @media (max-width: 430px) {
+      .method-note {
+        font-size: 8px;
+      }
+    }
+  </style>
+</head>
+
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div
+        id="loadingState"
+        class="app-loading"
+        role="status"
+        aria-label="Loading optometry supply and Medicare service demand data"
+      >
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p id="loaderText" class="loader-text">Loading live supply and Medicare data…</p>
+      </div>
+
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div
+            class="tab-list"
+            role="tablist"
+            aria-label="Oversupply chart"
+          >
+            <button
+              class="chart-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              tabindex="0"
+            >Oversupply</button>
+          </div>
+        </div>
+
+        <div
+          id="dataSourceIndicator"
+          class="live-data"
+          aria-label="Live data"
+          aria-live="polite"
+        >
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="dataSourceText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 class="chart-heading">Supply vs Medicare service demand</h2>
+          </div>
+        </div>
+
+        <div class="heading-controls">
+          <button
+            id="yoyTrendToggle"
+            class="yoy-trend-toggle is-on"
+            type="button"
+            aria-pressed="true"
+            aria-label="3-year trend. Press to switch to 10-year trend."
+          >
+            <span class="yoy-binary-indicator" aria-hidden="true"></span>
+            <span class="yoy-toggle-label">3yr Trend</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <div class="legend-viewport">
+            <div id="chartLegend" class="chart-legend" aria-label="Chart legend">
+              <span class="legend-item">
+                <span class="legend-line" style="--legend-colour: var(--supply-gold)"></span>
+                <span>Clinical hours worked</span>
+              </span>
+              <span class="legend-item">
+                <span class="legend-line" style="--legend-colour: var(--medicare-green)"></span>
+                <span>Medicare-billed hours</span>
+              </span>
+              <span class="legend-item">
+                <span class="legend-line" style="--legend-colour: var(--extra-purple)"></span>
+                <span>Extra clinicians</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas
+          id="oversupplyChart"
+          aria-label="Australian optometry clinical capacity compared with Medicare-billed service demand, with excess capacity expressed as extra clinicians"
+          role="img"
+        ></canvas>
+      </div>
+
+      <p class="method-note">
+        Extra clinicians = active clinical workforce capacity above Medicare-billed service demand, expressed using observed average clinical hours per active clinician.
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    // ============================================================
+    // DATA SOURCE
+    // ============================================================
+
+    const SHEET_ID =
+      '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
+
+    const MEDICARE_SHEET =
+      'Medicareitems';
+
+    const MEDICARE_DATA_RANGE =
+      'C30:KE';
+
+    const MEDICARE_ITEM_RANGE =
+      'D29:KE29';
+
+    const MEDICARE_HOURS_RANGE =
+      'D28:KE28';
+
+    const CLINICIAN_SHEET =
+      'OptomsbystatebyMMM';
+
+    const CLINICIAN_RANGE =
+      'A29:CC';
+
+    const CLINICIAN_COUNT_FIRST_INDEX = 1;
+    const CLINICIAN_HOURS_FIRST_INDEX = 41;
+    const RAW_CLINICIAN_SERIES_COUNT = 40;
+    const EXPECTED_ITEM_COUNT = 32;
+
+    const FETCH_TIMEOUT_MS = 15000;
+    const CACHE_FETCH_TIMEOUT_MS = 10000;
+
+    const LOCAL_CACHE_KEY =
+      'pff-extra-clinicians-v1';
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    // Backend 1 already includes Medicare item rows, item times and the
+    // national state×MMM clinician count/hour matrix in this snapshot.
+    const CACHE_APP_KEY =
+      'pff-medicare-service-demand-v13';
+
+    const COLOURS = Object.freeze({
+      supply: '#f1b916',
+      medicare: '#00a651',
+      extra: '#6600ff'
+    });
+
+    // ============================================================
+    // DOM + STATE
+    // ============================================================
+
+    const app = document.getElementById('app');
+    const loadingState = document.getElementById('loadingState');
+    const loaderText = document.getElementById('loaderText');
+    const statusElement = document.getElementById('status');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
+    const yoyTrendToggle = document.getElementById('yoyTrendToggle');
+    const trendLabelElement = yoyTrendToggle.querySelector('.yoy-toggle-label');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('oversupplyChart');
+
+    let sourceData = null;
+    let displayRows = [];
+    let chart = null;
+    let trendMode = '3yr';
+    let trendController = null;
+    let responsiveController = null;
+    let chartSummary = null;
+    let hoursScale = null;
+    let extraScale = null;
+    let leftAxisController = null;
+
+    // ============================================================
+    // DATA HELPERS
+    // ============================================================
+
+    function finiteNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function cellValue(cell) {
+      if (!cell) return null;
+      const raw = cell.v ?? cell.f ?? null;
+      return raw === null || raw === '' ? null : raw;
+    }
+
+    function numericCell(cell) {
+      const raw = cellValue(cell);
+      if (raw === null || raw === undefined || raw === '') return null;
+      const number = Number(
+        typeof raw === 'string' ? raw.replace(/,/g, '') : raw
+      );
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function itemNumberCell(cell) {
+      const value = numericCell(cell);
+      if (Number.isFinite(value)) return String(Math.round(value));
+      const text = String(cell?.v ?? cell?.f ?? '').trim();
+      return /^\d{5}$/.test(text) ? text : '';
+    }
+
+    // Core v1.2.11 does not export rowsToGVizTable, although one supplied
+    // app calls it. Keep this tiny adapter local so backend fallback is robust.
+    function rowsToGVizTable(rows) {
+      return {
+        rows: (Array.isArray(rows) ? rows : []).map(row => ({
+          c: (Array.isArray(row) ? row : []).map(value => ({ v: value }))
+        }))
+      };
+    }
+
+    function parseMetadataRows(itemTable, hoursTable) {
+      const itemCells = itemTable?.rows?.[0]?.c || [];
+      const hourCells = hoursTable?.rows?.[0]?.c || [];
+      const parsed = [];
+
+      for (let start = 0; start + 8 < itemCells.length; start += 9) {
+        const item = itemNumberCell(itemCells[start]);
+        if (!/^\d{5}$/.test(item)) break;
+
+        const repeated = Array.from(
+          { length: 9 },
+          (_, offset) => itemNumberCell(itemCells[start + offset])
+        );
+
+        if (!repeated.every(value => value === item)) break;
+
+        const hours = numericCell(hourCells[start]);
+        if (!Number.isFinite(hours) || hours <= 0) {
+          throw new Error(`Medicare consultation time was missing for item ${item}.`);
+        }
+
+        parsed.push({ item, hours });
+      }
+
+      if (
+        parsed.length !== EXPECTED_ITEM_COUNT ||
+        new Set(parsed.map(item => item.item)).size !== EXPECTED_ITEM_COUNT
+      ) {
+        throw new Error('Medicare item metadata were incomplete.');
+      }
+
+      return parsed;
+    }
+
+    function parseMedicareDataTable(table, itemSchema) {
+      const parsedRows = [];
+
+      for (const row of table?.rows || []) {
+        const cells = row?.c || [];
+        const yearValue = numericCell(cells[0]);
+        if (!Number.isFinite(yearValue)) continue;
+
+        const year = Math.round(yearValue);
+        if (year < 1900 || year > 2200) continue;
+
+        const totals = itemSchema.map(
+          (_, itemIndex) => numericCell(cells[9 + itemIndex * 9])
+        );
+
+        if (totals.some(Number.isFinite)) {
+          parsedRows.push({ year, totals });
+        }
+      }
+
+      parsedRows.sort((a, b) => a.year - b.year);
+
+      return {
+        items: itemSchema.map(item => ({ ...item })),
+        rows: parsedRows
+      };
+    }
+
+    function parseClinicianTable(table) {
+      const rows = [];
+
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const yearValue = numericCell(cells[0]);
+        if (!Number.isFinite(yearValue)) return;
+
+        const year = Math.round(yearValue);
+        if (year < 1900 || year > 2200) return;
+
+        const counts = Array.from(
+          { length: RAW_CLINICIAN_SERIES_COUNT },
+          (_, index) => numericCell(cells[CLINICIAN_COUNT_FIRST_INDEX + index])
+        );
+
+        const hours = Array.from(
+          { length: RAW_CLINICIAN_SERIES_COUNT },
+          (_, index) => numericCell(cells[CLINICIAN_HOURS_FIRST_INDEX + index])
+        );
+
+        if (counts.some(Number.isFinite) && hours.some(Number.isFinite)) {
+          rows.push({ year, counts, hours });
+        }
+      });
+
+      rows.sort((a, b) => a.year - b.year);
+      return rows;
+    }
+
+    function combineMedicareWithClinicalSupply(medicareData, clinicianRows) {
+      const clinicianByYear = new Map(
+        (clinicianRows || []).map(row => [row.year, row])
+      );
+
+      const rows = medicareData.rows
+        .map(medicareRow => {
+          const clinician = clinicianByYear.get(medicareRow.year);
+          if (!clinician) return null;
+
+          let activeClinicians = 0;
+          let cliniciansWithHours = 0;
+          let availableClinicalHoursWeek = 0;
+
+          for (let index = 0; index < RAW_CLINICIAN_SERIES_COUNT; index += 1) {
+            const count = finiteNumber(clinician.counts?.[index]);
+            const hours = finiteNumber(clinician.hours?.[index]);
+
+            if (Number.isFinite(count) && count >= 0) {
+              activeClinicians += count;
+            }
+
+            if (
+              Number.isFinite(count) && count >= 0 &&
+              Number.isFinite(hours) && hours >= 0
+            ) {
+              cliniciansWithHours += count;
+              availableClinicalHoursWeek += count * hours;
+            }
+          }
+
+          if (
+            activeClinicians <= 0 ||
+            cliniciansWithHours <= 0 ||
+            availableClinicalHoursWeek <= 0
+          ) {
+            return null;
+          }
+
+          return {
+            ...medicareRow,
+            activeClinicians,
+            cliniciansWithHours,
+            availableClinicalHoursWeek,
+            availableClinicalHoursAnnual: availableClinicalHoursWeek * 52
+          };
+        })
+        .filter(Boolean);
+
+      return { items: medicareData.items, rows };
+    }
+
+    function totalMedicareHours(row, items) {
+      let total = 0;
+      let found = false;
+
+      items.forEach((item, itemIndex) => {
+        const count = finiteNumber(row?.totals?.[itemIndex]);
+        const hours = finiteNumber(item?.hours);
+
+        if (Number.isFinite(count) && Number.isFinite(hours)) {
+          total += count * hours;
+          found = true;
+        }
+      });
+
+      return found ? total : null;
+    }
+
+    function deriveDisplayRows(data) {
+      return (data.rows || [])
+        .map(row => {
+          const clinicalHours = finiteNumber(row.availableClinicalHoursAnnual);
+          const medicareHours = totalMedicareHours(row, data.items);
+          const cliniciansWithHours = finiteNumber(row.cliniciansWithHours);
+
+          if (
+            !Number.isFinite(clinicalHours) || clinicalHours <= 0 ||
+            !Number.isFinite(medicareHours) ||
+            !Number.isFinite(cliniciansWithHours) || cliniciansWithHours <= 0
+          ) {
+            return null;
+          }
+
+          const gapHours = clinicalHours - medicareHours;
+          const averageAnnualClinicalHours = clinicalHours / cliniciansWithHours;
+          const extraClinicians = gapHours / averageAnnualClinicalHours;
+
+          return {
+            year: Number(row.year),
+            clinicalHours,
+            medicareHours,
+            gapHours,
+            averageAnnualClinicalHours,
+            extraClinicians,
+            clinicalHoursM: clinicalHours / 1e6,
+            medicareHoursM: medicareHours / 1e6,
+            gapHoursM: gapHours / 1e6
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.year - b.year);
+    }
+
+    function validSourceData(data) {
+      if (
+        !data ||
+        !Array.isArray(data.items) ||
+        data.items.length !== EXPECTED_ITEM_COUNT ||
+        !Array.isArray(data.rows) ||
+        data.rows.length < 3
+      ) {
+        return false;
+      }
+
+      if (
+        new Set(data.items.map(item => String(item?.item || ''))).size !==
+        EXPECTED_ITEM_COUNT
+      ) {
+        return false;
+      }
+
+      const derived = deriveDisplayRows(data);
+      return derived.length >= 3;
+    }
+
+    function parseLiveTables(tables) {
+      const [dataTable, itemTable, hoursTable, clinicianTable] = tables;
+      const itemSchema = parseMetadataRows(itemTable, hoursTable);
+      const medicareData = parseMedicareDataTable(dataTable, itemSchema);
+      const clinicianRows = parseClinicianTable(clinicianTable);
+      const data = combineMedicareWithClinicalSupply(medicareData, clinicianRows);
+
+      if (!validSourceData(data)) {
+        throw new Error('Live Medicare demand and clinical-supply data were incomplete.');
+      }
+
+      return [data];
+    }
+
+    function parseRemoteSnapshot(snapshot) {
+      const itemSchema = parseMetadataRows(
+        rowsToGVizTable([snapshot.data?.itemRow]),
+        rowsToGVizTable([snapshot.data?.hoursRow])
+      );
+
+      const medicareData = parseMedicareDataTable(
+        rowsToGVizTable(snapshot.data?.dataRows),
+        itemSchema
+      );
+
+      const clinicianRows = parseClinicianTable(
+        rowsToGVizTable(snapshot.data?.clinicianRows)
+      );
+
+      const data = combineMedicareWithClinicalSupply(medicareData, clinicianRows);
+
+      if (!validSourceData(data)) {
+        throw new Error('Cached Medicare demand and clinical-supply data were incomplete.');
+      }
+
+      return [data];
+    }
+
+    // ============================================================
+    // SCALE + TREND
+    // ============================================================
+
+    function niceCeiling(value, intervals = 5) {
+      if (!Number.isFinite(value) || value <= 0) return intervals;
+      const roughStep = value / intervals;
+      const power = 10 ** Math.floor(Math.log10(roughStep));
+      const scaled = roughStep / power;
+      const niceScaled = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 2.5 ? 2.5 : scaled <= 5 ? 5 : 10;
+      const step = niceScaled * power;
+      return step * intervals;
+    }
+
+    function computeScales() {
+      const maxHours = Math.max(
+        ...displayRows.flatMap(row => [row.clinicalHoursM, row.medicareHoursM])
+      );
+
+      const extraValues = displayRows.map(row => row.extraClinicians);
+      const minExtra = Math.min(...extraValues);
+      const maxExtra = Math.max(...extraValues);
+
+      const hoursMax = niceCeiling(maxHours * 1.04, 5);
+      const extraMax = niceCeiling(Math.max(0, maxExtra) * 1.08, 5);
+      const extraMin = minExtra < 0 ? -niceCeiling(Math.abs(minExtra) * 1.08, 5) : 0;
+
+      hoursScale = {
+        min: 0,
+        max: hoursMax,
+        intervals: 5,
+        step: hoursMax / 5
+      };
+
+      extraScale = {
+        min: extraMin,
+        max: Math.max(extraMax, extraMin + 5),
+        intervals: 5,
+        step: (Math.max(extraMax, extraMin + 5) - extraMin) / 5
+      };
+    }
+
+    function trendWindowSize() {
+      return trendMode === '10yr' ? 10 : trendMode === '3yr' ? 3 : 0;
+    }
+
+    function extraClinicianTrend() {
+      const windowSize = trendWindowSize();
+      if (windowSize < 2) return NaN;
+
+      return PFFCharts.latestConsecutiveTrend(
+        displayRows,
+        row => row.extraClinicians,
+        windowSize
+      );
+    }
+
+    // ============================================================
+    // CHART PLUGINS
+    // ============================================================
+
+    const yearTicksPlugin = PFFCharts.createYearTickMarksPlugin({
+      id: 'pffExtraCliniciansYearTicks',
+      getValue({ index }) {
+        return displayRows[index]?.year;
+      }
+    });
+
+    const rightAxisPlugin = {
+      id: 'pffExtraCliniciansRightAxis',
+      afterDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea || !extraScale) return;
+
+        const mobile = PFFCharts.mobileLayout();
+        const majorCount = extraScale.intervals;
+        const span = extraScale.max - extraScale.min;
+
+        ctx.save();
+        ctx.lineCap = 'butt';
+        ctx.font = `${mobile ? 9 : 10}px Lato, sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+
+        for (let index = 0; index <= majorCount; index += 1) {
+          const ratio = index / majorCount;
+          const value = extraScale.min + span * ratio;
+          const y = chartArea.bottom - chartArea.height * ratio;
+
+          ctx.strokeStyle = COLOURS.extra;
+          ctx.globalAlpha = 0.86;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(chartArea.right, Math.round(y) + 0.5);
+          ctx.lineTo(chartArea.right + 5, Math.round(y) + 0.5);
+          ctx.stroke();
+
+          ctx.globalAlpha = 0.92;
+          ctx.fillStyle = COLOURS.extra;
+          ctx.fillText(
+            PFFCharts.formatInteger(Math.round(value)),
+            chartArea.right + 8,
+            y
+          );
+
+          if (index < majorCount) {
+            const minorY = chartArea.bottom - chartArea.height * (ratio + 0.5 / majorCount);
+            ctx.strokeStyle = COLOURS.extra;
+            ctx.globalAlpha = 0.38;
+            ctx.lineWidth = 0.7;
+            ctx.beginPath();
+            ctx.moveTo(chartArea.right, Math.round(minorY) + 0.5);
+            ctx.lineTo(chartArea.right + 2, Math.round(minorY) + 0.5);
+            ctx.stroke();
+          }
+        }
+
+        ctx.globalAlpha = 0.80;
+        ctx.strokeStyle = COLOURS.extra;
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(chartArea.right) + 0.5, chartArea.top);
+        ctx.lineTo(Math.round(chartArea.right) + 0.5, chartArea.bottom);
+        ctx.stroke();
+
+        const titleX = chartArea.right + (mobile ? 50 : 56);
+        const titleY = chartArea.top + chartArea.height / 2;
+        ctx.translate(titleX, titleY);
+        ctx.rotate(Math.PI / 2);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = COLOURS.extra;
+        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('Extra clinicians', 0, 0);
+        ctx.restore();
+      }
+    };
+
+    const latestExtraLabelPlugin = {
+      id: 'pffLatestExtraCliniciansLabel',
+      afterDatasetsDraw(chartInstance) {
+        if (!displayRows.length) return;
+
+        const datasetIndex = 2;
+        const meta = chartInstance.getDatasetMeta(datasetIndex);
+        if (!meta || meta.hidden || !meta.data?.length) return;
+
+        const lastIndex = displayRows.length - 1;
+        const point = meta.data[lastIndex];
+        const latest = displayRows[lastIndex];
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+
+        const trend = extraClinicianTrend();
+        const valueText = `${PFFCharts.formatInteger(Math.round(latest.extraClinicians))} extra`;
+        const arrow = trend > 0.05 ? '↑' : trend < -0.05 ? '↓' : '';
+        const trendText = trendMode === 'off' || !Number.isFinite(trend)
+          ? ''
+          : ` · ${arrow ? `${arrow} ` : ''}${Math.abs(trend).toFixed(1)}% p.a.`;
+
+        const labelText = `${valueText}${trendText}`;
+        const { ctx, chartArea } = chartInstance;
+        const mobile = PFFCharts.mobileLayout();
+        const fontSize = mobile ? 8.2 : 9.1;
+        const height = mobile ? 15 : 16;
+        const paddingX = mobile ? 5 : 6;
+
+        ctx.save();
+        ctx.font = `700 ${fontSize}px Lato, sans-serif`;
+        ctx.textBaseline = 'middle';
+        const width = ctx.measureText(labelText).width + paddingX * 2;
+        const right = Math.min(chartArea.right - 4, Math.max(chartArea.left + width + 5, point.x - 5));
+        const left = right - width;
+        const y = PFFCharts.clamp(point.y - 13, chartArea.top + height / 2, chartArea.bottom - height / 2);
+        const top = y - height / 2;
+        const radius = 3;
+
+        if (Math.abs(point.y - y) > 3 || point.x < left) {
+          ctx.strokeStyle = 'rgba(105, 113, 138, 0.58)';
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(point.x, point.y);
+          ctx.lineTo(PFFCharts.clamp(point.x, left, right), y);
+          ctx.stroke();
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(left + radius, top);
+        ctx.lineTo(right - radius, top);
+        ctx.quadraticCurveTo(right, top, right, top + radius);
+        ctx.lineTo(right, top + height - radius);
+        ctx.quadraticCurveTo(right, top + height, right - radius, top + height);
+        ctx.lineTo(left + radius, top + height);
+        ctx.quadraticCurveTo(left, top + height, left, top + height - radius);
+        ctx.lineTo(left, top + radius);
+        ctx.quadraticCurveTo(left, top, left + radius, top);
+        ctx.closePath();
+        ctx.fillStyle = PFFCharts.seriesTint(COLOURS.extra, 0.20, 0.84);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(102, 0, 255, 0.42)';
+        ctx.lineWidth = 0.65;
+        ctx.stroke();
+
+        ctx.textAlign = 'left';
+        ctx.fillStyle = COLOURS.extra;
+        ctx.fillText(valueText, left + paddingX, y);
+
+        if (trendText) {
+          const valueWidth = ctx.measureText(valueText).width;
+          ctx.fillStyle = trend > 0.05
+            ? '#14823b'
+            : trend < -0.05
+              ? '#b42318'
+              : '#69718a';
+          ctx.fillText(trendText, left + paddingX + valueWidth, y);
+        }
+
+        ctx.restore();
+      }
+    };
+
+    // ============================================================
+    // CHART
+    // ============================================================
+
+    function leftScaleOptions() {
+      return PFFCharts.yScaleOptions(hoursScale, {
+        afterFit(axis) {
+          axis.width = PFFCharts.mobileLayout() ? 61 : 69;
+        }
+      });
+    }
+
+    function rightScaleOptions() {
+      return {
+        position: 'right',
+        min: extraScale.min,
+        max: extraScale.max,
+        afterFit(axis) {
+          axis.width = PFFCharts.mobileLayout() ? 67 : 75;
+        },
+        grid: {
+          display: false,
+          drawOnChartArea: false,
+          drawTicks: false
+        },
+        border: { display: false },
+        ticks: { display: false },
+        title: { display: false }
+      };
+    }
+
+    function datasets() {
+      return [
+        PFFCharts.lineDataset({
+          label: 'Clinical hours worked',
+          _seriesKey: 'supply',
+          _activeSeries: true,
+          yAxisID: 'y',
+          data: displayRows.map(row => ({ x: row.year, y: row.clinicalHoursM })),
+          borderColor: COLOURS.supply,
+          backgroundColor: 'rgba(102, 0, 255, 0.065)',
+          pointBackgroundColor: COLOURS.supply,
+          pointBorderColor: '#ffffff',
+          borderWidth: 2.9,
+          pointBorderWidth: 1,
+          fill: {
+            target: 1,
+            above: 'rgba(102, 0, 255, 0.065)',
+            below: 'rgba(102, 0, 255, 0.025)'
+          },
+          cubicInterpolationMode: 'monotone',
+          order: 2
+        }),
+
+        PFFCharts.lineDataset({
+          label: 'Medicare-billed hours',
+          _seriesKey: 'medicare',
+          _activeSeries: true,
+          yAxisID: 'y',
+          data: displayRows.map(row => ({ x: row.year, y: row.medicareHoursM })),
+          borderColor: COLOURS.medicare,
+          backgroundColor: COLOURS.medicare,
+          pointBackgroundColor: COLOURS.medicare,
+          pointBorderColor: '#ffffff',
+          borderWidth: 2.65,
+          pointBorderWidth: 1,
+          cubicInterpolationMode: 'monotone',
+          order: 3
+        }),
+
+        PFFCharts.lineDataset({
+          label: 'Extra clinicians',
+          _seriesKey: 'extra',
+          _activeSeries: true,
+          yAxisID: 'yExtra',
+          data: displayRows.map(row => ({ x: row.year, y: row.extraClinicians })),
+          borderColor: COLOURS.extra,
+          backgroundColor: COLOURS.extra,
+          pointBackgroundColor: COLOURS.extra,
+          pointBorderColor: '#ffffff',
+          borderWidth: 3,
+          pointBorderWidth: 1,
+          cubicInterpolationMode: 'monotone',
+          order: 1
+        })
+      ];
+    }
+
+    function tooltipOptions() {
+      return PFFCharts.tooltipOptions({
+        mode: 'index',
+        intersect: false,
+        filter(item) {
+          return item.datasetIndex === 0;
+        },
+        callbacks: {
+          title(items) {
+            const index = items?.[0]?.dataIndex;
+            return Number.isFinite(index) ? String(displayRows[index]?.year ?? '') : '';
+          },
+          label(context) {
+            const row = displayRows[context.dataIndex];
+            if (!row) return '';
+
+            return [
+              `Clinical hours worked: ${row.clinicalHoursM.toFixed(2)} million`,
+              `Medicare-billed hours: ${row.medicareHoursM.toFixed(2)} million`,
+              `Extra clinicians: ${PFFCharts.formatInteger(Math.round(row.extraClinicians))}`,
+              `Supply − service demand: ${row.gapHoursM.toFixed(2)} million hours`
+            ];
+          }
+        }
+      });
+    }
+
+    function chartOptions() {
+      return PFFCharts.baseChartOptions({
+        layout: {
+          padding: {
+            top: PFFCharts.mobileLayout() ? 8 : 9,
+            right: 0,
+            bottom: 0,
+            left: 0
+          }
+        },
+        interaction: {
+          mode: 'index',
+          intersect: false,
+          axis: 'x'
+        },
+        plugins: {
+          tooltip: tooltipOptions()
+        },
+        scales: {
+          x: PFFCharts.xYearScaleOptions(),
+          y: leftScaleOptions(),
+          yExtra: rightScaleOptions()
+        }
+      });
+    }
+
+    function createChart() {
+      computeScales();
+
+      leftAxisController = PFFCharts.createUnifiedYAxis({
+        id: 'pffExtraCliniciansHoursAxis',
+        getChart() {
+          return chart;
+        },
+        getScale() {
+          return hoursScale;
+        },
+        getDecimals() {
+          return hoursScale.step < 1 ? 1 : 0;
+        },
+        getTitle() {
+          return 'Hours (millions)';
+        },
+        formatValue(value) {
+          return hoursScale.step < 1
+            ? Number(value).toFixed(1)
+            : PFFCharts.formatInteger(Math.round(value));
+        }
+      });
+
+      chart = new Chart(chartCanvas.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: displayRows.map(row => String(row.year)),
+          datasets: datasets()
+        },
+        options: chartOptions(),
+        plugins: [
+          leftAxisController.plugin,
+          yearTicksPlugin,
+          rightAxisPlugin,
+          latestExtraLabelPlugin
+        ]
+      });
+
+      updateAccessibleSummary();
+    }
+
+    function updateAccessibleSummary() {
+      if (!displayRows.length) return;
+      const latest = displayRows[displayRows.length - 1];
+      const trend = extraClinicianTrend();
+      const trendText = trendMode === 'off' || !Number.isFinite(trend)
+        ? 'Trend display is off.'
+        : `${trendMode === '10yr' ? '10-year' : '3-year'} Extra clinicians trend ${trend >= 0 ? 'increased' : 'decreased'} by ${Math.abs(trend).toFixed(1)} percent per year.`;
+
+      PFFCharts.updateChartSummary(
+        `Supply versus Medicare service demand, ${displayRows[0].year} to ${latest.year}. In ${latest.year}, clinical hours worked were ${latest.clinicalHoursM.toFixed(2)} million, Medicare-billed hours were ${latest.medicareHoursM.toFixed(2)} million, and excess capacity was ${PFFCharts.formatInteger(Math.round(latest.extraClinicians))} extra clinicians. ${trendText}`,
+        chartSummary
+      );
+    }
+
+    // ============================================================
+    // CONTROLS + STARTUP
+    // ============================================================
+
+    trendController = PFFCharts.setupTrendToggle({
+      button: yoyTrendToggle,
+      initialMode: trendMode,
+      onChange(mode) {
+        trendMode = mode;
+        if (trendLabelElement && mode === 'off') {
+          trendLabelElement.textContent = 'Trend off';
+        }
+        updateAccessibleSummary();
+        chart?.draw();
+      }
+    });
+
+    chartSummary = PFFCharts.ensureChartSummary({ parent: app });
+
+    responsiveController = PFFCharts.createResponsiveController({
+      getChart() {
+        return chart;
+      },
+      observe: [app, chartShell],
+      onRefresh() {
+        chart?.draw();
+      }
+    });
+
+    PFF.initialiseApp({
+      app,
+      status: statusElement,
+
+      loadLive() {
+        loaderText.textContent = 'Loading live supply and Medicare data…';
+
+        return Promise.all([
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: MEDICARE_SHEET,
+            range: MEDICARE_DATA_RANGE,
+            headers: '1',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          }),
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: MEDICARE_SHEET,
+            range: MEDICARE_ITEM_RANGE,
+            headers: '0',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          }),
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: MEDICARE_SHEET,
+            range: MEDICARE_HOURS_RANGE,
+            headers: '0',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          }),
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: CLINICIAN_SHEET,
+            range: CLINICIAN_RANGE,
+            headers: '2',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          })
+        ]);
+      },
+
+      parseLive: parseLiveTables,
+
+      loadRemoteCache() {
+        loaderText.textContent = 'Loading cached PFF data…';
+        return PFFCharts.loadAppsScriptCache({
+          url: CACHE_WEB_APP_URL,
+          appKey: CACHE_APP_KEY,
+          timeoutMs: CACHE_FETCH_TIMEOUT_MS
+        });
+      },
+
+      parseRemoteCache: parseRemoteSnapshot,
+
+      cacheKey: LOCAL_CACHE_KEY,
+      minRows: 1,
+
+      dataSourceOptions: {
+        indicator: dataSourceIndicator,
+        text: dataSourceText
+      },
+
+      onLiveError(error) {
+        console.warn(
+          'Live Medicare/supply data unavailable; trying Apps Script cache.',
+          error
+        );
+        loaderText.textContent = 'Live data unavailable. Loading cached PFF data…';
+      },
+
+      onRemoteCacheError(error) {
+        console.warn(
+          'Apps Script Medicare/supply cache unavailable; trying browser cache.',
+          error
+        );
+        loaderText.textContent = 'Backend cache unavailable. Checking browser cache…';
+      },
+
+      render(loaded) {
+        const data = loaded.rows?.[0];
+
+        if (!validSourceData(data)) {
+          throw new Error('Unable to read Medicare demand and optometry clinical-supply data.');
+        }
+
+        sourceData = data;
+        displayRows = deriveDisplayRows(sourceData);
+
+        if (displayRows.length < 3) {
+          throw new Error('There were not enough overlapping supply and Medicare years to plot.');
+        }
+
+        createChart();
+        trendController?.set(trendMode, false);
+        responsiveController?.refresh();
+
+        return chart;
+      },
+
+      onReady() {
+        app.setAttribute('aria-busy', 'false');
+        loadingState.setAttribute('aria-hidden', 'true');
+        updateAccessibleSummary();
+      },
+
+      errorMessage: 'Unable to render Extra clinicians chart'
+    });
+  </script>
+</body>
+</html>
