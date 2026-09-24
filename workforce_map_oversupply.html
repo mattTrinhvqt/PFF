@@ -1,1 +1,1193 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Excess Clinicians by State</title>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
+
+  <style>
+    .single-tab-shell .tab-list {
+      min-width: 0;
+    }
+
+    .single-tab-shell .chart-tab {
+      cursor: default;
+    }
+
+    .single-tab-shell .tab-list::after {
+      display: none;
+    }
+
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: center;
+    }
+
+    .method-note-line {
+      display: block;
+    }
+
+    .method-note-line + .method-note-line {
+      margin-top: 2px;
+    }
+
+    @media (max-width: 430px) {
+      .method-note {
+        font-size: 10.5px;
+      }
+    }
+  </style>
+</head>
+
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div
+        id="loadingState"
+        class="app-loading"
+        role="status"
+        aria-live="polite"
+        aria-label="Loading excess clinician data"
+      >
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p id="loaderText" class="loader-text">Loading live supply and Medicare data…</p>
+      </div>
+
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div
+            class="tab-list"
+            role="tablist"
+            aria-label="Supply – Demand chart"
+          >
+            <button
+              class="chart-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              tabindex="0"
+            >Supply – Demand</button>
+          </div>
+        </div>
+
+        <div
+          id="sourceIndicator"
+          class="live-data"
+          aria-label="Live data"
+          aria-live="polite"
+        >
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="sourceText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div id="headingScrollShell" class="heading-scroll-shell">
+          <button
+            id="headingScrollLeft"
+            class="heading-scroll-button heading-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll graph title left"
+          >‹</button>
+
+          <div id="headingScrollViewport" class="heading-scroll-viewport">
+            <h2 class="chart-heading">Excess clinicians by state</h2>
+          </div>
+
+          <button
+            id="headingScrollRight"
+            class="heading-scroll-button heading-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll graph title right"
+          >›</button>
+        </div>
+
+        <div class="heading-controls">
+          <button
+            id="yoyTrendToggle"
+            class="yoy-trend-toggle is-on"
+            type="button"
+            aria-pressed="true"
+            aria-label="3-year trend. Press to switch to 10-year trend."
+          >
+            <span class="yoy-binary-indicator" aria-hidden="true"></span>
+            <span class="yoy-toggle-label">3yr Trend</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div id="legendNav" class="legend-nav">
+          <button
+            id="legendLeft"
+            class="legend-scroll-button legend-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll legend left"
+          >‹</button>
+
+          <div class="legend-viewport">
+            <div
+              id="legend"
+              class="chart-legend"
+              aria-label="Excess clinicians chart legend"
+            ></div>
+          </div>
+
+          <button
+            id="legendRight"
+            class="legend-scroll-button legend-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll legend right"
+          >›</button>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas
+          id="excessChart"
+          aria-label="Australia-wide total and state excess clinician trends"
+          role="img"
+        ></canvas>
+      </div>
+
+      <p class="method-note">
+        <span class="method-note-line"><strong>Clinical capacity:</strong> weekly clinical hours × 46 working weeks − 2.5 admin hours/week × 52 weeks</span>
+        <span class="method-note-line"><strong>Medicare-billed hours:</strong> Medicare service volumes × assigned consultation time</span>
+        <span class="method-note-line"><strong>Excess clinicians:</strong> clinical capacity above Medicare-billed service demand, expressed using adjusted annual clinical hours per active clinician; negative values indicate demand above capacity</span>
+        <span class="method-note-line"><strong>Trends:</strong> toggle cycles 3-year, 10-year and off; pills show latest-consecutive log-linear annual trends where defined</span>
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    // ============================================================
+    // DATA SOURCE
+    // ============================================================
+
+    const SHEET_ID =
+      '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
+
+    const MEDICARE_SHEET =
+      'Medicareitems';
+
+    const MEDICARE_DATA_RANGE =
+      'C30:KE';
+
+    const MEDICARE_ITEM_RANGE =
+      'D29:KE29';
+
+    const MEDICARE_HOURS_RANGE =
+      'D28:KE28';
+
+    const CLINICIAN_SHEET =
+      'OptomsbystatebyMMM';
+
+    const CLINICIAN_RANGE =
+      'A29:CC';
+
+    const CLINICIAN_COUNT_FIRST_INDEX = 1;
+    const CLINICIAN_HOURS_FIRST_INDEX = 41;
+    const RAW_CLINICIAN_SERIES_COUNT = 40;
+    const EXPECTED_ITEM_COUNT = 32;
+
+    const WORKING_WEEKS_PER_YEAR = 46;
+    const ADMIN_HOURS_PER_WEEK = 2.5;
+    const ADMIN_WEEKS_PER_YEAR = 52;
+
+    const FETCH_TIMEOUT_MS = 15000;
+    const CACHE_FETCH_TIMEOUT_MS = 10000;
+
+    const LOCAL_CACHE_KEY =
+      'pff-excess-clinicians-state-trends-v1';
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    // Reuse the existing backend snapshot because it already contains the
+    // complete Medicare rows plus the state×MMM clinician count/hour matrix.
+    const CACHE_APP_KEY =
+      'pff-medicare-service-demand-v13';
+
+    const AUSTRALIA_KEY = 'AUS';
+    const AUSTRALIA_COLOUR = '#0b5d1e';
+
+    const STATE_CODES = [
+      'NSW',
+      'VIC',
+      'QLD',
+      'SA',
+      'WA',
+      'TAS',
+      'NT',
+      'ACT'
+    ];
+
+    const STATE_COLOURS = Object.freeze({
+      NSW: '#2db7f5',
+      VIC: '#2d3a8c',
+      QLD: '#7a0036',
+      SA: '#f03a47',
+      WA: '#000000',
+      TAS: '#22a36b',
+      NT: '#c25e00',
+      ACT: '#7b61ff'
+    });
+
+    // Medicareitems repeats each item across NSW, VIC, QLD, SA, WA, TAS,
+    // ACT, NT, Total. These offsets are relative to the year column.
+    const MEDICARE_STATE_OFFSETS = Object.freeze({
+      NSW: 1,
+      VIC: 2,
+      QLD: 3,
+      SA: 4,
+      WA: 5,
+      TAS: 6,
+      ACT: 7,
+      NT: 8
+    });
+
+    // OptomsbystatebyMMM count/hour columns use the same 40 series in both
+    // halves of the table. The ranges below are zero-based series indices.
+    const CLINICIAN_STATE_INDICES = Object.freeze({
+      NSW: Object.freeze([0, 1, 2, 3, 4, 5, 6]),
+      VIC: Object.freeze([7, 8, 9, 10, 11]),
+      QLD: Object.freeze([12, 13, 14, 15, 16, 17, 18]),
+      SA: Object.freeze([19, 20, 21, 22, 23, 24, 25]),
+      WA: Object.freeze([26, 27, 28, 29, 30, 31, 32]),
+      TAS: Object.freeze([33, 34, 35]),
+      NT: Object.freeze([36, 37, 38]),
+      ACT: Object.freeze([39])
+    });
+
+    const SERIES = Object.freeze([
+      Object.freeze({
+        key: AUSTRALIA_KEY,
+        label: 'Total',
+        colour: AUSTRALIA_COLOUR,
+        width: 3.15
+      }),
+      ...STATE_CODES.map(code => Object.freeze({
+        key: code,
+        label: code,
+        colour: STATE_COLOURS[code],
+        width: 2.55
+      }))
+    ]);
+
+    // ============================================================
+    // DOM + STATE
+    // ============================================================
+
+    const app = document.getElementById('app');
+    const loadingState = document.getElementById('loadingState');
+    const loaderText = document.getElementById('loaderText');
+    const statusElement = document.getElementById('status');
+    const sourceIndicator = document.getElementById('sourceIndicator');
+    const sourceText = document.getElementById('sourceText');
+    const yoyTrendToggle = document.getElementById('yoyTrendToggle');
+    const headingScrollViewport = document.getElementById('headingScrollViewport');
+    const headingScrollLeft = document.getElementById('headingScrollLeft');
+    const headingScrollRight = document.getElementById('headingScrollRight');
+    const legend = document.getElementById('legend');
+    const legendLeft = document.getElementById('legendLeft');
+    const legendRight = document.getElementById('legendRight');
+    const chartShell = document.getElementById('chartShell');
+    const canvas = document.getElementById('excessChart');
+
+    let sourceData = null;
+    let rows = [];
+    let chart = null;
+    let trendMode = '3yr';
+    let yScale = null;
+    let yAxisController = null;
+    let trendController = null;
+    let headingScroller = null;
+    let legendController = null;
+    let responsiveController = null;
+    let chartInteractions = null;
+    let chartSummary = null;
+
+    const hidden = new Set();
+
+    // ============================================================
+    // DATA HELPERS
+    // ============================================================
+
+    function finiteNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function cellValue(cell) {
+      if (!cell) return null;
+      const raw = cell.v ?? cell.f ?? null;
+      return raw === null || raw === '' ? null : raw;
+    }
+
+    function numericCell(cell) {
+      const raw = cellValue(cell);
+      if (raw === null || raw === undefined || raw === '') return null;
+      const number = Number(
+        typeof raw === 'string' ? raw.replace(/,/g, '') : raw
+      );
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function itemNumberCell(cell) {
+      const value = numericCell(cell);
+      if (Number.isFinite(value)) return String(Math.round(value));
+      const text = String(cell?.v ?? cell?.f ?? '').trim();
+      return /^\d{5}$/.test(text) ? text : '';
+    }
+
+    // Keep a local adapter because Core v1.2.11 does not export this helper.
+    function rowsToGVizTable(sourceRows) {
+      return {
+        rows: (Array.isArray(sourceRows) ? sourceRows : []).map(row => ({
+          c: (Array.isArray(row) ? row : []).map(value => ({ v: value }))
+        }))
+      };
+    }
+
+    function parseMetadataRows(itemTable, hoursTable) {
+      const itemCells = itemTable?.rows?.[0]?.c || [];
+      const hourCells = hoursTable?.rows?.[0]?.c || [];
+      const parsed = [];
+
+      for (let start = 0; start + 8 < itemCells.length; start += 9) {
+        const item = itemNumberCell(itemCells[start]);
+        if (!/^\d{5}$/.test(item)) break;
+
+        const repeated = Array.from(
+          { length: 9 },
+          (_, offset) => itemNumberCell(itemCells[start + offset])
+        );
+
+        if (!repeated.every(value => value === item)) break;
+
+        const hours = numericCell(hourCells[start]);
+        if (!Number.isFinite(hours) || hours <= 0) {
+          throw new Error(`Medicare consultation time was missing for item ${item}.`);
+        }
+
+        parsed.push({ item, hours });
+      }
+
+      if (
+        parsed.length !== EXPECTED_ITEM_COUNT ||
+        new Set(parsed.map(item => item.item)).size !== EXPECTED_ITEM_COUNT
+      ) {
+        throw new Error('Medicare item metadata were incomplete.');
+      }
+
+      return parsed;
+    }
+
+    function parseMedicareDataTable(table, itemSchema) {
+      const parsedRows = [];
+
+      for (const sourceRow of table?.rows || []) {
+        const cells = sourceRow?.c || [];
+        const yearValue = numericCell(cells[0]);
+        if (!Number.isFinite(yearValue)) continue;
+
+        const year = Math.round(yearValue);
+        if (year < 1900 || year > 2200) continue;
+
+        const nationalTotals = itemSchema.map(
+          (_, itemIndex) => numericCell(cells[9 + itemIndex * 9])
+        );
+
+        const stateTotals = {};
+        STATE_CODES.forEach(code => {
+          const stateOffset = MEDICARE_STATE_OFFSETS[code];
+          stateTotals[code] = itemSchema.map(
+            (_, itemIndex) => numericCell(cells[stateOffset + itemIndex * 9])
+          );
+        });
+
+        const hasData = nationalTotals.some(Number.isFinite) ||
+          STATE_CODES.some(code => stateTotals[code].some(Number.isFinite));
+
+        if (hasData) {
+          parsedRows.push({
+            year,
+            nationalTotals,
+            stateTotals
+          });
+        }
+      }
+
+      parsedRows.sort((a, b) => a.year - b.year);
+
+      return {
+        items: itemSchema.map(item => ({ ...item })),
+        rows: parsedRows
+      };
+    }
+
+    function parseClinicianTable(table) {
+      const parsedRows = [];
+
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const yearValue = numericCell(cells[0]);
+        if (!Number.isFinite(yearValue)) return;
+
+        const year = Math.round(yearValue);
+        if (year < 1900 || year > 2200) return;
+
+        const counts = Array.from(
+          { length: RAW_CLINICIAN_SERIES_COUNT },
+          (_, index) => numericCell(cells[CLINICIAN_COUNT_FIRST_INDEX + index])
+        );
+
+        const hours = Array.from(
+          { length: RAW_CLINICIAN_SERIES_COUNT },
+          (_, index) => numericCell(cells[CLINICIAN_HOURS_FIRST_INDEX + index])
+        );
+
+        if (counts.some(Number.isFinite) && hours.some(Number.isFinite)) {
+          parsedRows.push({ year, counts, hours });
+        }
+      });
+
+      parsedRows.sort((a, b) => a.year - b.year);
+      return parsedRows;
+    }
+
+    function totalMedicareHours(totals, items) {
+      let total = 0;
+      let found = false;
+
+      items.forEach((item, itemIndex) => {
+        const count = finiteNumber(totals?.[itemIndex]);
+        const hours = finiteNumber(item?.hours);
+
+        if (Number.isFinite(count) && Number.isFinite(hours)) {
+          total += count * hours;
+          found = true;
+        }
+      });
+
+      return found ? total : null;
+    }
+
+    function clinicianCapacityForIndices(clinicianRow, indices) {
+      let activeClinicians = 0;
+      let cliniciansWithHours = 0;
+      let weeklyClinicalHours = 0;
+
+      indices.forEach(index => {
+        const count = finiteNumber(clinicianRow?.counts?.[index]);
+        const hours = finiteNumber(clinicianRow?.hours?.[index]);
+
+        if (Number.isFinite(count) && count >= 0) {
+          activeClinicians += count;
+        }
+
+        if (
+          Number.isFinite(count) && count >= 0 &&
+          Number.isFinite(hours) && hours >= 0
+        ) {
+          cliniciansWithHours += count;
+          weeklyClinicalHours += count * hours;
+        }
+      });
+
+      if (cliniciansWithHours <= 0 || weeklyClinicalHours <= 0) {
+        return null;
+      }
+
+      const annualClinicalHours = Math.max(
+        0,
+        weeklyClinicalHours * WORKING_WEEKS_PER_YEAR -
+          cliniciansWithHours * ADMIN_HOURS_PER_WEEK * ADMIN_WEEKS_PER_YEAR
+      );
+
+      if (annualClinicalHours <= 0) return null;
+
+      return {
+        activeClinicians,
+        cliniciansWithHours,
+        weeklyClinicalHours,
+        annualClinicalHours,
+        averageAnnualClinicalHours:
+          annualClinicalHours / cliniciansWithHours
+      };
+    }
+
+    function excessClinicians(capacity, medicareHours) {
+      if (
+        !capacity ||
+        !Number.isFinite(capacity.averageAnnualClinicalHours) ||
+        capacity.averageAnnualClinicalHours <= 0 ||
+        !Number.isFinite(medicareHours)
+      ) {
+        return null;
+      }
+
+      return (
+        capacity.annualClinicalHours - medicareHours
+      ) / capacity.averageAnnualClinicalHours;
+    }
+
+    function combineSources(medicareData, clinicianRows) {
+      const clinicianByYear = new Map(
+        (clinicianRows || []).map(row => [row.year, row])
+      );
+
+      const allIndices = Array.from(
+        { length: RAW_CLINICIAN_SERIES_COUNT },
+        (_, index) => index
+      );
+
+      const combinedRows = medicareData.rows
+        .map(medicareRow => {
+          const clinicianRow = clinicianByYear.get(medicareRow.year);
+          if (!clinicianRow) return null;
+
+          const values = {};
+          const details = {};
+
+          const australiaCapacity = clinicianCapacityForIndices(
+            clinicianRow,
+            allIndices
+          );
+
+          const australiaMedicareHours = totalMedicareHours(
+            medicareRow.nationalTotals,
+            medicareData.items
+          );
+
+          const australiaExcess = excessClinicians(
+            australiaCapacity,
+            australiaMedicareHours
+          );
+
+          if (!Number.isFinite(australiaExcess)) return null;
+
+          values[AUSTRALIA_KEY] = australiaExcess;
+          details[AUSTRALIA_KEY] = {
+            capacity: australiaCapacity,
+            medicareHours: australiaMedicareHours
+          };
+
+          STATE_CODES.forEach(code => {
+            const capacity = clinicianCapacityForIndices(
+              clinicianRow,
+              CLINICIAN_STATE_INDICES[code]
+            );
+
+            const medicareHours = totalMedicareHours(
+              medicareRow.stateTotals?.[code],
+              medicareData.items
+            );
+
+            const excess = excessClinicians(capacity, medicareHours);
+            values[code] = Number.isFinite(excess) ? excess : null;
+            details[code] = { capacity, medicareHours };
+          });
+
+          return {
+            year: medicareRow.year,
+            values,
+            details
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.year - b.year);
+
+      return {
+        items: medicareData.items,
+        rows: combinedRows
+      };
+    }
+
+    function validSourceData(data) {
+      if (
+        !data ||
+        !Array.isArray(data.items) ||
+        data.items.length !== EXPECTED_ITEM_COUNT ||
+        !Array.isArray(data.rows) ||
+        data.rows.length < 3
+      ) {
+        return false;
+      }
+
+      if (
+        new Set(data.items.map(item => String(item?.item || ''))).size !==
+        EXPECTED_ITEM_COUNT
+      ) {
+        return false;
+      }
+
+      return data.rows.some(row =>
+        SERIES.some(series => Number.isFinite(Number(row?.values?.[series.key])))
+      );
+    }
+
+    function parseLiveTables(tables) {
+      const [dataTable, itemTable, hoursTable, clinicianTable] = tables;
+      const itemSchema = parseMetadataRows(itemTable, hoursTable);
+      const medicareData = parseMedicareDataTable(dataTable, itemSchema);
+      const clinicianRows = parseClinicianTable(clinicianTable);
+      const data = combineSources(medicareData, clinicianRows);
+
+      if (!validSourceData(data)) {
+        throw new Error('Live excess-clinician data were incomplete.');
+      }
+
+      return [data];
+    }
+
+    function parseRemoteSnapshot(snapshot) {
+      const itemSchema = parseMetadataRows(
+        rowsToGVizTable([snapshot.data?.itemRow]),
+        rowsToGVizTable([snapshot.data?.hoursRow])
+      );
+
+      const medicareData = parseMedicareDataTable(
+        rowsToGVizTable(snapshot.data?.dataRows),
+        itemSchema
+      );
+
+      const clinicianRows = parseClinicianTable(
+        rowsToGVizTable(snapshot.data?.clinicianRows)
+      );
+
+      const data = combineSources(medicareData, clinicianRows);
+
+      if (!validSourceData(data)) {
+        throw new Error('Cached excess-clinician data were incomplete.');
+      }
+
+      return [data];
+    }
+
+    // ============================================================
+    // SCALE + TREND
+    // ============================================================
+
+    function niceStep(value) {
+      if (!Number.isFinite(value) || value <= 0) return 1;
+
+      const exponent = Math.floor(Math.log10(value));
+      const magnitude = 10 ** exponent;
+      const fraction = value / magnitude;
+      const niceFraction = fraction <= 1
+        ? 1
+        : fraction <= 2
+          ? 2
+          : fraction <= 2.5
+            ? 2.5
+            : fraction <= 5
+              ? 5
+              : 10;
+
+      return niceFraction * magnitude;
+    }
+
+    function computeScale() {
+      const values = rows.flatMap(row =>
+        SERIES.map(series => Number(row?.values?.[series.key]))
+          .filter(Number.isFinite)
+      );
+
+      if (!values.length) {
+        yScale = {
+          min: 0,
+          max: 100,
+          step: 20,
+          intervals: 5
+        };
+        return;
+      }
+
+      const maximum = Math.max(...values, 0);
+      const minimum = Math.min(...values, 0);
+      const step = niceStep(maximum / 6 || 1);
+      const max = Math.max(step, Math.ceil(maximum / step) * step);
+      const min = minimum < 0
+        ? Math.floor(minimum / step) * step
+        : 0;
+
+      yScale = {
+        min,
+        max,
+        step,
+        intervals: Math.round((max - min) / step)
+      };
+    }
+
+    function activeTrendWindow() {
+      return trendMode === '10yr'
+        ? 10
+        : trendMode === '3yr'
+          ? 3
+          : 0;
+    }
+
+    function trendForSeries(seriesKey) {
+      const windowSize = activeTrendWindow();
+      if (windowSize < 2) return NaN;
+
+      return PFFCharts.latestConsecutiveTrend(
+        rows,
+        row => Number(row?.values?.[seriesKey]),
+        windowSize
+      );
+    }
+
+    // ============================================================
+    // DATASETS + PLUGINS
+    // ============================================================
+
+    function datasetForSeries(series, seriesIndex) {
+      return PFFCharts.lineDataset({
+        label: series.label,
+        _seriesLabel: series.label,
+        _seriesKey: series.key,
+        _activeSeries: !hidden.has(seriesIndex),
+        data: rows.map(row => {
+          const value = Number(row?.values?.[series.key]);
+          return Number.isFinite(value) ? value : null;
+        }),
+        borderColor: series.colour,
+        backgroundColor: series.colour,
+        pointBackgroundColor: series.colour,
+        pointBorderColor: '#ffffff',
+        pointBorderWidth: 1,
+        borderWidth: series.width,
+        cubicInterpolationMode: 'monotone',
+        order: series.key === AUSTRALIA_KEY ? 1 : 2
+      });
+    }
+
+    function buildDatasets() {
+      return SERIES.map(datasetForSeries);
+    }
+
+    const yearTicksPlugin =
+      PFFCharts.createYearTickMarksPlugin({
+        id: 'pffExcessCliniciansStateYearTicks',
+        getValue({ index }) {
+          return rows[index]?.year;
+        }
+      });
+
+    const trendLabelsPlugin =
+      PFFCharts.createTrendLabelsPlugin({
+        id: 'pffExcessCliniciansStateTrendLabels',
+
+        enabled() {
+          return trendMode !== 'off';
+        },
+
+        isActive({ dataset }) {
+          return Boolean(dataset?._activeSeries);
+        },
+
+        getTrendValue({ dataset }) {
+          return trendForSeries(dataset?._seriesKey);
+        },
+
+        getSeriesColour({ dataset }) {
+          return dataset?.borderColor || '#69718a';
+        }
+      });
+
+    // ============================================================
+    // CHART
+    // ============================================================
+
+    function leftScaleOptions() {
+      return PFFCharts.yScaleOptions(yScale, {
+        ticks: {
+          stepSize: yScale.step
+        },
+        afterFit(axis) {
+          axis.width = PFFCharts.mobileLayout() ? 61 : 69;
+        }
+      });
+    }
+
+    function tooltipOptions() {
+      return PFFCharts.tooltipOptions({
+        mode: 'index',
+        intersect: false,
+        callbacks: {
+          title(items) {
+            const index = items?.[0]?.dataIndex;
+            return Number.isInteger(index)
+              ? String(rows[index]?.year ?? '')
+              : '';
+          },
+
+          label(context) {
+            const value = Number(context.raw);
+            if (!Number.isFinite(value)) return '';
+
+            const base =
+              `${context.dataset._seriesLabel}: ${PFFCharts.formatInteger(Math.round(value))}`;
+
+            if (trendMode === 'off') return base;
+
+            const trend = trendForSeries(context.dataset._seriesKey);
+            return Number.isFinite(trend)
+              ? `${base} · ${trend >= 0 ? '+' : '−'}${Math.abs(trend).toFixed(1)}% p.a.`
+              : base;
+          }
+        }
+      });
+    }
+
+    function chartOptions() {
+      return PFFCharts.baseChartOptions({
+        transitions:
+          PFFCharts.seriesVisibilityTransitionOptions(240),
+
+        interaction: {
+          mode: 'index',
+          intersect: false,
+          axis: 'x'
+        },
+
+        plugins: {
+          tooltip: tooltipOptions()
+        },
+
+        scales: {
+          x: PFFCharts.xYearScaleOptions({
+            ticks: {
+              callback(value, index) {
+                const year = Number(rows[index]?.year);
+                return Number.isFinite(year) && year % 2 === 0
+                  ? String(year)
+                  : '';
+              }
+            }
+          }),
+          y: leftScaleOptions()
+        }
+      });
+    }
+
+    function legendItems() {
+      return SERIES.map((series, datasetIndex) => ({
+        datasetIndex,
+        label: series.label,
+        colour: series.colour,
+        active: !hidden.has(datasetIndex)
+      }));
+    }
+
+    function createChart() {
+      computeScale();
+
+      yAxisController = PFFCharts.createUnifiedYAxis({
+        id: 'pffExcessCliniciansStateAxis',
+        getChart() {
+          return chart;
+        },
+        getScale() {
+          return yScale;
+        },
+        getDecimals() {
+          return 0;
+        },
+        getTitle() {
+          return 'Excess clinicians';
+        },
+        formatValue(value) {
+          return PFFCharts.formatInteger(Math.round(value));
+        }
+      });
+
+      yAxisController.setImmediately(yScale, 0);
+      yAxisController.setTitleImmediately('Excess clinicians');
+
+      chart = new Chart(
+        canvas.getContext('2d'),
+        {
+          type: 'line',
+          data: {
+            labels: rows.map(row => String(row.year)),
+            datasets: buildDatasets()
+          },
+          options: chartOptions(),
+          plugins: [
+            yAxisController.plugin,
+            yearTicksPlugin,
+            trendLabelsPlugin
+          ]
+        }
+      );
+
+      SERIES.forEach((_, index) => {
+        chart.setDatasetVisibility(index, !hidden.has(index));
+      });
+
+      legendController?.render();
+      updateAccessibleSummary();
+    }
+
+    function updateAccessibleSummary() {
+      if (!chartSummary || !rows.length) return;
+
+      const latest = rows[rows.length - 1];
+      const values = SERIES.map(series => {
+        const value = Number(latest?.values?.[series.key]);
+        return Number.isFinite(value)
+          ? `${series.label} ${PFFCharts.formatInteger(Math.round(value))}`
+          : `${series.label} unavailable`;
+      }).join(', ');
+
+      const trendDescription = trendMode === 'off'
+        ? 'Trend annotations are off.'
+        : `${activeTrendWindow()}-year trend annotations are on; log-linear trends are omitted for non-positive series.`;
+
+      PFFCharts.updateChartSummary(
+        `Excess clinicians by state. Latest year ${latest.year}: ${values}. ${trendDescription}`,
+        chartSummary
+      );
+    }
+
+    // ============================================================
+    // SHARED CONTROLS
+    // ============================================================
+
+    function setupControls() {
+      headingScroller = PFFCharts.setupScrollableRegion({
+        scroller: headingScrollViewport,
+        leftButton: headingScrollLeft,
+        rightButton: headingScrollRight
+      });
+
+      trendController = PFFCharts.setupTrendToggle({
+        button: yoyTrendToggle,
+        initialMode: trendMode,
+        onChange(mode) {
+          trendMode = mode;
+          updateAccessibleSummary();
+          chart?.draw();
+        }
+      });
+
+      legendController = PFFCharts.setupLegend({
+        legend,
+        leftButton: legendLeft,
+        rightButton: legendRight,
+        getChart() {
+          return chart;
+        },
+        getItems: legendItems,
+        onToggle({ datasetIndex, visible }) {
+          if (visible) {
+            hidden.delete(datasetIndex);
+          } else {
+            hidden.add(datasetIndex);
+          }
+
+          const dataset = chart?.data?.datasets?.[datasetIndex];
+          if (dataset) {
+            dataset._activeSeries = visible;
+          }
+
+          const duration = PFFCharts.reducedMotion() ? 0 : 240;
+          chart.options.animation.duration = duration;
+          chart.options.animations.x.duration = duration;
+          chart.options.animations.y.duration = duration;
+          chart.options.animations.colors.duration = duration;
+          updateAccessibleSummary();
+        }
+      });
+
+      chartInteractions = PFFCharts.setupChartInteractions({
+        canvas,
+        getChart() {
+          return chart;
+        }
+      });
+
+      responsiveController = PFFCharts.createResponsiveController({
+        getChart() {
+          return chart;
+        },
+        observe: [app, chartShell],
+        beforeResize(chartInstance) {
+          chartInstance.data.datasets.forEach(dataset => {
+            dataset.pointHitRadius = dataset._activeSeries
+              ? (PFFCharts.mobileLayout() ? 9 : 5)
+              : 0;
+          });
+        },
+        onRefresh() {
+          headingScroller?.update();
+          legendController?.update();
+        }
+      });
+
+      chartSummary = PFFCharts.ensureChartSummary({ parent: app });
+    }
+
+    // ============================================================
+    // STARTUP
+    // ============================================================
+
+    setupControls();
+
+    PFF.initialiseApp({
+      app,
+      status: statusElement,
+
+      loadLive() {
+        loaderText.textContent = 'Loading live supply and Medicare data…';
+
+        return Promise.all([
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: MEDICARE_SHEET,
+            range: MEDICARE_DATA_RANGE,
+            headers: '1',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          }),
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: MEDICARE_SHEET,
+            range: MEDICARE_ITEM_RANGE,
+            headers: '0',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          }),
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: MEDICARE_SHEET,
+            range: MEDICARE_HOURS_RANGE,
+            headers: '0',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          }),
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: CLINICIAN_SHEET,
+            range: CLINICIAN_RANGE,
+            headers: '2',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          })
+        ]);
+      },
+
+      parseLive: parseLiveTables,
+
+      loadRemoteCache() {
+        loaderText.textContent = 'Loading cached PFF data…';
+        return PFFCharts.loadAppsScriptCache({
+          url: CACHE_WEB_APP_URL,
+          appKey: CACHE_APP_KEY,
+          timeoutMs: CACHE_FETCH_TIMEOUT_MS
+        });
+      },
+
+      parseRemoteCache: parseRemoteSnapshot,
+
+      cacheKey: LOCAL_CACHE_KEY,
+      minRows: 1,
+
+      dataSourceOptions: {
+        indicator: sourceIndicator,
+        text: sourceText
+      },
+
+      onLiveError(error) {
+        console.warn(
+          'Live Medicare/supply data unavailable; trying Apps Script cache.',
+          error
+        );
+        loaderText.textContent = 'Live data unavailable. Loading cached PFF data…';
+      },
+
+      onRemoteCacheError(error) {
+        console.warn(
+          'Apps Script Medicare/supply cache unavailable; trying browser cache.',
+          error
+        );
+        loaderText.textContent = 'Backend cache unavailable. Checking browser cache…';
+      },
+
+      render(loaded) {
+        const data = loaded.rows?.[0];
+
+        if (!validSourceData(data)) {
+          throw new Error('Unable to read excess-clinician data.');
+        }
+
+        sourceData = data;
+        rows = sourceData.rows
+          .map(row => ({
+            year: Number(row.year),
+            values: { ...row.values },
+            details: { ...row.details }
+          }))
+          .filter(row =>
+            Number.isFinite(row.year) &&
+            SERIES.some(series =>
+              Number.isFinite(Number(row?.values?.[series.key]))
+            )
+          )
+          .sort((a, b) => a.year - b.year);
+
+        if (rows.length < 3) {
+          throw new Error('There were not enough overlapping supply and Medicare years to plot.');
+        }
+
+        createChart();
+        trendController?.set(trendMode, false);
+        legendController?.render();
+        responsiveController?.refresh();
+
+        return chart;
+      },
+
+      onReady() {
+        app.setAttribute('aria-busy', 'false');
+        loadingState.setAttribute('aria-hidden', 'true');
+        updateAccessibleSummary();
+      },
+
+      errorMessage: 'Excess clinician trends unavailable.'
+    });
+  </script>
+</body>
+</html>
