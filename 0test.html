@@ -23506,6 +23506,10 @@ function sortKeysByCountDesc(counts) {
     const locked = !hasValidBenchmarkForAbs_();
     section?.classList.toggle('is-benchmark-locked', locked);
     section?.querySelector('.abs-multi-picker')?.setAttribute('aria-disabled', String(locked));
+    section?.querySelectorAll('[data-abs-comparator]').forEach(input => {
+      input.disabled = locked;
+      input.setAttribute('aria-disabled', String(locked));
+    });
     if (!locked) showBenchmarkWarningForAbs_(false);
     else if (drawAttention) showBenchmarkWarningForAbs_(true);
   }
@@ -23566,17 +23570,7 @@ function sortKeysByCountDesc(counts) {
     title.innerHTML =
       `<a class="abs-results-source-link" href="${ABS_MULTI_SOURCE_URL}" target="_blank" rel="noopener noreferrer">ABS ${year}</a> income:`;
 
-    const selected = ABS_MULTI_SERIES.filter(meta => selectedComparators.has(meta.key));
-    const parts = [
-      `<span>${formatAbsHours_()} hrs/wk</span>`,
-      ...selected.map(meta => `<span>${meta.shortLabel}</span>`)
-    ];
-
-    values.innerHTML = parts
-      .map((part, index) =>
-        `${index ? '<span class="abs-results-summary-separator" aria-hidden="true">·</span>' : ''}${part}`
-      )
-      .join('');
+    values.innerHTML = `<span>${formatAbsHours_()} hrs/wk</span>`;
     values.hidden = false;
   }
 
@@ -23698,6 +23692,16 @@ function sortKeysByCountDesc(counts) {
       input.checked = false;
       input.addEventListener('change', () => {
         const key = input.dataset.absComparator;
+
+        if (!hasValidBenchmarkForAbs_()) {
+          input.checked = false;
+          selectedComparators.delete(key);
+          absResultsEnabled = selectedComparators.size > 0;
+          requireBenchmarkForAbs_();
+          syncComparatorSelectionUi();
+          return;
+        }
+
         if (input.checked) selectedComparators.add(key);
         else selectedComparators.delete(key);
         absResultsEnabled = selectedComparators.size > 0;
@@ -24433,9 +24437,12 @@ function sortKeysByCountDesc(counts) {
   function yTickLabel(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return '';
-    if (salaryMode()) {
-      if (Math.abs(numeric) >= 1000) return `$${Math.round(numeric / 1000)}k`;
-      return `$${Math.round(numeric)}`;
+    if (Math.abs(numeric) >= 1000) {
+      const scaled = numeric / 1000;
+      const rounded = Math.abs(scaled - Math.round(scaled)) < 0.001
+        ? String(Math.round(scaled))
+        : scaled.toFixed(1).replace(/\.0$/, '');
+      return `$${rounded}k`;
     }
     return `$${Math.round(numeric)}`;
   }
@@ -24466,6 +24473,242 @@ function sortKeysByCountDesc(counts) {
     scale.ticks = expanded;
   }
 
+  const TREND_Y_MAJOR_INTERVALS = 4;
+  const trendYAxisLabelAnimation = {
+    values: [],
+    targetValues: [],
+    raf: null,
+    token: 0
+  };
+
+  function trendNiceStep_(rawStep) {
+    if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+    const exponent = Math.floor(Math.log10(rawStep));
+    const magnitude = Math.pow(10, exponent);
+    const fraction = rawStep / magnitude;
+    const niceFraction = fraction <= 1
+      ? 1
+      : fraction <= 2
+        ? 2
+        : fraction <= 2.5
+          ? 2.5
+          : fraction <= 5
+            ? 5
+            : 10;
+    return niceFraction * magnitude;
+  }
+
+  function nextTrendNiceStep_(step) {
+    const value = Math.max(1e-9, Number(step) || 1);
+    const exponent = Math.floor(Math.log10(value));
+    const magnitude = Math.pow(10, exponent);
+    const fraction = value / magnitude;
+    if (fraction < 1.5) return 2 * magnitude;
+    if (fraction < 2.25) return 2.5 * magnitude;
+    if (fraction < 3.75) return 5 * magnitude;
+    if (fraction < 7.5) return 10 * magnitude;
+    return 20 * magnitude;
+  }
+
+  function trendYScaleDefinition_(model) {
+    const values = (model?.datasets || [])
+      .flatMap(dataset => (dataset?.data || []).map(point => Number(point?.y)))
+      .filter(value => Number.isFinite(value) && value > 0);
+
+    if (!values.length) {
+      return { min: 0, max: TREND_Y_MAJOR_INTERVALS, step: 1, minorStep: 0.5 };
+    }
+
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const span = Math.max(rawMax - rawMin, Math.abs(rawMax) * 0.15, 1);
+    const paddedMin = Math.max(0, rawMin - span * 0.08);
+    const paddedMax = rawMax + span * 0.10;
+
+    let step = trendNiceStep_((paddedMax - paddedMin) / TREND_Y_MAJOR_INTERVALS);
+    let min = Math.max(0, Math.floor(paddedMin / step) * step);
+    let max = min + step * TREND_Y_MAJOR_INTERVALS;
+
+    while (max < paddedMax - 1e-9) {
+      step = nextTrendNiceStep_(step);
+      min = Math.max(0, Math.floor(paddedMin / step) * step);
+      max = min + step * TREND_Y_MAJOR_INTERVALS;
+    }
+
+    return { min, max, step, minorStep: step / 2 };
+  }
+
+  function trendYMajorTargets_(scaleDef) {
+    return Array.from(
+      { length: TREND_Y_MAJOR_INTERVALS + 1 },
+      (_, index) => scaleDef.min + scaleDef.step * index
+    );
+  }
+
+  function setTrendYAxisLabelsImmediately_(scaleDef) {
+    const values = trendYMajorTargets_(scaleDef);
+    trendYAxisLabelAnimation.values = [...values];
+    trendYAxisLabelAnimation.targetValues = [...values];
+  }
+
+  function animateTrendYAxisLabels_(scaleDef, duration = 360) {
+    const targets = trendYMajorTargets_(scaleDef);
+    const starts = trendYAxisLabelAnimation.values.length === targets.length
+      ? [...trendYAxisLabelAnimation.values]
+      : [...targets];
+
+    if (trendYAxisLabelAnimation.raf) {
+      cancelAnimationFrame(trendYAxisLabelAnimation.raf);
+      trendYAxisLabelAnimation.raf = null;
+    }
+
+    const token = ++trendYAxisLabelAnimation.token;
+    trendYAxisLabelAnimation.targetValues = [...targets];
+
+    if (REDUCE_MOTION || duration <= 0) {
+      trendYAxisLabelAnimation.values = [...targets];
+      trendChart?.draw();
+      return;
+    }
+
+    const started = performance.now();
+    const frame = now => {
+      if (token !== trendYAxisLabelAnimation.token) return;
+      const progress = Math.min(1, (now - started) / duration);
+      const eased = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      trendYAxisLabelAnimation.values = targets.map((target, index) => {
+        const start = Number(starts[index]);
+        return Number.isFinite(start)
+          ? start + (target - start) * eased
+          : target;
+      });
+
+      trendChart?.draw();
+
+      if (progress < 1) {
+        trendYAxisLabelAnimation.raf = requestAnimationFrame(frame);
+      } else {
+        trendYAxisLabelAnimation.raf = null;
+        trendYAxisLabelAnimation.values = [...targets];
+        trendChart?.draw();
+      }
+    };
+
+    trendYAxisLabelAnimation.raf = requestAnimationFrame(frame);
+  }
+
+  function buildTrendYTicks_(scale, scaleDef) {
+    const ticks = [];
+    for (let index = 0; index <= TREND_Y_MAJOR_INTERVALS; index += 1) {
+      const major = scaleDef.min + scaleDef.step * index;
+      ticks.push({ value: major, pffMajor: true, pffMajorIndex: index });
+      if (index < TREND_Y_MAJOR_INTERVALS) {
+        ticks.push({ value: major + scaleDef.minorStep, pffMajor: false });
+      }
+    }
+    scale.ticks = ticks;
+  }
+
+  function trendDatasetIdentity_(dataset) {
+    const phase = dataset?.pffObserved
+      ? 'observed'
+      : dataset?.pffProjected
+        ? 'projected'
+        : 'series';
+    return `${dataset?.pffMarkerKey || dataset?.pffSeriesKey || dataset?.label || ''}|${phase}`;
+  }
+
+  function reconcileTrendDatasets_(nextDatasets) {
+    if (!trendChart) return nextDatasets;
+    const existing = new Map(
+      (trendChart.data.datasets || []).map(dataset => [trendDatasetIdentity_(dataset), dataset])
+    );
+
+    return nextDatasets.map(next => {
+      const key = trendDatasetIdentity_(next);
+      const current = existing.get(key);
+      if (!current) return next;
+
+      const existingPoints = new Map(
+        (current.data || []).map(point => [Number(point?.x), point])
+      );
+      const nextData = (next.data || []).map(point => {
+        const previous = existingPoints.get(Number(point?.x));
+        if (!previous) return { ...point };
+        previous.x = point.x;
+        previous.y = point.y;
+        return previous;
+      });
+
+      Object.assign(current, next);
+      current.data = nextData;
+      return current;
+    });
+  }
+
+  const trendAxisTicksPlugin = {
+    id: 'pffTrendAxisTicks',
+    afterDraw(chart) {
+      const { ctx, chartArea } = chart;
+      const xScale = chart.scales?.x;
+      const yScale = chart.scales?.y;
+      if (!chartArea || !xScale || !yScale) return;
+
+      ctx.save();
+
+      (xScale.ticks || []).forEach(tick => {
+        const year = Math.round(Number(tick?.value));
+        if (!Number.isFinite(year)) return;
+        const x = xScale.getPixelForValue(year);
+        if (!Number.isFinite(x)) return;
+        const major = year % 5 === 0;
+        const length = major ? 5 : 2;
+        ctx.strokeStyle = major ? '#151515' : '#69718a';
+        ctx.globalAlpha = major ? 1 : 0.60;
+        ctx.lineWidth = major ? 1 : 0.7;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+        ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + length);
+        ctx.stroke();
+      });
+
+      const animatedValues = trendYAxisLabelAnimation.values;
+      (yScale.ticks || []).forEach(tick => {
+        const value = Number(tick?.value);
+        if (!Number.isFinite(value)) return;
+        const y = yScale.getPixelForValue(value);
+        if (!Number.isFinite(y)) return;
+        const major = tick?.pffMajor !== false;
+        const length = major ? 5 : 2;
+
+        ctx.strokeStyle = major ? '#151515' : '#69718a';
+        ctx.globalAlpha = major ? 1 : 0.60;
+        ctx.lineWidth = major ? 1 : 0.7;
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left - length, Math.round(y) + 0.5);
+        ctx.lineTo(chartArea.left, Math.round(y) + 0.5);
+        ctx.stroke();
+
+        if (!major) return;
+        const majorIndex = Number(tick?.pffMajorIndex);
+        const animated = Number.isFinite(animatedValues?.[majorIndex])
+          ? animatedValues[majorIndex]
+          : value;
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#151515';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.font = `${window.matchMedia('(max-width: 430px)').matches ? 9 : 10}px Lato, sans-serif`;
+        ctx.fillText(yTickLabel(animated), chartArea.left - 8, y);
+      });
+
+      ctx.restore();
+    }
+  };
+
   function createTrendChart() {
     const canvas = document.getElementById('payTrendChart');
     const status = document.getElementById('payTrendChartStatus');
@@ -24479,15 +24722,21 @@ function sortKeysByCountDesc(counts) {
     }
 
     const model = buildTrendModel();
+    const yScaleDef = trendYScaleDefinition_(model);
+    setTrendYAxisLabelsImmediately_(yScaleDef);
     trendChart = new Chart(canvas.getContext('2d'), {
       type: 'line',
       data: { datasets: model.datasets },
-      plugins: [activeYearPlugin, trendAxisSpinesPlugin],
+      plugins: [activeYearPlugin, trendAxisSpinesPlugin, trendAxisTicksPlugin],
       options: {
         responsive: true,
         maintainAspectRatio: false,
         devicePixelRatio: Math.max(2, Math.min(window.devicePixelRatio || 1, 3)),
-        animation: REDUCE_MOTION ? false : { duration: 360, easing: 'easeOutCubic' },
+        animation: REDUCE_MOTION ? false : { duration: 360, easing: 'easeInOutCubic' },
+        animations: {
+          x: { type: 'number', duration: REDUCE_MOTION ? 0 : 360, easing: 'easeInOutCubic' },
+          y: { type: 'number', duration: REDUCE_MOTION ? 0 : 360, easing: 'easeInOutCubic' }
+        },
         transitions: {
           active: { animation: { duration: REDUCE_MOTION ? 0 : 140, easing: 'easeOutCubic' } },
           resize: { animation: { duration: 0 } }
@@ -24555,23 +24804,16 @@ function sortKeysByCountDesc(counts) {
             },
             grid: {
               drawOnChartArea: false,
-              drawTicks: true,
-              tickLength(context) {
-                const year = Math.round(Number(context.tick?.value));
-                return year % 5 === 0 ? 6 : 2;
-              },
-              tickColor: '#151515',
-              tickWidth(context) {
-                const year = Math.round(Number(context.tick?.value));
-                return year % 5 === 0 ? 1.1 : 0.7;
-              }
+              drawTicks: false
             },
             border: { display: false }
           },
           y: {
             beginAtZero: false,
+            min: yScaleDef.min,
+            max: yScaleDef.max,
             afterBuildTicks(scale) {
-              addMinorTicks_(scale);
+              buildTrendYTicks_(scale, yScaleDef);
             },
             title: {
               display: true,
@@ -24580,10 +24822,9 @@ function sortKeysByCountDesc(counts) {
               font: { family: 'Lato', size: 13, weight: '700' }
             },
             ticks: {
-              color: '#151515',
+              color: 'rgba(21, 21, 21, 0)',
               autoSkip: false,
               padding: 3,
-              maxTicksLimit: 5,
               font: { family: 'Lato', size: window.matchMedia('(max-width: 430px)').matches ? 9 : 10, weight: '400' },
               callback(value, index, ticks) {
                 return ticks?.[index]?.pffMajor === false ? '' : yTickLabel(value);
@@ -24598,14 +24839,7 @@ function sortKeysByCountDesc(counts) {
               lineWidth(context) {
                 return context.tick?.pffMajor === false ? 0.7 : 1;
               },
-              drawTicks: true,
-              tickLength(context) {
-                return context.tick?.pffMajor === false ? 1.5 : 5;
-              },
-              tickColor: '#151515',
-              tickWidth(context) {
-                return context.tick?.pffMajor === false ? 0.7 : 1.1;
-              }
+              drawTicks: false
             },
             border: { display: false }
           }
@@ -24657,13 +24891,26 @@ function sortKeysByCountDesc(counts) {
     }
 
     const model = buildTrendModel();
-    trendChart.data.datasets = model.datasets;
+    const yScaleDef = trendYScaleDefinition_(model);
+    trendChart.data.datasets = reconcileTrendDatasets_(model.datasets);
     trendChart.options.scales.x.min = trendMinYear();
     trendChart.options.scales.x.max = currentProjectionMaxYear();
+    trendChart.options.scales.y.min = yScaleDef.min;
+    trendChart.options.scales.y.max = yScaleDef.max;
+    trendChart.options.scales.y.afterBuildTicks = scale => {
+      buildTrendYTicks_(scale, yScaleDef);
+    };
     trendChart.options.scales.y.title.text = salaryMode() ? 'FTE salary ($)' : 'Hourly rate ($)';
     trendChart.options.animation = animate && !REDUCE_MOTION
-      ? { duration: 320, easing: 'easeOutCubic' }
+      ? { duration: 360, easing: 'easeInOutCubic' }
       : false;
+
+    if (animate && !REDUCE_MOTION) {
+      animateTrendYAxisLabels_(yScaleDef, 360);
+    } else {
+      setTrendYAxisLabelsImmediately_(yScaleDef);
+    }
+
     trendChart.update(animate && !REDUCE_MOTION ? undefined : 'none');
     renderTrendLegend(model.legend);
     refreshSliderUi();
@@ -25426,7 +25673,7 @@ function sortKeysByCountDesc(counts) {
     font-weight: 400 !important;
     letter-spacing: normal !important;
     line-height: 1.15 !important;
-    text-align: left !important;
+    text-align: center !important;
   }
 
   .abs-input-comparators .abs-multi-picker-intro {
@@ -25438,7 +25685,7 @@ function sortKeysByCountDesc(counts) {
     min-height: 22px !important;
     margin: 0 0 3px !important;
     align-items: center !important;
-    justify-content: flex-start !important;
+    justify-content: center !important;
     text-transform: uppercase !important;
   }
 
@@ -25481,6 +25728,10 @@ function sortKeysByCountDesc(counts) {
   .abs-input-comparators.is-benchmark-locked .abs-multi-option-content,
   .abs-input-comparators.is-benchmark-locked .abs-multi-option-label {
     cursor: default !important;
+  }
+
+  .abs-input-comparators.is-benchmark-locked .abs-multi-option input:disabled {
+    pointer-events: none !important;
   }
 
   /* Native select chevrons keep their own space; move the standard warning left. */
@@ -25603,11 +25854,11 @@ function sortKeysByCountDesc(counts) {
 
   .abs-selected-sentence {
     display: grid !important;
-    grid-template-columns: 12.2em 5.6em minmax(0, 1fr) !important;
+    grid-template-columns: 9.8em 6.2em minmax(0, 1fr) !important;
     width: 100%;
     min-width: 0;
     align-items: baseline !important;
-    column-gap: 0.38em !important;
+    column-gap: 0.58em !important;
     color: var(--ink) !important;
     font-size: 9px !important;
     line-height: 1.28 !important;
@@ -25640,15 +25891,15 @@ function sortKeysByCountDesc(counts) {
 
   .abs-selected-group-wrap {
     display: grid !important;
-    grid-template-columns: 6px minmax(0, auto) auto;
-    column-gap: 4px !important;
+    grid-template-columns: 10px minmax(0, auto) auto;
+    column-gap: 0 !important;
   }
 
   .abs-selected-name-dot {
     width: 6px !important;
     height: 6px !important;
     min-width: 6px !important;
-    margin: 0 !important;
+    margin: 0 4px 0 0 !important;
     align-self: center !important;
   }
 
@@ -25677,13 +25928,21 @@ function sortKeysByCountDesc(counts) {
 
   .pay-trend-legend-shell,
   .pay-trend-legend {
-    height: 20px !important;
+    height: auto !important;
     min-height: 20px !important;
   }
 
+  .pay-trend-legend-shell {
+    overflow: visible !important;
+  }
+
   .pay-trend-legend {
-    gap: 6px !important;
-    padding: 0 2px 1px !important;
+    flex-wrap: wrap !important;
+    align-content: flex-start !important;
+    gap: 4px 6px !important;
+    padding: 0 2px 3px !important;
+    overflow: visible !important;
+    white-space: normal !important;
   }
 
   .pay-trend-legend-item {
@@ -25721,9 +25980,9 @@ function sortKeysByCountDesc(counts) {
     }
 
     .abs-selected-sentence {
-      grid-template-columns: 11.2em 5.25em minmax(0, 1fr) !important;
+      grid-template-columns: 9.4em 6em minmax(0, 1fr) !important;
       font-size: 8.4px !important;
-      column-gap: 0.28em !important;
+      column-gap: 0.48em !important;
     }
 
     .abs-results-summary-main,
