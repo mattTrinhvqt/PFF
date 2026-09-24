@@ -23631,7 +23631,7 @@ function sortKeysByCountDesc(counts) {
       </div>
       <div class="abs-multi-columns">
         <div class="abs-multi-group abs-multi-column-group">
-          <div class="abs-multi-group-title">Professional occupation groups</div>
+          <div class="abs-multi-group-title">Professionals</div>
           <div class="abs-multi-option-grid abs-multi-column-grid">
             ${renderOptions(occupationItems)}
           </div>
@@ -23876,7 +23876,7 @@ function sortKeysByCountDesc(counts) {
     });
   }
 
-  function updateComparatorMarkers() {
+  function updateComparatorMarkers(animate = false) {
     const market = getActiveMarketResult();
     const targetYear = getTargetYear();
     const placements = [];
@@ -23905,7 +23905,22 @@ function sortKeysByCountDesc(counts) {
       marker.style.left = `${position}%`;
       marker.classList.toggle('edge-left', position <= 10);
       marker.classList.toggle('edge-right', position >= 90);
-      marker.querySelector('.abs-multi-marker-value').textContent = formatMoney(displayComparatorValue(hourly));
+      const markerValueEl = marker.querySelector('.abs-multi-marker-value');
+      const markerDisplayValue = displayComparatorValue(hourly);
+      if (markerValueEl) {
+        const modeAnimation = prepareDisplayModeAnimation_(markerValueEl);
+        if (animate) {
+          animateTextNumber(
+            markerValueEl,
+            markerDisplayValue,
+            value => formatMoney(value),
+            { delayedHourlyCents: modeAnimation.delayedHourlyCents }
+          );
+        } else {
+          markerValueEl.textContent = formatMoney(markerDisplayValue);
+          markerValueEl.dataset.numericValue = String(markerDisplayValue);
+        }
+      }
       marker.querySelector('.abs-multi-marker-label').textContent = meta.shortLabel;
       marker.hidden = false;
       placements.push({ marker, position });
@@ -23945,13 +23960,23 @@ function sortKeysByCountDesc(counts) {
     return row;
   }
 
-  function animateTextNumber(element, target, formatter) {
+  function animateTextNumber(element, target, formatter, options = {}) {
     if (!element || !Number.isFinite(Number(target))) return;
     const existingFrame = numberAnimationFrames.get(element);
     if (existingFrame) cancelAnimationFrame(existingFrame);
     const current = Number(element.dataset.numericValue);
     const start = Number.isFinite(current) ? current : Number(target);
     const end = Number(target);
+    const delayedHourlyCents = Boolean(options.delayedHourlyCents);
+    const prefix = String(options.prefix || '');
+    const hourlyWholeFormatter = value => {
+      const rounded = Math.round(Number(value));
+      return prefix + new Intl.NumberFormat('en-AU', {
+        style: 'currency',
+        currency: 'AUD',
+        maximumFractionDigits: 0
+      }).format(rounded) + '/hr';
+    };
     if (REDUCE_MOTION || Math.abs(start - end) < 0.005) {
       element.textContent = formatter(end);
       element.dataset.numericValue = String(end);
@@ -23964,17 +23989,43 @@ function sortKeysByCountDesc(counts) {
       const progress = Math.min(1, (now - started) / duration);
       const eased = 1 - Math.pow(1 - progress, 3);
       const value = start + (end - start) * eased;
-      element.textContent = formatter(value);
+      element.textContent = delayedHourlyCents && progress < 0.42
+        ? hourlyWholeFormatter(value)
+        : formatter(value);
       element.dataset.numericValue = String(value);
       if (progress < 1) {
         const id = requestAnimationFrame(frame);
         numberAnimationFrames.set(element, id);
       } else {
+        element.textContent = formatter(end);
+        element.dataset.numericValue = String(end);
         numberAnimationFrames.delete(element);
       }
     };
     const id = requestAnimationFrame(frame);
     numberAnimationFrames.set(element, id);
+  }
+
+  function prepareDisplayModeAnimation_(element) {
+    if (!element) return { modeChanged: false, delayedHourlyCents: false };
+    const currentMode = salaryMode() ? 'salary' : 'hourly';
+    const previousMode = element.dataset.displayMode || currentMode;
+    const modeChanged = previousMode !== currentMode;
+    const storedValue = Number(element.dataset.numericValue);
+
+    if (modeChanged && Number.isFinite(storedValue)) {
+      element.dataset.numericValue = String(
+        currentMode === 'hourly'
+          ? storedValue / annualHours()
+          : storedValue * annualHours()
+      );
+    }
+
+    element.dataset.displayMode = currentMode;
+    return {
+      modeChanged,
+      delayedHourlyCents: modeChanged && currentMode === 'hourly'
+    };
   }
 
   function updateSelectedComparatorRows(animate = false) {
@@ -24013,7 +24064,23 @@ function sortKeysByCountDesc(counts) {
       }
 
       const display = displayComparatorValue(hourly);
-      if (valueEl) valueEl.textContent = `: ${formatMoney(display)}`;
+      if (valueEl) {
+        const modeAnimation = prepareDisplayModeAnimation_(valueEl);
+        if (animate) {
+          animateTextNumber(
+            valueEl,
+            display,
+            value => `: ${formatMoney(value)}`,
+            {
+              delayedHourlyCents: modeAnimation.delayedHourlyCents,
+              prefix: ': '
+            }
+          );
+        } else {
+          valueEl.textContent = `: ${formatMoney(display)}`;
+          valueEl.dataset.numericValue = String(display);
+        }
+      }
 
       if (Number.isFinite(benchmarkDisplay)) {
         const difference = benchmarkDisplay - display;
@@ -24022,25 +24089,16 @@ function sortKeysByCountDesc(counts) {
         const thanWord = difference > 0.005 || difference < -0.005 ? 'than' : 'as';
         const formattedMagnitude = formatMoney(magnitude);
         if (diffEl) {
-          const currentDisplayMode = salaryMode() ? 'salary' : 'hourly';
-          const previousDisplayMode =
-            diffEl.dataset.displayMode || currentDisplayMode;
+          const modeAnimation = prepareDisplayModeAnimation_(diffEl);
 
-          if (previousDisplayMode !== currentDisplayMode) {
-            const storedValue = Number(diffEl.dataset.numericValue);
-            if (Number.isFinite(storedValue)) {
-              diffEl.dataset.numericValue = String(
-                currentDisplayMode === 'hourly'
-                  ? storedValue / annualHours()
-                  : storedValue * annualHours()
-              );
-            }
-          }
-
-          diffEl.dataset.displayMode = currentDisplayMode;
-
-          if (animate) animateTextNumber(diffEl, magnitude, value => formatMoney(value));
-          else {
+          if (animate) {
+            animateTextNumber(
+              diffEl,
+              magnitude,
+              value => formatMoney(value),
+              { delayedHourlyCents: modeAnimation.delayedHourlyCents }
+            );
+          } else {
             diffEl.textContent = formattedMagnitude;
             diffEl.dataset.numericValue = String(magnitude);
           }
@@ -24082,11 +24140,11 @@ function sortKeysByCountDesc(counts) {
   }
 
   function currentProjectionMaxYear() {
-    if (typeof hpssProjection !== 'undefined' && Array.isArray(hpssProjection) && hpssProjection.length) {
-      const year = Number(hpssProjection[hpssProjection.length - 1]?.year);
-      if (Number.isFinite(year)) return year;
+    const targetYear = Math.round(Number(getTargetYear()));
+    if (Number.isFinite(targetYear)) {
+      return Math.max(CURRENT_CALENDAR_YEAR, targetYear);
     }
-    return CURRENT_CALENDAR_YEAR + TREND_PROJECTION_YEARS;
+    return CURRENT_CALENDAR_YEAR;
   }
 
   function trendMinYear() {
@@ -24169,7 +24227,12 @@ function sortKeysByCountDesc(counts) {
     ) {
       const benchmarkData = hpssProjection
         .map(point => ({ x: Number(point?.year), y: chartValueFromAnnual(point?.projectedPay) }))
-        .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y) && point.y > 0);
+        .filter(point =>
+          Number.isFinite(point.x) &&
+          Number.isFinite(point.y) &&
+          point.y > 0 &&
+          point.x <= maxYear
+        );
 
       if (benchmarkData.length) {
         datasets.push({
@@ -24228,7 +24291,10 @@ function sortKeysByCountDesc(counts) {
           .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y) && point.y > 0);
         if (awardData.length) {
           const baseYear = Number(typeof hpssAwardData !== 'undefined' ? hpssAwardData?.baseYear : NaN);
-          const futureAward = awardData.filter(point => !Number.isFinite(baseYear) || point.x >= baseYear);
+          const futureAward = awardData.filter(point =>
+            (!Number.isFinite(baseYear) || point.x >= baseYear) &&
+            point.x <= maxYear
+          );
           datasets.push({
             label: 'HPSS Award minimum forecast',
             pffLegendLabel: 'HPSS Award',
@@ -25013,7 +25079,7 @@ function sortKeysByCountDesc(counts) {
   function refreshAllComparatorOutputs(animate = false) {
     syncComparatorSelectionUi();
     updateSelectedComparatorRows(animate);
-    updateComparatorMarkers();
+    updateComparatorMarkers(animate);
     refreshTrendChart(animate);
     if (typeof refreshCalculatorLayout === 'function') refreshCalculatorLayout();
   }
