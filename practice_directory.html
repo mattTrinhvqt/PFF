@@ -118,6 +118,9 @@
       --directory-corporate: #00b26f;
       --directory-independent: #5a3be7;
       --directory-other: #8b9099;
+      --directory-public-service-bg: #f7fbff;
+      --directory-public-service-hover: #f1f8fe;
+      --directory-public-service-selected: #e9f4fd;
       --directory-track: #f0f2f5;
       --directory-row-line: #f8f9fa;
       --directory-action-column: 58px;
@@ -758,6 +761,22 @@
       filter: none;
     }
 
+    .data-table tbody tr.is-public-service td {
+      background: var(--directory-public-service-bg) !important;
+      filter: none;
+    }
+
+    .data-table tbody tr.is-public-service:hover td {
+      background: var(--directory-public-service-hover) !important;
+      filter: none;
+    }
+
+    .data-table tbody tr.is-public-service.is-selected td,
+    .data-table tbody tr.is-public-service.is-selected:hover td {
+      background: var(--directory-public-service-selected) !important;
+      filter: none;
+    }
+
     .data-table tbody tr.is-selected td[data-key="referActions"],
     .data-table tbody tr.is-selected td[data-key="practiceName"],
     .data-table tbody tr.is-selected:hover td[data-key="referActions"],
@@ -840,6 +859,66 @@
 
     .practice-link:hover {
       text-decoration-thickness: 2px;
+    }
+
+    .public-practice-prefix {
+      position: absolute;
+      top: 2px;
+      left: var(--eat-table-cell-padding-inline);
+      color: #2b6f9f;
+      font-size: 7px;
+      font-weight: 700;
+      letter-spacing: 0.055em;
+      line-height: 1;
+      pointer-events: none;
+    }
+
+    .data-table tbody tr.is-public-service td[data-key="practiceName"] {
+      padding-top: 13px;
+      padding-bottom: 5px;
+    }
+
+    .data-table tbody tr.is-public-service td[data-key="practiceName"] .practice-name-text {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .public-specialty-message {
+      color: #315f80;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: center;
+      white-space: normal !important;
+      text-overflow: clip !important;
+    }
+
+    .public-specialty-content {
+      display: inline-flex;
+      max-width: 100%;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+
+    .public-specialty-actions {
+      display: inline-flex;
+      width: calc((2 * var(--eat-action-button-width)) + 1px);
+      flex: 0 0 calc((2 * var(--eat-action-button-width)) + 1px);
+      align-items: center;
+      justify-content: flex-start;
+      gap: 1px;
+    }
+
+    .public-specialty-actions .practice-action-slot {
+      flex: 0 0 var(--eat-action-button-width);
+    }
+
+    .public-specialty-text {
+      min-width: 0;
     }
 
     .specialty-yes,
@@ -4095,7 +4174,7 @@
           </button>
         </div>
 
-        <div class="service-scope-notice" role="note">Public hospital services not included (yet) <span aria-hidden="true">·</span> Individual practitioners not included</div>
+        <div class="service-scope-notice" role="note">Practices/services shown, not individual practitioners</div>
 
         <div id="searchWrap" class="eat-search-wrap">
           <div class="search-control eat-search-control">
@@ -4431,7 +4510,7 @@
           </table>
         </div>
 
-        <div id="emptyState" class="empty-state">No practices match the current search and filters.</div>
+        <div id="emptyState" class="empty-state">No practices/services match the current search and filters.</div>
       </div>
     </main>
   </div>
@@ -4469,10 +4548,10 @@
         '1598477979',
 
       ophthalmologySourceRange:
-        'B32:X',
+        'A32:X',
 
       ophthalmologySourceColumnCount:
-        23,
+        24,
 
       locationRange:
         'AA32:AM',
@@ -4540,8 +4619,10 @@
       'phn'
     ]);
 
-    /* Ophthalmology B:X. U:W are retained to preserve source row shape. */
-    const OPHTHALMOLOGY_SOURCE_KEYS = Object.freeze([
+    /* Ophthalmology A:X. Column A is the assigned practice/service ID.
+     * Legacy B:X cache rows are still accepted below. U:W are retained to
+     * preserve the source row shape. */
+    const OPHTHALMOLOGY_LEGACY_SOURCE_KEYS = Object.freeze([
       'practiceName',
       'address',
       'suburb',
@@ -4566,6 +4647,16 @@
       'sourceW',
       'phn'
     ]);
+
+    const OPHTHALMOLOGY_SOURCE_KEYS = Object.freeze([
+      'practiceId',
+      ...OPHTHALMOLOGY_LEGACY_SOURCE_KEYS
+    ]);
+
+    function isPublicServicePracticeId(value) {
+      const id = Number.parseInt(cleanText(value), 10);
+      return Number.isInteger(id) && id >= 5000 && id < 6000;
+    }
 
     const LOCATION_KEYS = Object.freeze([
       'postcode',
@@ -5756,15 +5847,23 @@
     ) {
       if (
         !Array.isArray(values) ||
-        values.length <
-          CONFIG.ophthalmologySourceColumnCount
+        values.length < OPHTHALMOLOGY_LEGACY_SOURCE_KEYS.length
       ) {
         return null;
       }
 
       const row = {};
+      const hasPracticeIdColumn =
+        values.length >= OPHTHALMOLOGY_SOURCE_KEYS.length;
+      const sourceKeys = hasPracticeIdColumn
+        ? OPHTHALMOLOGY_SOURCE_KEYS
+        : OPHTHALMOLOGY_LEGACY_SOURCE_KEYS;
 
-      OPHTHALMOLOGY_SOURCE_KEYS.forEach(
+      if (!hasPracticeIdColumn) {
+        row.practiceId = '';
+      }
+
+      sourceKeys.forEach(
         (key, index) => {
           row[key] =
             cleanText(values[index]);
@@ -5776,6 +5875,7 @@
       }
 
       row.sourceIndex = sourceIndex;
+      row.isPublicService = isPublicServicePracticeId(row.practiceId);
       row.stateCode = PFF.normaliseState(row.state);
       row.ownershipCode = null;
       row.mmmCode = PFF.normaliseMMM(row.mmm);
@@ -5797,13 +5897,22 @@
       };
 
       const specialtySearchTerms = [];
-      if (row.specialties.retina) specialtySearchTerms.push('retina retinal vitreoretinal vr vitreous macula macular macular degeneration age-related macular degeneration age related macular degeneration amd wet amd neovascular amd namd dry amd geographic atrophy ga diabetic retinopathy dr diabetic macular oedema diabetic macular edema dmo dme macular oedema macular edema retinal vein occlusion rvo branch retinal vein occlusion brvo central retinal vein occlusion crvo retinal tear retinal hole retinal break retinal detachment rd posterior vitreous detachment pvd epiretinal membrane erm macular hole central serous chorioretinopathy cscr csr retinitis pigmentosa retinal dystrophy');
-      if (row.specialties.glaucoma) specialtySearchTerms.push('glaucoma glaucoma specialist glaucoma suspect ocular hypertension oht iop raised iop elevated iop high eye pressure intraocular pressure narrow angle angle closure angle-closure glaucoma open angle glaucoma open-angle glaucoma poag normal tension glaucoma ntg pseudoexfoliation pxf pigmentary glaucoma glaucoma surgery migs trabeculectomy');
-      if (row.specialties.cornea) specialtySearchTerms.push('cornea corneal anterior segment anterior eye ocular surface ocular surface disease dry eye dry eyes dry eye disease ded blepharitis mgd meibomian gland dysfunction keratoconus corneal ectasia corneal dystrophy fuchs fuchs dystrophy corneal transplant keratoplasty pk dalk dmek dsaek corneal ulcer microbial keratitis keratitis corneal abrasion recurrent corneal erosion corneal scar corneal infection pterygium limbal stem cell cross-linking corneal cross-linking cxl');
-      if (row.specialties.oculoplastics) specialtySearchTerms.push('oculoplastics oculoplastic eyelid eyelids lid lids eyelid surgery lid surgery droopy eyelid droopy eyelids ptosis entropion ectropion chalazion blepharoplasty lacrimal tear duct blocked tear duct nasolacrimal nldo watery eye watery eyes epiphora dacryocystorhinostomy dcr orbital orbit orbital disease orbital tumour orbital tumor eye socket thyroid eye disease ted');
-      if (row.specialties.paedStrab) specialtySearchTerms.push('paediatric pediatric paed peds child children kids infant congenital paediatric ophthalmology pediatric ophthalmology child ophthalmology childrens ophthalmology strabismus strab squint amblyopia lazy eye eye turn turned eye crossed eyes diplopia double vision ocular motility motility orthoptics esotropia exotropia');
-      if (row.specialties.neuro) specialtySearchTerms.push('neuro neuro-ophthalmology neuro ophthalmology neuroophthalmology neuro ophth neuro ophthalmologist neuro-ophthalmologist optic nerve optic neuropathy optic neuritis optic disc swelling disc swelling swollen optic nerve papilloedema papilledema visual field defect visual field loss hemianopia hemianopsia diplopia double vision cranial nerve palsy sixth nerve palsy third nerve palsy fourth nerve palsy ocular motor palsy anisocoria horner syndrome myasthenia nystagmus idiopathic intracranial hypertension iih');
-      if (row.specialties.uveitis) specialtySearchTerms.push('uveitis inflammatory ocular inflammation intraocular inflammation ocular inflammatory disease eye inflammation inflammatory eye disease iritis anterior uveitis intermediate uveitis posterior uveitis panuveitis vitritis chorioretinitis retinal vasculitis ocular vasculitis sarcoid uveitis hla-b27 sympathetic ophthalmia scleritis episcleritis');
+
+      if (row.isPublicService) {
+        specialtySearchTerms.push(
+          OPHTHALMOLOGY_SPECIALTIES
+            .flatMap(definition => [definition.label, ...definition.aliases])
+            .join(' ')
+        );
+      } else {
+        if (row.specialties.retina) specialtySearchTerms.push('retina retinal vitreoretinal vr vitreous macula macular macular degeneration age-related macular degeneration age related macular degeneration amd wet amd neovascular amd namd dry amd geographic atrophy ga diabetic retinopathy dr diabetic macular oedema diabetic macular edema dmo dme macular oedema macular edema retinal vein occlusion rvo branch retinal vein occlusion brvo central retinal vein occlusion crvo retinal tear retinal hole retinal break retinal detachment rd posterior vitreous detachment pvd epiretinal membrane erm macular hole central serous chorioretinopathy cscr csr retinitis pigmentosa retinal dystrophy');
+        if (row.specialties.glaucoma) specialtySearchTerms.push('glaucoma glaucoma specialist glaucoma suspect ocular hypertension oht iop raised iop elevated iop high eye pressure intraocular pressure narrow angle angle closure angle-closure glaucoma open angle glaucoma open-angle glaucoma poag normal tension glaucoma ntg pseudoexfoliation pxf pigmentary glaucoma glaucoma surgery migs trabeculectomy');
+        if (row.specialties.cornea) specialtySearchTerms.push('cornea corneal anterior segment anterior eye ocular surface ocular surface disease dry eye dry eyes dry eye disease ded blepharitis mgd meibomian gland dysfunction keratoconus corneal ectasia corneal dystrophy fuchs fuchs dystrophy corneal transplant keratoplasty pk dalk dmek dsaek corneal ulcer microbial keratitis keratitis corneal abrasion recurrent corneal erosion corneal scar corneal infection pterygium limbal stem cell cross-linking corneal cross-linking cxl');
+        if (row.specialties.oculoplastics) specialtySearchTerms.push('oculoplastics oculoplastic eyelid eyelids lid lids eyelid surgery lid surgery droopy eyelid droopy eyelids ptosis entropion ectropion chalazion blepharoplasty lacrimal tear duct blocked tear duct nasolacrimal nldo watery eye watery eyes epiphora dacryocystorhinostomy dcr orbital orbit orbital disease orbital tumour orbital tumor eye socket thyroid eye disease ted');
+        if (row.specialties.paedStrab) specialtySearchTerms.push('paediatric pediatric paed peds child children kids infant congenital paediatric ophthalmology pediatric ophthalmology child ophthalmology childrens ophthalmology strabismus strab squint amblyopia lazy eye eye turn turned eye crossed eyes diplopia double vision ocular motility motility orthoptics esotropia exotropia');
+        if (row.specialties.neuro) specialtySearchTerms.push('neuro neuro-ophthalmology neuro ophthalmology neuroophthalmology neuro ophth neuro ophthalmologist neuro-ophthalmologist optic nerve optic neuropathy optic neuritis optic disc swelling disc swelling swollen optic nerve papilloedema papilledema visual field defect visual field loss hemianopia hemianopsia diplopia double vision cranial nerve palsy sixth nerve palsy third nerve palsy fourth nerve palsy ocular motor palsy anisocoria horner syndrome myasthenia nystagmus idiopathic intracranial hypertension iih');
+        if (row.specialties.uveitis) specialtySearchTerms.push('uveitis inflammatory ocular inflammation intraocular inflammation ocular inflammatory disease eye inflammation inflammatory eye disease iritis anterior uveitis intermediate uveitis posterior uveitis panuveitis vitritis chorioretinitis retinal vasculitis ocular vasculitis sarcoid uveitis hla-b27 sympathetic ophthalmia scleritis episcleritis');
+      }
 
       row.searchText =
         PFF.normaliseText(
@@ -6888,7 +6997,10 @@
         definition => {
           let count = 0;
           rows.forEach(row => {
-            if (row.specialties?.[definition.key]) {
+            if (
+              row.isPublicService ||
+              row.specialties?.[definition.key]
+            ) {
               count += 1;
             }
           });
@@ -9939,7 +10051,7 @@
 
             specialtyDefinitions.forEach(
               definition => {
-                if (row.specialties?.[definition.key]) {
+                if (row.isPublicService || row.specialties?.[definition.key]) {
                   increment(specialtyCounts, definition.key);
                 }
               }
@@ -10172,7 +10284,7 @@
     }
 
     function specialtyRequirementsMet(row) {
-      if (!requiredSpecialties.size) {
+      if (row?.isPublicService || !requiredSpecialties.size) {
         return true;
       }
 
@@ -10324,9 +10436,44 @@
       ]);
     }
 
+    function shouldPrioritizePublicServices() {
+      if (activeServiceType !== 'ophthalmology') {
+        return false;
+      }
+
+      const hasSearchText = Boolean(
+        normaliseSearchText(searchInput.value)
+      );
+
+      const hasFilterNarrowing =
+        selectedStates.size !== STATES.length ||
+        selectedMMM.size !== MMM_VALUES.length ||
+        selectedPHNs.size !== phnValues.length ||
+        requiredSpecialties.size > 0;
+
+      return Boolean(activeLocation) || hasSearchText || hasFilterNarrowing;
+    }
+
+    function comparePublicServicePriority(first, second) {
+      if (!shouldPrioritizePublicServices()) {
+        return 0;
+      }
+
+      const firstPriority = first?.isPublicService ? 0 : 1;
+      const secondPriority = second?.isPublicService ? 0 : 1;
+      return firstPriority - secondPriority;
+    }
+
     function sortFilteredRowsInPlace() {
       filteredRows.sort(
         (first, second) => {
+          const publicServiceComparison =
+            comparePublicServicePriority(first, second);
+
+          if (publicServiceComparison !== 0) {
+            return publicServiceComparison;
+          }
+
           const comparison = compareValues(first, second, sortKey);
 
           if (comparison !== 0) {
@@ -10438,7 +10585,10 @@
           }
         );
 
-        if (!defaultPracticeSort) {
+        if (
+          !defaultPracticeSort ||
+          shouldPrioritizePublicServices()
+        ) {
           sortFilteredRowsInPlace();
         }
 
@@ -10526,7 +10676,11 @@
       }
 
       if (column.key === 'practiceName') {
-        return `<span class="practice-name-text">${escapeHtml(row.practiceName || '–')}</span>`;
+        const publicPrefix = row.isPublicService
+          ? '<span class="public-practice-prefix">PUBLIC</span>'
+          : '';
+
+        return `${publicPrefix}<span class="practice-name-text">${escapeHtml(row.practiceName || '–')}</span>`;
       }
 
       if (column.key === 'address') {
@@ -11022,29 +11176,67 @@
     }
 
     function tableRowHtml(row, columns) {
-      return `
-        <tr>
-          ${columns.map(
-            column => {
-              const raw =
-                column.key === 'mmm'
-                  ? (row.mmmCode || row.mmm || '')
-                  : column.key === 'employerType'
-                    ? (row.ownershipCode || row.employerType || '')
-                    : column.key === 'distanceKm'
-                      ? formatDistance(row.distanceKm)
-                      : row[column.key] || '';
+      const specialtyColumnCount = row.isPublicService
+        ? columns.filter(column => SPECIALTY_TABLE_COLUMN_KEYS.has(column.key)).length
+        : 0;
+      let publicSpecialtyMessageRendered = false;
+      const cells = [];
 
-              const fullText = cleanText(raw);
-              const popoverAttrs = fullText
-                ? ` class="has-full-text" tabindex="0" data-full-text="${escapeHtml(fullText)}" title="${escapeHtml(fullText)}"`
-                : '';
-
-              return `
-                <td data-key="${column.key}"${SPECIALTY_TABLE_COLUMN_KEYS.has(column.key) ? ' data-specialty-column="true"' : ''} ${popoverAttrs}>${formatCell(row, column)}</td>
-              `;
+      columns.forEach(
+        column => {
+          if (
+            row.isPublicService &&
+            SPECIALTY_TABLE_COLUMN_KEYS.has(column.key)
+          ) {
+            if (publicSpecialtyMessageRendered) {
+              return;
             }
-          ).join('')}
+
+            publicSpecialtyMessageRendered = true;
+            const message = 'Contact ophthal/registrar for available specialties';
+            const publicWebsite = safeExternalUrl(row.websiteUrl || row.website);
+            const publicEmail = cleanText(row.emailAddress || '');
+            const websiteAction = publicWebsite
+              ? `<a class="practice-action" href="${escapeHtml(publicWebsite)}" target="_blank" rel="noopener" aria-label="Open website for ${escapeHtml(row.practiceName)}" title="Website"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4"></path><path d="M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5S14.4 18.2 12 20.5C9.6 18.2 8.4 15.4 8.4 12S9.6 5.8 12 3.5Z"></path></svg></a>`
+              : '';
+            const emailAction = publicEmail
+              ? `<a class="practice-action" href="mailto:${escapeHtml(publicEmail)}" aria-label="Email ${escapeHtml(row.practiceName)}" title="Email ${escapeHtml(publicEmail)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg></a>`
+              : '';
+            const publicActionSlots = [websiteAction, emailAction]
+              .map(
+                action => `<span class="practice-action-slot">${action || '<span class="practice-action practice-action-placeholder" aria-hidden="true"></span>'}</span>`
+              )
+              .join('');
+
+            cells.push(
+              `<td data-key="publicSpecialties" data-specialty-column="true" colspan="${specialtyColumnCount}" class="public-specialty-message" title="${escapeHtml(message)}"><span class="public-specialty-content"><span class="public-specialty-actions">${publicActionSlots}</span><span class="public-specialty-text">${escapeHtml(message)}</span></span></td>`
+            );
+            return;
+          }
+
+          const raw =
+            column.key === 'mmm'
+              ? (row.mmmCode || row.mmm || '')
+              : column.key === 'employerType'
+                ? (row.ownershipCode || row.employerType || '')
+                : column.key === 'distanceKm'
+                  ? formatDistance(row.distanceKm)
+                  : row[column.key] || '';
+
+          const fullText = cleanText(raw);
+          const popoverAttrs = fullText
+            ? ` class="has-full-text" tabindex="0" data-full-text="${escapeHtml(fullText)}" title="${escapeHtml(fullText)}"`
+            : '';
+
+          cells.push(
+            `<td data-key="${column.key}"${SPECIALTY_TABLE_COLUMN_KEYS.has(column.key) ? ' data-specialty-column="true"' : ''} ${popoverAttrs}>${formatCell(row, column)}</td>`
+          );
+        }
+      );
+
+      return `
+        <tr${row.isPublicService ? ' class="is-public-service"' : ''}>
+          ${cells.join('')}
         </tr>
       `;
     }
@@ -11090,10 +11282,10 @@
         activeLocation
           ? (
               practiceCountScope === 'radius'
-                ? 'No practices match the current radius and filters'
-                : 'No practices match the selected PHN and filters'
+                ? 'No practices/services match the current radius and filters'
+                : 'No practices/services match the selected PHN and filters'
             )
-          : 'No practices match the current search and filters';
+          : 'No practices/services match the current search and filters';
 
       emptyState.classList.toggle('is-visible', !hasRows);
 
