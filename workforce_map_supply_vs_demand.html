@@ -66,7 +66,7 @@
       color: var(--pff-muted);
       font-size: 11.5px;
       line-height: 1.34;
-      text-align: center;
+      text-align: left;
     }
 
     .method-note-line {
@@ -200,15 +200,23 @@
     const MEDICARE_HOURS_RANGE =
       'D28:KE28';
 
-    const CLINICIAN_SHEET =
-      'OptomsbystatebyMMM';
+    const ACTIVE_CLINICIAN_SHEET =
+      'Optomsbystate';
 
-    const CLINICIAN_RANGE =
-      'A29:CC';
+    // L = year; M:U = state/other active clinicians; V = Australia total.
+    const ACTIVE_CLINICIAN_RANGE =
+      'L30:V';
 
-    const CLINICIAN_COUNT_FIRST_INDEX = 1;
-    const CLINICIAN_HOURS_FIRST_INDEX = 41;
-    const RAW_CLINICIAN_SERIES_COUNT = 40;
+    const ACTIVE_CLINICIAN_TOTAL_INDEX = 10;
+
+    const CLINICAL_HOURS_SHEET =
+      'Optomhoursbystate';
+
+    // A = year; B:I = state mean weekly clinical hours; J = Australia total.
+    const CLINICAL_HOURS_RANGE =
+      'A30:J';
+
+    const CLINICAL_HOURS_TOTAL_INDEX = 9;
     const EXPECTED_ITEM_COUNT = 32;
 
     // Match the established PFF workforce-capacity methodology rather than
@@ -222,13 +230,13 @@
     const CACHE_FETCH_TIMEOUT_MS = 10000;
 
     const LOCAL_CACHE_KEY =
-      'pff-excess-clinicians-v2';
+      'pff-excess-clinicians-v3';
 
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
 
-    // Backend 1 already includes Medicare item rows, item times and the
-    // national state×MMM clinician count/hour matrix in this snapshot.
+    // Backend 1 stores Medicare rows plus state-level active clinician and
+    // state-level clinical-hours tables for the same national calculation.
     const CACHE_APP_KEY =
       'pff-medicare-service-demand-v13';
 
@@ -364,7 +372,7 @@
       };
     }
 
-    function parseClinicianTable(table) {
+    function parseActiveClinicianTable(table) {
       const rows = [];
 
       (table?.rows || []).forEach(sourceRow => {
@@ -375,18 +383,11 @@
         const year = Math.round(yearValue);
         if (year < 1900 || year > 2200) return;
 
-        const counts = Array.from(
-          { length: RAW_CLINICIAN_SERIES_COUNT },
-          (_, index) => numericCell(cells[CLINICIAN_COUNT_FIRST_INDEX + index])
-        );
+        const activeClinicians =
+          numericCell(cells[ACTIVE_CLINICIAN_TOTAL_INDEX]);
 
-        const hours = Array.from(
-          { length: RAW_CLINICIAN_SERIES_COUNT },
-          (_, index) => numericCell(cells[CLINICIAN_HOURS_FIRST_INDEX + index])
-        );
-
-        if (counts.some(Number.isFinite) && hours.some(Number.isFinite)) {
-          rows.push({ year, counts, hours });
+        if (Number.isFinite(activeClinicians) && activeClinicians > 0) {
+          rows.push({ year, activeClinicians });
         }
       });
 
@@ -394,55 +395,75 @@
       return rows;
     }
 
-    function combineMedicareWithClinicalSupply(medicareData, clinicianRows) {
-      const clinicianByYear = new Map(
-        (clinicianRows || []).map(row => [row.year, row])
+    function parseClinicalHoursTable(table) {
+      const rows = [];
+
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const yearValue = numericCell(cells[0]);
+        if (!Number.isFinite(yearValue)) return;
+
+        const year = Math.round(yearValue);
+        if (year < 1900 || year > 2200) return;
+
+        const weeklyClinicalHours =
+          numericCell(cells[CLINICAL_HOURS_TOTAL_INDEX]);
+
+        if (Number.isFinite(weeklyClinicalHours) && weeklyClinicalHours > 0) {
+          rows.push({ year, weeklyClinicalHours });
+        }
+      });
+
+      rows.sort((a, b) => a.year - b.year);
+      return rows;
+    }
+
+    function combineMedicareWithClinicalSupply(
+      medicareData,
+      activeClinicianRows,
+      clinicalHoursRows
+    ) {
+      const activeByYear = new Map(
+        (activeClinicianRows || []).map(row => [row.year, row.activeClinicians])
+      );
+
+      const hoursByYear = new Map(
+        (clinicalHoursRows || []).map(row => [row.year, row.weeklyClinicalHours])
       );
 
       const rows = medicareData.rows
         .map(medicareRow => {
-          const clinician = clinicianByYear.get(medicareRow.year);
-          if (!clinician) return null;
-
-          let activeClinicians = 0;
-          let cliniciansWithHours = 0;
-          let availableClinicalHoursWeek = 0;
-
-          for (let index = 0; index < RAW_CLINICIAN_SERIES_COUNT; index += 1) {
-            const count = finiteNumber(clinician.counts?.[index]);
-            const hours = finiteNumber(clinician.hours?.[index]);
-
-            if (Number.isFinite(count) && count >= 0) {
-              activeClinicians += count;
-            }
-
-            if (
-              Number.isFinite(count) && count >= 0 &&
-              Number.isFinite(hours) && hours >= 0
-            ) {
-              cliniciansWithHours += count;
-              availableClinicalHoursWeek += count * hours;
-            }
-          }
+          const activeClinicians = finiteNumber(
+            activeByYear.get(medicareRow.year)
+          );
+          const weeklyClinicalHours = finiteNumber(
+            hoursByYear.get(medicareRow.year)
+          );
 
           if (
-            activeClinicians <= 0 ||
-            cliniciansWithHours <= 0 ||
-            availableClinicalHoursWeek <= 0
+            !Number.isFinite(activeClinicians) || activeClinicians <= 0 ||
+            !Number.isFinite(weeklyClinicalHours) || weeklyClinicalHours <= 0
           ) {
+            return null;
+          }
+
+          const annualClinicalHoursPerClinician = Math.max(
+            0,
+            weeklyClinicalHours * WORKING_WEEKS_PER_YEAR -
+              ADMIN_HOURS_PER_WEEK * ADMIN_WEEKS_PER_YEAR
+          );
+
+          if (annualClinicalHoursPerClinician <= 0) {
             return null;
           }
 
           return {
             ...medicareRow,
             activeClinicians,
-            cliniciansWithHours,
-            availableClinicalHoursWeek,
-            availableClinicalHoursAnnual: Math.max(
-              0,
-              availableClinicalHoursWeek * WORKING_WEEKS_PER_YEAR -
-                cliniciansWithHours * ADMIN_HOURS_PER_WEEK * ADMIN_WEEKS_PER_YEAR
-            )
+            weeklyClinicalHours,
+            annualClinicalHoursPerClinician,
+            availableClinicalHoursAnnual:
+              activeClinicians * annualClinicalHoursPerClinician
           };
         })
         .filter(Boolean);
@@ -472,18 +493,22 @@
         .map(row => {
           const clinicalHours = finiteNumber(row.availableClinicalHoursAnnual);
           const medicareHours = totalMedicareHours(row, data.items);
-          const cliniciansWithHours = finiteNumber(row.cliniciansWithHours);
+          const activeClinicians = finiteNumber(row.activeClinicians);
+          const annualClinicalHoursPerClinician =
+            finiteNumber(row.annualClinicalHoursPerClinician);
 
           if (
             !Number.isFinite(clinicalHours) || clinicalHours <= 0 ||
             !Number.isFinite(medicareHours) ||
-            !Number.isFinite(cliniciansWithHours) || cliniciansWithHours <= 0
+            !Number.isFinite(activeClinicians) || activeClinicians <= 0 ||
+            !Number.isFinite(annualClinicalHoursPerClinician) ||
+              annualClinicalHoursPerClinician <= 0
           ) {
             return null;
           }
 
           const gapHours = clinicalHours - medicareHours;
-          const averageAnnualClinicalHours = clinicalHours / cliniciansWithHours;
+          const averageAnnualClinicalHours = annualClinicalHoursPerClinician;
           const excessClinicians = gapHours / averageAnnualClinicalHours;
 
           return {
@@ -545,11 +570,24 @@
     }
 
     function parseLiveTables(tables) {
-      const [dataTable, itemTable, hoursTable, clinicianTable] = tables;
+      const [
+        dataTable,
+        itemTable,
+        hoursTable,
+        activeClinicianTable,
+        clinicalHoursTable
+      ] = tables;
       const itemSchema = parseMetadataRows(itemTable, hoursTable);
       const medicareData = parseMedicareDataTable(dataTable, itemSchema);
-      const clinicianRows = parseClinicianTable(clinicianTable);
-      const data = combineMedicareWithClinicalSupply(medicareData, clinicianRows);
+      const activeClinicianRows =
+        parseActiveClinicianTable(activeClinicianTable);
+      const clinicalHoursRows =
+        parseClinicalHoursTable(clinicalHoursTable);
+      const data = combineMedicareWithClinicalSupply(
+        medicareData,
+        activeClinicianRows,
+        clinicalHoursRows
+      );
 
       if (!validSourceData(data)) {
         throw new Error('Live Medicare demand and clinical-supply data were incomplete.');
@@ -569,11 +607,19 @@
         itemSchema
       );
 
-      const clinicianRows = parseClinicianTable(
-        rowsToGVizTable(snapshot.data?.clinicianRows)
+      const activeClinicianRows = parseActiveClinicianTable(
+        rowsToGVizTable(snapshot.data?.activeClinicianRows)
       );
 
-      const data = combineMedicareWithClinicalSupply(medicareData, clinicianRows);
+      const clinicalHoursRows = parseClinicalHoursTable(
+        rowsToGVizTable(snapshot.data?.clinicalHoursRows)
+      );
+
+      const data = combineMedicareWithClinicalSupply(
+        medicareData,
+        activeClinicianRows,
+        clinicalHoursRows
+      );
 
       if (!validSourceData(data)) {
         throw new Error('Cached Medicare demand and clinical-supply data were incomplete.');
@@ -621,6 +667,35 @@
         return displayRows[index]?.year;
       }
     });
+
+    function rectanglesOverlap(first, second, padding = 0) {
+      if (!first || !second) return false;
+      return !(
+        first.right + padding < second.left ||
+        first.left - padding > second.right ||
+        first.bottom + padding < second.top ||
+        first.top - padding > second.bottom
+      );
+    }
+
+    function visibleTooltipRectangle(chartInstance, padding = 5) {
+      const tooltip = chartInstance?.tooltip;
+      if (
+        !tooltip ||
+        !(Number(tooltip.opacity) > 0) ||
+        ![tooltip.x, tooltip.y, tooltip.width, tooltip.height]
+          .every(Number.isFinite)
+      ) {
+        return null;
+      }
+
+      return {
+        left: tooltip.x - padding,
+        right: tooltip.x + tooltip.width + padding,
+        top: tooltip.y - padding,
+        bottom: tooltip.y + tooltip.height + padding
+      };
+    }
 
     const gapMeasurementPlugin = {
       id: 'pffExcessCliniciansGapMeasurement',
@@ -689,8 +764,6 @@
         ctx.lineTo(lineX + capHalf, yBottom);
         ctx.stroke();
 
-        // Compact label beside the selected gap. At rest this marks the latest year;
-        // hover/touch moves the measurement to the selected historical year.
         ctx.font = `700 ${fontSize}px Lato, sans-serif`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -698,17 +771,92 @@
         const textWidth = ctx.measureText(label).width;
         const boxWidth = textWidth + padX * 2;
         const gapFromLine = mobile ? 5 : 6;
-        const roomRight = chartArea.right - lineX;
-        const placeRight = roomRight >= boxWidth + gapFromLine + 2;
-        const left = placeRight
-          ? lineX + gapFromLine
-          : lineX - gapFromLine - boxWidth;
-        const top = PFFCharts.clamp(
-          yMid - boxHeight / 2,
-          chartArea.top + 1,
-          chartArea.bottom - boxHeight - 1
-        );
         const radius = 3.5;
+        const tooltipRect = visibleTooltipRectangle(chartInstance, mobile ? 5 : 4);
+        const trendRects = Array.isArray(chartInstance.$pffTrendPillRects)
+          ? chartInstance.$pffTrendPillRects
+          : [];
+        const blockers = [tooltipRect, ...trendRects].filter(Boolean);
+
+        const verticalStep = boxHeight + (mobile ? 5 : 6);
+        const verticalOffsets = [
+          0,
+          -verticalStep,
+          verticalStep,
+          -verticalStep * 2,
+          verticalStep * 2,
+          -verticalStep * 3,
+          verticalStep * 3
+        ];
+        const horizontalGaps = [
+          gapFromLine,
+          gapFromLine + (mobile ? 6 : 8),
+          gapFromLine + (mobile ? 12 : 16)
+        ];
+        const sides = ['right', 'left'];
+        let chosen = null;
+
+        for (const side of sides) {
+          for (const horizontalGap of horizontalGaps) {
+            for (const verticalOffset of verticalOffsets) {
+              let left = side === 'right'
+                ? lineX + horizontalGap
+                : lineX - horizontalGap - boxWidth;
+
+              left = PFFCharts.clamp(
+                left,
+                chartArea.left + 2,
+                chartArea.right - boxWidth - 2
+              );
+
+              const top = PFFCharts.clamp(
+                yMid - boxHeight / 2 + verticalOffset,
+                chartArea.top + 1,
+                chartArea.bottom - boxHeight - 1
+              );
+
+              const rectangle = {
+                left,
+                right: left + boxWidth,
+                top,
+                bottom: top + boxHeight
+              };
+
+              const overlaps = blockers.some(
+                blocker => rectanglesOverlap(rectangle, blocker, mobile ? 3 : 4)
+              );
+
+              if (!overlaps) {
+                chosen = rectangle;
+                break;
+              }
+            }
+            if (chosen) break;
+          }
+          if (chosen) break;
+        }
+
+        if (!chosen) {
+          const left = PFFCharts.clamp(
+            lineX - gapFromLine - boxWidth,
+            chartArea.left + 2,
+            chartArea.right - boxWidth - 2
+          );
+          const top = PFFCharts.clamp(
+            yMid - boxHeight / 2,
+            chartArea.top + 1,
+            chartArea.bottom - boxHeight - 1
+          );
+          chosen = {
+            left,
+            right: left + boxWidth,
+            top,
+            bottom: top + boxHeight
+          };
+        }
+
+        const top = chosen.top;
+        const left = chosen.left;
 
         ctx.beginPath();
         ctx.moveTo(left + radius, top);
@@ -737,6 +885,7 @@
     const fixedTrendPillsPlugin = {
       id: 'pffExcessCliniciansFixed10yrTrendPills',
       afterDatasetsDraw(chartInstance) {
+        chartInstance.$pffTrendPillRects = [];
         if (!displayRows.length || !chartInstance?.chartArea) return;
 
         const supplyMeta = chartInstance.getDatasetMeta(0);
@@ -860,6 +1009,13 @@
           }
           ctx.fillText(valueText, textX, chosen.y);
         });
+
+        chartInstance.$pffTrendPillRects = placed.map(rectangle => ({
+          left: rectangle.left,
+          right: rectangle.right,
+          top: rectangle.top,
+          bottom: rectangle.bottom
+        }));
 
         ctx.restore();
       }
@@ -1166,8 +1322,8 @@
         plugins: [
           leftAxisController.plugin,
           yearTicksPlugin,
-          gapMeasurementPlugin,
-          fixedTrendPillsPlugin
+          fixedTrendPillsPlugin,
+          gapMeasurementPlugin
         ]
       });
 
@@ -1180,7 +1336,7 @@
       const latest = displayRows[displayRows.length - 1];
 
       PFFCharts.updateChartSummary(
-        `Clinician supply minus Medicare service demand, ${displayRows[0].year} to ${latest.year}. Annual clinical capacity is adjusted for 46 working weeks and 2.5 admin hours per week across 52 weeks. In ${latest.year}, adjusted clinical hours were ${latest.clinicalHoursM.toFixed(2)} million, Medicare-billed hours were ${latest.medicareHoursM.toFixed(2)} million, and the shaded gap represented ${PFFCharts.formatInteger(Math.round(latest.excessClinicians))} excess clinicians. Trend pills show fixed 10-year log-linear annual trends.`,
+        `Clinician supply minus Medicare service demand, ${displayRows[0].year} to ${latest.year}. Annual clinical capacity uses state-level workforce data and is adjusted for 46 working weeks and 2.5 admin hours per week across 52 weeks. In ${latest.year}, adjusted clinical hours were ${latest.clinicalHoursM.toFixed(2)} million, Medicare-billed hours were ${latest.medicareHoursM.toFixed(2)} million, and the shaded gap represented ${PFFCharts.formatInteger(Math.round(latest.excessClinicians))} excess clinicians. Trend pills show fixed 10-year log-linear annual trends.`,
         chartSummary
       );
     }
@@ -1235,9 +1391,17 @@
           }),
           PFFCharts.loadGVizSheet({
             sheetId: SHEET_ID,
-            sheetName: CLINICIAN_SHEET,
-            range: CLINICIAN_RANGE,
-            headers: '2',
+            sheetName: ACTIVE_CLINICIAN_SHEET,
+            range: ACTIVE_CLINICIAN_RANGE,
+            headers: '1',
+            timeoutMs: FETCH_TIMEOUT_MS,
+            query: 'select *'
+          }),
+          PFFCharts.loadGVizSheet({
+            sheetId: SHEET_ID,
+            sheetName: CLINICAL_HOURS_SHEET,
+            range: CLINICAL_HOURS_RANGE,
+            headers: '1',
             timeoutMs: FETCH_TIMEOUT_MS,
             query: 'select *'
           })
