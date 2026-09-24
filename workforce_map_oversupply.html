@@ -52,16 +52,16 @@
     }
 
     .method-note {
-      margin: 1px 2px 0;
+      margin: 4px 2px 0;
       color: var(--pff-muted);
-      font-size: 8.5px;
-      line-height: 1.25;
+      font-size: 10px;
+      line-height: 1.3;
       text-align: center;
     }
 
     @media (max-width: 430px) {
       .method-note {
-        font-size: 8px;
+        font-size: 9.5px;
       }
     }
   </style>
@@ -117,21 +117,8 @@
       <div class="chart-heading-row">
         <div class="heading-scroll-shell">
           <div class="heading-scroll-viewport">
-            <h2 class="chart-heading">Supply vs Medicare service demand</h2>
+            <h2 class="chart-heading">Clinician supply – Medicare service demand</h2>
           </div>
-        </div>
-
-        <div class="heading-controls">
-          <button
-            id="yoyTrendToggle"
-            class="yoy-trend-toggle is-on"
-            type="button"
-            aria-pressed="true"
-            aria-label="3-year trend. Press to switch to 10-year trend."
-          >
-            <span class="yoy-binary-indicator" aria-hidden="true"></span>
-            <span class="yoy-toggle-label">3yr Trend</span>
-          </button>
         </div>
       </div>
 
@@ -148,7 +135,7 @@
                 <span>Medicare-billed hours</span>
               </span>
               <span class="legend-item">
-                <span class="legend-line" style="--legend-colour: var(--extra-purple)"></span>
+                <span class="legend-line is-gap" style="--legend-colour: var(--extra-purple)"></span>
                 <span>Extra clinicians</span>
               </span>
             </div>
@@ -159,13 +146,13 @@
       <div id="chartShell" class="chart-shell">
         <canvas
           id="oversupplyChart"
-          aria-label="Australian optometry clinical capacity compared with Medicare-billed service demand, with excess capacity expressed as extra clinicians"
+          aria-label="Australian optometry clinician supply compared with Medicare-billed service demand, with the shaded gap labelled as extra clinicians for each year"
           role="img"
         ></canvas>
       </div>
 
       <p class="method-note">
-        Extra clinicians = active clinical workforce capacity above Medicare-billed service demand, expressed using observed average clinical hours per active clinician.
+        Extra clinicians = active clinical workforce capacity above Medicare-billed service demand, expressed using observed average clinical hours per active clinician
       </p>
     </main>
   </div>
@@ -233,20 +220,15 @@
     const statusElement = document.getElementById('status');
     const dataSourceIndicator = document.getElementById('dataSourceIndicator');
     const dataSourceText = document.getElementById('dataSourceText');
-    const yoyTrendToggle = document.getElementById('yoyTrendToggle');
-    const trendLabelElement = yoyTrendToggle.querySelector('.yoy-toggle-label');
     const chartShell = document.getElementById('chartShell');
     const chartCanvas = document.getElementById('oversupplyChart');
 
     let sourceData = null;
     let displayRows = [];
     let chart = null;
-    let trendMode = '3yr';
-    let trendController = null;
     let responsiveController = null;
     let chartSummary = null;
     let hoursScale = null;
-    let extraScale = null;
     let leftAxisController = null;
 
     // ============================================================
@@ -565,13 +547,7 @@
         ...displayRows.flatMap(row => [row.clinicalHoursM, row.medicareHoursM])
       );
 
-      const extraValues = displayRows.map(row => row.extraClinicians);
-      const minExtra = Math.min(...extraValues);
-      const maxExtra = Math.max(...extraValues);
-
       const hoursMax = niceCeiling(maxHours * 1.04, 5);
-      const extraMax = niceCeiling(Math.max(0, maxExtra) * 1.08, 5);
-      const extraMin = minExtra < 0 ? -niceCeiling(Math.abs(minExtra) * 1.08, 5) : 0;
 
       hoursScale = {
         min: 0,
@@ -579,28 +555,6 @@
         intervals: 5,
         step: hoursMax / 5
       };
-
-      extraScale = {
-        min: extraMin,
-        max: Math.max(extraMax, extraMin + 5),
-        intervals: 5,
-        step: (Math.max(extraMax, extraMin + 5) - extraMin) / 5
-      };
-    }
-
-    function trendWindowSize() {
-      return trendMode === '10yr' ? 10 : trendMode === '3yr' ? 3 : 0;
-    }
-
-    function extraClinicianTrend() {
-      const windowSize = trendWindowSize();
-      if (windowSize < 2) return NaN;
-
-      return PFFCharts.latestConsecutiveTrend(
-        displayRows,
-        row => row.extraClinicians,
-        windowSize
-      );
     }
 
     // ============================================================
@@ -614,153 +568,68 @@
       }
     });
 
-    const rightAxisPlugin = {
-      id: 'pffExtraCliniciansRightAxis',
-      afterDraw(chartInstance) {
-        const { ctx, chartArea } = chartInstance;
-        if (!chartArea || !extraScale) return;
-
-        const mobile = PFFCharts.mobileLayout();
-        const majorCount = extraScale.intervals;
-        const span = extraScale.max - extraScale.min;
-
-        ctx.save();
-        ctx.lineCap = 'butt';
-        ctx.font = `${mobile ? 9 : 10}px Lato, sans-serif`;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-
-        for (let index = 0; index <= majorCount; index += 1) {
-          const ratio = index / majorCount;
-          const value = extraScale.min + span * ratio;
-          const y = chartArea.bottom - chartArea.height * ratio;
-
-          ctx.strokeStyle = COLOURS.extra;
-          ctx.globalAlpha = 0.86;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(chartArea.right, Math.round(y) + 0.5);
-          ctx.lineTo(chartArea.right + 5, Math.round(y) + 0.5);
-          ctx.stroke();
-
-          ctx.globalAlpha = 0.92;
-          ctx.fillStyle = COLOURS.extra;
-          ctx.fillText(
-            PFFCharts.formatInteger(Math.round(value)),
-            chartArea.right + 8,
-            y
-          );
-
-          if (index < majorCount) {
-            const minorY = chartArea.bottom - chartArea.height * (ratio + 0.5 / majorCount);
-            ctx.strokeStyle = COLOURS.extra;
-            ctx.globalAlpha = 0.38;
-            ctx.lineWidth = 0.7;
-            ctx.beginPath();
-            ctx.moveTo(chartArea.right, Math.round(minorY) + 0.5);
-            ctx.lineTo(chartArea.right + 2, Math.round(minorY) + 0.5);
-            ctx.stroke();
-          }
-        }
-
-        ctx.globalAlpha = 0.80;
-        ctx.strokeStyle = COLOURS.extra;
-        ctx.lineWidth = 1.1;
-        ctx.beginPath();
-        ctx.moveTo(Math.round(chartArea.right) + 0.5, chartArea.top);
-        ctx.lineTo(Math.round(chartArea.right) + 0.5, chartArea.bottom);
-        ctx.stroke();
-
-        const titleX = chartArea.right + (mobile ? 50 : 56);
-        const titleY = chartArea.top + chartArea.height / 2;
-        ctx.translate(titleX, titleY);
-        ctx.rotate(Math.PI / 2);
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = COLOURS.extra;
-        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText('Extra clinicians', 0, 0);
-        ctx.restore();
-      }
-    };
-
-    const latestExtraLabelPlugin = {
-      id: 'pffLatestExtraCliniciansLabel',
+    const gapLabelsPlugin = {
+      id: 'pffExtraCliniciansGapLabels',
       afterDatasetsDraw(chartInstance) {
         if (!displayRows.length) return;
 
-        const datasetIndex = 2;
-        const meta = chartInstance.getDatasetMeta(datasetIndex);
-        if (!meta || meta.hidden || !meta.data?.length) return;
+        const supplyMeta = chartInstance.getDatasetMeta(0);
+        const medicareMeta = chartInstance.getDatasetMeta(1);
+        if (!supplyMeta?.data?.length || !medicareMeta?.data?.length) return;
 
-        const lastIndex = displayRows.length - 1;
-        const point = meta.data[lastIndex];
-        const latest = displayRows[lastIndex];
-        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-
-        const trend = extraClinicianTrend();
-        const valueText = `${PFFCharts.formatInteger(Math.round(latest.extraClinicians))} extra`;
-        const arrow = trend > 0.05 ? '↑' : trend < -0.05 ? '↓' : '';
-        const trendText = trendMode === 'off' || !Number.isFinite(trend)
-          ? ''
-          : ` · ${arrow ? `${arrow} ` : ''}${Math.abs(trend).toFixed(1)}% p.a.`;
-
-        const labelText = `${valueText}${trendText}`;
         const { ctx, chartArea } = chartInstance;
         const mobile = PFFCharts.mobileLayout();
-        const fontSize = mobile ? 8.2 : 9.1;
-        const height = mobile ? 15 : 16;
-        const paddingX = mobile ? 5 : 6;
+        const fontSize = mobile ? 7.8 : 8.6;
+        const boxHeight = mobile ? 13 : 14;
+        const padX = mobile ? 3.5 : 4;
 
         ctx.save();
         ctx.font = `700 ${fontSize}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const width = ctx.measureText(labelText).width + paddingX * 2;
-        const right = Math.min(chartArea.right - 4, Math.max(chartArea.left + width + 5, point.x - 5));
-        const left = right - width;
-        const y = PFFCharts.clamp(point.y - 13, chartArea.top + height / 2, chartArea.bottom - height / 2);
-        const top = y - height / 2;
-        const radius = 3;
 
-        if (Math.abs(point.y - y) > 3 || point.x < left) {
-          ctx.strokeStyle = 'rgba(105, 113, 138, 0.58)';
-          ctx.lineWidth = 0.8;
+        displayRows.forEach((row, index) => {
+          const supplyPoint = supplyMeta.data[index];
+          const medicarePoint = medicareMeta.data[index];
+          if (!supplyPoint || !medicarePoint) return;
+          if (![supplyPoint.x, supplyPoint.y, medicarePoint.y].every(Number.isFinite)) return;
+
+          const label = PFFCharts.formatInteger(Math.round(row.extraClinicians));
+          const width = ctx.measureText(label).width + padX * 2;
+          const x = PFFCharts.clamp(
+            supplyPoint.x,
+            chartArea.left + width / 2 + 1,
+            chartArea.right - width / 2 - 1
+          );
+          const y = PFFCharts.clamp(
+            (supplyPoint.y + medicarePoint.y) / 2,
+            chartArea.top + boxHeight / 2 + 1,
+            chartArea.bottom - boxHeight / 2 - 1
+          );
+          const left = x - width / 2;
+          const top = y - boxHeight / 2;
+          const radius = 3;
+
           ctx.beginPath();
-          ctx.moveTo(point.x, point.y);
-          ctx.lineTo(PFFCharts.clamp(point.x, left, right), y);
+          ctx.moveTo(left + radius, top);
+          ctx.lineTo(left + width - radius, top);
+          ctx.quadraticCurveTo(left + width, top, left + width, top + radius);
+          ctx.lineTo(left + width, top + boxHeight - radius);
+          ctx.quadraticCurveTo(left + width, top + boxHeight, left + width - radius, top + boxHeight);
+          ctx.lineTo(left + radius, top + boxHeight);
+          ctx.quadraticCurveTo(left, top + boxHeight, left, top + boxHeight - radius);
+          ctx.lineTo(left, top + radius);
+          ctx.quadraticCurveTo(left, top, left + radius, top);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.86)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(102, 0, 255, 0.24)';
+          ctx.lineWidth = 0.6;
           ctx.stroke();
-        }
 
-        ctx.beginPath();
-        ctx.moveTo(left + radius, top);
-        ctx.lineTo(right - radius, top);
-        ctx.quadraticCurveTo(right, top, right, top + radius);
-        ctx.lineTo(right, top + height - radius);
-        ctx.quadraticCurveTo(right, top + height, right - radius, top + height);
-        ctx.lineTo(left + radius, top + height);
-        ctx.quadraticCurveTo(left, top + height, left, top + height - radius);
-        ctx.lineTo(left, top + radius);
-        ctx.quadraticCurveTo(left, top, left + radius, top);
-        ctx.closePath();
-        ctx.fillStyle = PFFCharts.seriesTint(COLOURS.extra, 0.20, 0.84);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(102, 0, 255, 0.42)';
-        ctx.lineWidth = 0.65;
-        ctx.stroke();
-
-        ctx.textAlign = 'left';
-        ctx.fillStyle = COLOURS.extra;
-        ctx.fillText(valueText, left + paddingX, y);
-
-        if (trendText) {
-          const valueWidth = ctx.measureText(valueText).width;
-          ctx.fillStyle = trend > 0.05
-            ? '#14823b'
-            : trend < -0.05
-              ? '#b42318'
-              : '#69718a';
-          ctx.fillText(trendText, left + paddingX + valueWidth, y);
-        }
+          ctx.fillStyle = COLOURS.extra;
+          ctx.fillText(label, x, y + 0.2);
+        });
 
         ctx.restore();
       }
@@ -776,25 +645,6 @@
           axis.width = PFFCharts.mobileLayout() ? 61 : 69;
         }
       });
-    }
-
-    function rightScaleOptions() {
-      return {
-        position: 'right',
-        min: extraScale.min,
-        max: extraScale.max,
-        afterFit(axis) {
-          axis.width = PFFCharts.mobileLayout() ? 67 : 75;
-        },
-        grid: {
-          display: false,
-          drawOnChartArea: false,
-          drawTicks: false
-        },
-        border: { display: false },
-        ticks: { display: false },
-        title: { display: false }
-      };
     }
 
     function datasets() {
@@ -834,22 +684,6 @@
           pointBorderWidth: 1,
           cubicInterpolationMode: 'monotone',
           order: 3
-        }),
-
-        PFFCharts.lineDataset({
-          label: 'Extra clinicians',
-          _seriesKey: 'extra',
-          _activeSeries: true,
-          yAxisID: 'yExtra',
-          data: displayRows.map(row => ({ x: row.year, y: row.extraClinicians })),
-          borderColor: COLOURS.extra,
-          backgroundColor: COLOURS.extra,
-          pointBackgroundColor: COLOURS.extra,
-          pointBorderColor: '#ffffff',
-          borderWidth: 3,
-          pointBorderWidth: 1,
-          cubicInterpolationMode: 'monotone',
-          order: 1
         })
       ];
     }
@@ -901,8 +735,7 @@
         },
         scales: {
           x: PFFCharts.xYearScaleOptions(),
-          y: leftScaleOptions(),
-          yExtra: rightScaleOptions()
+          y: leftScaleOptions()
         }
       });
     }
@@ -941,8 +774,7 @@
         plugins: [
           leftAxisController.plugin,
           yearTicksPlugin,
-          rightAxisPlugin,
-          latestExtraLabelPlugin
+          gapLabelsPlugin
         ]
       });
 
@@ -952,33 +784,16 @@
     function updateAccessibleSummary() {
       if (!displayRows.length) return;
       const latest = displayRows[displayRows.length - 1];
-      const trend = extraClinicianTrend();
-      const trendText = trendMode === 'off' || !Number.isFinite(trend)
-        ? 'Trend display is off.'
-        : `${trendMode === '10yr' ? '10-year' : '3-year'} Extra clinicians trend ${trend >= 0 ? 'increased' : 'decreased'} by ${Math.abs(trend).toFixed(1)} percent per year.`;
 
       PFFCharts.updateChartSummary(
-        `Supply versus Medicare service demand, ${displayRows[0].year} to ${latest.year}. In ${latest.year}, clinical hours worked were ${latest.clinicalHoursM.toFixed(2)} million, Medicare-billed hours were ${latest.medicareHoursM.toFixed(2)} million, and excess capacity was ${PFFCharts.formatInteger(Math.round(latest.extraClinicians))} extra clinicians. ${trendText}`,
+        `Clinician supply minus Medicare service demand, ${displayRows[0].year} to ${latest.year}. In ${latest.year}, clinical hours worked were ${latest.clinicalHoursM.toFixed(2)} million, Medicare-billed hours were ${latest.medicareHoursM.toFixed(2)} million, and the shaded gap represented ${PFFCharts.formatInteger(Math.round(latest.extraClinicians))} extra clinicians.`,
         chartSummary
       );
     }
 
     // ============================================================
-    // CONTROLS + STARTUP
+    // STARTUP
     // ============================================================
-
-    trendController = PFFCharts.setupTrendToggle({
-      button: yoyTrendToggle,
-      initialMode: trendMode,
-      onChange(mode) {
-        trendMode = mode;
-        if (trendLabelElement && mode === 'off') {
-          trendLabelElement.textContent = 'Trend off';
-        }
-        updateAccessibleSummary();
-        chart?.draw();
-      }
-    });
 
     chartSummary = PFFCharts.ensureChartSummary({ parent: app });
 
@@ -1087,7 +902,6 @@
         }
 
         createChart();
-        trendController?.set(trendMode, false);
         responsiveController?.refresh();
 
         return chart;
