@@ -855,8 +855,80 @@
           };
         }
 
-        const top = chosen.top;
-        const left = chosen.left;
+        // Smoothly ease the value pill between collision-safe positions instead
+        // of snapping when the tooltip or a trend pill changes its target position.
+        const now = typeof performance !== 'undefined' && performance.now
+          ? performance.now()
+          : Date.now();
+        const reducedMotion =
+          typeof PFFCharts.reducedMotion === 'function' &&
+          PFFCharts.reducedMotion();
+
+        let motion = chartInstance.$pffGapPillMotion;
+        if (
+          !motion ||
+          !Number.isFinite(motion.left) ||
+          !Number.isFinite(motion.top)
+        ) {
+          motion = {
+            left: chosen.left,
+            top: chosen.top,
+            targetLeft: chosen.left,
+            targetTop: chosen.top,
+            lastTime: now,
+            rafId: null
+          };
+          chartInstance.$pffGapPillMotion = motion;
+        }
+
+        motion.targetLeft = chosen.left;
+        motion.targetTop = chosen.top;
+
+        if (reducedMotion) {
+          motion.left = motion.targetLeft;
+          motion.top = motion.targetTop;
+          motion.lastTime = now;
+        } else {
+          const elapsed = PFFCharts.clamp(
+            now - (Number.isFinite(motion.lastTime) ? motion.lastTime : now - 16),
+            8,
+            40
+          );
+          const timeConstant = mobile ? 68 : 78;
+          const easing = 1 - Math.exp(-elapsed / timeConstant);
+
+          motion.left += (motion.targetLeft - motion.left) * easing;
+          motion.top += (motion.targetTop - motion.top) * easing;
+          motion.lastTime = now;
+
+          const distance = Math.hypot(
+            motion.targetLeft - motion.left,
+            motion.targetTop - motion.top
+          );
+
+          if (distance < 0.25) {
+            motion.left = motion.targetLeft;
+            motion.top = motion.targetTop;
+          } else if (motion.rafId === null) {
+            motion.rafId = requestAnimationFrame(() => {
+              motion.rafId = null;
+              if (chartInstance?.ctx) {
+                chartInstance.draw();
+              }
+            });
+          }
+        }
+
+        const left = PFFCharts.clamp(
+          motion.left,
+          chartArea.left + 2,
+          chartArea.right - boxWidth - 2
+        );
+        const top = PFFCharts.clamp(
+          motion.top,
+          chartArea.top + 1,
+          chartArea.bottom - boxHeight - 1
+        );
 
         ctx.beginPath();
         ctx.moveTo(left + radius, top);
@@ -879,6 +951,16 @@
         ctx.fillText(label, left + padX, top + boxHeight / 2 + 0.2);
 
         ctx.restore();
+      },
+
+      afterDestroy(chartInstance) {
+        const motion = chartInstance?.$pffGapPillMotion;
+        if (motion?.rafId !== null && motion?.rafId !== undefined) {
+          cancelAnimationFrame(motion.rafId);
+        }
+        if (chartInstance) {
+          chartInstance.$pffGapPillMotion = null;
+        }
       }
     };
 
