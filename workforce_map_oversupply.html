@@ -91,7 +91,7 @@
               role="tab"
               aria-selected="true"
               tabindex="0"
-            >Supply – Demand</button>
+            >Oversupply</button>
           </div>
         </div>
 
@@ -883,6 +883,71 @@
       });
     }
 
+    function alignedTooltipLabel(context) {
+      const value = Number(context.raw);
+      if (!Number.isFinite(value)) return '';
+
+      const dataIndex = context.dataIndex;
+      const tooltipRows = SERIES
+        .map(series => {
+          const rowValue = Number(rows[dataIndex]?.values?.[series.key]);
+          if (!Number.isFinite(rowValue)) return null;
+
+          const trend = trendForSeries(series.key);
+          return {
+            key: series.key,
+            label: `${series.label}:`,
+            count: PFFCharts.formatInteger(Math.round(rowValue)),
+            trend: Number.isFinite(trend)
+              ? `· ${trend >= 0 ? '+' : '−'}${Math.abs(trend).toFixed(1)}% p.a. (10yr)`
+              : ''
+          };
+        })
+        .filter(Boolean);
+
+      const current = tooltipRows.find(
+        item => item.key === context.dataset?._seriesKey
+      );
+      if (!current) return '';
+
+      const canvasContext = context.chart?.ctx;
+      const tooltip = context.chart?.tooltip;
+      const toFont = Chart?.helpers?.toFont;
+
+      if (!canvasContext || typeof toFont !== 'function') {
+        return `${current.label}  ${current.count}${current.trend ? `  ${current.trend}` : ''}`;
+      }
+
+      const previousFont = canvasContext.font;
+
+      try {
+        const bodyFont = toFont(tooltip?.options?.bodyFont || {});
+        if (bodyFont?.string) canvasContext.font = bodyFont.string;
+
+        const measure = text => canvasContext.measureText(String(text)).width;
+        const maxLabelWidth = Math.max(...tooltipRows.map(item => measure(item.label)));
+        const maxCountWidth = Math.max(...tooltipRows.map(item => measure(item.count)));
+        const spaceWidth = Math.max(measure(' '), 1);
+        const columnGap = PFFCharts.mobileLayout() ? 8 : 10;
+
+        const spacesFor = pixels =>
+          ' '.repeat(Math.max(2, Math.ceil(pixels / spaceWidth)));
+
+        const beforeCount = spacesFor(
+          maxLabelWidth - measure(current.label) + columnGap
+        );
+        const beforeTrend = spacesFor(
+          maxCountWidth - measure(current.count) + columnGap
+        );
+
+        return current.trend
+          ? `${current.label}${beforeCount}${current.count}${beforeTrend}${current.trend}`
+          : `${current.label}${beforeCount}${current.count}`;
+      } finally {
+        canvasContext.font = previousFont;
+      }
+    }
+
     function tooltipOptions() {
       return PFFCharts.tooltipOptions({
         mode: 'index',
@@ -896,16 +961,7 @@
           },
 
           label(context) {
-            const value = Number(context.raw);
-            if (!Number.isFinite(value)) return '';
-
-            const base =
-              `${context.dataset._seriesLabel}: ${PFFCharts.formatInteger(Math.round(value))}`;
-
-            const trend = trendForSeries(context.dataset._seriesKey);
-            return Number.isFinite(trend)
-              ? `${base} · ${trend >= 0 ? '+' : '−'}${Math.abs(trend).toFixed(1)}% p.a. (10yr)`
-              : base;
+            return alignedTooltipLabel(context);
           }
         }
       });
