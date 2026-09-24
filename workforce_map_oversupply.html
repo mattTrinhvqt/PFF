@@ -146,7 +146,7 @@
       <div id="chartShell" class="chart-shell">
         <canvas
           id="oversupplyChart"
-          aria-label="Australian optometry clinician supply compared with Medicare-billed service demand, with the shaded gap labelled as extra clinicians for each year"
+          aria-label="Australian optometry clinician supply compared with Medicare-billed service demand, with the shaded gap measured as extra clinicians"
           role="img"
         ></canvas>
       </div>
@@ -568,8 +568,8 @@
       }
     });
 
-    const gapLabelsPlugin = {
-      id: 'pffExtraCliniciansGapLabels',
+    const gapMeasurementPlugin = {
+      id: 'pffExtraCliniciansGapMeasurement',
       afterDatasetsDraw(chartInstance) {
         if (!displayRows.length) return;
 
@@ -577,59 +577,102 @@
         const medicareMeta = chartInstance.getDatasetMeta(1);
         if (!supplyMeta?.data?.length || !medicareMeta?.data?.length) return;
 
+        const activeElements =
+          typeof chartInstance.getActiveElements === 'function'
+            ? chartInstance.getActiveElements()
+            : [];
+
+        const hoveredIndex = activeElements.find(
+          item => Number.isInteger(item?.index)
+        )?.index;
+
+        const index = Number.isInteger(hoveredIndex)
+          ? hoveredIndex
+          : displayRows.length - 1;
+
+        const row = displayRows[index];
+        const supplyPoint = supplyMeta.data[index];
+        const medicarePoint = medicareMeta.data[index];
+
+        if (!row || !supplyPoint || !medicarePoint) return;
+        if (![supplyPoint.x, supplyPoint.y, medicarePoint.y].every(Number.isFinite)) return;
+
         const { ctx, chartArea } = chartInstance;
         const mobile = PFFCharts.mobileLayout();
-        const fontSize = mobile ? 7.8 : 8.6;
-        const boxHeight = mobile ? 13 : 14;
-        const padX = mobile ? 3.5 : 4;
+        const lineX = PFFCharts.clamp(
+          supplyPoint.x,
+          chartArea.left + 1,
+          chartArea.right - 1
+        );
+        const yTop = Math.min(supplyPoint.y, medicarePoint.y);
+        const yBottom = Math.max(supplyPoint.y, medicarePoint.y);
+        const yMid = (yTop + yBottom) / 2;
+
+        const fontSize = mobile ? 8.7 : 9.5;
+        const boxHeight = mobile ? 16 : 17;
+        const padX = mobile ? 5 : 6;
+        const label = `${PFFCharts.formatInteger(Math.round(row.extraClinicians))} extra clinicians`;
 
         ctx.save();
+
+        // Vertical measurement line between supply and Medicare demand.
+        ctx.strokeStyle = 'rgba(102, 0, 255, 0.82)';
+        ctx.lineWidth = mobile ? 1.2 : 1.35;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(lineX, yTop + 1);
+        ctx.lineTo(lineX, yBottom - 1);
+        ctx.stroke();
+
+        // Short horizontal end caps make the gap measurement explicit.
+        const capHalf = mobile ? 3.5 : 4;
+        ctx.beginPath();
+        ctx.moveTo(lineX - capHalf, yTop);
+        ctx.lineTo(lineX + capHalf, yTop);
+        ctx.moveTo(lineX - capHalf, yBottom);
+        ctx.lineTo(lineX + capHalf, yBottom);
+        ctx.stroke();
+
+        // Compact label beside the selected gap. At rest this marks the latest year;
+        // hover/touch moves the measurement to the selected historical year.
         ctx.font = `700 ${fontSize}px Lato, sans-serif`;
-        ctx.textAlign = 'center';
+        ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
 
-        displayRows.forEach((row, index) => {
-          const supplyPoint = supplyMeta.data[index];
-          const medicarePoint = medicareMeta.data[index];
-          if (!supplyPoint || !medicarePoint) return;
-          if (![supplyPoint.x, supplyPoint.y, medicarePoint.y].every(Number.isFinite)) return;
+        const textWidth = ctx.measureText(label).width;
+        const boxWidth = textWidth + padX * 2;
+        const gapFromLine = mobile ? 5 : 6;
+        const roomRight = chartArea.right - lineX;
+        const placeRight = roomRight >= boxWidth + gapFromLine + 2;
+        const left = placeRight
+          ? lineX + gapFromLine
+          : lineX - gapFromLine - boxWidth;
+        const top = PFFCharts.clamp(
+          yMid - boxHeight / 2,
+          chartArea.top + 1,
+          chartArea.bottom - boxHeight - 1
+        );
+        const radius = 3.5;
 
-          const label = PFFCharts.formatInteger(Math.round(row.extraClinicians));
-          const width = ctx.measureText(label).width + padX * 2;
-          const x = PFFCharts.clamp(
-            supplyPoint.x,
-            chartArea.left + width / 2 + 1,
-            chartArea.right - width / 2 - 1
-          );
-          const y = PFFCharts.clamp(
-            (supplyPoint.y + medicarePoint.y) / 2,
-            chartArea.top + boxHeight / 2 + 1,
-            chartArea.bottom - boxHeight / 2 - 1
-          );
-          const left = x - width / 2;
-          const top = y - boxHeight / 2;
-          const radius = 3;
+        ctx.beginPath();
+        ctx.moveTo(left + radius, top);
+        ctx.lineTo(left + boxWidth - radius, top);
+        ctx.quadraticCurveTo(left + boxWidth, top, left + boxWidth, top + radius);
+        ctx.lineTo(left + boxWidth, top + boxHeight - radius);
+        ctx.quadraticCurveTo(left + boxWidth, top + boxHeight, left + boxWidth - radius, top + boxHeight);
+        ctx.lineTo(left + radius, top + boxHeight);
+        ctx.quadraticCurveTo(left, top + boxHeight, left, top + boxHeight - radius);
+        ctx.lineTo(left, top + radius);
+        ctx.quadraticCurveTo(left, top, left + radius, top);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(102, 0, 255, 0.28)';
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
 
-          ctx.beginPath();
-          ctx.moveTo(left + radius, top);
-          ctx.lineTo(left + width - radius, top);
-          ctx.quadraticCurveTo(left + width, top, left + width, top + radius);
-          ctx.lineTo(left + width, top + boxHeight - radius);
-          ctx.quadraticCurveTo(left + width, top + boxHeight, left + width - radius, top + boxHeight);
-          ctx.lineTo(left + radius, top + boxHeight);
-          ctx.quadraticCurveTo(left, top + boxHeight, left, top + boxHeight - radius);
-          ctx.lineTo(left, top + radius);
-          ctx.quadraticCurveTo(left, top, left + radius, top);
-          ctx.closePath();
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.86)';
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(102, 0, 255, 0.24)';
-          ctx.lineWidth = 0.6;
-          ctx.stroke();
-
-          ctx.fillStyle = COLOURS.extra;
-          ctx.fillText(label, x, y + 0.2);
-        });
+        ctx.fillStyle = COLOURS.extra;
+        ctx.fillText(label, left + padX, top + boxHeight / 2 + 0.2);
 
         ctx.restore();
       }
@@ -707,7 +750,6 @@
             return [
               `Clinical hours worked: ${row.clinicalHoursM.toFixed(2)} million`,
               `Medicare-billed hours: ${row.medicareHoursM.toFixed(2)} million`,
-              `Extra clinicians: ${PFFCharts.formatInteger(Math.round(row.extraClinicians))}`,
               `Supply − service demand: ${row.gapHoursM.toFixed(2)} million hours`
             ];
           }
@@ -774,7 +816,7 @@
         plugins: [
           leftAxisController.plugin,
           yearTicksPlugin,
-          gapLabelsPlugin
+          gapMeasurementPlugin
         ]
       });
 
