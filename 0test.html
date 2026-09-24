@@ -23263,6 +23263,7 @@ function sortKeysByCountDesc(counts) {
 
   const seriesByKey = new Map(ABS_MULTI_SERIES.map(item => [item.key, item]));
   const selectedComparators = new Set();
+  let absResultsEnabled = false;
   const comparatorMarkers = new Map();
   const rowElements = new Map();
 
@@ -23473,6 +23474,132 @@ function sortKeysByCountDesc(counts) {
     status.style.color = isError ? 'var(--benchmark-red)' : '';
   }
 
+  function hasValidBenchmarkForAbs_() {
+    const input = document.getElementById('currentSalary');
+    const numeric = Number(
+      String(input?.value ?? '')
+        .replace(/[^0-9.\-]/g, '')
+        .trim()
+    );
+    return Number.isFinite(numeric) && numeric > 0;
+  }
+
+  function showBenchmarkWarningForAbs_(drawAttention = false) {
+    const warning = document.getElementById('benchmarkRequiredWarning');
+    const field = document.getElementById('benchmarkField');
+    const input = document.getElementById('currentSalary');
+
+    warning?.classList.toggle('is-visible', !hasValidBenchmarkForAbs_());
+    warning?.setAttribute('aria-hidden', String(hasValidBenchmarkForAbs_()));
+    field?.classList.toggle('has-required-warning', !hasValidBenchmarkForAbs_());
+    input?.setAttribute('aria-invalid', String(!hasValidBenchmarkForAbs_()));
+
+    if (drawAttention && warning && !hasValidBenchmarkForAbs_()) {
+      warning.classList.remove('is-attention');
+      void warning.offsetWidth;
+      warning.classList.add('is-attention');
+    }
+  }
+
+  function syncAbsBenchmarkGate_(drawAttention = false) {
+    const section = document.getElementById('absMultiCompare');
+    const locked = !hasValidBenchmarkForAbs_();
+    section?.classList.toggle('is-benchmark-locked', locked);
+    section?.querySelector('.abs-multi-picker')?.setAttribute('aria-disabled', String(locked));
+    if (!locked) showBenchmarkWarningForAbs_(false);
+    else if (drawAttention) showBenchmarkWarningForAbs_(true);
+  }
+
+  function requireBenchmarkForAbs_() {
+    if (hasValidBenchmarkForAbs_()) {
+      syncAbsBenchmarkGate_(false);
+      return true;
+    }
+
+    syncAbsBenchmarkGate_(true);
+    const input = document.getElementById('currentSalary');
+    const field = document.getElementById('benchmarkField');
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
+    const isMobile = window.matchMedia?.('(max-width: 430px)')?.matches || false;
+
+    if (isMobile) {
+      field?.scrollIntoView({
+        behavior: reduceMotion ? 'auto' : 'smooth',
+        block: 'center',
+        inline: 'nearest'
+      });
+    }
+
+    window.setTimeout(
+      () => input?.focus({ preventScroll: true }),
+      reduceMotion ? 0 : 180
+    );
+
+    return false;
+  }
+
+  function formatAbsHours_() {
+    const hours = currentFteWeeklyHours();
+    const rounded = Math.round(hours * 100) / 100;
+    return Number.isInteger(rounded)
+      ? String(rounded)
+      : String(rounded).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  function updateAbsResultsSummary_() {
+    const title = document.getElementById('absResultsSummaryTitle');
+    const values = document.getElementById('absResultsSummaryValues');
+    const toggle = document.getElementById('absMultiResultsToggle');
+    if (!title || !values) return;
+
+    const count = selectedComparators.size;
+    if (toggle) toggle.checked = Boolean(absResultsEnabled && count);
+
+    if (!count || !absResultsEnabled) {
+      title.innerHTML = 'ABS income comparisons <em>(optional)</em>';
+      values.hidden = true;
+      values.textContent = '';
+      return;
+    }
+
+    const year = Math.round(Number(getTargetYear()) || CURRENT_CALENDAR_YEAR);
+    title.innerHTML =
+      `<a class="abs-results-source-link" href="${ABS_MULTI_SOURCE_URL}" target="_blank" rel="noopener noreferrer">ABS ${year}</a> income:`;
+
+    const selected = ABS_MULTI_SERIES.filter(meta => selectedComparators.has(meta.key));
+    const parts = [
+      `<span>${formatAbsHours_()} hrs/wk</span>`,
+      ...selected.map(meta => `<span>${meta.shortLabel}</span>`)
+    ];
+
+    values.innerHTML = parts
+      .map((part, index) =>
+        `${index ? '<span class="abs-results-summary-separator" aria-hidden="true">·</span>' : ''}${part}`
+      )
+      .join('');
+    values.hidden = false;
+  }
+
+  function fitAbsInputLabels_() {
+    const labels = document.querySelectorAll('.abs-input-comparators .abs-multi-option-label');
+    labels.forEach(label => {
+      label.style.fontSize = '';
+      const option = label.closest('.abs-multi-option');
+      const content = label.closest('.abs-multi-option-content');
+      if (!option || !content) return;
+
+      const base = window.matchMedia?.('(max-width: 430px)')?.matches ? 9 : 10;
+      let size = base;
+      label.style.fontSize = `${size}px`;
+      label.style.whiteSpace = 'nowrap';
+
+      while (size > 6.6 && content.scrollWidth > option.clientWidth + 0.5) {
+        size -= 0.2;
+        label.style.fontSize = `${size.toFixed(1)}px`;
+      }
+    });
+  }
+
   function buildComparatorUi() {
     const inputAnchor = document.getElementById('hpssInputDetails') || document.getElementById('benchmarkField');
     const resultsAnchor = document.getElementById('hpssCompare');
@@ -23491,7 +23618,11 @@ function sortKeysByCountDesc(counts) {
         <input type="checkbox" data-abs-comparator="${meta.key}">
         <span class="abs-multi-option-content">
           <span class="abs-multi-option-dot" aria-hidden="true"></span>
-          <span class="abs-multi-option-label">${meta.label}</span>
+          <span class="abs-multi-option-label">${
+            meta.group === 'Professional occupation groups'
+              ? meta.label.replace(/\s+Professionals$/i, '')
+              : meta.label
+          }</span>
         </span>
       </label>
     `).join('');
@@ -23528,7 +23659,7 @@ function sortKeysByCountDesc(counts) {
           <span id="absMultiCount" class="abs-multi-count" aria-live="polite"></span>
         </summary>
         <div class="abs-multi-picker">
-          <p class="abs-multi-picker-intro">Choose any pay group(s) to compare with your benchmark pay</p>
+          <p class="abs-multi-picker-intro">Choose any pay group(s) to compare against</p>
           ${groupHtml}
         </div>
       </details>
@@ -23542,6 +23673,23 @@ function sortKeysByCountDesc(counts) {
     resultSection.className = 'abs-comparator-results';
     resultSection.hidden = true;
     resultSection.innerHTML = `
+      <div id="absResultsSummary" class="abs-results-summary">
+        <span class="abs-results-summary-main">
+          <span id="absResultsSummaryTitle" class="abs-results-summary-title">ABS income comparisons <em>(optional)</em></span>
+          <span id="absResultsSummaryValues" class="abs-results-summary-values" hidden></span>
+        </span>
+        <label
+          class="abs-multi-results-checkbox-wrap"
+          for="absMultiResultsToggle"
+          aria-label="Turn ABS income comparisons on or off"
+        >
+          <input
+            id="absMultiResultsToggle"
+            class="abs-multi-results-checkbox"
+            type="checkbox"
+          >
+        </label>
+      </div>
       <div id="absSelectedList" class="abs-selected-list" hidden></div>
     `;
     resultsAnchor.insertAdjacentElement('afterend', resultSection);
@@ -23552,6 +23700,7 @@ function sortKeysByCountDesc(counts) {
         const key = input.dataset.absComparator;
         if (input.checked) selectedComparators.add(key);
         else selectedComparators.delete(key);
+        absResultsEnabled = selectedComparators.size > 0;
         syncComparatorSelectionUi();
         if (selectedComparators.size) loadAbsRows();
         refreshAllComparatorOutputs(true);
@@ -23559,8 +23708,63 @@ function sortKeysByCountDesc(counts) {
       });
     });
 
-    document.getElementById('absMultiDetails')?.addEventListener('toggle', () => {
+    const absDetails = document.getElementById('absMultiDetails');
+    const absPicker = inputSection.querySelector('.abs-multi-picker');
+    const absResultsToggle = document.getElementById('absMultiResultsToggle');
+
+    absDetails?.addEventListener('toggle', () => {
+      syncAbsBenchmarkGate_(absDetails.open);
       if (typeof refreshCalculatorLayout === 'function') refreshCalculatorLayout();
+    });
+
+    absPicker?.addEventListener(
+      'pointerdown',
+      event => {
+        if (!hasValidBenchmarkForAbs_()) {
+          event.preventDefault();
+          event.stopPropagation();
+          requireBenchmarkForAbs_();
+        }
+      },
+      true
+    );
+
+    absPicker?.addEventListener(
+      'focusin',
+      event => {
+        if (!hasValidBenchmarkForAbs_()) {
+          event.preventDefault();
+          requireBenchmarkForAbs_();
+        }
+      },
+      true
+    );
+
+    absResultsToggle?.addEventListener('change', event => {
+      const wantsEnabled = Boolean(event.currentTarget.checked);
+
+      if (wantsEnabled && !selectedComparators.size) {
+        absResultsEnabled = false;
+        event.currentTarget.checked = false;
+
+        const app = document.getElementById('app');
+        if (app?.classList.contains('is-input-collapsed') && typeof setInputPanelCollapsed === 'function') {
+          setInputPanelCollapsed(false);
+        }
+
+        requestAnimationFrame(() => {
+          if (absDetails) absDetails.open = true;
+          syncAbsBenchmarkGate_(true);
+          if (!hasValidBenchmarkForAbs_()) requireBenchmarkForAbs_();
+          if (typeof refreshCalculatorLayout === 'function') refreshCalculatorLayout();
+        });
+
+        syncComparatorSelectionUi();
+        return;
+      }
+
+      absResultsEnabled = wantsEnabled;
+      refreshAllComparatorOutputs(true);
     });
 
   }
@@ -23584,7 +23788,7 @@ function sortKeysByCountDesc(counts) {
         <div id="payTrendChartStatus" class="pay-trend-chart-status" hidden aria-live="polite"></div>
       </div>
       <p class="pay-trend-note">
-        Solid lines show observed history where available; dashed lines show projections; HPSS reflects Award pay-point progression and projected rates; ABS projections use each series’ historical trend; Optoms and You begin from the current calculator estimate
+        Solid lines show observed history; dotted lines show forecast projections based on historical trends
       </p>
     `;
     anchor.insertAdjacentElement('afterend', section);
@@ -23593,12 +23797,17 @@ function sortKeysByCountDesc(counts) {
 
   function syncComparatorSelectionUi() {
     const count = selectedComparators.size;
+    if (!count) absResultsEnabled = false;
+
     const countEl = document.getElementById('absMultiCount');
     if (countEl) countEl.textContent = count ? `${count} selected` : '';
+
     const list = document.getElementById('absSelectedList');
     const resultsSection = document.getElementById('absComparatorResults');
-    if (list) list.hidden = count === 0;
-    if (resultsSection) resultsSection.hidden = count === 0;
+    if (list) list.hidden = count === 0 || !absResultsEnabled;
+    if (resultsSection) resultsSection.hidden = false;
+
+    updateAbsResultsSummary_();
   }
 
   function ensureComparatorMarker(meta) {
@@ -23670,7 +23879,7 @@ function sortKeysByCountDesc(counts) {
     ABS_MULTI_SERIES.forEach(meta => {
       const marker = ensureComparatorMarker(meta);
       if (!marker) return;
-      if (!selectedComparators.has(meta.key) || !absRows.length || !market) {
+      if (!absResultsEnabled || !selectedComparators.has(meta.key) || !absRows.length || !market) {
         marker.hidden = true;
         return;
       }
@@ -23710,10 +23919,14 @@ function sortKeysByCountDesc(counts) {
     row.style.setProperty('--series-colour', meta.colour);
     row.innerHTML = `
       <span class="abs-selected-sentence">
-        <span class="abs-selected-lead">You earn</span>
-        <strong class="abs-selected-diff">–</strong>
-        <strong class="abs-selected-relation-word">more</strong>
-        <span class="abs-selected-than-word">than</span>
+        <span class="abs-selected-lead-block">
+          <span class="abs-selected-lead">You earn</span>
+          <strong class="abs-selected-diff">–</strong>
+        </span>
+        <span class="abs-selected-relation-block">
+          <strong class="abs-selected-relation-word">more</strong>
+          <span class="abs-selected-than-word">than</span>
+        </span>
         <span class="abs-selected-group-wrap">
           <span class="abs-selected-name-dot" aria-hidden="true"></span>
           <strong class="abs-selected-name-text">${meta.label}</strong>
@@ -23721,6 +23934,7 @@ function sortKeysByCountDesc(counts) {
         </span>
       </span>
     `;
+    row.title = meta.label;
     list.appendChild(row);
     rowElements.set(meta.key, row);
     return row;
@@ -23772,7 +23986,7 @@ function sortKeysByCountDesc(counts) {
     ABS_MULTI_SERIES.forEach(meta => {
       const row = ensureSelectedRow(meta);
       if (!row) return;
-      const selected = selectedComparators.has(meta.key);
+      const selected = absResultsEnabled && selectedComparators.has(meta.key);
       row.hidden = !selected;
       if (!selected) return;
 
@@ -23794,7 +24008,7 @@ function sortKeysByCountDesc(counts) {
       }
 
       const display = displayComparatorValue(hourly);
-      if (valueEl) valueEl.textContent = `(${formatMoney(display)})`;
+      if (valueEl) valueEl.textContent = `: ${formatMoney(display)}`;
 
       if (Number.isFinite(benchmarkDisplay)) {
         const difference = benchmarkDisplay - display;
@@ -23856,7 +24070,7 @@ function sortKeysByCountDesc(counts) {
   function trendMinYear() {
     const years = [];
 
-    if (absRows.length) {
+    if (absResultsEnabled && absRows.length) {
       selectedComparators.forEach(key => {
         const rows = getSeriesRows(key);
         if (rows.length) years.push(rows[0].year);
@@ -23903,42 +24117,46 @@ function sortKeysByCountDesc(counts) {
       .sort((a, b) => a.x - b.x);
   }
 
+  function hpssTrendEnabled_() {
+    return Boolean(
+      typeof hpssResultsEnabled !== 'undefined' &&
+      hpssResultsEnabled &&
+      typeof hpssSelectedLevel !== 'undefined' &&
+      hpssSelectedLevel
+    );
+  }
+
+  function absTrendEnabled_() {
+    return Boolean(absResultsEnabled && selectedComparators.size);
+  }
+
+  function trendComparisonsEnabled_() {
+    return hpssTrendEnabled_() || absTrendEnabled_();
+  }
+
   function buildTrendModel() {
     const datasets = [];
     const legend = [];
     const maxYear = currentProjectionMaxYear();
 
-    if (typeof hpssProjection !== 'undefined' && Array.isArray(hpssProjection) && hpssProjection.length) {
-      const marketData = hpssProjection
-        .map(point => ({ x: Number(point?.year), y: chartValueFromAnnual(point?.marketRes?.p50) }))
-        .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
-      if (marketData.length) {
-        datasets.push({
-          label: 'Optoms',
-          pffLegendLabel: 'Optoms',
-          data: marketData,
-          parsing: false,
-          borderColor: '#6600ff',
-          backgroundColor: '#6600ff',
-          borderWidth: TREND_LINE_WIDTH,
-          pointRadius: 0,
-          pointHoverRadius: 0,
-          borderDash: [6, 4],
-          tension: 0,
-          fill: false,
-          spanGaps: true,
-          order: 3
-        });
-        legend.push({ label: 'Optoms', colour: '#6600ff', dashed: true });
-      }
-
+    if (
+      trendComparisonsEnabled_() &&
+      typeof hpssProjection !== 'undefined' &&
+      Array.isArray(hpssProjection) &&
+      hpssProjection.length
+    ) {
       const benchmarkData = hpssProjection
         .map(point => ({ x: Number(point?.year), y: chartValueFromAnnual(point?.projectedPay) }))
         .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y) && point.y > 0);
+
       if (benchmarkData.length) {
         datasets.push({
           label: 'You',
           pffLegendLabel: 'You',
+          pffMarkerKey: 'you',
+          pffMarkerShape: 'target',
+          pffMarkerColour: '#b42318',
+          pffProjected: true,
           data: benchmarkData,
           parsing: false,
           borderColor: '#b42318',
@@ -23946,23 +24164,26 @@ function sortKeysByCountDesc(counts) {
           borderWidth: TREND_LINE_WIDTH,
           pointRadius: 0,
           pointHoverRadius: 0,
-          borderDash: [5, 4],
+          borderDash: [1.5, 3.5],
+          borderCapStyle: 'round',
           tension: 0,
           fill: false,
           spanGaps: true,
           order: 2
         });
-        legend.push({ label: 'You', colour: '#b42318', dashed: true });
+        legend.push({ label: 'You', colour: '#b42318' });
       }
 
-      const hpssEnabled = typeof hpssResultsEnabled !== 'undefined' && hpssResultsEnabled;
-      if (hpssEnabled) {
+      if (hpssTrendEnabled_()) {
         const awardColour = selectedHpssColour();
         const observedAward = getHpssHistoricalTrendData();
         if (observedAward.length) {
           datasets.push({
             label: 'HPSS Award minimum',
             pffLegendLabel: 'HPSS Award',
+            pffMarkerKey: 'hpss',
+            pffMarkerShape: 'circle',
+            pffMarkerColour: awardColour,
             pffObserved: true,
             data: observedAward,
             parsing: false,
@@ -23989,6 +24210,9 @@ function sortKeysByCountDesc(counts) {
           datasets.push({
             label: 'HPSS Award minimum forecast',
             pffLegendLabel: 'HPSS Award',
+            pffMarkerKey: 'hpss',
+            pffMarkerShape: 'circle',
+            pffMarkerColour: awardColour,
             pffProjected: true,
             data: futureAward,
             parsing: false,
@@ -23997,18 +24221,19 @@ function sortKeysByCountDesc(counts) {
             borderWidth: TREND_LINE_WIDTH,
             pointRadius: 0,
             pointHoverRadius: 0,
-            borderDash: [4, 4],
+            borderDash: [1.5, 3.5],
+            borderCapStyle: 'round',
             tension: 0,
             fill: false,
             spanGaps: true,
             order: 5
           });
-          legend.push({ label: 'HPSS Award', colour: awardColour, dashed: false });
+          legend.push({ label: 'HPSS Award', colour: awardColour });
         }
       }
     }
 
-    if (absRows.length) {
+    if (absResultsEnabled && absRows.length) {
       selectedComparators.forEach(key => {
         const meta = seriesByKey.get(key);
         if (!meta) return;
@@ -24019,6 +24244,9 @@ function sortKeysByCountDesc(counts) {
           label: meta.label,
           pffLegendLabel: meta.shortLabel,
           pffSeriesKey: key,
+          pffMarkerKey: `abs:${key}`,
+          pffMarkerShape: 'square',
+          pffMarkerColour: meta.colour,
           pffObserved: true,
           data: observed.map(row => ({ x: row.year, y: chartValueFromHourly(row.value) })),
           parsing: false,
@@ -24043,6 +24271,9 @@ function sortKeysByCountDesc(counts) {
           label: `${meta.label} forecast`,
           pffLegendLabel: meta.shortLabel,
           pffSeriesKey: key,
+          pffMarkerKey: `abs:${key}`,
+          pffMarkerShape: 'square',
+          pffMarkerColour: meta.colour,
           pffProjected: true,
           data: projectedData,
           parsing: false,
@@ -24051,13 +24282,14 @@ function sortKeysByCountDesc(counts) {
           borderWidth: TREND_LINE_WIDTH,
           pointRadius: 0,
           pointHoverRadius: 0,
-          borderDash: [5, 4],
+          borderDash: [1.5, 3.5],
+          borderCapStyle: 'round',
           tension: 0,
           fill: false,
           spanGaps: true,
           order: 7
         });
-        legend.push({ label: meta.shortLabel, colour: meta.colour, dashed: false });
+        legend.push({ label: meta.shortLabel, colour: meta.colour });
       });
     }
 
@@ -24094,28 +24326,57 @@ function sortKeysByCountDesc(counts) {
       if (!Number.isFinite(x) || x < area.left || x > area.right) return;
       const ctx = chart.ctx;
       ctx.save();
-      ctx.strokeStyle = 'rgba(102, 0, 255, 0.30)';
+      ctx.strokeStyle = 'rgba(105, 113, 138, 0.26)';
       ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
+      ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(Math.round(x) + 0.5, area.top);
       ctx.lineTo(Math.round(x) + 0.5, area.bottom);
       ctx.stroke();
       ctx.setLineDash([]);
 
+      const drawnMarkers = new Set();
+
       chart.data.datasets.forEach(dataset => {
+        const markerKey = dataset.pffMarkerKey || dataset.pffLegendLabel || dataset.label;
+        if (drawnMarkers.has(markerKey)) return;
+
         const value = datasetValueAtYear(dataset, visualTrendYear);
         if (!Number.isFinite(value)) return;
         const y = yScale.getPixelForValue(value);
         if (!Number.isFinite(y) || y < area.top || y > area.bottom) return;
-        const colour = dataset.borderColor || dataset.backgroundColor || '#151515';
+
+        const colour = dataset.pffMarkerColour || dataset.borderColor || dataset.backgroundColor || '#151515';
+        const shape = dataset.pffMarkerShape || 'circle';
+        drawnMarkers.add(markerKey);
+
+        if (shape === 'square') {
+          const size = 7;
+          ctx.fillStyle = colour;
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.rect(x - size / 2, y - size / 2, size, size);
+          ctx.fill();
+          ctx.stroke();
+          return;
+        }
+
+        const radius = 4.2;
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = 1.6;
         ctx.beginPath();
-        ctx.fillStyle = colour;
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 0.65;
-        ctx.arc(x, y, 2.15, 0, Math.PI * 2);
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+
+        if (shape === 'target') {
+          ctx.fillStyle = colour;
+          ctx.beginPath();
+          ctx.arc(x, y, 1.55, 0, Math.PI * 2);
+          ctx.fill();
+        }
       });
 
       ctx.restore();
@@ -24183,6 +24444,28 @@ function sortKeysByCountDesc(counts) {
     return formatMoney(Number(value), !salaryMode());
   }
 
+  function addMinorTicks_(scale) {
+    const majors = (scale.ticks || [])
+      .map(tick => ({ ...tick, value: Number(tick.value), pffMajor: true }))
+      .filter(tick => Number.isFinite(tick.value))
+      .sort((a, b) => a.value - b.value);
+
+    if (majors.length < 2) return;
+
+    const expanded = [];
+    majors.forEach((tick, index) => {
+      expanded.push(tick);
+      const next = majors[index + 1];
+      if (!next) return;
+      const midpoint = (tick.value + next.value) / 2;
+      if (Number.isFinite(midpoint) && midpoint > tick.value && midpoint < next.value) {
+        expanded.push({ value: midpoint, pffMajor: false });
+      }
+    });
+
+    scale.ticks = expanded;
+  }
+
   function createTrendChart() {
     const canvas = document.getElementById('payTrendChart');
     const status = document.getElementById('payTrendChartStatus');
@@ -24203,7 +24486,7 @@ function sortKeysByCountDesc(counts) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        devicePixelRatio: Math.min(window.devicePixelRatio || 1, 3),
+        devicePixelRatio: Math.max(2, Math.min(window.devicePixelRatio || 1, 3)),
         animation: REDUCE_MOTION ? false : { duration: 360, easing: 'easeOutCubic' },
         transitions: {
           active: { animation: { duration: REDUCE_MOTION ? 0 : 140, easing: 'easeOutCubic' } },
@@ -24243,7 +24526,13 @@ function sortKeysByCountDesc(counts) {
             afterBuildTicks(scale) {
               const start = Math.ceil(Number(scale.min));
               const end = Math.floor(Number(scale.max));
-              scale.ticks = Array.from({ length: Math.max(0, end - start + 1) }, (_, index) => ({ value: start + index }));
+              scale.ticks = Array.from(
+                { length: Math.max(0, end - start + 1) },
+                (_, index) => {
+                  const value = start + index;
+                  return { value, pffMajor: value % 5 === 0 };
+                }
+              );
             },
             title: {
               display: true,
@@ -24281,6 +24570,9 @@ function sortKeysByCountDesc(counts) {
           },
           y: {
             beginAtZero: false,
+            afterBuildTicks(scale) {
+              addMinorTicks_(scale);
+            },
             title: {
               display: true,
               text: salaryMode() ? 'FTE salary ($)' : 'Hourly rate ($)',
@@ -24289,19 +24581,31 @@ function sortKeysByCountDesc(counts) {
             },
             ticks: {
               color: '#151515',
-              autoSkip: true,
+              autoSkip: false,
               padding: 3,
               maxTicksLimit: 5,
               font: { family: 'Lato', size: window.matchMedia('(max-width: 430px)').matches ? 9 : 10, weight: '400' },
-              callback: yTickLabel
+              callback(value, index, ticks) {
+                return ticks?.[index]?.pffMajor === false ? '' : yTickLabel(value);
+              }
             },
             grid: {
-              color: 'rgba(105, 113, 138, 0.075)',
-              lineWidth: 1,
+              color(context) {
+                return context.tick?.pffMajor === false
+                  ? 'rgba(105, 113, 138, 0.035)'
+                  : 'rgba(105, 113, 138, 0.075)';
+              },
+              lineWidth(context) {
+                return context.tick?.pffMajor === false ? 0.7 : 1;
+              },
               drawTicks: true,
-              tickLength: 5,
+              tickLength(context) {
+                return context.tick?.pffMajor === false ? 1.5 : 5;
+              },
               tickColor: '#151515',
-              tickWidth: 1.1
+              tickWidth(context) {
+                return context.tick?.pffMajor === false ? 0.7 : 1.1;
+              }
             },
             border: { display: false }
           }
@@ -24321,7 +24625,7 @@ function sortKeysByCountDesc(counts) {
     if (!legend) return;
     legend.innerHTML = items.map(item => `
       <span class="pay-trend-legend-item" style="--series-colour:${item.colour};">
-        <span class="pay-trend-legend-line ${item.dashed ? 'is-dashed' : ''}" aria-hidden="true"></span>
+        <span class="pay-trend-legend-line" aria-hidden="true"></span>
         <span>${item.label}</span>
       </span>
     `).join('');
@@ -24332,8 +24636,9 @@ function sortKeysByCountDesc(counts) {
     const status = document.getElementById('payTrendChartStatus');
     if (!section) return;
     const hasResults = Boolean(typeof lastRes !== 'undefined' && lastRes);
-    section.hidden = !hasResults;
-    if (!hasResults) return;
+    const hasActiveComparison = trendComparisonsEnabled_();
+    section.hidden = !(hasResults && hasActiveComparison);
+    if (!hasResults || !hasActiveComparison) return;
 
     activeTrendYear = getTargetYear();
     animateTrendFocusYear(activeTrendYear);
@@ -24390,6 +24695,7 @@ function sortKeysByCountDesc(counts) {
     activeTrendYear = getTargetYear();
     animateTrendFocusYear(activeTrendYear);
     refreshSliderUi();
+    updateAbsResultsSummary_();
     updateSelectedComparatorRows(true);
     updateComparatorMarkers();
     queueTrendChartRefresh(false);
@@ -24410,6 +24716,7 @@ function sortKeysByCountDesc(counts) {
       activeTrendYear = getTargetYear();
       animateTrendFocusYear(activeTrendYear);
       refreshSliderUi();
+      updateAbsResultsSummary_();
       updateSelectedComparatorRows(true);
       updateComparatorMarkers();
       queueTrendChartRefresh(false);
@@ -24426,6 +24733,7 @@ function sortKeysByCountDesc(counts) {
     });
 
     document.getElementById('currentSalary')?.addEventListener('input', () => {
+      syncAbsBenchmarkGate_(false);
       requestAnimationFrame(() => refreshAllComparatorOutputs(false));
     });
 
@@ -24448,7 +24756,11 @@ function sortKeysByCountDesc(counts) {
       observer.observe(app, { attributes: true, attributeFilter: ['class'] });
     }
 
-    window.addEventListener('resize', () => queueTrendChartRefresh(false));
+    window.addEventListener('resize', () => {
+      fitAbsInputLabels_();
+      trendChart?.resize();
+      queueTrendChartRefresh(false);
+    });
   }
 
   function hideLegacyAbsControls() {
@@ -24463,6 +24775,8 @@ function sortKeysByCountDesc(counts) {
     hideLegacyAbsControls();
     buildComparatorUi();
     buildTrendUi();
+    syncAbsBenchmarkGate_(false);
+    fitAbsInputLabels_();
     syncComparatorSelectionUi();
     installEventBridges();
     if (typeof hpssActiveProjectionIndex !== 'undefined') activeOffset = Number(hpssActiveProjectionIndex) || 0;
@@ -25077,5 +25391,352 @@ function sortKeysByCountDesc(counts) {
     }
   }
 </style>
+
+<style id="pffMultiComparatorTrendV5RequestedStyles">
+  /* Input summary aligns exactly with the HPSS optional heading. */
+  .abs-input-comparators .abs-multi-details > summary {
+    justify-content: flex-start !important;
+    min-height: 40px !important;
+    padding: 9px 2px 8px !important;
+    gap: 8px !important;
+    color: var(--ink) !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    line-height: 1.25 !important;
+    text-align: left !important;
+  }
+
+  .abs-input-comparators .abs-multi-summary-main {
+    justify-content: flex-start !important;
+    text-align: left !important;
+  }
+
+  .abs-input-comparators .abs-multi-count {
+    right: 25px !important;
+  }
+
+  .abs-input-comparators .abs-multi-picker {
+    text-align: left !important;
+  }
+
+  .abs-input-comparators .abs-multi-picker-intro,
+  .abs-input-comparators .abs-multi-group-title {
+    color: var(--muted) !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    letter-spacing: normal !important;
+    line-height: 1.15 !important;
+    text-align: left !important;
+  }
+
+  .abs-input-comparators .abs-multi-picker-intro {
+    margin: 0 0 7px !important;
+  }
+
+  .abs-input-comparators .abs-multi-group-title {
+    display: flex !important;
+    min-height: 22px !important;
+    margin: 0 0 3px !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    text-transform: uppercase !important;
+  }
+
+  .abs-input-comparators .abs-multi-option {
+    min-height: 32px !important;
+    padding: 3px 3px 4px !important;
+    color: var(--ink) !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    line-height: 1.1 !important;
+  }
+
+  .abs-input-comparators .abs-multi-option-label {
+    min-width: 0;
+    color: var(--ink) !important;
+    font-size: 10px;
+    font-weight: 700 !important;
+    line-height: 1.1 !important;
+    white-space: nowrap !important;
+  }
+
+  .abs-input-comparators .abs-multi-column-group .abs-multi-option,
+  .abs-input-comparators .abs-multi-column-group .abs-multi-option-content,
+  .abs-input-comparators .abs-multi-column-group .abs-multi-option-label {
+    justify-content: flex-start !important;
+    text-align: left !important;
+  }
+
+  .abs-input-comparators .abs-multi-column-group .abs-multi-option-content {
+    width: 100%;
+  }
+
+  .abs-input-comparators.is-benchmark-locked .abs-multi-picker {
+    opacity: 0.48;
+    transition: opacity 180ms ease;
+    cursor: default !important;
+  }
+
+  .abs-input-comparators.is-benchmark-locked .abs-multi-option,
+  .abs-input-comparators.is-benchmark-locked .abs-multi-option-content,
+  .abs-input-comparators.is-benchmark-locked .abs-multi-option-label {
+    cursor: default !important;
+  }
+
+  /* Native select chevrons keep their own space; move the standard warning left. */
+  .calculator-form > .field.has-core-required-warning:has(select)::after {
+    right: 24px !important;
+  }
+
+  /* ABS result mini-summary mirrors the HPSS Award summary row. */
+  .abs-comparator-results {
+    width: 100%;
+    margin-top: 8px !important;
+    padding-top: 0 !important;
+    border-top: 2px solid var(--track) !important;
+    color: var(--ink);
+    text-align: left;
+  }
+
+  .abs-results-summary {
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    padding: 9px 2px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  .abs-results-summary-main {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .abs-results-summary-title {
+    flex: 0 0 auto;
+    padding-right: 2px;
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  .abs-results-summary-title em {
+    color: var(--muted);
+    font-style: italic;
+    font-weight: 400;
+  }
+
+  .abs-results-source-link,
+  .abs-results-source-link:visited {
+    color: var(--purple);
+    font-weight: 700;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+
+  .abs-results-summary-values {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.25;
+    scrollbar-width: none;
+    white-space: nowrap;
+  }
+
+  .abs-results-summary-values[hidden] {
+    display: none !important;
+  }
+
+  .abs-results-summary-values::-webkit-scrollbar {
+    display: none;
+  }
+
+  .abs-results-summary-separator {
+    flex: 0 0 auto;
+    color: var(--track);
+  }
+
+  .abs-multi-results-checkbox-wrap {
+    display: inline-flex;
+    flex: 0 0 auto;
+    margin-left: auto;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .abs-multi-results-checkbox {
+    width: 17px;
+    height: 17px;
+    margin: 0;
+    accent-color: var(--purple);
+    cursor: pointer;
+  }
+
+  /* Three stable left-aligned blocks across every selected ABS comparison. */
+  .abs-selected-list {
+    gap: 1px !important;
+    padding: 0 2px 3px !important;
+  }
+
+  .abs-selected-row {
+    display: block !important;
+    padding: 3px 1px !important;
+  }
+
+  .abs-selected-sentence {
+    display: grid !important;
+    grid-template-columns: 12.2em 5.6em minmax(0, 1fr) !important;
+    width: 100%;
+    min-width: 0;
+    align-items: baseline !important;
+    column-gap: 0.38em !important;
+    color: var(--ink) !important;
+    font-size: 9px !important;
+    line-height: 1.28 !important;
+    text-align: left !important;
+  }
+
+  .abs-selected-lead-block,
+  .abs-selected-relation-block,
+  .abs-selected-group-wrap {
+    display: inline-flex !important;
+    min-width: 0;
+    align-items: baseline !important;
+    justify-content: flex-start !important;
+    gap: 0.24em !important;
+    text-align: left !important;
+    white-space: nowrap;
+  }
+
+  .abs-selected-lead,
+  .abs-selected-than-word {
+    color: var(--ink) !important;
+    font-weight: 400 !important;
+  }
+
+  .abs-selected-diff,
+  .abs-selected-relation-word {
+    color: var(--purple) !important;
+    font-weight: 700 !important;
+  }
+
+  .abs-selected-group-wrap {
+    display: grid !important;
+    grid-template-columns: 6px minmax(0, auto) auto;
+    column-gap: 4px !important;
+  }
+
+  .abs-selected-name-dot {
+    width: 6px !important;
+    height: 6px !important;
+    min-width: 6px !important;
+    margin: 0 !important;
+    align-self: center !important;
+  }
+
+  .abs-selected-name-text {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ink) !important;
+    font-weight: 700 !important;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .abs-selected-comparator-value {
+    margin-left: 0 !important;
+    color: var(--ink) !important;
+    font-weight: 700 !important;
+    white-space: nowrap;
+  }
+
+  /* No separator between the aligned comparison sentences and the graph. */
+  .pay-trend-section {
+    margin-top: 3px !important;
+    padding-top: 0 !important;
+    border-top: 0 !important;
+  }
+
+  .pay-trend-legend-shell,
+  .pay-trend-legend {
+    height: 20px !important;
+    min-height: 20px !important;
+  }
+
+  .pay-trend-legend {
+    gap: 6px !important;
+    padding: 0 2px 1px !important;
+  }
+
+  .pay-trend-legend-item {
+    gap: 3px !important;
+    font-size: 9px !important;
+  }
+
+  .pay-trend-legend-line {
+    width: 10px !important;
+    height: 2px !important;
+    flex: 0 0 10px !important;
+  }
+
+  .pay-trend-chart-shell {
+    height: 176px !important;
+    margin-top: -1px !important;
+  }
+
+  .pay-trend-chart-shell canvas {
+    image-rendering: auto;
+  }
+
+  .pay-trend-note {
+    margin: 4px 0 0 !important;
+    color: var(--muted) !important;
+    font-size: 8.5px !important;
+    font-weight: 400 !important;
+    line-height: 1.35 !important;
+    text-align: center !important;
+  }
+
+  @media (max-width: 430px) {
+    .abs-input-comparators .abs-multi-option-label {
+      font-size: 9px;
+    }
+
+    .abs-selected-sentence {
+      grid-template-columns: 11.2em 5.25em minmax(0, 1fr) !important;
+      font-size: 8.4px !important;
+      column-gap: 0.28em !important;
+    }
+
+    .abs-results-summary-main,
+    .abs-results-summary-values {
+      gap: 4px;
+    }
+
+    .abs-results-summary-title,
+    .abs-results-summary-values {
+      font-size: 10px;
+    }
+  }
+</style>
+
 </body>
 </html>
