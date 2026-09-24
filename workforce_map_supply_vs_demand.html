@@ -1262,14 +1262,48 @@
       const hoverTolerance = () => PFFCharts.mobileLayout() ? 6 : 4;
       let hoverRafId = null;
 
+      let hoveredGapIndex = null;
+
       const handleGapHover = event => {
         if (!chart?.chartArea || event.pointerType === 'touch') return;
 
+        // A tap-pinned year stays fixed until the next press outside the gap.
+        // Re-assert it after Chart.js processes pointer movement so native
+        // hover handling cannot move the tooltip away from the pinned year.
+        if (Number.isInteger(pinnedGapIndex)) {
+          const pinnedIndex = pinnedGapIndex;
+          if (hoverRafId) cancelAnimationFrame(hoverRafId);
+          hoverRafId = requestAnimationFrame(() => {
+            hoverRafId = null;
+            activateGapYear(pinnedIndex, { pin: true });
+          });
+          return;
+        }
+
         const point = eventPointInChart(event);
         const index = gapHitAtPoint(point, hoverTolerance());
-        if (!Number.isInteger(index)) return;
 
         if (hoverRafId) cancelAnimationFrame(hoverRafId);
+
+        if (!Number.isInteger(index)) {
+          const hasVisibleSelection =
+            Number.isInteger(hoveredGapIndex) ||
+            (chart.getActiveElements?.().length || 0) > 0 ||
+            Number(chart.tooltip?.opacity) > 0;
+
+          if (!hasVisibleSelection) return;
+
+          hoveredGapIndex = null;
+          hoverRafId = requestAnimationFrame(() => {
+            hoverRafId = null;
+            clearGapSelection();
+          });
+          return;
+        }
+
+        if (index === hoveredGapIndex) return;
+        hoveredGapIndex = index;
+
         hoverRafId = requestAnimationFrame(() => {
           hoverRafId = null;
           activateGapYear(index, { pin: false });
@@ -1285,6 +1319,8 @@
         if (Number.isInteger(index)) {
           if (event.cancelable) event.preventDefault();
 
+          hoveredGapIndex = null;
+
           // Apply after Chart.js handles the same native event so the chosen
           // year remains pinned until the next tap outside the shaded gap.
           requestAnimationFrame(() => activateGapYear(index, { pin: true }));
@@ -1298,6 +1334,7 @@
 
       const handlePointerLeave = () => {
         if (Number.isInteger(pinnedGapIndex)) return;
+        hoveredGapIndex = null;
         requestAnimationFrame(clearGapSelection);
       };
 
