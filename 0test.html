@@ -113,19 +113,6 @@
         }
       };
 
-      document.addEventListener(
-        'click',
-        event => {
-          if (
-            event.target.closest?.(
-              '.benchmark-mode-button'
-            )
-          ) {
-            window.pffModeChangeCoordinator
-              .schedule();
-          }
-        }
-      );
     }
 
     function scheduleApplyScale() {
@@ -9658,9 +9645,6 @@ function sortKeysByCountDesc(counts) {
           );
         }
 
-        fteHours =
-          FTE_WEEKLY_HOURS;
-
         applyWorkPatternMedians_(
           liveWorkPatternMedians
         );
@@ -9683,9 +9667,6 @@ function sortKeysByCountDesc(counts) {
         buildModelFromTable_(
           snapshot.data.permanentModelTable
         );
-
-        fteHours =
-          FTE_WEEKLY_HOURS;
 
         applyWorkPatternMedians_(
           snapshot.data.workPatternMedians
@@ -11250,11 +11231,6 @@ function sortKeysByCountDesc(counts) {
   const projectedBenchmarkValuePatch =
     document.getElementById('projectedBenchmarkValue');
 
-  const estimateBtnPatch =
-    document.getElementById('estimateBtn');
-
-  const toggleBtnPatch =
-    document.getElementById('toggleBtn');
 
   const labelAnimationTokens =
     new WeakMap();
@@ -14134,82 +14110,6 @@ function sortKeysByCountDesc(counts) {
       );
     });
 
-  estimateBtnPatch?.addEventListener(
-    'click',
-    event => {
-      if (
-        hasAnyHpssHoursAnswer_() &&
-        !hpssSelectedLevel
-      ) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-
-        setHpssAwardLevelWarning_(
-          true,
-          true
-        );
-
-        setHpssInputDetailsOpen_(
-          true,
-          true
-        );
-
-        const reduceMotion =
-          window.pffPrefersReducedMotion();
-
-        hpssLevelFieldset?.scrollIntoView({
-          behavior:
-            reduceMotion
-              ? 'auto'
-              : 'smooth',
-          block: 'center',
-          inline: 'nearest'
-        });
-
-        return;
-      }
-
-      setHpssAwardLevelWarning_(false);
-    },
-    true
-  );
-
-  /* ========================================================
-   * VALIDATE FT HOURS BEFORE THE EXISTING CALCULATE HANDLER
-   * ======================================================== */
-
-  estimateBtnPatch?.addEventListener(
-    'click',
-    event => {
-      if (viewMode !== 'salary') {
-        return;
-      }
-
-      if (!updateFtHoursWarning_()) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-
-        setFormMessage(
-          `⚠ Enter paid full-time hours from ${USER_FTE_HOURS_MIN} to ${USER_FTE_HOURS_MAX}`,
-          true
-        );
-
-        benchmarkFtHoursInput?.focus({
-          preventScroll: true
-        });
-
-        selectAllFtHours_();
-
-        return;
-      }
-
-      fteHours =
-        Number(
-          benchmarkFtHoursInput.value
-        );
-    },
-    true
-  );
 
   /* ========================================================
    * HOURS-NORMALISED HPSS CALCULATION
@@ -16709,14 +16609,6 @@ function sortKeysByCountDesc(counts) {
       return result;
     };
 
-  /* Existing results-view toggle uses the newly patched functions. */
-  toggleBtnPatch?.addEventListener(
-    'click',
-    () => {
-      updateBenchmarkViewLabels_(true);
-      syncBenchmarkModeUi_();
-    }
-  );
 
   function syncStandaloneAbsToggle_(sourceToggle) {
     const inputToggle =
@@ -23522,12 +23414,48 @@ function sortKeysByCountDesc(counts) {
     return absRows.reduce((latest, row) => Math.max(latest, Number(row.year) || 0), 0) || null;
   }
 
+  function paidFtHoursState_() {
+    const input =
+      document.getElementById('benchmarkFtHours');
+    const raw = input?.value.trim() || '';
+    const value = Number(raw);
+    const min = Number(input?.min) || 35;
+    const max = Number(input?.max) || 45;
+
+    return {
+      input,
+      raw,
+      value,
+      min,
+      max,
+      valid:
+        raw !== '' &&
+        Number.isFinite(value) &&
+        value >= min &&
+        value <= max
+    };
+  }
+
   function currentFteWeeklyHours() {
-    const input = document.getElementById('benchmarkFtHours');
-    const entered = Number(input?.value);
-    if (Number.isFinite(entered) && entered > 0) return entered;
-    const fallback = Number(typeof fteHours !== 'undefined' ? fteHours : NaN);
-    return Number.isFinite(fallback) && fallback > 0 ? fallback : 38;
+    const state = paidFtHoursState_();
+    if (state.valid) return state.value;
+
+    if (
+      typeof getUserFteWeeklyHours_ === 'function'
+    ) {
+      return getUserFteWeeklyHours_();
+    }
+
+    const fallback =
+      Number(
+        typeof fteHours !== 'undefined'
+          ? fteHours
+          : NaN
+      );
+
+    return Number.isFinite(fallback) && fallback > 0
+      ? fallback
+      : 38;
   }
 
   function annualHours() {
@@ -25752,20 +25680,11 @@ function sortKeysByCountDesc(counts) {
       return false;
     }
 
-    if (salaryMode()) {
-      const ftHoursInput =
-        document.getElementById('benchmarkFtHours');
-      const ftHours = Number(ftHoursInput?.value);
-      const min = Number(ftHoursInput?.min) || 35;
-      const max = Number(ftHoursInput?.max) || 45;
-
-      if (
-        !Number.isFinite(ftHours) ||
-        ftHours < min ||
-        ftHours > max
-      ) {
-        return false;
-      }
+    if (
+      salaryMode() &&
+      !paidFtHoursState_().valid
+    ) {
+      return false;
     }
 
     if (!hpssHoursStateValid_()) {
@@ -26040,19 +25959,13 @@ function sortKeysByCountDesc(counts) {
       return true;
     }
 
-    if (source === 'ftHours' && salaryMode()) {
-      const hours = Number(ftHoursInput?.value);
-      const min = Number(ftHoursInput?.min) || 35;
-      const max = Number(ftHoursInput?.max) || 45;
-
-      if (
-        !Number.isFinite(hours) ||
-        hours < min ||
-        hours > max
-      ) {
-        ftHoursInput?.focus();
-        return true;
-      }
+    if (
+      source === 'ftHours' &&
+      salaryMode() &&
+      !paidFtHoursState_().valid
+    ) {
+      ftHoursInput?.focus();
+      return true;
     }
 
     if (focusComparisonKind_(nextKind)) {
@@ -26112,9 +26025,102 @@ function sortKeysByCountDesc(counts) {
     return null;
   }
 
+  function requireHpssAwardLevel_() {
+    if (
+      typeof setHpssInputDetailsOpen_ === 'function'
+    ) {
+      setHpssInputDetailsOpen_(true, true);
+    } else {
+      const details =
+        document.getElementById('hpssInputDetails');
+      if (details) details.open = true;
+    }
+
+    const warning =
+      document.getElementById('hpssAwardLevelWarning');
+
+    warning?.classList.add('is-visible');
+    warning?.setAttribute('aria-hidden', 'false');
+
+    if (warning) {
+      warning.classList.remove('is-attention');
+      void warning.offsetWidth;
+      warning.classList.add('is-attention');
+    }
+
+    const firstLevel =
+      document.querySelector(
+        'input[name="hpssLevel"]:not(:disabled)'
+      );
+
+    const target =
+      firstLevel ||
+      document.getElementById('hpssLevelFieldset');
+
+    if (firstLevel) {
+      returnAttentionScrollFocus_(firstLevel, 80);
+    } else {
+      const reduceMotion =
+        window.pffPrefersReducedMotion();
+
+      target?.scrollIntoView({
+        behavior: reduceMotion ? 'auto' : 'smooth',
+        block: 'center',
+        inline: 'nearest'
+      });
+    }
+  }
+
   function preflightPrimaryAction_() {
     const hpssIntent = hpssBenchmarkIntent_();
     const absIntent = absBenchmarkIntent_();
+    const benchmarkInput =
+      document.getElementById('currentSalary');
+    const benchmarkText =
+      benchmarkInput?.value.trim() || '';
+
+    if (
+      benchmarkText &&
+      !hasValidBenchmarkForAbs_()
+    ) {
+      syncBenchmarkRequirementUi_(false);
+
+      if (typeof setFormMessage === 'function') {
+        setFormMessage(
+          '⚠ Enter a valid benchmark or leave it blank',
+          true
+        );
+      }
+
+      returnAttentionScrollFocus_(
+        benchmarkInput,
+        40
+      );
+      return false;
+    }
+
+    if (salaryMode()) {
+      const ftState = paidFtHoursState_();
+
+      if (!ftState.valid) {
+        if (typeof setFormMessage === 'function') {
+          setFormMessage(
+            `⚠ Enter paid full-time hours from ${ftState.min} to ${ftState.max}`,
+            true
+          );
+        }
+
+        returnAttentionScrollFocus_(
+          ftState.input,
+          40
+        );
+        return false;
+      }
+
+      if (typeof fteHours !== 'undefined') {
+        fteHours = ftState.value;
+      }
+    }
 
     if (!hpssIntent && !absIntent) {
       return true;
@@ -26134,21 +26140,21 @@ function sortKeysByCountDesc(counts) {
       return false;
     }
 
-    if (salaryMode()) {
-      const ftHoursInput =
-        document.getElementById('benchmarkFtHours');
-      const ftHours = Number(ftHoursInput?.value);
-      const min = Number(ftHoursInput?.min) || 35;
-      const max = Number(ftHoursInput?.max) || 45;
+    const hasHpssHours = Boolean(
+      document.getElementById('hpssWeekendHours')
+        ?.value.trim() ||
+      document.getElementById('hpssEveningHours')
+        ?.value.trim()
+    );
+    const hpssLevel = selectedHpssLevel_();
 
-      if (
-        !Number.isFinite(ftHours) ||
-        ftHours < min ||
-        ftHours > max
-      ) {
-        returnAttentionScrollFocus_(ftHoursInput, 40);
-        return false;
-      }
+    if (
+      hpssIntent &&
+      hasHpssHours &&
+      !hpssLevel
+    ) {
+      requireHpssAwardLevel_();
+      return false;
     }
 
     if (hpssIntent && !hpssHoursStateValid_()) {
@@ -26301,23 +26307,9 @@ function sortKeysByCountDesc(counts) {
     const salaryInput = document.getElementById('currentSalary');
     const ftHoursInput = document.getElementById('benchmarkFtHours');
 
-    const syncInputEnterKeyHints_ = () => {
-      salaryInput?.setAttribute(
-        'enterkeyhint',
-        salaryMode() ? 'next' : 'done'
-      );
-      ftHoursInput?.setAttribute(
-        'enterkeyhint',
-        'done'
-      );
-    };
-
-    syncInputEnterKeyHints_();
-
-    window.pffModeChangeCoordinator?.register(
-      'input-keyboard-flow',
-      35,
-      syncInputEnterKeyHints_
+    ftHoursInput?.setAttribute(
+      'enterkeyhint',
+      'done'
     );
 
     salaryInput?.addEventListener(
@@ -26397,14 +26389,18 @@ function sortKeysByCountDesc(counts) {
 
     estimateButton?.addEventListener(
       'click',
-      () => {
+      event => {
         if (preflightPrimaryAction_()) {
           clearReturnAttention_();
-        } else {
-          requestAnimationFrame(
-            () => advanceInputFlow_('calculate')
-          );
+          return;
         }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        requestAnimationFrame(
+          () => advanceInputFlow_('calculate')
+        );
       },
       true
     );
