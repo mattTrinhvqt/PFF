@@ -3884,42 +3884,13 @@
       cursor: pointer;
     }
 
-    /* Temporary next-step cue after a valid Award level is chosen.
-       Only the letters animate, keeping the button itself unchanged. */
+    /* Temporary next-step cue after the form becomes valid.
+       The final attention styles below provide the button-level pulse. */
     #estimateBtn.is-next-action {
       color: var(--ink);
       background: transparent;
       border-color: var(--ink);
       box-shadow: none;
-    }
-
-    #estimateBtn.is-next-action .estimate-cue-letter {
-      display: inline-block;
-      color: var(--ink);
-      animation:
-        estimateNextActionLetterCue
-        1150ms
-        ease-in-out
-        1
-        both;
-      animation-delay:
-        calc(var(--letter-index) * 55ms);
-    }
-
-    @keyframes estimateNextActionLetterCue {
-      0%,
-      8% {
-        color: var(--ink);
-      }
-
-      22%,
-      72% {
-        color: var(--purple);
-      }
-
-      100% {
-        color: var(--ink);
-      }
     }
 
     .benchmark-required-warning.is-attention {
@@ -8912,12 +8883,7 @@ function sortKeysByCountDesc(counts) {
     let calculateCueToken = 0;
 
     function cueCalculateButton_() {
-      if (!estimateBtn) return;
-
-      const label =
-        estimateBtn.textContent.trim();
-
-      if (!label) return;
+      if (!estimateBtn || estimateBtn.disabled) return;
 
       const token =
         ++calculateCueToken;
@@ -8926,67 +8892,23 @@ function sortKeysByCountDesc(counts) {
         'is-next-action'
       );
 
-      estimateBtn.textContent = '';
-
-      [...label].forEach(
-        (character, index) => {
-          const span =
-            document.createElement('span');
-
-          span.className =
-            'estimate-cue-letter';
-
-          span.style.setProperty(
-            '--letter-index',
-            String(index)
-          );
-
-          span.textContent =
-            character === ' '
-              ? '\u00a0'
-              : character;
-
-          estimateBtn.appendChild(span);
-        }
-      );
-
       void estimateBtn.offsetWidth;
 
       estimateBtn.classList.add(
         'is-next-action'
       );
 
-      const totalDuration =
-        1150 +
-        Math.max(0, label.length - 1) * 55 +
-        80;
-
+      /* Three soft pulses are enough to signal that the form is ready
+         without turning the primary action into a persistent animation. */
       window.setTimeout(
         () => {
-          if (
-            token !== calculateCueToken ||
-            !estimateBtn.classList.contains(
-              'is-next-action'
-            )
-          ) {
-            return;
-          }
+          if (token !== calculateCueToken) return;
 
           estimateBtn.classList.remove(
             'is-next-action'
           );
-
-          /* Do not overwrite Calculating/Recalculating if the
-             button was pressed while the cue was running. */
-          if (
-            estimateBtn.querySelector(
-              '.estimate-cue-letter'
-            )
-          ) {
-            estimateBtn.textContent = label;
-          }
         },
-        totalDuration
+        3250
       );
     }
 
@@ -11123,6 +11045,7 @@ function sortKeysByCountDesc(counts) {
   const USER_FTE_HOURS_MAX = 45;
   const HPSS_AWARD_BASE_WEEKLY_HOURS = 38;
   const VIEW_SWITCH_ANIMATION_MS = 240;
+  const HOURLY_CENTS_REVEAL_PROGRESS = 0.88;
 
   const PATCH_ABS_SHEET_ID =
     '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
@@ -13204,12 +13127,12 @@ function sortKeysByCountDesc(counts) {
       target < 1000 &&
       /\.\d{2}(?:\/hr)?$/.test(finalText.replace(/,/g, ''));
 
-    /* During the first part of a salary -> hourly count, keep whole-dollar
-       formatting. This prevents a temporary ".00/hr" width expansion
-       before the much smaller hourly value has counted down. */
+    /* Keep salary -> hourly counts in whole dollars until the final part
+       of the transition. Decimal cents only appear once the much smaller
+       hourly value has nearly settled, avoiding an early width expansion. */
     if (
       switchingAnnualToHourly &&
-      progress < 0.95
+      progress < HOURLY_CENTS_REVEAL_PROGRESS
     ) {
       return formatAnnualCurrency_(
         value
@@ -17433,6 +17356,7 @@ function sortKeysByCountDesc(counts) {
    * ======================================================== */
 
   let readyCueTimerPatch = null;
+  let calculateReadyPreviouslyPatch_ = false;
 
   function numericTextPatch_(element) {
     if (!element) {
@@ -17639,12 +17563,25 @@ function sortKeysByCountDesc(counts) {
     readyCueTimerPatch =
       window.setTimeout(
         () => {
+          const ready =
+            calculateWouldPassPatch_();
+
           if (
-            calculateWouldPassPatch_() &&
+            ready &&
+            !calculateReadyPreviouslyPatch_ &&
             typeof cueCalculateButton_ === 'function'
           ) {
             cueCalculateButton_();
           }
+
+          if (!ready) {
+            document
+              .getElementById('estimateBtn')
+              ?.classList.remove('is-next-action');
+          }
+
+          calculateReadyPreviouslyPatch_ =
+            ready;
         },
         180
       );
@@ -17659,12 +17596,25 @@ function sortKeysByCountDesc(counts) {
   ];
 
   readyBlurIds.forEach(id => {
-    document
-      .getElementById(id)
-      ?.addEventListener(
-        'blur',
-        cueIfReadyPatch_
-      );
+    const control =
+      document.getElementById(id);
+
+    control?.addEventListener(
+      'input',
+      () => {
+        if (!calculateWouldPassPatch_()) {
+          calculateReadyPreviouslyPatch_ = false;
+          document
+            .getElementById('estimateBtn')
+            ?.classList.remove('is-next-action');
+        }
+      }
+    );
+
+    control?.addEventListener(
+      'blur',
+      cueIfReadyPatch_
+    );
   });
 
   [
@@ -17691,7 +17641,8 @@ function sortKeysByCountDesc(counts) {
       );
     });
 
-  /* Re-cue after Edit once a user finishes changing a valid section. */
+  /* Opening Edit does not itself create a new ready cue. A new cue is
+     earned only if the form later becomes incomplete and then valid again. */
   document
     .getElementById(
       'inputSummaryButton'
@@ -17702,6 +17653,9 @@ function sortKeysByCountDesc(counts) {
         window.clearTimeout(
           readyCueTimerPatch
         );
+
+        calculateReadyPreviouslyPatch_ =
+          calculateWouldPassPatch_();
       }
     );
 
@@ -20150,13 +20104,13 @@ function sortKeysByCountDesc(counts) {
 
       /*
        * Match the other salary -> hourly number animations:
-       * keep whole-dollar formatting during the first 62% of
-       * the count so ".00/hr" does not appear while the value
-       * is still large and temporarily widen the text.
+       * keep whole-dollar formatting until the final 12% of
+       * the count so decimal cents appear only once the hourly
+       * value has nearly settled.
        */
       if (
         switchingAnnualToHourly &&
-        progress < 0.62
+        progress < 0.88
       ) {
         element.textContent =
           '$' +
@@ -23234,6 +23188,7 @@ function sortKeysByCountDesc(counts) {
   const TREND_PROJECTION_YEARS = 20;
   const CURRENT_CALENDAR_YEAR = new Date().getFullYear();
   const REDUCE_MOTION = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
+  const HOURLY_CENTS_REVEAL_PROGRESS = 0.88;
 
   const ABS_MULTI_SERIES = [
     { key: 'total', column: 1, label: 'Total (all employees)', shortLabel: 'Total', group: 'Broad comparisons', colour: '#1D4ED8' },
@@ -24012,7 +23967,7 @@ function sortKeysByCountDesc(counts) {
       const eased = 1 - Math.pow(1 - progress, 3);
       const value = start + (end - start) * eased;
       element.textContent =
-        delayedHourlyCents && progress < 0.95
+        delayedHourlyCents && progress < HOURLY_CENTS_REVEAL_PROGRESS
           ? transitionAnnualFormatter(value)
           : formatter(value);
       element.dataset.numericValue = String(value);
@@ -25400,9 +25355,7 @@ function sortKeysByCountDesc(counts) {
       readyToRecalculate
     );
 
-    if (readyToRecalculate) {
-      /* The repeating button cue replaces the one-off letter cue in this
-         specific return-from-results workflow. */
+    if (!readyToRecalculate) {
       calculateButton?.classList.remove('is-next-action');
     }
   }
@@ -25425,6 +25378,10 @@ function sortKeysByCountDesc(counts) {
           'pff-return-attention-button'
         );
       });
+
+    document
+      .getElementById('estimateBtn')
+      ?.classList.remove('is-next-action');
   }
 
   let returnAttentionAdvanceTimer_ = null;
@@ -25685,7 +25642,20 @@ function sortKeysByCountDesc(counts) {
       }
     );
 
-    document.getElementById('estimateBtn')?.addEventListener(
+    const estimateButton =
+      document.getElementById('estimateBtn');
+
+    estimateButton?.addEventListener(
+      'focus',
+      event => {
+        event.currentTarget.classList.remove(
+          'is-next-action',
+          'pff-return-attention-button'
+        );
+      }
+    );
+
+    estimateButton?.addEventListener(
       'click',
       clearReturnAttention_,
       true
@@ -26780,10 +26750,16 @@ function sortKeysByCountDesc(counts) {
   }
 
   #estimateBtn.is-next-action,
-  #estimateBtn:focus:not(:disabled),
   #estimateBtn.pff-return-attention-button {
     outline: none;
-    animation: pffReturnActionPulse 1550ms ease-in-out infinite;
+    animation: pffReturnActionPulse 1050ms ease-in-out 3;
+  }
+
+  #estimateBtn:focus:not(:disabled) {
+    outline: none;
+    border-color: var(--purple);
+    box-shadow: 0 0 0 2px rgba(102, 0, 255, 0.16);
+    animation: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
