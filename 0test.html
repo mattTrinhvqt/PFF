@@ -23992,18 +23992,10 @@ function sortKeysByCountDesc(counts) {
       const progress = Math.min(1, (now - started) / duration);
       const eased = 1 - Math.pow(1 - progress, 3);
       const value = start + (end - start) * eased;
-
-      /*
-       * During Salary -> Hourly, keep the shrinking number in the compact
-       * annual-currency shape until almost complete. Only then introduce
-       * the decimal cents and "/hr" suffix, so the text never grows wider
-       * before it becomes the much shorter hourly value.
-       */
       element.textContent =
         delayedHourlyCents && progress < 0.95
           ? transitionAnnualFormatter(value)
           : formatter(value);
-
       element.dataset.numericValue = String(value);
       if (progress < 1) {
         const id = requestAnimationFrame(frame);
@@ -24024,13 +24016,8 @@ function sortKeysByCountDesc(counts) {
     const previousMode = element.dataset.displayMode || currentMode;
     const modeChanged = previousMode !== currentMode;
 
-    /*
-     * Keep the actual previously displayed numeric value. This allows the
-     * visible number to count from Salary to Hourly (and back) instead of
-     * silently converting the stored start value directly to the target.
-     */
+    /* Keep the visible previous number as the animation start value. */
     element.dataset.displayMode = currentMode;
-
     return {
       modeChanged,
       delayedHourlyCents:
@@ -24439,27 +24426,21 @@ function sortKeysByCountDesc(counts) {
     afterDatasetsDraw(chart) {
       const yScale = chart.scales?.y;
       const area = chart.chartArea;
-      if (!yScale || !area || !Number.isFinite(visualTrendYear)) return;
+      const year = Number(visualTrendYear);
 
-      /*
-       * The selected projection year is always the visible right edge.
-       * Keep the guide and markers fixed there while their Y positions
-       * follow the projected values. This avoids opposing X movements when
-       * the visible year range expands or contracts.
-       */
+      if (
+        !yScale ||
+        !area ||
+        !Number.isFinite(year)
+      ) {
+        return;
+      }
+
+      /* The selected year is the visible right edge. Keep marker X fixed
+         there so slider changes only move markers vertically. */
       const x = area.right;
-      const ctx = chart.ctx;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(105, 113, 138, 0.26)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(Math.round(x) + 0.5, area.top);
-      ctx.lineTo(Math.round(x) + 0.5, area.bottom);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      const markerItems = new Map();
+      const markerItems = [];
+      const markerKeys = new Set();
 
       chart.data.datasets.forEach(dataset => {
         const markerKey =
@@ -24467,13 +24448,10 @@ function sortKeysByCountDesc(counts) {
           dataset.pffLegendLabel ||
           dataset.label;
 
-        if (markerItems.has(markerKey)) return;
+        if (markerKeys.has(markerKey)) return;
 
         const value =
-          datasetValueAtYear(
-            dataset,
-            visualTrendYear
-          );
+          datasetValueAtYear(dataset, year);
 
         if (!Number.isFinite(value)) return;
 
@@ -24488,7 +24466,8 @@ function sortKeysByCountDesc(counts) {
           return;
         }
 
-        markerItems.set(markerKey, {
+        markerKeys.add(markerKey);
+        markerItems.push({
           markerKey,
           y,
           colour:
@@ -24502,35 +24481,35 @@ function sortKeysByCountDesc(counts) {
         });
       });
 
-      /*
-       * Draw "You" last so its target marker always remains visible when
-       * multiple series meet at the same projected value.
-       */
-      Array.from(markerItems.values())
-        .sort((first, second) => {
-          const firstPriority =
-            first.markerKey === 'you' ? 1 : 0;
-          const secondPriority =
-            second.markerKey === 'you' ? 1 : 0;
+      /* Draw You last so its target symbol has visual priority. */
+      markerItems.sort((first, second) =>
+        Number(first.markerKey === 'you') -
+        Number(second.markerKey === 'you')
+      );
 
-          return firstPriority - secondPriority;
-        })
-        .forEach(item => {
-          const {
-            y,
-            colour,
-            shape
-          } = item;
+      const ctx = chart.ctx;
+      ctx.save();
 
-          if (shape === 'square') {
+      try {
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.26)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, area.top);
+        ctx.lineTo(Math.round(x) + 0.5, area.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        markerItems.forEach(item => {
+          if (item.shape === 'square') {
             const size = 7;
-            ctx.fillStyle = colour;
+            ctx.fillStyle = item.colour;
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 0.8;
             ctx.beginPath();
             ctx.rect(
               x - size / 2,
-              y - size / 2,
+              item.y - size / 2,
               size,
               size
             );
@@ -24541,12 +24520,12 @@ function sortKeysByCountDesc(counts) {
 
           const radius = 4.2;
           ctx.fillStyle = '#fff';
-          ctx.strokeStyle = colour;
+          ctx.strokeStyle = item.colour;
           ctx.lineWidth = 1.6;
           ctx.beginPath();
           ctx.arc(
             x,
-            y,
+            item.y,
             radius,
             0,
             Math.PI * 2
@@ -24554,12 +24533,12 @@ function sortKeysByCountDesc(counts) {
           ctx.fill();
           ctx.stroke();
 
-          if (shape === 'target') {
-            ctx.fillStyle = colour;
+          if (item.shape === 'target') {
+            ctx.fillStyle = item.colour;
             ctx.beginPath();
             ctx.arc(
               x,
-              y,
+              item.y,
               1.55,
               0,
               Math.PI * 2
@@ -24567,8 +24546,9 @@ function sortKeysByCountDesc(counts) {
             ctx.fill();
           }
         });
-
-      ctx.restore();
+      } finally {
+        ctx.restore();
+      }
     }
   };
 
@@ -24595,30 +24575,16 @@ function sortKeysByCountDesc(counts) {
   function animateTrendFocusYear(targetYear) {
     const target = Number(targetYear);
     if (!Number.isFinite(target)) return;
-    if (trendYearAnimationFrame) cancelAnimationFrame(trendYearAnimationFrame);
-    if (REDUCE_MOTION || !trendChart) {
-      visualTrendYear = target;
-      trendChart?.draw();
-      return;
+
+    if (trendYearAnimationFrame) {
+      cancelAnimationFrame(trendYearAnimationFrame);
+      trendYearAnimationFrame = null;
     }
-    const start = Number.isFinite(visualTrendYear) ? visualTrendYear : target;
-    const started = performance.now();
-    const duration = 320;
-    const frame = now => {
-      const progress = Math.min(1, (now - started) / duration);
-      const eased = progress < 0.5
-        ? 4 * progress * progress * progress
-        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-      visualTrendYear = start + (target - start) * eased;
-      trendChart?.draw();
-      if (progress < 1) trendYearAnimationFrame = requestAnimationFrame(frame);
-      else {
-        visualTrendYear = target;
-        trendYearAnimationFrame = null;
-        trendChart?.draw();
-      }
-    };
-    trendYearAnimationFrame = requestAnimationFrame(frame);
+
+    /* Do not run a second canvas animation loop while Chart.js is
+       animating the visible year range. The slider itself drives the
+       active marker year synchronously. */
+    visualTrendYear = target;
   }
 
   function yTickLabel(value) {
@@ -25298,6 +25264,101 @@ function sortKeysByCountDesc(counts) {
       });
   }
 
+  let returnAttentionAdvanceTimer_ = null;
+
+  function returnAttentionActive_() {
+    const app = document.getElementById('app');
+    return Boolean(
+      app &&
+      !app.classList.contains('is-input-collapsed') &&
+      returnAttentionContexts.size > 0
+    );
+  }
+
+  function returnAttentionScrollFocus_(element, delay = 0) {
+    if (!element) return;
+
+    const reduceMotion =
+      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ||
+      false;
+
+    window.setTimeout(() => {
+      element.scrollIntoView({
+        behavior: reduceMotion ? 'auto' : 'smooth',
+        block: 'center',
+        inline: 'nearest'
+      });
+
+      window.setTimeout(() => {
+        try {
+          element.focus({ preventScroll: true });
+        } catch (_) {
+          element.focus?.();
+        }
+      }, reduceMotion ? 0 : 180);
+    }, delay);
+  }
+
+  function focusReturnAttentionSection_() {
+    if (!returnAttentionActive_()) return;
+
+    if (!hasValidBenchmarkForAbs_()) {
+      returnAttentionScrollFocus_(
+        document.getElementById('currentSalary')
+      );
+      return;
+    }
+
+    const nextKind =
+      [...returnAttentionContexts].find(
+        kind => !returnAttentionComplete_(kind)
+      );
+
+    if (nextKind === 'hpss') {
+      if (typeof setHpssInputDetailsOpen_ === 'function') {
+        setHpssInputDetailsOpen_(true, true);
+      } else {
+        const details = document.getElementById('hpssInputDetails');
+        if (details) details.open = true;
+      }
+
+      returnAttentionScrollFocus_(
+        document.getElementById('hpssInputDetailsSummary') ||
+        document.getElementById('hpssInputDetails'),
+        80
+      );
+      return;
+    }
+
+    if (nextKind === 'abs') {
+      const details = document.getElementById('absMultiDetails');
+      if (details) details.open = true;
+
+      returnAttentionScrollFocus_(
+        details?.querySelector('summary') ||
+        document.getElementById('absMultiCompare'),
+        80
+      );
+      return;
+    }
+
+    returnAttentionScrollFocus_(
+      document.getElementById('estimateBtn'),
+      80
+    );
+  }
+
+  function scheduleReturnAttentionAdvance_(delay = 240) {
+    if (returnAttentionAdvanceTimer_ !== null) {
+      clearTimeout(returnAttentionAdvanceTimer_);
+    }
+
+    returnAttentionAdvanceTimer_ = window.setTimeout(() => {
+      returnAttentionAdvanceTimer_ = null;
+      focusReturnAttentionSection_();
+    }, delay);
+  }
+
   function installReturnAttention_() {
     const app = document.getElementById('app');
     const hpssToggle = document.getElementById('hpssResultsEnabledToggle');
@@ -25335,15 +25396,69 @@ function sortKeysByCountDesc(counts) {
       true
     );
 
-    document.getElementById('currentSalary')?.addEventListener(
+    const salaryInput = document.getElementById('currentSalary');
+    const ftHoursInput = document.getElementById('benchmarkFtHours');
+
+    salaryInput?.setAttribute('enterkeyhint', 'next');
+    ftHoursInput?.setAttribute('enterkeyhint', 'done');
+
+    salaryInput?.addEventListener(
       'input',
       () => requestAnimationFrame(syncReturnAttention_)
+    );
+
+    salaryInput?.addEventListener(
+      'keydown',
+      event => {
+        if (event.key !== 'Enter' || !returnAttentionActive_()) return;
+
+        event.preventDefault();
+        event.currentTarget.blur();
+
+        if (!hasValidBenchmarkForAbs_()) {
+          requireBenchmarkForAbs_();
+          return;
+        }
+
+        returnAttentionScrollFocus_(ftHoursInput, 40);
+      }
+    );
+
+    ftHoursInput?.addEventListener(
+      'keydown',
+      event => {
+        if (event.key !== 'Enter' || !returnAttentionActive_()) return;
+
+        event.preventDefault();
+
+        const hours = Number(event.currentTarget.value);
+        if (
+          !Number.isFinite(hours) ||
+          hours < USER_FTE_HOURS_MIN ||
+          hours > USER_FTE_HOURS_MAX
+        ) {
+          event.currentTarget.focus();
+          return;
+        }
+
+        event.currentTarget.blur();
+        scheduleReturnAttentionAdvance_(120);
+      }
     );
 
     document.querySelectorAll('input[name="hpssLevel"]').forEach(input => {
       input.addEventListener(
         'change',
-        () => requestAnimationFrame(syncReturnAttention_)
+        () => {
+          requestAnimationFrame(syncReturnAttention_);
+
+          if (
+            returnAttentionContexts.has('hpss') &&
+            returnAttentionComplete_('hpss')
+          ) {
+            scheduleReturnAttentionAdvance_(220);
+          }
+        }
       );
     });
 
@@ -25352,6 +25467,15 @@ function sortKeysByCountDesc(counts) {
       event => {
         if (event.target.closest('[data-abs-comparator]')) {
           requestAnimationFrame(syncReturnAttention_);
+
+          if (
+            returnAttentionContexts.has('abs') &&
+            returnAttentionComplete_('abs')
+          ) {
+            /* A short pause still allows quick multi-selection before the
+               view advances to the next required action. */
+            scheduleReturnAttentionAdvance_(650);
+          }
         }
       }
     );
