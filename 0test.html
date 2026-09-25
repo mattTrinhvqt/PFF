@@ -23972,13 +23972,13 @@ function sortKeysByCountDesc(counts) {
     const end = Number(target);
     const delayedHourlyCents = Boolean(options.delayedHourlyCents);
     const prefix = String(options.prefix || '');
-    const hourlyWholeFormatter = value => {
+    const transitionAnnualFormatter = value => {
       const rounded = Math.round(Number(value));
       return prefix + new Intl.NumberFormat('en-AU', {
         style: 'currency',
         currency: 'AUD',
         maximumFractionDigits: 0
-      }).format(rounded) + '/hr';
+      }).format(rounded);
     };
     if (REDUCE_MOTION || Math.abs(start - end) < 0.005) {
       element.textContent = formatter(end);
@@ -23987,14 +23987,23 @@ function sortKeysByCountDesc(counts) {
       return;
     }
     const started = performance.now();
-    const duration = 260;
+    const duration = 300;
     const frame = now => {
       const progress = Math.min(1, (now - started) / duration);
       const eased = 1 - Math.pow(1 - progress, 3);
       const value = start + (end - start) * eased;
-      element.textContent = delayedHourlyCents && progress < 0.42
-        ? hourlyWholeFormatter(value)
-        : formatter(value);
+
+      /*
+       * During Salary -> Hourly, keep the shrinking number in the compact
+       * annual-currency shape until almost complete. Only then introduce
+       * the decimal cents and "/hr" suffix, so the text never grows wider
+       * before it becomes the much shorter hourly value.
+       */
+      element.textContent =
+        delayedHourlyCents && progress < 0.95
+          ? transitionAnnualFormatter(value)
+          : formatter(value);
+
       element.dataset.numericValue = String(value);
       if (progress < 1) {
         const id = requestAnimationFrame(frame);
@@ -24014,20 +24023,20 @@ function sortKeysByCountDesc(counts) {
     const currentMode = salaryMode() ? 'salary' : 'hourly';
     const previousMode = element.dataset.displayMode || currentMode;
     const modeChanged = previousMode !== currentMode;
-    const storedValue = Number(element.dataset.numericValue);
 
-    if (modeChanged && Number.isFinite(storedValue)) {
-      element.dataset.numericValue = String(
-        currentMode === 'hourly'
-          ? storedValue / annualHours()
-          : storedValue * annualHours()
-      );
-    }
-
+    /*
+     * Keep the actual previously displayed numeric value. This allows the
+     * visible number to count from Salary to Hourly (and back) instead of
+     * silently converting the stored start value directly to the target.
+     */
     element.dataset.displayMode = currentMode;
+
     return {
       modeChanged,
-      delayedHourlyCents: modeChanged && currentMode === 'hourly'
+      delayedHourlyCents:
+        modeChanged &&
+        previousMode === 'salary' &&
+        currentMode === 'hourly'
     };
   }
 
@@ -24428,12 +24437,17 @@ function sortKeysByCountDesc(counts) {
   const activeYearPlugin = {
     id: 'pffActiveTrendYear',
     afterDatasetsDraw(chart) {
-      const xScale = chart.scales?.x;
       const yScale = chart.scales?.y;
       const area = chart.chartArea;
-      if (!xScale || !yScale || !area || !Number.isFinite(visualTrendYear)) return;
-      const x = xScale.getPixelForValue(visualTrendYear);
-      if (!Number.isFinite(x) || x < area.left || x > area.right) return;
+      if (!yScale || !area || !Number.isFinite(visualTrendYear)) return;
+
+      /*
+       * The selected projection year is always the visible right edge.
+       * Keep the guide and markers fixed there while their Y positions
+       * follow the projected values. This avoids opposing X movements when
+       * the visible year range expands or contracts.
+       */
+      const x = area.right;
       const ctx = chart.ctx;
       ctx.save();
       ctx.strokeStyle = 'rgba(105, 113, 138, 0.26)';
@@ -24445,49 +24459,114 @@ function sortKeysByCountDesc(counts) {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      const drawnMarkers = new Set();
+      const markerItems = new Map();
 
       chart.data.datasets.forEach(dataset => {
-        const markerKey = dataset.pffMarkerKey || dataset.pffLegendLabel || dataset.label;
-        if (drawnMarkers.has(markerKey)) return;
+        const markerKey =
+          dataset.pffMarkerKey ||
+          dataset.pffLegendLabel ||
+          dataset.label;
 
-        const value = datasetValueAtYear(dataset, visualTrendYear);
+        if (markerItems.has(markerKey)) return;
+
+        const value =
+          datasetValueAtYear(
+            dataset,
+            visualTrendYear
+          );
+
         if (!Number.isFinite(value)) return;
-        const y = yScale.getPixelForValue(value);
-        if (!Number.isFinite(y) || y < area.top || y > area.bottom) return;
 
-        const colour = dataset.pffMarkerColour || dataset.borderColor || dataset.backgroundColor || '#151515';
-        const shape = dataset.pffMarkerShape || 'circle';
-        drawnMarkers.add(markerKey);
+        const y =
+          yScale.getPixelForValue(value);
 
-        if (shape === 'square') {
-          const size = 7;
-          ctx.fillStyle = colour;
-          ctx.strokeStyle = '#fff';
-          ctx.lineWidth = 0.8;
-          ctx.beginPath();
-          ctx.rect(x - size / 2, y - size / 2, size, size);
-          ctx.fill();
-          ctx.stroke();
+        if (
+          !Number.isFinite(y) ||
+          y < area.top ||
+          y > area.bottom
+        ) {
           return;
         }
 
-        const radius = 4.2;
-        ctx.fillStyle = '#fff';
-        ctx.strokeStyle = colour;
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        if (shape === 'target') {
-          ctx.fillStyle = colour;
-          ctx.beginPath();
-          ctx.arc(x, y, 1.55, 0, Math.PI * 2);
-          ctx.fill();
-        }
+        markerItems.set(markerKey, {
+          markerKey,
+          y,
+          colour:
+            dataset.pffMarkerColour ||
+            dataset.borderColor ||
+            dataset.backgroundColor ||
+            '#151515',
+          shape:
+            dataset.pffMarkerShape ||
+            'circle'
+        });
       });
+
+      /*
+       * Draw "You" last so its target marker always remains visible when
+       * multiple series meet at the same projected value.
+       */
+      Array.from(markerItems.values())
+        .sort((first, second) => {
+          const firstPriority =
+            first.markerKey === 'you' ? 1 : 0;
+          const secondPriority =
+            second.markerKey === 'you' ? 1 : 0;
+
+          return firstPriority - secondPriority;
+        })
+        .forEach(item => {
+          const {
+            y,
+            colour,
+            shape
+          } = item;
+
+          if (shape === 'square') {
+            const size = 7;
+            ctx.fillStyle = colour;
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.rect(
+              x - size / 2,
+              y - size / 2,
+              size,
+              size
+            );
+            ctx.fill();
+            ctx.stroke();
+            return;
+          }
+
+          const radius = 4.2;
+          ctx.fillStyle = '#fff';
+          ctx.strokeStyle = colour;
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.arc(
+            x,
+            y,
+            radius,
+            0,
+            Math.PI * 2
+          );
+          ctx.fill();
+          ctx.stroke();
+
+          if (shape === 'target') {
+            ctx.fillStyle = colour;
+            ctx.beginPath();
+            ctx.arc(
+              x,
+              y,
+              1.55,
+              0,
+              Math.PI * 2
+            );
+            ctx.fill();
+          }
+        });
 
       ctx.restore();
     }
@@ -24524,10 +24603,12 @@ function sortKeysByCountDesc(counts) {
     }
     const start = Number.isFinite(visualTrendYear) ? visualTrendYear : target;
     const started = performance.now();
-    const duration = 220;
+    const duration = 320;
     const frame = now => {
       const progress = Math.min(1, (now - started) / duration);
-      const eased = 1 - Math.pow(1 - progress, 3);
+      const eased = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
       visualTrendYear = start + (target - start) * eased;
       trendChart?.draw();
       if (progress < 1) trendYearAnimationFrame = requestAnimationFrame(frame);
@@ -24891,7 +24972,7 @@ function sortKeysByCountDesc(counts) {
           active: { animation: { duration: REDUCE_MOTION ? 0 : 140, easing: 'easeOutCubic' } },
           resize: { animation: { duration: 0 } }
         },
-        layout: { autoPadding: false, padding: { top: 5, right: 4, bottom: 0, left: 0 } },
+        layout: { autoPadding: false, padding: { top: 5, right: 9, bottom: 0, left: 0 } },
         interaction: { mode: 'nearest', axis: 'xy', intersect: false },
         plugins: {
           legend: { display: false },
@@ -26183,11 +26264,11 @@ function sortKeysByCountDesc(counts) {
 
   .abs-selected-sentence {
     display: grid !important;
-    grid-template-columns: 9.8em 6.2em minmax(0, 1fr) !important;
+    grid-template-columns: 9.25em 5.8em minmax(0, 1fr) !important;
     width: 100%;
     min-width: 0;
     align-items: baseline !important;
-    column-gap: 0.58em !important;
+    column-gap: 0.42em !important;
     color: var(--ink) !important;
     font-family: 'Lato', sans-serif !important;
     font-size: 10px !important;
@@ -26365,9 +26446,9 @@ function sortKeysByCountDesc(counts) {
     }
 
     .abs-selected-sentence {
-      grid-template-columns: 9.4em 6em minmax(0, 1fr) !important;
+      grid-template-columns: 9em 5.6em minmax(0, 1fr) !important;
       font-size: 9px !important;
-      column-gap: 0.48em !important;
+      column-gap: 0.36em !important;
     }
 
     .abs-results-summary-main,
