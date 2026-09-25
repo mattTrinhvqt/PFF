@@ -23796,7 +23796,7 @@ function sortKeysByCountDesc(counts) {
         <div id="payTrendChartStatus" class="pay-trend-chart-status" hidden aria-live="polite"></div>
       </div>
       <p class="pay-trend-note">
-        Solid lines show observed history; dotted lines show forecast projections based on historical trends
+        Dotted lines show forecast projections based on historical trends
       </p>
     `;
     anchor.insertAdjacentElement('afterend', section);
@@ -24421,6 +24421,41 @@ function sortKeysByCountDesc(counts) {
     return null;
   }
 
+  function renderedDatasetYAtX_(chart, datasetIndex, targetX) {
+    const dataset = chart.data.datasets?.[datasetIndex];
+    const elements = chart.getDatasetMeta(datasetIndex)?.data || [];
+    const points = elements
+      .map(element => ({
+        x: Number(element?.x),
+        y: Number(element?.y)
+      }))
+      .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y))
+      .sort((first, second) => first.x - second.x);
+
+    if (!points.length || !Number.isFinite(targetX)) return null;
+
+    const tolerance = 1.5;
+    for (const point of points) {
+      if (Math.abs(point.x - targetX) <= tolerance) {
+        return point.y;
+      }
+    }
+
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const first = points[index];
+      const second = points[index + 1];
+      if (targetX < first.x || targetX > second.x) continue;
+      const span = second.x - first.x;
+      if (!Number.isFinite(span) || Math.abs(span) < 1e-7) {
+        return second.y;
+      }
+      const ratio = (targetX - first.x) / span;
+      return first.y + (second.y - first.y) * ratio;
+    }
+
+    return null;
+  }
+
   const activeYearPlugin = {
     id: 'pffActiveTrendYear',
     afterDatasetsDraw(chart) {
@@ -24442,7 +24477,7 @@ function sortKeysByCountDesc(counts) {
       const markerItems = [];
       const markerKeys = new Set();
 
-      chart.data.datasets.forEach(dataset => {
+      chart.data.datasets.forEach((dataset, datasetIndex) => {
         const markerKey =
           dataset.pffMarkerKey ||
           dataset.pffLegendLabel ||
@@ -24450,13 +24485,14 @@ function sortKeysByCountDesc(counts) {
 
         if (markerKeys.has(markerKey)) return;
 
-        const value =
-          datasetValueAtYear(dataset, year);
-
-        if (!Number.isFinite(value)) return;
-
-        const y =
-          yScale.getPixelForValue(value);
+        /* Read the y position from the line's current rendered geometry.
+           This keeps each marker exactly in sync with Chart.js while the
+           x-axis and projected line are animating. */
+        const y = renderedDatasetYAtX_(
+          chart,
+          datasetIndex,
+          x
+        );
 
         if (
           !Number.isFinite(y) ||
@@ -24554,7 +24590,7 @@ function sortKeysByCountDesc(counts) {
 
   const trendAxisSpinesPlugin = {
     id: 'pffTrendAxisSpines',
-    afterDraw(chart) {
+    afterDatasetsDraw(chart) {
       const { ctx, chartArea } = chart;
       if (!chartArea) return;
       ctx.save();
@@ -24839,7 +24875,7 @@ function sortKeysByCountDesc(counts) {
 
   const trendAxisTicksPlugin = {
     id: 'pffTrendAxisTicks',
-    afterDraw(chart) {
+    afterDatasetsDraw(chart) {
       const { ctx, chartArea } = chart;
       const xScale = chart.scales?.x;
       const yScale = chart.scales?.y;
@@ -24939,7 +24975,13 @@ function sortKeysByCountDesc(counts) {
           resize: { animation: { duration: 0 } }
         },
         layout: { autoPadding: false, padding: { top: 5, right: 9, bottom: 0, left: 0 } },
-        interaction: { mode: 'nearest', axis: 'xy', intersect: false },
+        interaction: { mode: 'nearest', axis: 'xy', intersect: true },
+        onClick(_event, elements, chartInstance) {
+          if (!elements?.length) {
+            chartInstance.tooltip?.setActiveElements([], { x: 0, y: 0 });
+            chartInstance.draw();
+          }
+        },
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -25053,7 +25095,7 @@ function sortKeysByCountDesc(counts) {
         },
         elements: {
           line: { borderCapStyle: 'round', borderJoinStyle: 'round' },
-          point: { hitRadius: 8 }
+          point: { hitRadius: 3 }
         }
       }
     });
@@ -26325,7 +26367,7 @@ function sortKeysByCountDesc(counts) {
   .abs-results-source-link:visited {
     color: var(--purple);
     font-weight: 700;
-    text-decoration: underline;
+    text-decoration: underline !important;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
   }
@@ -26540,6 +26582,7 @@ function sortKeysByCountDesc(counts) {
   }
 
   #benchmarkField.pff-return-attention,
+  #benchmarkField.has-required-warning,
   #hpssInputDetails.pff-return-attention,
   #absMultiCompare.pff-return-attention {
     border-radius: 0;
@@ -26552,6 +26595,7 @@ function sortKeysByCountDesc(counts) {
 
   @media (prefers-reduced-motion: reduce) {
     #benchmarkField.pff-return-attention,
+    #benchmarkField.has-required-warning,
     #hpssInputDetails.pff-return-attention,
     #absMultiCompare.pff-return-attention,
     #estimateBtn.pff-return-attention-button {
