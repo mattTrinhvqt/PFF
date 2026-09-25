@@ -1069,6 +1069,16 @@ const YEAR_MS = 365.2425 * DAY_MS;
 const AVERAGE_MONTH_DAYS = 365.2425 / 12;
 const TRAILING_WINDOW_MS = CONFIG.trailingWeeks * 7 * DAY_MS;
 const YEAR_TRAILING_WINDOW_MS = YEAR_MS;
+
+/*
+ * Systematic SEEK collection began 24 March 2025. Facebook history has been
+ * backfilled further, but must not make an incomplete SEEK-era rolling window
+ * look mature. Raw monthly views therefore begin with the first complete
+ * calendar month after collection started.
+ */
+const COLLECTION_START_TIME = Date.UTC(2025, 2, 24);
+const MONTHLY_DISPLAY_START_TIME = Date.UTC(2025, 3, 1);
+
 const POINT_SLOT_COUNT = CONFIG.maxGroups;
 const LINE_SLOT_OFFSET = CONFIG.maxGroups;
 const TOTAL_DATASET_SLOTS = CONFIG.maxGroups * 2;
@@ -2601,7 +2611,7 @@ const monthEnd = addUtcMonths(monthStart, 1).getTime();
 const effectiveEnd = Math.min(monthEnd, now);
 const windowStart = effectiveEnd - TRAILING_WINDOW_MS;
 
-if (windowStart < axisBounds.firstDataTime) {
+if (windowStart < COLLECTION_START_TIME) {
 return {
 x: monthTimestamp,
 y: null,
@@ -2691,7 +2701,7 @@ const monthEnd = addUtcMonths(monthStart, 1).getTime();
 const effectiveEnd = Math.min(monthEnd, now);
 const windowStart = effectiveEnd - TRAILING_WINDOW_MS;
 
-if (windowStart < axisBounds.firstDataTime) {
+if (windowStart < COLLECTION_START_TIME) {
 return {
 x: monthTimestamp,
 y: null,
@@ -2741,7 +2751,7 @@ const monthEnd = addUtcMonths(monthStart, 1).getTime();
 const effectiveEnd = Math.min(monthEnd, now);
 const windowStart = effectiveEnd - YEAR_TRAILING_WINDOW_MS;
 
-if (windowStart < axisBounds.firstDataTime) {
+if (windowStart < COLLECTION_START_TIME) {
 return {
 x: monthTimestamp,
 y: null,
@@ -3571,6 +3581,16 @@ function getTargetXBounds(
 targets,
 view
 ) {
+if (view === 'count' || view === 'proportion') {
+return {
+minimum: Math.max(
+axisBounds.xMin,
+MONTHLY_DISPLAY_START_TIME
+),
+maximum: axisBounds.xMax
+};
+}
+
 if (view !== 'per100') {
 return {
 minimum: axisBounds.xMin,
@@ -4665,20 +4685,26 @@ const area = activeChart.chartArea;
 if (!xScale || !area) return;
 
 const context = activeChart.ctx;
+const essiLuxDate = Date.UTC(2025, 11, 1);
+const indeedDate = Date.UTC(2026, 6, 1);
 const events = [
 {
-date: Date.UTC(2025, 11, 1),
+date: essiLuxDate,
 label: 'EssiLux jobs added'
 },
 {
-date: Date.UTC(2026, 6, 1),
+date: indeedDate,
 label: 'Indeed jobs added'
-},
-{
-date: Date.UTC(2026, 8, 19),
-label: 'Facebook jobs added'
 }
 ];
+
+const visibleStart = Number(xScale.min);
+const coverageLabel =
+visibleStart >= indeedDate
+? 'SEEK + EssiLux + Indeed jobs'
+: visibleStart >= essiLuxDate
+? 'SEEK + EssiLux jobs'
+: 'SEEK jobs only';
 
 context.save();
 context.fillStyle = 'rgba(105, 113, 138, 0.76)';
@@ -4686,7 +4712,7 @@ context.font = '400 9px Lato, sans-serif';
 context.textAlign = 'left';
 context.textBaseline = 'top';
 context.fillText(
-'SEEK jobs only',
+coverageLabel,
 area.left + 4,
 area.top + 5
 );
@@ -4932,7 +4958,6 @@ axisFadeOpacity,
 1
 );
 context.lineCap = 'butt';
-context.strokeStyle = '#151515';
 
 ticks.forEach((tick, index) => {
 const value =
@@ -4953,10 +4978,13 @@ isRepeatMajorTick(value);
 
 const tickLength =
 major
-? 6
+? 5
 : 2;
 
 context.beginPath();
+context.strokeStyle = major
+? '#151515'
+: 'rgba(105, 113, 138, 0.60)';
 context.lineWidth =
 major
 ? 1
@@ -6584,9 +6612,16 @@ grid: {
 drawOnChartArea: false,
 drawTicks: true,
 tickLength(context) {
-return isQuarterTick(context.tick?.value) ? 6 : 2;
+return isQuarterTick(context.tick?.value) ? 5 : 2;
 },
-tickColor: '#151515'
+tickWidth(context) {
+return isQuarterTick(context.tick?.value) ? 1 : 0.7;
+},
+tickColor(context) {
+return isQuarterTick(context.tick?.value)
+? '#151515'
+: 'rgba(105, 113, 138, 0.60)';
+}
 },
 border: {
 display: false
@@ -6646,10 +6681,18 @@ return index % 2 === 0 ? 1 : 0.7;
 drawTicks: true,
 tickLength(context) {
 const index = context.index ?? 0;
-return index % 2 === 0 ? 5 : 1.5;
+return index % 2 === 0 ? 5 : 2;
 },
-tickColor: '#151515',
-tickWidth: 1.1
+tickColor(context) {
+const index = context.index ?? 0;
+return index % 2 === 0
+? '#151515'
+: 'rgba(105, 113, 138, 0.60)';
+},
+tickWidth(context) {
+const index = context.index ?? 0;
+return index % 2 === 0 ? 1 : 0.7;
+}
 },
 border: {
 display: false
