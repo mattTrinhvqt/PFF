@@ -8,6 +8,115 @@
     let scaleTimer = null;
     let stageHeightTimer = null;
 
+    window.PFF_LEGACY_ABS_INTERACTIONS_ENABLED = false;
+
+    window.PFF_UI_MOTION =
+      window.PFF_UI_MOTION ||
+      Object.freeze({
+        numberMs: 300,
+        viewSwitchMs: 240,
+        trendMs: 320,
+        scaleMs: 360,
+        tooltipMs: 140,
+        attentionPulseMs: 1650,
+        actionPulseMs: 1050,
+        easing: 'easeInOutCubic'
+      });
+
+    window.pffPrefersReducedMotion =
+      window.pffPrefersReducedMotion ||
+      (() =>
+        window.matchMedia?.(
+          '(prefers-reduced-motion: reduce)'
+        )?.matches || false);
+
+    window.pffGetValidBenchmarkAnnual =
+      window.pffGetValidBenchmarkAnnual ||
+      (rawValue => {
+        const parser =
+          window.pffParseBenchmarkAnnual;
+
+        const parsed =
+          typeof parser === 'function'
+            ? parser(rawValue)
+            : Number(
+                String(rawValue ?? '')
+                  .replace(/[$,\s]/g, '')
+                  .trim()
+              );
+
+        const numeric = Number(parsed);
+
+        return (
+          Number.isFinite(numeric) && numeric > 0
+            ? numeric
+            : null
+        );
+      });
+
+    window.pffHasValidBenchmark =
+      window.pffHasValidBenchmark ||
+      (rawValue =>
+        window.pffGetValidBenchmarkAnnual(
+          rawValue
+        ) !== null);
+
+    if (!window.pffModeChangeCoordinator) {
+      const modeTasks = new Map();
+      let modeFrame = null;
+
+      window.pffModeChangeCoordinator = {
+        register(name, order, task) {
+          if (!name || typeof task !== 'function') {
+            return;
+          }
+
+          modeTasks.set(name, {
+            order: Number(order) || 0,
+            task
+          });
+        },
+
+        schedule() {
+          if (modeFrame !== null) {
+            return;
+          }
+
+          modeFrame =
+            requestAnimationFrame(() => {
+              modeFrame = null;
+
+              [...modeTasks.values()]
+                .sort((a, b) => a.order - b.order)
+                .forEach(entry => {
+                  try {
+                    entry.task();
+                  } catch (error) {
+                    console.warn(
+                      'Mode-change task failed',
+                      error
+                    );
+                  }
+                });
+            });
+        }
+      };
+
+      document.addEventListener(
+        'click',
+        event => {
+          if (
+            event.target.closest?.(
+              '.benchmark-mode-button'
+            )
+          ) {
+            window.pffModeChangeCoordinator
+              .schedule();
+          }
+        }
+      );
+    }
+
     function scheduleApplyScale() {
       if (!ENABLE_SCALE) return;
 
@@ -5985,7 +6094,7 @@ function sortKeysByCountDesc(counts) {
         : 0;
 
       const reduceMotion =
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        window.pffPrefersReducedMotion();
 
       const token = ++projectedExperienceAnimationToken;
 
@@ -6205,9 +6314,7 @@ function sortKeysByCountDesc(counts) {
           .getBoundingClientRect();
 
       const reduceMotion =
-        window.matchMedia(
-          '(prefers-reduced-motion: reduce)'
-        ).matches;
+        window.pffPrefersReducedMotion();
 
       if (
         shouldCollapse &&
@@ -7136,9 +7243,7 @@ function sortKeysByCountDesc(counts) {
       }
 
       const reduceMotion =
-        window.matchMedia(
-          '(prefers-reduced-motion: reduce)'
-        ).matches;
+        window.pffPrefersReducedMotion();
 
       const token =
         ++headingAnimationToken;
@@ -7259,7 +7364,7 @@ function sortKeysByCountDesc(counts) {
     ) {
       const target = Math.max(0, Math.round(Number(offsetYears) || 0));
       const year = Number(calendarYear);
-      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const reduceMotion = window.pffPrefersReducedMotion();
       const previous = Number(resultsHeadingYears.dataset.numericValue || 0);
       const token = ++headingYearAnimationToken;
 
@@ -7560,7 +7665,7 @@ function sortKeysByCountDesc(counts) {
           : 0;
 
       const reduceMotion =
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        window.pffPrefersReducedMotion();
 
       const shouldAnimate =
         animate &&
@@ -9017,9 +9122,7 @@ function sortKeysByCountDesc(counts) {
         Boolean(open);
 
       const reduceMotion =
-        window.matchMedia(
-          '(prefers-reduced-motion: reduce)'
-        ).matches;
+        window.pffPrefersReducedMotion();
 
       if (hpssInputAnimation) {
         try {
@@ -10054,15 +10157,8 @@ function sortKeysByCountDesc(counts) {
       const input =
         document.getElementById('currentSalary');
 
-      const value =
-        parseSalaryInput_(
-          input?.value || ''
-        );
-
-      return (
-        value !== null &&
-        Number.isFinite(Number(value)) &&
-        Number(value) > 0
+      return window.pffHasValidBenchmark(
+        input?.value || ''
       );
     }
 
@@ -10194,9 +10290,7 @@ function sortKeysByCountDesc(counts) {
         document.getElementById('currentSalary');
 
       const reduceMotion =
-        window.matchMedia(
-          '(prefers-reduced-motion: reduce)'
-        ).matches;
+        window.pffPrefersReducedMotion();
 
       const isMobile =
         window.matchMedia(
@@ -11044,8 +11138,11 @@ function sortKeysByCountDesc(counts) {
   const USER_FTE_HOURS_MIN = 35;
   const USER_FTE_HOURS_MAX = 45;
   const HPSS_AWARD_BASE_WEEKLY_HOURS = 38;
-  const VIEW_SWITCH_ANIMATION_MS = 240;
+  const VIEW_SWITCH_ANIMATION_MS =
+    window.PFF_UI_MOTION.viewSwitchMs;
   const HOURLY_CENTS_REVEAL_PROGRESS = 0.88;
+  const LEGACY_ABS_INTERACTIONS_ENABLED =
+    window.PFF_LEGACY_ABS_INTERACTIONS_ENABLED !== false;
 
   const PATCH_ABS_SHEET_ID =
     '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
@@ -12479,9 +12576,7 @@ function sortKeysByCountDesc(counts) {
     }
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     const token =
       (labelAnimationTokens.get(element) || 0) + 1;
@@ -12751,9 +12846,7 @@ function sortKeysByCountDesc(counts) {
     }
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     if (
       !animate ||
@@ -13011,9 +13104,7 @@ function sortKeysByCountDesc(counts) {
     }
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     const token =
       (labelAnimationTokens.get(element) || 0) + 1;
@@ -13181,9 +13272,7 @@ function sortKeysByCountDesc(counts) {
         : startFromText;
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     const token =
       (numberAnimationTokens.get(element) || 0) + 1;
@@ -13291,9 +13380,7 @@ function sortKeysByCountDesc(counts) {
       );
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     const token =
       (numberAnimationTokens.get(input) || 0) + 1;
@@ -13601,6 +13688,9 @@ function sortKeysByCountDesc(counts) {
             getUserFteAnnualHours_()
         : displayedValue;
     };
+
+  window.pffParseBenchmarkAnnual =
+    rawValue => parseSalaryInput_(rawValue);
 
   formatSalaryInput_ =
     function(value) {
@@ -13973,9 +14063,7 @@ function sortKeysByCountDesc(counts) {
         );
 
         const reduceMotion =
-          window.matchMedia(
-            '(prefers-reduced-motion: reduce)'
-          ).matches;
+          window.pffPrefersReducedMotion();
 
         hpssLevelFieldset?.scrollIntoView({
           behavior:
@@ -15096,6 +15184,10 @@ function sortKeysByCountDesc(counts) {
   }
 
   function requestPatchedAbsData_() {
+    if (!LEGACY_ABS_INTERACTIONS_ENABLED) {
+      return Promise.resolve(null);
+    }
+
     if (patchedAbsData) {
       return Promise.resolve(
         patchedAbsData
@@ -15575,9 +15667,7 @@ function sortKeysByCountDesc(counts) {
       wrap.getBoundingClientRect().width;
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     wrap
       .getAnimations?.()
@@ -15874,6 +15964,11 @@ function sortKeysByCountDesc(counts) {
     animate = false,
     duration = VIEW_SWITCH_ANIMATION_MS
   ) {
+    if (!LEGACY_ABS_INTERACTIONS_ENABLED) {
+      hidePatchedAbsMarkers_();
+      return;
+    }
+
     absPatchObserverSuppressed_ =
       true;
 
@@ -16599,101 +16694,79 @@ function sortKeysByCountDesc(counts) {
     refreshCalculatorLayout();
   }
 
-  /* ABS toggles: keep the input/results checkboxes synchronised before
-     any later renderer or observer gets a chance to read their state. */
-  [
-    document.getElementById(
-      'absComparisonToggle'
-    ),
-    document.getElementById(
-      'absResultsToggle'
-    )
-  ]
-    .filter(Boolean)
-    .forEach(toggle => {
-      /*
-       * Capture phase synchronises only the checkbox state. It deliberately
-       * does not hide/show the markers yet, so the later marker animation
-       * handler can still capture their visible starting positions.
-       */
-      toggle.addEventListener(
-        'change',
-        event => {
-          const enabled =
-            Boolean(
-              event.currentTarget.checked
-            );
-
-          const inputToggle =
-            document.getElementById(
-              'absComparisonToggle'
-            );
-
-          const resultsToggle =
-            document.getElementById(
-              'absResultsToggle'
-            );
-
-          if (inputToggle) {
-            inputToggle.checked =
-              enabled;
-          }
-
-          if (resultsToggle) {
-            resultsToggle.checked =
-              enabled;
-          }
-        },
-        true
-      );
-
-      /*
-       * Normal rendering remains in the bubble phase, after the ABS marker
-       * animation handler has had a chance to capture its start positions.
-       */
-      toggle.addEventListener(
-        'change',
-        event => {
-          syncStandaloneAbsToggle_(
-            event.currentTarget
-          );
-
-          requestAnimationFrame(
-            () => {
-              syncPatchedAbs_(
-                false
+  /* The legacy ABS renderer remains available as fallback code, but its
+     hidden controls no longer install interactive event entry points. */
+  if (LEGACY_ABS_INTERACTIONS_ENABLED) {
+    [
+      document.getElementById(
+        'absComparisonToggle'
+      ),
+      document.getElementById(
+        'absResultsToggle'
+      )
+    ]
+      .filter(Boolean)
+      .forEach(toggle => {
+        toggle.addEventListener(
+          'change',
+          event => {
+            const enabled =
+              Boolean(
+                event.currentTarget.checked
               );
-            }
-          );
-        }
-      );
-    });
 
-  /* Keep ABS comparisons active while the HPSS slider moves.
-     Future years are projected from the historical ABS series. */
-  document
-    .getElementById(
-      'hpssYearSlider'
-    )
-    ?.addEventListener(
-      'input',
-      () => {
-        requestAnimationFrame(
-          () => {
-            syncPatchedAbs_(
-              true
+            const inputToggle =
+              document.getElementById(
+                'absComparisonToggle'
+              );
+
+            const resultsToggle =
+              document.getElementById(
+                'absResultsToggle'
+              );
+
+            if (inputToggle) {
+              inputToggle.checked = enabled;
+            }
+
+            if (resultsToggle) {
+              resultsToggle.checked = enabled;
+            }
+          },
+          true
+        );
+
+        toggle.addEventListener(
+          'change',
+          event => {
+            syncStandaloneAbsToggle_(
+              event.currentTarget
             );
           }
         );
-      }
-    );
+      });
+
+    document
+      .getElementById('hpssYearSlider')
+      ?.addEventListener(
+        'input',
+        () => {
+          requestAnimationFrame(
+            () => syncPatchedAbs_(true)
+          );
+        }
+      );
+  }
 
   /* Re-apply the patched ABS presentation if the original ABS renderer
    * finishes an asynchronous refresh after this patch has rendered. */
   let absPatchObserver = null;
 
   function connectAbsPatchObserver_() {
-    if (!window.MutationObserver) {
+    if (
+      !LEGACY_ABS_INTERACTIONS_ENABLED ||
+      !window.MutationObserver
+    ) {
       return;
     }
 
@@ -16797,24 +16870,20 @@ function sortKeysByCountDesc(counts) {
   updateBenchmarkViewLabels_(
     false
   );
-  requestPatchedAbsData_();
-  connectAbsPatchObserver_();
+  if (LEGACY_ABS_INTERACTIONS_ENABLED) {
+    requestPatchedAbsData_();
+    connectAbsPatchObserver_();
 
-  window.setTimeout(
-    () =>
-      syncPatchedAbs_(
-        false
-      ),
-    500
-  );
+    window.setTimeout(
+      () => syncPatchedAbs_(false),
+      500
+    );
 
-  window.setTimeout(
-    () =>
-      syncPatchedAbs_(
-        false
-      ),
-    1500
-  );
+    window.setTimeout(
+      () => syncPatchedAbs_(false),
+      1500
+    );
+  }
 
   refreshCalculatorLayout();
 })();
@@ -17423,6 +17492,13 @@ function sortKeysByCountDesc(counts) {
   }
 
   function calculateWouldPassPatch_() {
+    if (
+      typeof window.pffIsPrimaryActionReady ===
+      'function'
+    ) {
+      return window.pffIsPrimaryActionReady();
+    }
+
     const button =
       document.getElementById(
         'estimateBtn'
@@ -17586,6 +17662,9 @@ function sortKeysByCountDesc(counts) {
         180
       );
   }
+
+  window.pffSyncPrimaryActionReadiness =
+    cueIfReadyPatch_;
 
   const readyBlurIds = [
     'years',
@@ -18858,14 +18937,11 @@ function sortKeysByCountDesc(counts) {
     benchmarkInputFinal.maxLength = hourly ? 6 : 8;
   }
 
-  document
-    .querySelectorAll('.benchmark-mode-button')
-    .forEach(button => {
-      button.addEventListener(
-        'click',
-        () => requestAnimationFrame(syncBenchmarkMaxLengthFinal_)
-      );
-    });
+  window.pffModeChangeCoordinator?.register(
+    'benchmark-maxlength',
+    10,
+    syncBenchmarkMaxLengthFinal_
+  );
 
   syncBenchmarkMaxLengthFinal_();
 
@@ -19053,11 +19129,18 @@ function sortKeysByCountDesc(counts) {
   const absContextMetaSourceFinal =
     document.getElementById('absContextMetaPatch');
 
+  const legacyAbsInteractionsFinal_ =
+    window.PFF_LEGACY_ABS_INTERACTIONS_ENABLED !== false;
+
   const absResultsCheckboxFinal =
-    document.getElementById('absResultsToggle');
+    legacyAbsInteractionsFinal_
+      ? document.getElementById('absResultsToggle')
+      : null;
 
   const absInputCheckboxFinal =
-    document.getElementById('absComparisonToggle');
+    legacyAbsInteractionsFinal_
+      ? document.getElementById('absComparisonToggle')
+      : null;
 
   let absAnimatedTitleFinal =
     document.getElementById('absAnimatedTitleFinal');
@@ -19189,7 +19272,7 @@ function sortKeysByCountDesc(counts) {
     }
 
     const reduceMotion =
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.pffPrefersReducedMotion();
 
     const token = ++absTitleAnimationTokenFinal;
 
@@ -19309,7 +19392,7 @@ function sortKeysByCountDesc(counts) {
     }
 
     const reduceMotion =
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.pffPrefersReducedMotion();
 
     const token = ++absWordAnimationTokenFinal;
 
@@ -19457,9 +19540,7 @@ function sortKeysByCountDesc(counts) {
     }
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     const token =
       (absInlineAnimationTokensFinal.get(element) || 0) + 1;
@@ -19599,9 +19680,7 @@ function sortKeysByCountDesc(counts) {
       Number(element.textContent);
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     element.getAnimations?.().forEach(animation => {
       try { animation.cancel(); } catch (_) {}
@@ -19627,7 +19706,7 @@ function sortKeysByCountDesc(counts) {
     const startedAt =
       performance.now();
 
-    const duration = 300;
+    const duration = NUMBER_ANIMATION_MS;
 
     function frame(now) {
       if (
@@ -20037,9 +20116,7 @@ function sortKeysByCountDesc(counts) {
       );
 
     const reduceMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches;
+      window.pffPrefersReducedMotion();
 
     const token =
       (absDifferenceAnimationTokensFinal.get(
@@ -20424,7 +20501,9 @@ function sortKeysByCountDesc(counts) {
   [
     absResultsCheckboxFinal,
     absInputCheckboxFinal,
-    benchmarkInputFinal
+    legacyAbsInteractionsFinal_
+      ? benchmarkInputFinal
+      : null
   ].filter(Boolean).forEach(element => {
     element.addEventListener('change', scheduleAbsConclusionFinal_);
     element.addEventListener('input', scheduleAbsConclusionFinal_);
@@ -20433,91 +20512,67 @@ function sortKeysByCountDesc(counts) {
   let absModeConclusionSettleTimerFinal =
     null;
 
-  document
-    .querySelectorAll('.benchmark-mode-button')
-    .forEach(button => {
-      button.addEventListener(
-        'click',
-        () => {
-          /*
-           * Update the purple ABS conclusions immediately so they
-           * animate with the rest of the salary/hourly switch.
-           */
-          requestAnimationFrame(
-            scheduleAbsConclusionFinal_
-          );
+  function handleAbsModeConclusionChangeFinal_() {
+    scheduleAbsConclusionFinal_();
 
-          /*
-           * A results-mode click can also trigger the hidden original
-           * mode button, so keep only one final settle timer.
-           */
-          if (
-            absModeConclusionSettleTimerFinal !==
-            null
-          ) {
-            window.clearTimeout(
-              absModeConclusionSettleTimerFinal
-            );
-          }
-
-          /*
-           * Once all salary/hourly renderers have finished, explicitly
-           * lock the purple ABS amounts to their current-mode targets.
-           */
-          absModeConclusionSettleTimerFinal =
-            window.setTimeout(
-              () => {
-                absModeConclusionSettleTimerFinal =
-                  null;
-
-                updateAbsForecastConclusionsFinal_();
-
-                document
-                  .querySelectorAll(
-                    '.abs-live-difference-final'
-                  )
-                  .forEach(amount => {
-                    const target =
-                      Number(
-                        amount.dataset
-                          .absDifferenceTarget
-                      );
-
-                    if (
-                      !Number.isFinite(target)
-                    ) {
-                      return;
-                    }
-
-                    /*
-                     * Cancel any older purple-value animation that
-                     * might otherwise finish afterward and restore
-                     * the previous salary-formatted text.
-                     */
-                    absDifferenceAnimationTokensFinal.set(
-                      amount,
-                      (
-                        absDifferenceAnimationTokensFinal.get(
-                          amount
-                        ) || 0
-                      ) + 1
-                    );
-
-                    amount.dataset
-                      .absDifferenceAnimating =
-                      'false';
-
-                    amount.textContent =
-                      formattedDifferenceFinal_(
-                        target
-                      );
-                  });
-              },
-              360
-            );
-        }
+    if (
+      absModeConclusionSettleTimerFinal !== null
+    ) {
+      window.clearTimeout(
+        absModeConclusionSettleTimerFinal
       );
-    });
+    }
+
+    absModeConclusionSettleTimerFinal =
+      window.setTimeout(
+        () => {
+          absModeConclusionSettleTimerFinal = null;
+
+          updateAbsForecastConclusionsFinal_();
+
+          document
+            .querySelectorAll(
+              '.abs-live-difference-final'
+            )
+            .forEach(amount => {
+              const target =
+                Number(
+                  amount.dataset
+                    .absDifferenceTarget
+                );
+
+              if (!Number.isFinite(target)) {
+                return;
+              }
+
+              absDifferenceAnimationTokensFinal.set(
+                amount,
+                (
+                  absDifferenceAnimationTokensFinal.get(
+                    amount
+                  ) || 0
+                ) + 1
+              );
+
+              amount.dataset
+                .absDifferenceAnimating =
+                'false';
+
+              amount.textContent =
+                formattedDifferenceFinal_(target);
+            });
+        },
+        window.PFF_UI_MOTION.scaleMs
+      );
+  }
+
+  if (legacyAbsInteractionsFinal_) {
+    window.pffModeChangeCoordinator?.register(
+      'abs-conclusion',
+      20,
+      handleAbsModeConclusionChangeFinal_
+    );
+  }
 
   /* Initial sync after all previous renderers have settled. */
   requestAnimationFrame(() => {
@@ -21676,9 +21731,7 @@ function sortKeysByCountDesc(counts) {
       }
 
       const reduceMotion =
-        window.matchMedia(
-          '(prefers-reduced-motion: reduce)'
-        ).matches;
+        window.pffPrefersReducedMotion();
 
       if (
         !animate ||
@@ -21851,23 +21904,28 @@ function sortKeysByCountDesc(counts) {
     );
   }
 
-  document
-    .querySelectorAll('.benchmark-mode-button')
-    .forEach(button => {
-      button.addEventListener(
-        'click',
-        () => requestAnimationFrame(
-          syncAbsDifferenceGeometryFinal_
-        )
-      );
-    });
+  if (
+    window.PFF_LEGACY_ABS_INTERACTIONS_ENABLED !== false
+  ) {
+    window.pffModeChangeCoordinator?.register(
+      'abs-difference-geometry',
+      30,
+      syncAbsDifferenceGeometryFinal_
+    );
 
-  syncAbsDifferenceGeometryFinal_();
+    syncAbsDifferenceGeometryFinal_();
+  }
 })();
 </script>
 
 <script>
 (() => {
+  if (
+    window.PFF_LEGACY_ABS_INTERACTIONS_ENABLED === false
+  ) {
+    return;
+  }
+
   const absMarkerTogglesFinal = [
     document.getElementById('absComparisonToggle'),
     document.getElementById('absResultsToggle')
@@ -23187,7 +23245,10 @@ function sortKeysByCountDesc(counts) {
   const ABS_MULTI_SOURCE_URL = 'https://www.abs.gov.au/statistics/labour/earnings-and-working-conditions/employee-earnings/latest-release';
   const TREND_PROJECTION_YEARS = 20;
   const CURRENT_CALENDAR_YEAR = new Date().getFullYear();
-  const REDUCE_MOTION = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
+  const TREND_ANIMATION_MS = window.PFF_UI_MOTION.trendMs;
+  const TREND_SCALE_ANIMATION_MS = window.PFF_UI_MOTION.scaleMs;
+  const TREND_EASING = window.PFF_UI_MOTION.easing;
+  const NUMBER_ANIMATION_MS = window.PFF_UI_MOTION.numberMs;
   const HOURLY_CENTS_REVEAL_PROGRESS = 0.88;
 
   const ABS_MULTI_SERIES = [
@@ -23238,12 +23299,11 @@ function sortKeysByCountDesc(counts) {
   let activeOffset = 0;
   let activeTrendYear = CURRENT_CALENDAR_YEAR;
   let visualTrendYear = CURRENT_CALENDAR_YEAR;
-  let trendYearAnimationFrame = null;
   const trendXAxisAnimation_ = {
     fromMax: CURRENT_CALENDAR_YEAR,
     toMax: CURRENT_CALENDAR_YEAR,
     startTime: 0,
-    duration: 320
+    duration: TREND_ANIMATION_MS
   };
   const numberAnimationFrames = new WeakMap();
 
@@ -23444,12 +23504,9 @@ function sortKeysByCountDesc(counts) {
 
   function hasValidBenchmarkForAbs_() {
     const input = document.getElementById('currentSalary');
-    const numeric = Number(
-      String(input?.value ?? '')
-        .replace(/[^0-9.\-]/g, '')
-        .trim()
+    return window.pffHasValidBenchmark(
+      input?.value || ''
     );
-    return Number.isFinite(numeric) && numeric > 0;
   }
 
   function showBenchmarkWarningForAbs_(drawAttention = false) {
@@ -23491,7 +23548,7 @@ function sortKeysByCountDesc(counts) {
     syncAbsBenchmarkGate_(true);
     const input = document.getElementById('currentSalary');
     const field = document.getElementById('benchmarkField');
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
+    const reduceMotion = window.pffPrefersReducedMotion();
     const isMobile = window.matchMedia?.('(max-width: 430px)')?.matches || false;
 
     if (isMobile) {
@@ -23954,7 +24011,7 @@ function sortKeysByCountDesc(counts) {
         maximumFractionDigits: 0
       }).format(rounded);
     };
-    if (REDUCE_MOTION || Math.abs(start - end) < 0.005) {
+    if (window.pffPrefersReducedMotion() || Math.abs(start - end) < 0.005) {
       element.textContent = formatter(end);
       element.dataset.numericValue = String(end);
       numberAnimationFrames.delete(element);
@@ -24598,11 +24655,6 @@ function sortKeysByCountDesc(counts) {
     const target = Number(targetYear);
     if (!Number.isFinite(target)) return;
 
-    if (trendYearAnimationFrame) {
-      cancelAnimationFrame(trendYearAnimationFrame);
-      trendYearAnimationFrame = null;
-    }
-
     /* Do not run a second canvas animation loop while Chart.js is
        animating the visible year range. The slider itself drives the
        active marker year synchronously. */
@@ -24634,7 +24686,7 @@ function sortKeysByCountDesc(counts) {
     return from + (to - from) * eased;
   }
 
-  function startTrendXAxisAnimation_(targetMax, duration = 320) {
+  function startTrendXAxisAnimation_(targetMax, duration = TREND_ANIMATION_MS) {
     const target = Number(targetMax);
     if (!Number.isFinite(target)) return;
 
@@ -24643,7 +24695,7 @@ function sortKeysByCountDesc(counts) {
     trendXAxisAnimation_.fromMax = Number.isFinite(current) ? current : target;
     trendXAxisAnimation_.toMax = target;
     trendXAxisAnimation_.startTime = now;
-    trendXAxisAnimation_.duration = REDUCE_MOTION ? 0 : Math.max(0, Number(duration) || 0);
+    trendXAxisAnimation_.duration = window.pffPrefersReducedMotion() ? 0 : Math.max(0, Number(duration) || 0);
   }
 
   function trendXAxisPixelForYear_(chart, year, visualMax = trendXAxisVisualMax_()) {
@@ -24683,28 +24735,6 @@ function sortKeysByCountDesc(counts) {
 
   function tooltipValue(value) {
     return formatMoney(Number(value), !salaryMode());
-  }
-
-  function addMinorTicks_(scale) {
-    const majors = (scale.ticks || [])
-      .map(tick => ({ ...tick, value: Number(tick.value), pffMajor: true }))
-      .filter(tick => Number.isFinite(tick.value))
-      .sort((a, b) => a.value - b.value);
-
-    if (majors.length < 2) return;
-
-    const expanded = [];
-    majors.forEach((tick, index) => {
-      expanded.push(tick);
-      const next = majors[index + 1];
-      if (!next) return;
-      const midpoint = (tick.value + next.value) / 2;
-      if (Number.isFinite(midpoint) && midpoint > tick.value && midpoint < next.value) {
-        expanded.push({ value: midpoint, pffMajor: false });
-      }
-    });
-
-    scale.ticks = expanded;
   }
 
   const TREND_Y_TARGET_MAJOR_INTERVALS = 6;
@@ -24806,7 +24836,10 @@ function sortKeysByCountDesc(counts) {
     trendYAxisLabelAnimation.targetValues = [...values];
   }
 
-  function animateTrendYAxisLabels_(scaleDef, duration = 360) {
+  function animateTrendYAxisLabels_(
+    scaleDef,
+    duration = TREND_SCALE_ANIMATION_MS
+  ) {
     const targets = trendYMajorTargets_(scaleDef);
     const previousValues = trendYAxisLabelAnimation.values;
     const starts = previousValues.length === targets.length
@@ -24833,7 +24866,7 @@ function sortKeysByCountDesc(counts) {
     const token = ++trendYAxisLabelAnimation.token;
     trendYAxisLabelAnimation.targetValues = [...targets];
 
-    if (REDUCE_MOTION || duration <= 0) {
+    if (window.pffPrefersReducedMotion() || duration <= 0) {
       trendYAxisLabelAnimation.values = [...targets];
       trendChart?.draw();
       return;
@@ -25037,13 +25070,13 @@ function sortKeysByCountDesc(counts) {
         responsive: true,
         maintainAspectRatio: false,
         devicePixelRatio: Math.max(2, Math.min(window.devicePixelRatio || 1, 3)),
-        animation: REDUCE_MOTION ? false : { duration: 360, easing: 'easeInOutCubic' },
+        animation: window.pffPrefersReducedMotion() ? false : { duration: TREND_SCALE_ANIMATION_MS, easing: TREND_EASING },
         animations: {
-          x: { type: 'number', duration: REDUCE_MOTION ? 0 : 360, easing: 'easeInOutCubic' },
-          y: { type: 'number', duration: REDUCE_MOTION ? 0 : 360, easing: 'easeInOutCubic' }
+          x: { type: 'number', duration: window.pffPrefersReducedMotion() ? 0 : TREND_SCALE_ANIMATION_MS, easing: TREND_EASING },
+          y: { type: 'number', duration: window.pffPrefersReducedMotion() ? 0 : TREND_SCALE_ANIMATION_MS, easing: TREND_EASING }
         },
         transitions: {
-          active: { animation: { duration: REDUCE_MOTION ? 0 : 140, easing: 'easeOutCubic' } },
+          active: { animation: { duration: window.pffPrefersReducedMotion() ? 0 : window.PFF_UI_MOTION.tooltipMs, easing: 'easeOutCubic' } },
           resize: { animation: { duration: 0 } }
         },
         layout: { autoPadding: false, padding: { top: 5, right: 9, bottom: 0, left: 0 } },
@@ -25214,15 +25247,15 @@ function sortKeysByCountDesc(counts) {
     const yScaleDef = trendYScaleDefinition_(model);
     const currentTrendScaleMode = salaryMode() ? 'salary' : 'hourly';
     const modeChanged = currentTrendScaleMode !== lastTrendScaleMode_;
-    const animateChartChange = Boolean(animate && !REDUCE_MOTION);
-    const animateScaleChange = Boolean(modeChanged && !REDUCE_MOTION);
+    const animateChartChange = Boolean(animate && !window.pffPrefersReducedMotion());
+    const animateScaleChange = Boolean(modeChanged && !window.pffPrefersReducedMotion());
     const animateAnyChange = animateChartChange || animateScaleChange;
     trendChart.data.datasets = reconcileTrendDatasets_(model.datasets);
     trendChart.options.scales.x.min = trendMinYear();
     const nextXMax = currentProjectionMaxYear();
     startTrendXAxisAnimation_(
       nextXMax,
-      animateChartChange ? 320 : 0
+      animateChartChange ? TREND_ANIMATION_MS : 0
     );
     trendChart.options.scales.x.max = nextXMax;
     trendChart.options.scales.y.min = yScaleDef.min;
@@ -25233,13 +25266,18 @@ function sortKeysByCountDesc(counts) {
     trendChart.options.scales.y.title.text = salaryMode() ? 'FTE salary ($)' : 'Hourly rate ($)';
     trendChart.options.animation = animateAnyChange
       ? {
-          duration: animateScaleChange ? 360 : 320,
-          easing: 'easeInOutCubic'
+          duration: animateScaleChange
+            ? TREND_SCALE_ANIMATION_MS
+            : TREND_ANIMATION_MS,
+          easing: TREND_EASING
         }
       : false;
 
     if (animateScaleChange) {
-      animateTrendYAxisLabels_(yScaleDef, 360);
+      animateTrendYAxisLabels_(
+        yScaleDef,
+        TREND_SCALE_ANIMATION_MS
+      );
     } else if (!trendYAxisLabelAnimation.raf) {
       setTrendYAxisLabelsImmediately_(yScaleDef);
     }
@@ -25256,6 +25294,24 @@ function sortKeysByCountDesc(counts) {
     requestAnimationFrame(() => {
       chartUpdateQueued = false;
       refreshTrendChart(animate);
+    });
+  }
+
+  let comparatorRefreshQueued_ = false;
+  let comparatorRefreshAnimate_ = false;
+
+  function queueComparatorRefresh_(animate = false) {
+    comparatorRefreshAnimate_ =
+      comparatorRefreshAnimate_ || Boolean(animate);
+
+    if (comparatorRefreshQueued_) return;
+    comparatorRefreshQueued_ = true;
+
+    requestAnimationFrame(() => {
+      const shouldAnimate = comparatorRefreshAnimate_;
+      comparatorRefreshQueued_ = false;
+      comparatorRefreshAnimate_ = false;
+      refreshAllComparatorOutputs(shouldAnimate);
     });
   }
 
@@ -25290,14 +25346,174 @@ function sortKeysByCountDesc(counts) {
     if (typeof refreshCalculatorLayout === 'function') refreshCalculatorLayout();
   }
 
+  function selectedHpssLevel_() {
+    return (
+      typeof hpssSelectedLevel !== 'undefined' &&
+      hpssSelectedLevel
+    ) ||
+      document.querySelector(
+        'input[name="hpssLevel"]:checked'
+      )?.value ||
+      '';
+  }
+
+  function hpssHoursStateValid_() {
+    const weekend =
+      document.getElementById('hpssWeekendHours');
+    const evening =
+      document.getElementById('hpssEveningHours');
+
+    return [
+      { element: weekend, max: 20 },
+      { element: evening, max: 38 }
+    ].every(item => {
+      const raw = item.element?.value.trim() || '';
+      if (!raw) return true;
+      const value = Number(raw);
+      return (
+        Number.isFinite(value) &&
+        value >= 0 &&
+        value <= item.max
+      );
+    });
+  }
+
+  function primaryBenchmarkRequired_() {
+    const hasHpssHours = Boolean(
+      document.getElementById('hpssWeekendHours')
+        ?.value.trim() ||
+      document.getElementById('hpssEveningHours')
+        ?.value.trim()
+    );
+
+    const hpssOpen = Boolean(
+      document.getElementById('hpssInputDetails')
+        ?.open
+    );
+    const absOpen = Boolean(
+      document.getElementById('absMultiDetails')
+        ?.open
+    );
+    const hpssBenchmarkRequested = Boolean(
+      typeof benchmarkRequiredForHpss !== 'undefined' &&
+      benchmarkRequiredForHpss
+    );
+
+    return Boolean(
+      selectedHpssLevel_() ||
+      hasHpssHours ||
+      selectedComparators.size > 0 ||
+      hpssOpen ||
+      absOpen ||
+      hpssBenchmarkRequested ||
+      returnAttentionContexts.has('hpss') ||
+      returnAttentionContexts.has('abs')
+    );
+  }
+
+  function isPrimaryActionReady_() {
+    const button = document.getElementById('estimateBtn');
+    if (!button || button.disabled) return false;
+
+    const yearsText =
+      document.getElementById('years')
+        ?.value.trim() || '';
+    const years = yearsText
+      ? Number(yearsText)
+      : NaN;
+    const mmm = Number(
+      document.getElementById('mmm')?.value
+    );
+    const state =
+      document.getElementById('state')
+        ?.value.trim() || '';
+
+    if (
+      !Number.isFinite(years) ||
+      years < 0 ||
+      !Number.isFinite(mmm) ||
+      mmm < 1 ||
+      mmm > 7 ||
+      !state
+    ) {
+      return false;
+    }
+
+    const benchmarkInput =
+      document.getElementById('currentSalary');
+    const benchmarkText =
+      benchmarkInput?.value.trim() || '';
+    const benchmarkValid =
+      hasValidBenchmarkForAbs_();
+
+    if (benchmarkText && !benchmarkValid) {
+      return false;
+    }
+
+    if (
+      primaryBenchmarkRequired_() &&
+      !benchmarkValid
+    ) {
+      return false;
+    }
+
+    if (salaryMode()) {
+      const ftHoursInput =
+        document.getElementById('benchmarkFtHours');
+      const ftHours = Number(ftHoursInput?.value);
+      const min = Number(ftHoursInput?.min) || 35;
+      const max = Number(ftHoursInput?.max) || 45;
+
+      if (
+        !Number.isFinite(ftHours) ||
+        ftHours < min ||
+        ftHours > max
+      ) {
+        return false;
+      }
+    }
+
+    if (!hpssHoursStateValid_()) {
+      return false;
+    }
+
+    const hasHpssHours = Boolean(
+      document.getElementById('hpssWeekendHours')
+        ?.value.trim() ||
+      document.getElementById('hpssEveningHours')
+        ?.value.trim()
+    );
+    const hpssLevel = selectedHpssLevel_();
+
+    if (hasHpssHours && !hpssLevel) {
+      return false;
+    }
+
+    if (
+      returnAttentionContexts.has('hpss') &&
+      !hpssLevel
+    ) {
+      return false;
+    }
+
+    if (
+      returnAttentionContexts.has('abs') &&
+      selectedComparators.size === 0
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  window.pffIsPrimaryActionReady =
+    isPrimaryActionReady_;
+
   function returnAttentionComplete_(kind) {
     if (!hasValidBenchmarkForAbs_()) return false;
 
     if (kind === 'hpss') {
-      return Boolean(
-        typeof hpssSelectedLevel !== 'undefined' &&
-        hpssSelectedLevel
-      );
+      return Boolean(selectedHpssLevel_());
     }
 
     if (kind === 'abs') {
@@ -25348,7 +25564,8 @@ function sortKeysByCountDesc(counts) {
     const readyToRecalculate =
       inputOpen &&
       returnAttentionContexts.size > 0 &&
-      [...returnAttentionContexts].every(returnAttentionComplete_);
+      [...returnAttentionContexts].every(returnAttentionComplete_) &&
+      isPrimaryActionReady_();
 
     calculateButton?.classList.toggle(
       'pff-return-attention-button',
@@ -25399,8 +25616,7 @@ function sortKeysByCountDesc(counts) {
     if (!element) return;
 
     const reduceMotion =
-      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ||
-      false;
+      window.pffPrefersReducedMotion();
 
     window.setTimeout(() => {
       element.scrollIntoView({
@@ -25419,26 +25635,42 @@ function sortKeysByCountDesc(counts) {
     }, delay);
   }
 
-  function focusReturnAttentionSection_() {
-    if (!returnAttentionActive_()) return;
-
-    if (!hasValidBenchmarkForAbs_()) {
-      returnAttentionScrollFocus_(
-        document.getElementById('currentSalary')
-      );
-      return;
-    }
-
-    const nextKind =
+  function nextInputComparisonKind_() {
+    const armed =
       [...returnAttentionContexts].find(
         kind => !returnAttentionComplete_(kind)
       );
 
-    if (nextKind === 'hpss') {
+    if (armed) return armed;
+
+    const hpssDetails =
+      document.getElementById('hpssInputDetails');
+    if (
+      hpssDetails?.open &&
+      !selectedHpssLevel_()
+    ) {
+      return 'hpss';
+    }
+
+    const absDetails =
+      document.getElementById('absMultiDetails');
+    if (
+      absDetails?.open &&
+      selectedComparators.size === 0
+    ) {
+      return 'abs';
+    }
+
+    return null;
+  }
+
+  function focusComparisonKind_(kind) {
+    if (kind === 'hpss') {
       if (typeof setHpssInputDetailsOpen_ === 'function') {
         setHpssInputDetailsOpen_(true, true);
       } else {
-        const details = document.getElementById('hpssInputDetails');
+        const details =
+          document.getElementById('hpssInputDetails');
         if (details) details.open = true;
       }
 
@@ -25447,11 +25679,12 @@ function sortKeysByCountDesc(counts) {
         document.getElementById('hpssInputDetails'),
         80
       );
-      return;
+      return true;
     }
 
-    if (nextKind === 'abs') {
-      const details = document.getElementById('absMultiDetails');
+    if (kind === 'abs') {
+      const details =
+        document.getElementById('absMultiDetails');
       if (details) details.open = true;
 
       returnAttentionScrollFocus_(
@@ -25459,13 +25692,89 @@ function sortKeysByCountDesc(counts) {
         document.getElementById('absMultiCompare'),
         80
       );
-      return;
+      return true;
     }
 
-    returnAttentionScrollFocus_(
-      document.getElementById('estimateBtn'),
-      80
+    return false;
+  }
+
+  function advanceInputFlow_(source = '') {
+    const app = document.getElementById('app');
+    const inputOpen = Boolean(
+      app &&
+      !app.classList.contains('is-input-collapsed')
     );
+
+    if (!inputOpen) return false;
+
+    const nextKind = nextInputComparisonKind_();
+    const benchmarkRequired =
+      primaryBenchmarkRequired_() ||
+      Boolean(nextKind);
+
+    if (
+      benchmarkRequired &&
+      !hasValidBenchmarkForAbs_()
+    ) {
+      if (
+        nextKind === 'abs' ||
+        returnAttentionContexts.has('abs')
+      ) {
+        requireBenchmarkForAbs_();
+      } else {
+        requireBenchmarkForHpss_();
+      }
+      return true;
+    }
+
+    const ftHoursInput =
+      document.getElementById('benchmarkFtHours');
+
+    if (
+      source === 'benchmark' &&
+      salaryMode() &&
+      ftHoursInput
+    ) {
+      returnAttentionScrollFocus_(
+        ftHoursInput,
+        40
+      );
+      return true;
+    }
+
+    if (source === 'ftHours' && salaryMode()) {
+      const hours = Number(ftHoursInput?.value);
+      const min = Number(ftHoursInput?.min) || 35;
+      const max = Number(ftHoursInput?.max) || 45;
+
+      if (
+        !Number.isFinite(hours) ||
+        hours < min ||
+        hours > max
+      ) {
+        ftHoursInput?.focus();
+        return true;
+      }
+    }
+
+    if (focusComparisonKind_(nextKind)) {
+      return true;
+    }
+
+    if (isPrimaryActionReady_()) {
+      returnAttentionScrollFocus_(
+        document.getElementById('estimateBtn'),
+        80
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  function focusReturnAttentionSection_() {
+    if (!returnAttentionActive_()) return;
+    advanceInputFlow_('comparison');
   }
 
   function scheduleReturnAttentionAdvance_(delay = 240) {
@@ -25519,11 +25828,24 @@ function sortKeysByCountDesc(counts) {
     const salaryInput = document.getElementById('currentSalary');
     const ftHoursInput = document.getElementById('benchmarkFtHours');
 
-    salaryInput?.setAttribute(
-      'enterkeyhint',
-      viewMode === 'hourly' ? 'done' : 'next'
+    const syncInputEnterKeyHints_ = () => {
+      salaryInput?.setAttribute(
+        'enterkeyhint',
+        salaryMode() ? 'next' : 'done'
+      );
+      ftHoursInput?.setAttribute(
+        'enterkeyhint',
+        'done'
+      );
+    };
+
+    syncInputEnterKeyHints_();
+
+    window.pffModeChangeCoordinator?.register(
+      'input-keyboard-flow',
+      35,
+      syncInputEnterKeyHints_
     );
-    ftHoursInput?.setAttribute('enterkeyhint', 'done');
 
     salaryInput?.addEventListener(
       'input',
@@ -25535,76 +25857,20 @@ function sortKeysByCountDesc(counts) {
       event => {
         if (event.key !== 'Enter') return;
 
-        const inputOpen = Boolean(
-          app &&
-          !app.classList.contains('is-input-collapsed')
-        );
-
-        if (!inputOpen) return;
-
         event.preventDefault();
-
-        const hpssOpen = Boolean(
-          document.getElementById('hpssInputDetails')?.open
-        );
-        const absOpen = Boolean(
-          document.getElementById('absMultiDetails')?.open
-        );
-        const benchmarkRequired =
-          hpssOpen ||
-          absOpen ||
-          returnAttentionContexts.size > 0;
-
-        if (
-          benchmarkRequired &&
-          !hasValidBenchmarkForAbs_()
-        ) {
-          if (absOpen || returnAttentionContexts.has('abs')) {
-            requireBenchmarkForAbs_();
-          } else if (
-            hpssOpen ||
-            returnAttentionContexts.has('hpss')
-          ) {
-            requireBenchmarkForHpss_();
-          }
-          return;
-        }
-
         event.currentTarget.blur();
-
-        if (
-          viewMode === 'salary' &&
-          ftHoursInput
-        ) {
-          returnAttentionScrollFocus_(ftHoursInput, 40);
-          return;
-        }
-
-        if (returnAttentionActive_()) {
-          scheduleReturnAttentionAdvance_(80);
-        }
+        advanceInputFlow_('benchmark');
       }
     );
 
     ftHoursInput?.addEventListener(
       'keydown',
       event => {
-        if (event.key !== 'Enter' || !returnAttentionActive_()) return;
+        if (event.key !== 'Enter') return;
 
         event.preventDefault();
-
-        const hours = Number(event.currentTarget.value);
-        if (
-          !Number.isFinite(hours) ||
-          hours < USER_FTE_HOURS_MIN ||
-          hours > USER_FTE_HOURS_MAX
-        ) {
-          event.currentTarget.focus();
-          return;
-        }
-
         event.currentTarget.blur();
-        scheduleReturnAttentionAdvance_(120);
+        advanceInputFlow_('ftHours');
       }
     );
 
@@ -25629,6 +25895,7 @@ function sortKeysByCountDesc(counts) {
       event => {
         if (event.target.closest('[data-abs-comparator]')) {
           requestAnimationFrame(syncReturnAttention_);
+          window.pffSyncPrimaryActionReadiness?.();
 
           if (
             returnAttentionContexts.has('abs') &&
@@ -25675,19 +25942,22 @@ function sortKeysByCountDesc(counts) {
       queueTrendChartRefresh(true);
     });
 
-    document.querySelectorAll('.benchmark-mode-button').forEach(button => {
-      button.addEventListener('click', () => {
-        requestAnimationFrame(() => refreshAllComparatorOutputs(true));
-      });
-    });
+    window.pffModeChangeCoordinator?.register(
+      'multi-comparator-refresh',
+      40,
+      () => {
+        queueComparatorRefresh_(true);
+        window.pffSyncPrimaryActionReadiness?.();
+      }
+    );
 
     document.getElementById('benchmarkFtHours')?.addEventListener('input', () => {
-      requestAnimationFrame(() => refreshAllComparatorOutputs(false));
+      queueComparatorRefresh_(false);
     });
 
     document.getElementById('currentSalary')?.addEventListener('input', () => {
       syncAbsBenchmarkGate_(false);
-      requestAnimationFrame(() => refreshAllComparatorOutputs(false));
+      queueComparatorRefresh_(false);
     });
 
     document.getElementById('hpssResultsEnabledToggle')?.addEventListener('change', () => {
@@ -25703,7 +25973,7 @@ function sortKeysByCountDesc(counts) {
       const observer = new MutationObserver(mutations => {
         if (mutations.some(item => item.type === 'attributes' && item.attributeName === 'class')) {
           if (typeof hpssActiveProjectionIndex !== 'undefined') activeOffset = Number(hpssActiveProjectionIndex) || 0;
-          requestAnimationFrame(() => refreshAllComparatorOutputs(false));
+          queueComparatorRefresh_(false);
         }
       });
       observer.observe(app, { attributes: true, attributeFilter: ['class'] });
@@ -26719,6 +26989,11 @@ function sortKeysByCountDesc(counts) {
     text-align: center !important;
   }
 
+  :root {
+    --pff-attention-pulse-duration: 1650ms;
+    --pff-action-pulse-duration: 1050ms;
+  }
+
   /* Return-from-results guidance. This is deliberately inactive during the
      normal first-pass input flow. */
   @keyframes pffReturnAttentionPulse {
@@ -26746,13 +27021,13 @@ function sortKeysByCountDesc(counts) {
   #hpssInputDetails.pff-return-attention,
   #absMultiCompare.pff-return-attention {
     border-radius: 0;
-    animation: pffReturnAttentionPulse 1650ms ease-in-out infinite;
+    animation: pffReturnAttentionPulse var(--pff-attention-pulse-duration) ease-in-out infinite;
   }
 
   #estimateBtn.is-next-action,
   #estimateBtn.pff-return-attention-button {
     outline: none;
-    animation: pffReturnActionPulse 1050ms ease-in-out 3;
+    animation: pffReturnActionPulse var(--pff-action-pulse-duration) ease-in-out 3;
   }
 
   #estimateBtn:focus:not(:disabled) {
