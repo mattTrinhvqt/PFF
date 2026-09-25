@@ -23263,6 +23263,7 @@ function sortKeysByCountDesc(counts) {
 
   const seriesByKey = new Map(ABS_MULTI_SERIES.map(item => [item.key, item]));
   const selectedComparators = new Set();
+  const returnAttentionContexts = new Set();
   let absResultsEnabled = false;
   const comparatorMarkers = new Map();
   const rowElements = new Map();
@@ -23614,9 +23615,11 @@ function sortKeysByCountDesc(counts) {
         <span class="abs-multi-option-content">
           <span class="abs-multi-option-dot" aria-hidden="true"></span>
           <span class="abs-multi-option-label">${
-            meta.group === 'Professional occupation groups'
-              ? meta.label.replace(/\s+Professionals$/i, '')
-              : meta.label
+            meta.key === 'ict'
+              ? 'ICT (Information and Communication Technology)'
+              : meta.group === 'Professional occupation groups'
+                ? meta.label.replace(/\s+Professionals$/i, '')
+                : meta.label
           }</span>
         </span>
       </label>
@@ -23654,7 +23657,7 @@ function sortKeysByCountDesc(counts) {
           <span id="absMultiCount" class="abs-multi-count" aria-live="polite"></span>
         </summary>
         <div class="abs-multi-picker">
-          <p class="abs-multi-picker-intro">Choose any pay group(s) to compare against</p>
+          <p class="abs-multi-picker-intro">Choose any pay group(s) to compare against:</p>
           ${groupHtml}
         </div>
       </details>
@@ -24147,6 +24150,22 @@ function sortKeysByCountDesc(counts) {
     return CURRENT_CALENDAR_YEAR;
   }
 
+  function fullProjectionMaxYear() {
+    const candidates = [CURRENT_CALENDAR_YEAR + TREND_PROJECTION_YEARS];
+
+    if (
+      typeof hpssProjection !== 'undefined' &&
+      Array.isArray(hpssProjection)
+    ) {
+      hpssProjection.forEach(point => {
+        const year = Number(point?.year);
+        if (Number.isFinite(year)) candidates.push(year);
+      });
+    }
+
+    return Math.max(...candidates);
+  }
+
   function trendMinYear() {
     const years = [];
 
@@ -24217,7 +24236,10 @@ function sortKeysByCountDesc(counts) {
   function buildTrendModel() {
     const datasets = [];
     const legend = [];
-    const maxYear = currentProjectionMaxYear();
+    /* Keep the full forecast model loaded. The slider changes only the
+       visible x-axis extent, which keeps the y-axis fixed and lets the
+       forecast reveal smoothly instead of rebuilding future points. */
+    const maxYear = fullProjectionMaxYear();
 
     if (
       trendComparisonsEnabled_() &&
@@ -24502,7 +24524,7 @@ function sortKeysByCountDesc(counts) {
     }
     const start = Number.isFinite(visualTrendYear) ? visualTrendYear : target;
     const started = performance.now();
-    const duration = 150;
+    const duration = 220;
     const frame = now => {
       const progress = Math.min(1, (now - started) / duration);
       const eased = 1 - Math.pow(1 - progress, 3);
@@ -24824,6 +24846,15 @@ function sortKeysByCountDesc(counts) {
         ctx.fillText(yTickLabel(animated), chartArea.left - 8, y);
       });
 
+      /* Keep the x-axis title fixed to the canvas centre while the visible
+         year range expands. */
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#151515';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.font = '700 13px Lato, sans-serif';
+      ctx.fillText('Year', chart.width / 2, chart.height - 2);
+
       ctx.restore();
     }
   };
@@ -24902,8 +24933,13 @@ function sortKeysByCountDesc(counts) {
                 }
               );
             },
+            afterFit(scale) {
+              /* Fixed x-scale height prevents the title/ticks from shifting
+                 vertically as the visible projection year changes. */
+              scale.height = 40;
+            },
             title: {
-              display: true,
+              display: false,
               text: 'Year',
               color: '#151515',
               padding: { top: 7, bottom: 2 },
@@ -25018,7 +25054,9 @@ function sortKeysByCountDesc(counts) {
     const yScaleDef = trendYScaleDefinition_(model);
     const currentTrendScaleMode = salaryMode() ? 'salary' : 'hourly';
     const modeChanged = currentTrendScaleMode !== lastTrendScaleMode_;
-    const animateScaleChange = (animate || modeChanged) && !REDUCE_MOTION;
+    const animateChartChange = Boolean(animate && !REDUCE_MOTION);
+    const animateScaleChange = Boolean(modeChanged && !REDUCE_MOTION);
+    const animateAnyChange = animateChartChange || animateScaleChange;
     trendChart.data.datasets = reconcileTrendDatasets_(model.datasets);
     trendChart.options.scales.x.min = trendMinYear();
     trendChart.options.scales.x.max = currentProjectionMaxYear();
@@ -25028,8 +25066,11 @@ function sortKeysByCountDesc(counts) {
       buildTrendYTicks_(scale, yScaleDef);
     };
     trendChart.options.scales.y.title.text = salaryMode() ? 'FTE salary ($)' : 'Hourly rate ($)';
-    trendChart.options.animation = animateScaleChange
-      ? { duration: 360, easing: 'easeInOutCubic' }
+    trendChart.options.animation = animateAnyChange
+      ? {
+          duration: animateScaleChange ? 360 : 320,
+          easing: 'easeInOutCubic'
+        }
       : false;
 
     if (animateScaleChange) {
@@ -25038,7 +25079,7 @@ function sortKeysByCountDesc(counts) {
       setTrendYAxisLabelsImmediately_(yScaleDef);
     }
 
-    trendChart.update(animateScaleChange ? undefined : 'none');
+    trendChart.update(animateAnyChange ? undefined : 'none');
     lastTrendScaleMode_ = currentTrendScaleMode;
     renderTrendLegend(model.legend);
     refreshSliderUi();
@@ -25073,7 +25114,7 @@ function sortKeysByCountDesc(counts) {
     updateAbsResultsSummary_();
     updateSelectedComparatorRows(true);
     updateComparatorMarkers();
-    queueTrendChartRefresh(false);
+    queueTrendChartRefresh(true);
   }
 
   function refreshAllComparatorOutputs(animate = false) {
@@ -25082,6 +25123,163 @@ function sortKeysByCountDesc(counts) {
     updateComparatorMarkers(animate);
     refreshTrendChart(animate);
     if (typeof refreshCalculatorLayout === 'function') refreshCalculatorLayout();
+  }
+
+  function returnAttentionComplete_(kind) {
+    if (!hasValidBenchmarkForAbs_()) return false;
+
+    if (kind === 'hpss') {
+      return Boolean(
+        typeof hpssSelectedLevel !== 'undefined' &&
+        hpssSelectedLevel
+      );
+    }
+
+    if (kind === 'abs') {
+      return selectedComparators.size > 0;
+    }
+
+    return true;
+  }
+
+  function syncReturnAttention_() {
+    const app = document.getElementById('app');
+    const inputOpen = Boolean(
+      app &&
+      !app.classList.contains('is-input-collapsed')
+    );
+    const benchmarkValid = hasValidBenchmarkForAbs_();
+    const hpssArmed = returnAttentionContexts.has('hpss');
+    const absArmed = returnAttentionContexts.has('abs');
+    const hpssComplete = returnAttentionComplete_('hpss');
+    const absComplete = returnAttentionComplete_('abs');
+
+    const benchmark = document.getElementById('benchmarkField');
+    const hpssSection = document.getElementById('hpssInputDetails');
+    const absSection = document.getElementById('absMultiCompare');
+    const calculateButton = document.getElementById('estimateBtn');
+
+    benchmark?.classList.toggle(
+      'pff-return-attention',
+      inputOpen &&
+      (hpssArmed || absArmed) &&
+      !benchmarkValid
+    );
+
+    hpssSection?.classList.toggle(
+      'pff-return-attention',
+      inputOpen &&
+      hpssArmed &&
+      !hpssComplete
+    );
+
+    absSection?.classList.toggle(
+      'pff-return-attention',
+      inputOpen &&
+      absArmed &&
+      !absComplete
+    );
+
+    const readyToRecalculate =
+      inputOpen &&
+      returnAttentionContexts.size > 0 &&
+      [...returnAttentionContexts].every(returnAttentionComplete_);
+
+    calculateButton?.classList.toggle(
+      'pff-return-attention-button',
+      readyToRecalculate
+    );
+
+    if (readyToRecalculate) {
+      /* The repeating button cue replaces the one-off letter cue in this
+         specific return-from-results workflow. */
+      calculateButton?.classList.remove('is-next-action');
+    }
+  }
+
+  function armReturnAttention_(kind) {
+    if (!kind) return;
+    returnAttentionContexts.add(kind);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(syncReturnAttention_);
+    });
+  }
+
+  function clearReturnAttention_() {
+    returnAttentionContexts.clear();
+    document
+      .querySelectorAll('.pff-return-attention, .pff-return-attention-button')
+      .forEach(element => {
+        element.classList.remove(
+          'pff-return-attention',
+          'pff-return-attention-button'
+        );
+      });
+  }
+
+  function installReturnAttention_() {
+    const app = document.getElementById('app');
+    const hpssToggle = document.getElementById('hpssResultsEnabledToggle');
+    const absToggle = document.getElementById('absMultiResultsToggle');
+
+    /* Capture the user's intent before the existing checkbox handlers may
+       revert an incomplete toggle and return to the input screen. */
+    hpssToggle?.addEventListener(
+      'change',
+      event => {
+        if (
+          app?.classList.contains('is-input-collapsed') &&
+          event.currentTarget.checked &&
+          !(typeof hpssSelectedLevel !== 'undefined' && hpssSelectedLevel)
+        ) {
+          armReturnAttention_('hpss');
+        }
+        requestAnimationFrame(syncReturnAttention_);
+      },
+      true
+    );
+
+    absToggle?.addEventListener(
+      'change',
+      event => {
+        if (
+          app?.classList.contains('is-input-collapsed') &&
+          event.currentTarget.checked &&
+          selectedComparators.size === 0
+        ) {
+          armReturnAttention_('abs');
+        }
+        requestAnimationFrame(syncReturnAttention_);
+      },
+      true
+    );
+
+    document.getElementById('currentSalary')?.addEventListener(
+      'input',
+      () => requestAnimationFrame(syncReturnAttention_)
+    );
+
+    document.querySelectorAll('input[name="hpssLevel"]').forEach(input => {
+      input.addEventListener(
+        'change',
+        () => requestAnimationFrame(syncReturnAttention_)
+      );
+    });
+
+    document.getElementById('absMultiCompare')?.addEventListener(
+      'change',
+      event => {
+        if (event.target.closest('[data-abs-comparator]')) {
+          requestAnimationFrame(syncReturnAttention_);
+        }
+      }
+    );
+
+    document.getElementById('estimateBtn')?.addEventListener(
+      'click',
+      clearReturnAttention_,
+      true
+    );
   }
 
   function installEventBridges() {
@@ -25094,7 +25292,7 @@ function sortKeysByCountDesc(counts) {
       updateAbsResultsSummary_();
       updateSelectedComparatorRows(true);
       updateComparatorMarkers();
-      queueTrendChartRefresh(false);
+      queueTrendChartRefresh(true);
     });
 
     document.querySelectorAll('.benchmark-mode-button').forEach(button => {
@@ -25154,6 +25352,7 @@ function sortKeysByCountDesc(counts) {
     fitAbsInputLabels_();
     syncComparatorSelectionUi();
     installEventBridges();
+    installReturnAttention_();
     if (typeof hpssActiveProjectionIndex !== 'undefined') activeOffset = Number(hpssActiveProjectionIndex) || 0;
     refreshSliderUi();
     refreshAllComparatorOutputs(false);
@@ -25990,9 +26189,18 @@ function sortKeysByCountDesc(counts) {
     align-items: baseline !important;
     column-gap: 0.58em !important;
     color: var(--ink) !important;
-    font-size: 9px !important;
-    line-height: 1.28 !important;
+    font-family: 'Lato', sans-serif !important;
+    font-size: 10px !important;
+    line-height: 1.25 !important;
     text-align: left !important;
+  }
+
+  .abs-selected-sentence span,
+  .abs-selected-sentence strong {
+    font-family: 'Lato', sans-serif !important;
+    font-size: 1em !important;
+    line-height: 1.25 !important;
+    vertical-align: baseline !important;
   }
 
   .abs-selected-lead-block,
@@ -26104,6 +26312,53 @@ function sortKeysByCountDesc(counts) {
     text-align: center !important;
   }
 
+  /* Return-from-results guidance. This is deliberately inactive during the
+     normal first-pass input flow. */
+  @keyframes pffReturnAttentionPulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 rgba(102, 0, 255, 0.04);
+    }
+    50% {
+      box-shadow: 0 0 0 3px rgba(102, 0, 255, 0.16);
+    }
+  }
+
+  @keyframes pffReturnActionPulse {
+    0%, 100% {
+      border-color: var(--ink);
+      box-shadow: 0 0 0 0 rgba(102, 0, 255, 0.04);
+    }
+    50% {
+      border-color: var(--purple);
+      box-shadow: 0 0 0 3px rgba(102, 0, 255, 0.18);
+    }
+  }
+
+  #benchmarkField.pff-return-attention,
+  #hpssInputDetails.pff-return-attention,
+  #absMultiCompare.pff-return-attention {
+    border-radius: 6px;
+    animation: pffReturnAttentionPulse 1650ms ease-in-out infinite;
+  }
+
+  #estimateBtn.pff-return-attention-button {
+    animation: pffReturnActionPulse 1550ms ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #benchmarkField.pff-return-attention,
+    #hpssInputDetails.pff-return-attention,
+    #absMultiCompare.pff-return-attention,
+    #estimateBtn.pff-return-attention-button {
+      animation: none !important;
+      box-shadow: 0 0 0 2px rgba(102, 0, 255, 0.16) !important;
+    }
+
+    #estimateBtn.pff-return-attention-button {
+      border-color: var(--purple) !important;
+    }
+  }
+
   @media (max-width: 430px) {
     .abs-input-comparators .abs-multi-option-label {
       font-size: 9px;
@@ -26111,7 +26366,7 @@ function sortKeysByCountDesc(counts) {
 
     .abs-selected-sentence {
       grid-template-columns: 9.4em 6em minmax(0, 1fr) !important;
-      font-size: 8.4px !important;
+      font-size: 9px !important;
       column-gap: 0.48em !important;
     }
 
