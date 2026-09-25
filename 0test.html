@@ -24,6 +24,16 @@
         easing: 'easeInOutCubic'
       });
 
+    document.documentElement.style.setProperty(
+      '--pff-attention-pulse-duration',
+      `${window.PFF_UI_MOTION.attentionPulseMs}ms`
+    );
+
+    document.documentElement.style.setProperty(
+      '--pff-action-pulse-duration',
+      `${window.PFF_UI_MOTION.actionPulseMs}ms`
+    );
+
     window.pffPrefersReducedMotion =
       window.pffPrefersReducedMotion ||
       (() =>
@@ -10002,12 +10012,27 @@ function sortKeysByCountDesc(counts) {
       .addEventListener('click', estimate);
 
     toggleBtn.addEventListener('click', () => {
-      viewMode = viewMode === 'salary' ? 'hourly' : 'salary';
+      const nextMode =
+        viewMode === 'salary'
+          ? 'hourly'
+          : 'salary';
+
+      if (
+        typeof window.pffSetBenchmarkViewMode ===
+        'function'
+      ) {
+        window.pffSetBenchmarkViewMode(nextMode);
+        return;
+      }
+
+      viewMode = nextMode;
 
       updateView(
         true,
         TOGGLE_NUMBER_ANIMATION_MS
       );
+
+      window.pffModeChangeCoordinator?.schedule();
     });
 
     function selectAllCurrentSalary_() {
@@ -13977,7 +14002,12 @@ function sortKeysByCountDesc(counts) {
       syncBenchmarkModeUi_();
       refreshCalculatorLayout();
     }
+
+    window.pffModeChangeCoordinator?.schedule();
   }
+
+  window.pffSetBenchmarkViewMode =
+    setBenchmarkViewMode_;
 
   benchmarkModeSalary?.addEventListener(
     'click',
@@ -23585,7 +23615,10 @@ function sortKeysByCountDesc(counts) {
     const hpssRequired = hpssBenchmarkIntent_();
     const absRequired = absBenchmarkIntent_();
     const required = hpssRequired || absRequired;
+    const benchmarkText = input?.value.trim() || '';
+    const entered = Boolean(benchmarkText);
     const valid = hasValidBenchmarkForAbs_();
+    const invalidEntered = entered && !valid;
     const show = required && !valid;
     const isResultsView = Boolean(
       app?.classList.contains('is-input-collapsed')
@@ -23605,7 +23638,10 @@ function sortKeysByCountDesc(counts) {
       }
 
       input.placeholder = placeholder;
-      input.setAttribute('aria-invalid', String(show));
+      input.setAttribute(
+        'aria-invalid',
+        String(show || invalidEntered)
+      );
     }
 
     warning?.classList.toggle('is-visible', show);
@@ -23624,17 +23660,15 @@ function sortKeysByCountDesc(counts) {
       hpssRequired,
       absRequired,
       required,
+      entered,
       valid,
+      invalidEntered,
       show
     };
   }
 
   window.pffSyncBenchmarkRequirement =
     syncBenchmarkRequirementUi_;
-
-  function showBenchmarkWarningForAbs_(drawAttention = false) {
-    syncBenchmarkRequirementUi_(drawAttention);
-  }
 
   function syncAbsBenchmarkGate_(drawAttention = false) {
     const section = document.getElementById('absMultiCompare');
@@ -23650,8 +23684,13 @@ function sortKeysByCountDesc(counts) {
       ?.setAttribute('aria-disabled', String(locked));
 
     section?.querySelectorAll('[data-abs-comparator]').forEach(input => {
-      input.disabled = false;
-      input.removeAttribute('aria-disabled');
+      input.disabled = locked;
+
+      if (locked) {
+        input.setAttribute('aria-disabled', 'true');
+      } else {
+        input.removeAttribute('aria-disabled');
+      }
     });
 
     syncBenchmarkRequirementUi_(
@@ -24700,25 +24739,6 @@ function sortKeysByCountDesc(counts) {
     return { datasets, legend };
   }
 
-  function datasetValueAtYear(dataset, year) {
-    const points = (dataset?.data || [])
-      .map(point => ({ x: Number(point?.x), y: Number(point?.y) }))
-      .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y))
-      .sort((a, b) => a.x - b.x);
-    if (!points.length || year < points[0].x || year > points[points.length - 1].x) return null;
-    for (let index = 0; index < points.length; index += 1) {
-      const point = points[index];
-      if (Math.abs(point.x - year) < 1e-7) return point.y;
-      const next = points[index + 1];
-      if (!next) break;
-      if (year > point.x && year < next.x) {
-        const ratio = (year - point.x) / (next.x - point.x);
-        return point.y + (next.y - point.y) * ratio;
-      }
-    }
-    return null;
-  }
-
   function renderedDatasetYAtX_(chart, datasetIndex, targetX) {
     const dataset = chart.data.datasets?.[datasetIndex];
     const elements = chart.getDatasetMeta(datasetIndex)?.data || [];
@@ -25496,8 +25516,6 @@ function sortKeysByCountDesc(counts) {
 
     activeTrendYear = getTargetYear();
     animateTrendFocusYear(activeTrendYear);
-    const activeYearEl = document.getElementById('payTrendActiveYear');
-    if (activeYearEl) activeYearEl.textContent = String(activeTrendYear);
 
     if (status) {
       status.hidden = true;
@@ -25506,7 +25524,6 @@ function sortKeysByCountDesc(counts) {
 
     if (!chartReady || !trendChart) {
       createTrendChart();
-      refreshSliderUi();
       return;
     }
 
@@ -25517,12 +25534,18 @@ function sortKeysByCountDesc(counts) {
     const animateChartChange = Boolean(animate && !window.pffPrefersReducedMotion());
     const animateScaleChange = Boolean(modeChanged && !window.pffPrefersReducedMotion());
     const animateAnyChange = animateChartChange || animateScaleChange;
+    const chartAnimationDuration =
+      animateScaleChange
+        ? TREND_SCALE_ANIMATION_MS
+        : animateChartChange
+          ? TREND_ANIMATION_MS
+          : 0;
     trendChart.data.datasets = reconcileTrendDatasets_(model.datasets);
     trendChart.options.scales.x.min = trendMinYear();
     const nextXMax = currentProjectionMaxYear();
     startTrendXAxisAnimation_(
       nextXMax,
-      animateChartChange ? TREND_ANIMATION_MS : 0
+      chartAnimationDuration
     );
     trendChart.options.scales.x.max = nextXMax;
     trendChart.options.scales.y.min = yScaleDef.min;
@@ -25533,12 +25556,15 @@ function sortKeysByCountDesc(counts) {
     trendChart.options.scales.y.title.text = salaryMode() ? 'FTE salary ($)' : 'Hourly rate ($)';
     trendChart.options.animation = animateAnyChange
       ? {
-          duration: animateScaleChange
-            ? TREND_SCALE_ANIMATION_MS
-            : TREND_ANIMATION_MS,
+          duration: chartAnimationDuration,
           easing: TREND_EASING
         }
       : false;
+
+    trendChart.options.animations.x.duration =
+      chartAnimationDuration;
+    trendChart.options.animations.y.duration =
+      chartAnimationDuration;
 
     if (animateScaleChange) {
       animateTrendYAxisLabels_(
@@ -25552,15 +25578,21 @@ function sortKeysByCountDesc(counts) {
     trendChart.update(animateAnyChange ? undefined : 'none');
     lastTrendScaleMode_ = currentTrendScaleMode;
     renderTrendLegend(model.legend);
-    refreshSliderUi();
   }
 
+  let trendRefreshAnimate_ = false;
+
   function queueTrendChartRefresh(animate = false) {
+    trendRefreshAnimate_ =
+      trendRefreshAnimate_ || Boolean(animate);
+
     if (chartUpdateQueued) return;
     chartUpdateQueued = true;
     requestAnimationFrame(() => {
+      const shouldAnimate = trendRefreshAnimate_;
       chartUpdateQueued = false;
-      refreshTrendChart(animate);
+      trendRefreshAnimate_ = false;
+      refreshTrendChart(shouldAnimate);
     });
   }
 
@@ -25580,29 +25612,6 @@ function sortKeysByCountDesc(counts) {
       comparatorRefreshAnimate_ = false;
       refreshAllComparatorOutputs(shouldAnimate);
     });
-  }
-
-  function refreshSliderUi() {
-    const year = getTargetYear();
-    const activeYearEl = document.getElementById('payTrendActiveYear');
-    if (activeYearEl) activeYearEl.textContent = String(year);
-  }
-
-  function setActiveOffset(offset, syncExistingSlider = true, source = '') {
-    const hpssSlider = document.getElementById('hpssYearSlider');
-    const max = Math.max(0, Number(hpssSlider?.max) || TREND_PROJECTION_YEARS);
-    activeOffset = Math.max(0, Math.min(max, Math.round(Number(offset) || 0)));
-    if (syncExistingSlider && hpssSlider && source !== 'hpss') {
-      hpssSlider.value = String(activeOffset);
-      hpssSlider.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    activeTrendYear = getTargetYear();
-    animateTrendFocusYear(activeTrendYear);
-    refreshSliderUi();
-    updateAbsResultsSummary_();
-    updateSelectedComparatorRows(true);
-    updateComparatorMarkers();
-    queueTrendChartRefresh(true);
   }
 
   function refreshAllComparatorOutputs(animate = false) {
@@ -25629,13 +25638,23 @@ function sortKeysByCountDesc(counts) {
       document.getElementById('hpssWeekendHours');
     const evening =
       document.getElementById('hpssEveningHours');
+    const requireExplicit =
+      Boolean(selectedHpssLevel_());
+    const weekendMax =
+      typeof HPSS_WEEKEND_HOURS_MAX !== 'undefined'
+        ? HPSS_WEEKEND_HOURS_MAX
+        : 20;
+    const eveningMax =
+      typeof getHpssFteWeeklyHours_ === 'function'
+        ? getHpssFteWeeklyHours_()
+        : 38;
 
     return [
-      { element: weekend, max: 20 },
-      { element: evening, max: 38 }
+      { element: weekend, max: weekendMax },
+      { element: evening, max: eveningMax }
     ].every(item => {
       const raw = item.element?.value.trim() || '';
-      if (!raw) return true;
+      if (!raw) return !requireExplicit;
       const value = Number(raw);
       return (
         Number.isFinite(value) &&
@@ -26017,15 +26036,34 @@ function sortKeysByCountDesc(counts) {
   }
 
   function firstInvalidHpssHoursInput_() {
+    const requireExplicit =
+      Boolean(selectedHpssLevel_());
     const checks = [
-      { id: 'hpssWeekendHours', max: 20 },
-      { id: 'hpssEveningHours', max: 38 }
+      {
+        id: 'hpssWeekendHours',
+        max:
+          typeof HPSS_WEEKEND_HOURS_MAX !== 'undefined'
+            ? HPSS_WEEKEND_HOURS_MAX
+            : 20
+      },
+      {
+        id: 'hpssEveningHours',
+        max:
+          typeof getHpssFteWeeklyHours_ === 'function'
+            ? getHpssFteWeeklyHours_()
+            : 38
+      }
     ];
 
     for (const item of checks) {
       const input = document.getElementById(item.id);
       const raw = input?.value.trim() || '';
-      if (!raw) continue;
+
+      if (!raw) {
+        if (requireExplicit) return input;
+        continue;
+      }
+
       const value = Number(raw);
       if (
         !Number.isFinite(value) ||
@@ -26079,6 +26117,36 @@ function sortKeysByCountDesc(counts) {
     }
 
     if (hpssIntent && !hpssHoursStateValid_()) {
+      if (selectedHpssLevel_()) {
+        const weekendInput =
+          document.getElementById('hpssWeekendHours');
+        const eveningInput =
+          document.getElementById('hpssEveningHours');
+
+        if (
+          typeof hpssWeekendRequiredWarning !==
+          'undefined'
+        ) {
+          hpssWeekendRequiredWarning =
+            !weekendInput?.value.trim();
+        }
+
+        if (
+          typeof hpssEveningRequiredWarning !==
+          'undefined'
+        ) {
+          hpssEveningRequiredWarning =
+            !eveningInput?.value.trim();
+        }
+
+        if (
+          typeof updateHpssHoursWarnings_ ===
+          'function'
+        ) {
+          updateHpssHoursWarnings_();
+        }
+      }
+
       const invalidHours = firstInvalidHpssHoursInput_();
       if (invalidHours) {
         if (typeof setHpssInputDetailsOpen_ === 'function') {
@@ -26313,7 +26381,6 @@ function sortKeysByCountDesc(counts) {
       activeOffset = Number(event.currentTarget.value) || 0;
       activeTrendYear = getTargetYear();
       animateTrendFocusYear(activeTrendYear);
-      refreshSliderUi();
       updateAbsResultsSummary_();
       updateSelectedComparatorRows(true);
       updateComparatorMarkers();
@@ -26383,7 +26450,6 @@ function sortKeysByCountDesc(counts) {
     installEventBridges();
     installReturnAttention_();
     if (typeof hpssActiveProjectionIndex !== 'undefined') activeOffset = Number(hpssActiveProjectionIndex) || 0;
-    refreshSliderUi();
     refreshAllComparatorOutputs(false);
   }
 
@@ -27089,7 +27155,7 @@ function sortKeysByCountDesc(counts) {
   }
 
   .abs-input-comparators.is-benchmark-locked .abs-multi-option input:disabled {
-    pointer-events: none !important;
+    pointer-events: auto !important;
   }
 
   /* Native select chevrons keep their own space; move the standard warning left. */
