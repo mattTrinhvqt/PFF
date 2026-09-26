@@ -66,14 +66,14 @@
 
     .summary-module {
       width: 100%;
-      margin: 0 0 10px;
-      padding: 7px 5px 9px;
+      margin: 0 0 6px;
+      padding: 5px 5px 6px;
       background: #fff;
       border-bottom: 1px solid var(--track);
     }
 
     .summary-context {
-      margin: 0 0 2px;
+      margin: 0 0 1px;
       color: var(--pff-ink);
       font-size: 13px;
       font-weight: 400;
@@ -82,7 +82,7 @@
     }
 
     .summary-lead {
-      margin: 0 0 3px;
+      margin: 0 0 1px;
       color: var(--pff-ink);
       font-size: 13px;
       font-weight: 400;
@@ -93,7 +93,7 @@
     .summary-timeline {
       width: 100%;
       min-width: 0;
-      margin: 0 0 7px;
+      margin: 0 0 4px;
     }
 
     .summary-timeline-topline {
@@ -141,7 +141,7 @@
       --summary-slider-progress: 100%;
       position: relative;
       width: 100%;
-      min-height: 22px;
+      min-height: 20px;
       margin: 0;
     }
 
@@ -237,7 +237,7 @@
       z-index: 4;
       display: block;
       width: 100%;
-      height: 22px;
+      height: 20px;
       margin: 0;
       padding: 0;
       appearance: none;
@@ -364,7 +364,7 @@
     .summary-table th,
     .summary-table td {
       position: relative;
-      padding: 7px 2px;
+      padding: 4px 2px;
       line-height: 1.15;
       text-align: center;
       vertical-align: middle;
@@ -433,18 +433,18 @@
 
 
     .summary-count-cell {
-      padding: 2px !important;
+      padding: 1px !important;
     }
 
     .summary-count-button {
       position: relative;
       display: flex;
       width: 100%;
-      min-height: 30px;
+      min-height: 25px;
       align-items: center;
       justify-content: center;
       margin: 0;
-      padding: 4px 1px;
+      padding: 2px 1px;
       color: var(--pff-ink);
       background: transparent;
       border: 1px solid transparent;
@@ -550,11 +550,11 @@
 
     .summary-action-line {
       display: flex;
-      min-height: 19px;
+      min-height: 18px;
       align-items: center;
       justify-content: center;
       gap: 5px;
-      margin: 4px 0 0;
+      margin: 2px 0 0;
       color: var(--pff-muted);
       font-size: 9px;
       line-height: 1.2;
@@ -627,7 +627,7 @@
 
       .summary-table th,
       .summary-table td {
-        padding: 6px 1px;
+        padding: 4px 1px;
       }
 
       .summary-table th {
@@ -653,7 +653,7 @@
       }
 
       .summary-count-button {
-        min-height: 27px;
+        min-height: 25px;
         padding-right: 0;
         padding-left: 0;
         border-radius: 4px;
@@ -692,7 +692,7 @@
       align-items: flex-end;
       justify-content: space-between;
       gap: 10px;
-      margin: 0 6px 5px;
+      margin: 0 6px 3px;
     }
 
     .status-group {
@@ -767,8 +767,8 @@
     .filter-button,
     .reset-button,
     .salary-control {
-      height: 31px;
-      min-height: 31px;
+      height: 29px;
+      min-height: 29px;
       box-sizing: border-box;
       padding: 0 3px;
       color: var(--pff-ink);
@@ -2031,7 +2031,8 @@
 
       fetchTimeout: 20000,
       liveAttempts: 2,
-      liveRetryDelay: 1500
+      liveRetryDelay: 1500,
+      fetchWindowMonths: 4
     };
 
     /*
@@ -2743,6 +2744,80 @@
           )
         )
       );
+    }
+
+    function trackerFetchCutoff() {
+      return subtractMonths(
+        sydneyToday(),
+        CONFIG.fetchWindowMonths
+      );
+    }
+
+    function formatGvizQueryDate(
+      date
+    ) {
+      const year =
+        date.getUTCFullYear();
+
+      const month =
+        String(
+          date.getUTCMonth() + 1
+        ).padStart(
+          2,
+          '0'
+        );
+
+      const day =
+        String(
+          date.getUTCDate()
+        ).padStart(
+          2,
+          '0'
+        );
+
+      return `${year}-${month}-${day}`;
+    }
+
+    function trackerFetchQuery() {
+      return `select * where D >= date '${formatGvizQueryDate(
+        trackerFetchCutoff()
+      )}'`;
+    }
+
+    function trimTrackerSnapshotToFetchWindow(
+      snapshot
+    ) {
+      const validated =
+        validateTrackerSnapshot(
+          snapshot
+        );
+
+      const dateIndex =
+        CONFIG.columns.date -
+        1;
+
+      const cutoffTime =
+        trackerFetchCutoff()
+          .getTime();
+
+      return {
+        ...validated,
+        rows:
+          validated.rows.filter(
+            row => {
+              const date =
+                parseDate(
+                  row?.[dateIndex]
+                );
+
+              return (
+                date &&
+                date.getTime() >=
+                  cutoffTime
+              );
+            }
+          )
+      };
     }
 
     function parseDate(
@@ -4923,24 +4998,52 @@
     }
 
     async function loadLiveTrackerSnapshot() {
-      const table =
-        await PFF.loadGVizSheet({
-          sheetId:
-            CONFIG.spreadsheetId,
-          gid:
-            CONFIG.sheetGid,
-          range:
-            `A${CONFIG.headerRow}:N`,
-          headers: 1,
-          timeoutMs:
-            CONFIG.fetchTimeout,
-          sheetLabel:
-            'optometry-related job tracker'
-        });
+      const options = {
+        sheetId:
+          CONFIG.spreadsheetId,
+        gid:
+          CONFIG.sheetGid,
+        range:
+          `A${CONFIG.headerRow}:N`,
+        headers: 1,
+        timeoutMs:
+          CONFIG.fetchTimeout,
+        sheetLabel:
+          'optometry-related job tracker'
+      };
 
-      return normaliseLiveTableSnapshot(
-        table
-      );
+      try {
+        const table =
+          await PFF.loadGVizSheet({
+            ...options,
+            query:
+              trackerFetchQuery()
+          });
+
+        return trimTrackerSnapshotToFetchWindow(
+          normaliseLiveTableSnapshot(
+            table
+          )
+        );
+      } catch (
+        filteredLoadError
+      ) {
+        console.warn(
+          'Recent-window Google Sheets query failed; retrying the full feed.',
+          filteredLoadError
+        );
+
+        const table =
+          await PFF.loadGVizSheet(
+            options
+          );
+
+        return trimTrackerSnapshotToFetchWindow(
+          normaliseLiveTableSnapshot(
+            table
+          )
+        );
+      }
     }
 
     async function loadRemoteTrackerSnapshot() {
@@ -4956,7 +5059,7 @@
 
       return {
         snapshot:
-          validateTrackerSnapshot(
+          trimTrackerSnapshotToFetchWindow(
             payload.data
           ),
         cachedAt:
@@ -4969,13 +5072,18 @@
       snapshot,
       metadata = {}
     ) {
+      const retainedSnapshot =
+        trimTrackerSnapshotToFetchWindow(
+          snapshot
+        );
+
       PFF.saveLocalCache(
         CONFIG.dataCacheKey,
-        snapshot.rows,
+        retainedSnapshot.rows,
         {
           cacheVersion: 1,
           headerLabels:
-            snapshot.headerLabels,
+            retainedSnapshot.headerLabels,
           ...metadata
         }
       );
@@ -4998,7 +5106,7 @@
 
       return {
         snapshot:
-          validateTrackerSnapshot({
+          trimTrackerSnapshotToFetchWindow({
             headerLabels:
               cached.headerLabels,
             rows:
@@ -5070,8 +5178,24 @@
 
     function renderTrackerSnapshot(
       snapshot,
-      source
+      source,
+      {
+        preserveSummaryState = false
+      } = {}
     ) {
+      const previousSummaryWeeks =
+        state.summaryWeeksToShow;
+
+      const previousSummarySelection =
+        state.summarySelection
+          ? {
+              rowType:
+                state.summarySelection.rowType,
+              stateCode:
+                state.summarySelection.stateCode
+            }
+          : null;
+
       const response =
         buildGvizResponseFromSnapshot(
           snapshot
@@ -5080,6 +5204,43 @@
       prepareSummaryDataFromGviz(
         response
       );
+
+      if (
+        preserveSummaryState &&
+        Number.isFinite(
+          previousSummaryWeeks
+        )
+      ) {
+        state.summaryWeeksToShow =
+          Math.max(
+            1,
+            Math.min(
+              state.summaryMaxWeeks,
+              previousSummaryWeeks
+            )
+          );
+
+        summaryPeriodSlider.value =
+          String(
+            state.summaryMaxWeeks -
+            state.summaryWeeksToShow +
+            1
+          );
+
+        if (
+          previousSummarySelection
+        ) {
+          state.summarySelection = {
+            ...previousSummarySelection,
+            startDate:
+              summaryPeriodStart(),
+            endDate:
+              summaryPeriodEnd()
+          };
+        }
+
+        renderSummaryCounts();
+      }
 
       render(
         buildModel(
@@ -6528,75 +6689,85 @@
       let remoteCacheError =
         null;
 
+      let browserCacheError =
+        null;
+
+      let hasRenderedSnapshot =
+        false;
+
+      let browserRendered =
+        false;
+
+      let liveRendered =
+        false;
+
+      let remoteResult =
+        null;
+
+      /*
+       * Keep the explicit cache-test switch behaving as before: when it is
+       * enabled, test the backend cache first and use the browser cache only
+       * as a fallback.
+       */
       if (
-        !FORCE_CACHED_DATA
+        FORCE_CACHED_DATA
       ) {
         try {
-          const snapshot =
-            await PFF.retryAsync(
-              () =>
-                loadLiveTrackerSnapshot(),
-              {
-                attempts:
-                  CONFIG.liveAttempts,
-                delayMs:
-                  CONFIG.liveRetryDelay,
-                onAttemptError:
-                  error => {
-                    liveError =
-                      error;
-                  }
-              }
-            );
+          const remote =
+            await loadRemoteTrackerSnapshot();
 
           saveBrowserTrackerSnapshot(
-            snapshot,
+            remote.snapshot,
             {
-              source: 'live'
+              source:
+                'remote-cache',
+              remoteCachedAt:
+                remote.cachedAt
             }
           );
 
           renderTrackerSnapshot(
-            snapshot,
-            'live'
+            remote.snapshot,
+            'cached'
           );
 
           return;
         } catch (
           error
         ) {
-          liveError =
+          remoteCacheError =
             error;
         }
-      }
 
-      try {
-        const remote =
-          await loadRemoteTrackerSnapshot();
+        try {
+          const browser =
+            loadBrowserTrackerSnapshot();
 
-        saveBrowserTrackerSnapshot(
-          remote.snapshot,
-          {
-            source:
-              'remote-cache',
-            remoteCachedAt:
-              remote.cachedAt
-          }
-        );
+          renderTrackerSnapshot(
+            browser.snapshot,
+            'cached'
+          );
 
-        renderTrackerSnapshot(
-          remote.snapshot,
-          'cached'
+          return;
+        } catch (
+          error
+        ) {
+          browserCacheError =
+            error;
+        }
+
+        showError(
+          browserCacheError ||
+          remoteCacheError
         );
 
         return;
-      } catch (
-        error
-      ) {
-        remoteCacheError =
-          error;
       }
 
+      /*
+       * Returning visitors can see their last valid snapshot immediately.
+       * Network requests then refresh it without holding the loading screen.
+       */
       try {
         const browser =
           loadBrowserTrackerSnapshot();
@@ -6606,29 +6777,173 @@
           'cached'
         );
 
-        return;
+        hasRenderedSnapshot =
+          true;
+
+        browserRendered =
+          true;
       } catch (
-        browserCacheError
+        error
       ) {
-        console.error(
-          'Live optometry-related job tracker load failed',
-          liveError
-        );
-
-        console.error(
-          'Backend optometry-related job tracker cache load failed',
-          remoteCacheError
-        );
-
-        console.error(
-          'Browser optometry-related job tracker cache load failed',
-          browserCacheError
-        );
-
-        showError(
-          browserCacheError
-        );
+        browserCacheError =
+          error;
       }
+
+      const remoteTask =
+        loadRemoteTrackerSnapshot()
+          .then(
+            remote => {
+              remoteResult =
+                remote;
+
+              if (
+                hasRenderedSnapshot
+              ) {
+                return;
+              }
+
+              saveBrowserTrackerSnapshot(
+                remote.snapshot,
+                {
+                  source:
+                    'remote-cache',
+                  remoteCachedAt:
+                    remote.cachedAt
+                }
+              );
+
+              renderTrackerSnapshot(
+                remote.snapshot,
+                'cached'
+              );
+
+              hasRenderedSnapshot =
+                true;
+            }
+          )
+          .catch(
+            error => {
+              remoteCacheError =
+                error;
+            }
+          );
+
+      const liveTask =
+        PFF.retryAsync(
+          () =>
+            loadLiveTrackerSnapshot(),
+          {
+            attempts:
+              CONFIG.liveAttempts,
+            delayMs:
+              CONFIG.liveRetryDelay,
+            onAttemptError:
+              error => {
+                liveError =
+                  error;
+              }
+          }
+        )
+          .then(
+            snapshot => {
+              saveBrowserTrackerSnapshot(
+                snapshot,
+                {
+                  source: 'live'
+                }
+              );
+
+              renderTrackerSnapshot(
+                snapshot,
+                'live',
+                {
+                  preserveSummaryState:
+                    hasRenderedSnapshot
+                }
+              );
+
+              liveRendered =
+                true;
+
+              hasRenderedSnapshot =
+                true;
+            }
+          )
+          .catch(
+            error => {
+              liveError =
+                error;
+            }
+          );
+
+      await Promise.all([
+        remoteTask,
+        liveTask
+      ]);
+
+      if (
+        liveRendered
+      ) {
+        return;
+      }
+
+      /*
+       * If the browser cache gave us an instant first paint but live refresh
+       * failed, prefer the successfully fetched backend cache once both
+       * network attempts have settled.
+       */
+      if (
+        browserRendered &&
+        remoteResult
+      ) {
+        saveBrowserTrackerSnapshot(
+          remoteResult.snapshot,
+          {
+            source:
+              'remote-cache',
+            remoteCachedAt:
+              remoteResult.cachedAt
+          }
+        );
+
+        renderTrackerSnapshot(
+          remoteResult.snapshot,
+          'cached',
+          {
+            preserveSummaryState:
+              true
+          }
+        );
+
+        return;
+      }
+
+      if (
+        hasRenderedSnapshot
+      ) {
+        return;
+      }
+
+      console.error(
+        'Live optometry-related job tracker load failed',
+        liveError
+      );
+
+      console.error(
+        'Backend optometry-related job tracker cache load failed',
+        remoteCacheError
+      );
+
+      console.error(
+        'Browser optometry-related job tracker cache load failed',
+        browserCacheError
+      );
+
+      showError(
+        browserCacheError ||
+        remoteCacheError ||
+        liveError
+      );
     }
 
     
