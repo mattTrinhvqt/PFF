@@ -24568,6 +24568,15 @@ function sortKeysByCountDesc(counts) {
     return hpssTrendEnabled_() || absTrendEnabled_();
   }
 
+  function absTrendDataPending_() {
+    return Boolean(
+      absResultsEnabled &&
+      selectedComparators.size > 0 &&
+      !absRows.length &&
+      !absLoadError
+    );
+  }
+
   function buildTrendModel() {
     const datasets = [];
     const legend = [];
@@ -25085,7 +25094,7 @@ function sortKeysByCountDesc(counts) {
 
   const TREND_Y_TARGET_MAJOR_INTERVALS = 6;
   const TREND_Y_PADDING_RATIO = 0.03;
-  const TREND_Y_MIN_VALUE_PADDING_RATIO = 0.005;
+  const TREND_Y_MIN_VALUE_PADDING_RATIO = 0.001;
   const trendYAxisLabelAnimation = {
     values: [],
     targetValues: [],
@@ -25639,6 +25648,21 @@ function sortKeysByCountDesc(counts) {
     section.hidden = !(hasResults && hasActiveComparison);
     if (!hasResults || !hasActiveComparison) return;
 
+    /* Do not establish an incomplete y-axis while selected ABS history is
+       still loading. The existing chart-status overlay keeps the graph area
+       stable, then the chart is built/refreshed once all selected ABS data is
+       available. This prevents a one-off y-axis jump after first render. */
+    if (absTrendDataPending_()) {
+      if (status) {
+        status.hidden = false;
+        status.textContent = 'Loading ABS income history…';
+      }
+      if (!absLoadPromise) {
+        loadAbsRows();
+      }
+      return;
+    }
+
     activeTrendYear = getTargetYear();
     animateTrendFocusYear(activeTrendYear);
     const activeYearEl = document.getElementById('payTrendActiveYear');
@@ -25804,10 +25828,7 @@ function sortKeysByCountDesc(counts) {
     );
   }
 
-  function isPrimaryActionReady_() {
-    const button = document.getElementById('estimateBtn');
-    if (!button || button.disabled) return false;
-
+  function corePrimaryFieldsReady_() {
     const yearsText =
       document.getElementById('years')
         ?.value.trim() || '';
@@ -25821,14 +25842,21 @@ function sortKeysByCountDesc(counts) {
       document.getElementById('state')
         ?.value.trim() || '';
 
-    if (
-      !Number.isFinite(years) ||
-      years < 0 ||
-      !Number.isFinite(mmm) ||
-      mmm < 1 ||
-      mmm > 7 ||
-      !state
-    ) {
+    return Boolean(
+      Number.isFinite(years) &&
+      years >= 0 &&
+      Number.isFinite(mmm) &&
+      mmm >= 1 &&
+      mmm <= 7 &&
+      state
+    );
+  }
+
+  function isPrimaryActionReady_() {
+    const button = document.getElementById('estimateBtn');
+    if (!button || button.disabled) return false;
+
+    if (!corePrimaryFieldsReady_()) {
       return false;
     }
 
@@ -26548,12 +26576,23 @@ function sortKeysByCountDesc(counts) {
          * here when this capture listener needs to stop the click and
          * guide the user to an unfinished input.
          */
+        /* Core fields keep using estimate()'s original validation and
+           message pathway. Do not let the newer comparison workflow swallow
+           a click just because a core required field is incomplete. */
+        if (!corePrimaryFieldsReady_()) {
+          clearReturnAttention_();
+          return;
+        }
+
         if (isPrimaryActionReady_()) {
           clearReturnAttention_();
           return;
         }
 
-        preflightPrimaryAction_();
+        if (preflightPrimaryAction_()) {
+          clearReturnAttention_();
+          return;
+        }
 
         event.preventDefault();
         event.stopImmediatePropagation();
