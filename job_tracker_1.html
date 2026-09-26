@@ -79,14 +79,14 @@
 
     .summary-module {
       width: 100%;
-      margin: 0 0 10px;
-      padding: 7px 5px 9px;
+      margin: 0 0 6px;
+      padding: 5px 5px 6px;
       background: #fff;
       border-bottom: 1px solid var(--track);
     }
 
     .summary-lead {
-      margin: 0 0 3px;
+      margin: 0 0 1px;
       color: var(--pff-ink);
       font-size: 13px;
       font-weight: 400;
@@ -97,7 +97,7 @@
     .summary-timeline {
       width: 100%;
       min-width: 0;
-      margin: 0 0 7px;
+      margin: 0 0 4px;
     }
 
     .summary-timeline-topline {
@@ -145,7 +145,7 @@
       --summary-slider-progress: 100%;
       position: relative;
       width: 100%;
-      min-height: 22px;
+      min-height: 20px;
       margin: 0;
     }
 
@@ -241,7 +241,7 @@
       z-index: 4;
       display: block;
       width: 100%;
-      height: 22px;
+      height: 20px;
       margin: 0;
       padding: 0;
       appearance: none;
@@ -368,7 +368,7 @@
     .summary-table th,
     .summary-table td {
       position: relative;
-      padding: 5px 2px;
+      padding: 4px 2px;
       line-height: 1.15;
       text-align: center;
       vertical-align: middle;
@@ -458,7 +458,7 @@
       position: relative;
       display: flex;
       width: 100%;
-      min-height: 27px;
+      min-height: 25px;
       align-items: center;
       justify-content: center;
       margin: 0;
@@ -568,11 +568,11 @@
 
     .summary-action-line {
       display: flex;
-      min-height: 19px;
+      min-height: 18px;
       align-items: center;
       justify-content: center;
       gap: 5px;
-      margin: 4px 0 0;
+      margin: 2px 0 0;
       color: var(--pff-muted);
       font-size: 9px;
       line-height: 1.2;
@@ -684,7 +684,7 @@
       align-items: flex-end;
       justify-content: space-between;
       gap: 10px;
-      margin: 0 6px 5px;
+      margin: 0 6px 3px;
     }
 
     .status-group {
@@ -703,7 +703,7 @@
     }
 
     .table-status {
-      margin: 5px 0 0;
+      margin: 2px 0 0;
       color: var(--pff-muted);
       font-size: 12px;
       font-weight: 400;
@@ -753,8 +753,8 @@
 
     .filter-button,
     .reset-button {
-      height: 31px;
-      min-height: 31px;
+      height: 29px;
+      min-height: 29px;
       box-sizing: border-box;
       padding: 0 3px;
       color: var(--pff-ink);
@@ -812,7 +812,7 @@
       grid-template-columns: max-content auto;
       align-items: center;
       gap: 6px;
-      min-height: 31px;
+      min-height: 29px;
       padding: 0 5px;
       color: var(--pff-ink);
       background: #fff;
@@ -1810,7 +1810,7 @@
               >
                 <span class="filter-label-wrap">
                   <span class="filter-label">Rurality</span>
-                  <span class="filter-subtext">metro → very remote</span>
+                  <span class="filter-subtext">Metro → Very remote</span>
                 </span>
 
                 <span class="filter-value">ALL</span>
@@ -2083,6 +2083,14 @@
       FETCH_TIMEOUT_MS: 20000,
       LIVE_ATTEMPTS: 2,
       LIVE_RETRY_DELAY_MS: 1500,
+
+      /*
+       * Job Tracker 1 displays the latest 3 months. Fetch roughly one
+       * additional month so the displayed window remains complete even
+       * when the newest advertisement is not from today.
+       */
+      FETCH_WINDOW_MONTHS: 4,
+
       STORAGE_KEY: 'pff-job-tracker-filters-v7',
       DATA_CACHE_KEY:
         'pff-clinical-optometry-job-tracker-data-v1'
@@ -3024,6 +3032,71 @@
       );
     }
 
+    function getTrackerFetchCutoff() {
+      return subtractCalendarMonths(
+        getSydneyToday(),
+        CONFIG.FETCH_WINDOW_MONTHS
+      );
+    }
+
+    function formatGvizQueryDate(date) {
+      const year =
+        date.getUTCFullYear();
+
+      const month =
+        String(
+          date.getUTCMonth() + 1
+        ).padStart(2, '0');
+
+      const day =
+        String(
+          date.getUTCDate()
+        ).padStart(2, '0');
+
+      return `${year}-${month}-${day}`;
+    }
+
+    function getTrackerFetchQuery() {
+      return `select * where D >= date '${formatGvizQueryDate(
+        getTrackerFetchCutoff()
+      )}'`;
+    }
+
+    function trimTrackerSnapshotToFetchWindow(
+      snapshot
+    ) {
+      const validated =
+        validateTrackerSnapshot(
+          snapshot
+        );
+
+      const dateIndex =
+        CONFIG.DATE_COLUMN - 1;
+
+      const cutoffTime =
+        getTrackerFetchCutoff()
+          .getTime();
+
+      return {
+        ...validated,
+        rows:
+          validated.rows.filter(
+            row => {
+              const date =
+                parseDateValue(
+                  row?.[dateIndex]
+                );
+
+              return (
+                date &&
+                date.getTime() >=
+                  cutoffTime
+              );
+            }
+          )
+      };
+    }
+
     function parseDateValue(value) {
       if (
         value instanceof Date &&
@@ -3691,6 +3764,8 @@
               CONFIG.HEADER_ROW +
               1 +
               rowOffset,
+
+            sourceMarker,
 
             isRepeat:
               isRepeatValue(
@@ -5170,56 +5245,55 @@
     }
 
     async function loadLiveTrackerSnapshot() {
-      const table =
-        await PFF.loadGVizSheet({
-          sheetId:
-            CONFIG.SPREADSHEET_ID,
-          sheetName:
-            CONFIG.SHEET_NAME ||
-            undefined,
-          gid:
-            CONFIG.SHEET_NAME
-              ? undefined
-              : CONFIG.SHEET_GID,
-          range:
-            `A${CONFIG.HEADER_ROW}:Y`,
-          headers: 1,
-          timeoutMs:
-            CONFIG.FETCH_TIMEOUT_MS,
-          sheetLabel:
-            'clinical job tracker'
-        });
-
-      let facebookLinksBySourceMarker =
-        {};
+      const options = {
+        sheetId:
+          CONFIG.SPREADSHEET_ID,
+        sheetName:
+          CONFIG.SHEET_NAME ||
+          undefined,
+        gid:
+          CONFIG.SHEET_NAME
+            ? undefined
+            : CONFIG.SHEET_GID,
+        range:
+          `A${CONFIG.HEADER_ROW}:Y`,
+        headers: 1,
+        timeoutMs:
+          CONFIG.FETCH_TIMEOUT_MS,
+        sheetLabel:
+          'clinical job tracker'
+      };
 
       try {
-        const remote =
-          await loadRemoteTrackerSnapshot();
+        const table =
+          await PFF.loadGVizSheet({
+            ...options,
+            query:
+              getTrackerFetchQuery()
+          });
 
-        facebookLinksBySourceMarker =
-          remote
-            ?.snapshot
-            ?.facebookLinksBySourceMarker ||
-          {};
-      } catch (error) {
+        return trimTrackerSnapshotToFetchWindow(
+          normaliseLiveTableSnapshot(
+            table
+          )
+        );
+      } catch (filteredLoadError) {
         console.warn(
-          'Facebook job source hyperlinks could not be loaded.',
-          error
+          'Recent-window Google Sheets query failed; retrying the full feed.',
+          filteredLoadError
+        );
+
+        const table =
+          await PFF.loadGVizSheet(
+            options
+          );
+
+        return trimTrackerSnapshotToFetchWindow(
+          normaliseLiveTableSnapshot(
+            table
+          )
         );
       }
-
-      const snapshot =
-        normaliseLiveTableSnapshot(
-          table
-        );
-
-      snapshot.facebookLinksBySourceMarker =
-        facebookLinksBySourceMarker;
-
-      return validateTrackerSnapshot(
-        snapshot
-      );
     }
 
     async function loadRemoteTrackerSnapshot() {
@@ -5235,7 +5309,7 @@
 
       return {
         snapshot:
-          validateTrackerSnapshot(
+          trimTrackerSnapshotToFetchWindow(
             payload.data
           ),
         cachedAt:
@@ -5248,15 +5322,20 @@
       snapshot,
       metadata = {}
     ) {
+      const retainedSnapshot =
+        trimTrackerSnapshotToFetchWindow(
+          snapshot
+        );
+
       PFF.saveLocalCache(
         CONFIG.DATA_CACHE_KEY,
-        snapshot.rows,
+        retainedSnapshot.rows,
         {
           cacheVersion: 1,
           headerLabels:
-            snapshot.headerLabels,
+            retainedSnapshot.headerLabels,
           facebookLinksBySourceMarker:
-            snapshot
+            retainedSnapshot
               .facebookLinksBySourceMarker ||
             {},
           ...metadata
@@ -5281,7 +5360,7 @@
 
       return {
         snapshot:
-          validateTrackerSnapshot({
+          trimTrackerSnapshotToFetchWindow({
             headerLabels:
               cached.headerLabels,
             rows:
@@ -5334,10 +5413,147 @@
       );
     }
 
+    function mergeFacebookLinks(
+      snapshot,
+      facebookLinksBySourceMarker
+    ) {
+      if (!snapshot) {
+        return snapshot;
+      }
+
+      snapshot.facebookLinksBySourceMarker = {
+        ...(
+          snapshot.facebookLinksBySourceMarker ||
+          {}
+        ),
+        ...(
+          facebookLinksBySourceMarker ||
+          {}
+        )
+      };
+
+      return snapshot;
+    }
+
+    function applyFacebookLinks(
+      facebookLinksBySourceMarker
+    ) {
+      if (
+        !facebookLinksBySourceMarker ||
+        typeof facebookLinksBySourceMarker !==
+          'object'
+      ) {
+        return;
+      }
+
+      state.rows.forEach(
+        row => {
+          if (
+            row.isDelisted ||
+            !row.sourceMarker
+          ) {
+            return;
+          }
+
+          const sourceMarker =
+            cleanText(
+              row.sourceMarker
+            );
+
+          if (
+            !normaliseText(
+              sourceMarker
+            ).endsWith(
+              'facebook|'
+            )
+          ) {
+            return;
+          }
+
+          const url =
+            cleanText(
+              facebookLinksBySourceMarker[
+                sourceMarker
+              ] ||
+              ''
+            );
+
+          if (
+            !/^https?:\/\//i.test(
+              url
+            )
+          ) {
+            return;
+          }
+
+          const cell =
+            row.element.querySelector(
+              'td[data-source-column="A"]'
+            );
+
+          if (!cell) {
+            return;
+          }
+
+          let anchor =
+            cell.querySelector('a');
+
+          if (!anchor) {
+            cell.textContent = '';
+
+            anchor =
+              document.createElement(
+                'a'
+              );
+
+            anchor.textContent =
+              'Facebook';
+
+            anchor.classList.add(
+              'link-facebook'
+            );
+
+            anchor.target =
+              '_blank';
+
+            anchor.rel =
+              'noopener noreferrer';
+
+            anchor.setAttribute(
+              'aria-label',
+              'Facebook — opens in a new tab'
+            );
+
+            cell.appendChild(
+              anchor
+            );
+          }
+
+          anchor.href = url;
+        }
+      );
+    }
+
     function renderTrackerSnapshot(
       snapshot,
-      source
+      source,
+      {
+        preserveSummaryState = false
+      } = {}
     ) {
+      const previousSummaryWeeks =
+        state.summaryWeeksToShow;
+
+      const previousSummarySelection =
+        state.summarySelection
+          ? {
+              employerType:
+                state.summarySelection.employerType,
+              stateCode:
+                state.summarySelection.stateCode
+            }
+          : null;
+
       const response =
         buildGvizResponseFromSnapshot(
           snapshot
@@ -5346,6 +5562,41 @@
       prepareSummaryDataFromGviz(
         response
       );
+
+      if (
+        preserveSummaryState &&
+        Number.isFinite(
+          previousSummaryWeeks
+        )
+      ) {
+        state.summaryWeeksToShow =
+          Math.max(
+            1,
+            Math.min(
+              state.summaryMaxWeeks,
+              previousSummaryWeeks
+            )
+          );
+
+        summaryPeriodSlider.value =
+          String(
+            state.summaryMaxWeeks -
+            state.summaryWeeksToShow +
+            1
+          );
+
+        if (previousSummarySelection) {
+          state.summarySelection = {
+            ...previousSummarySelection,
+            startDate:
+              summaryPeriodStart(),
+            endDate:
+              summaryPeriodEnd()
+          };
+        }
+
+        renderSummaryCounts();
+      }
 
       renderTable(
         buildModelFromGviz(
@@ -6300,6 +6551,10 @@
           state.rows.push({
             element: tr,
 
+            sourceMarker:
+              rowModel.sourceMarker ||
+              '',
+
             isRepeat:
               rowModel.isRepeat,
 
@@ -6844,101 +7099,315 @@
       let remoteCacheError =
         null;
 
-      if (
-        !FORCE_CACHED_DATA
-      ) {
+      let browserCacheError =
+        null;
+
+      let hasRenderedSnapshot =
+        false;
+
+      let browserRendered =
+        false;
+
+      let liveRendered =
+        false;
+
+      let remoteResult =
+        null;
+
+      let latestLiveSnapshot =
+        null;
+
+      let facebookLinksBySourceMarker =
+        {};
+
+      /*
+       * Keep the explicit cache-test switch behaving as before: when it is
+       * enabled, test the backend cache first and use the browser cache only
+       * as a fallback.
+       */
+      if (FORCE_CACHED_DATA) {
         try {
-          const snapshot =
-            await PFF.retryAsync(
-              () =>
-                loadLiveTrackerSnapshot(),
-              {
-                attempts:
-                  CONFIG.LIVE_ATTEMPTS,
-                delayMs:
-                  CONFIG.LIVE_RETRY_DELAY_MS,
-                onAttemptError:
-                  error => {
-                    liveError =
-                      error;
-                  }
-              }
-            );
+          const remote =
+            await loadRemoteTrackerSnapshot();
 
           saveBrowserTrackerSnapshot(
-            snapshot,
+            remote.snapshot,
             {
-              source: 'live'
+              source:
+                'remote-cache',
+              remoteCachedAt:
+                remote.cachedAt
             }
           );
 
           renderTrackerSnapshot(
-            snapshot,
-            'live'
+            remote.snapshot,
+            'cached'
           );
 
           return;
         } catch (error) {
-          liveError =
+          remoteCacheError =
             error;
         }
-      }
 
-      try {
-        const remote =
-          await loadRemoteTrackerSnapshot();
+        try {
+          const browser =
+            loadBrowserTrackerSnapshot();
 
-        saveBrowserTrackerSnapshot(
-          remote.snapshot,
-          {
-            source:
-              'remote-cache',
-            remoteCachedAt:
-              remote.cachedAt
-          }
-        );
+          renderTrackerSnapshot(
+            browser.snapshot,
+            'cached'
+          );
 
-        renderTrackerSnapshot(
-          remote.snapshot,
-          'cached'
+          return;
+        } catch (error) {
+          browserCacheError =
+            error;
+        }
+
+        showError(
+          browserCacheError ||
+          remoteCacheError
         );
 
         return;
-      } catch (error) {
-        remoteCacheError =
-          error;
       }
 
+      /*
+       * Returning visitors can see their last valid snapshot immediately.
+       * Network requests then refresh it without holding the loading screen.
+       */
       try {
         const browser =
           loadBrowserTrackerSnapshot();
+
+        facebookLinksBySourceMarker = {
+          ...facebookLinksBySourceMarker,
+          ...(
+            browser.snapshot
+              .facebookLinksBySourceMarker ||
+            {}
+          )
+        };
 
         renderTrackerSnapshot(
           browser.snapshot,
           'cached'
         );
 
-        return;
-      } catch (browserCacheError) {
-        console.error(
-          'Live clinical job tracker load failed',
-          liveError
-        );
+        hasRenderedSnapshot =
+          true;
 
-        console.error(
-          'Backend clinical job tracker cache load failed',
-          remoteCacheError
-        );
-
-        console.error(
-          'Browser clinical job tracker cache load failed',
-          browserCacheError
-        );
-
-        showError(
-          browserCacheError
-        );
+        browserRendered =
+          true;
+      } catch (error) {
+        browserCacheError =
+          error;
       }
+
+      const remoteTask =
+        loadRemoteTrackerSnapshot()
+          .then(
+            remote => {
+              remoteResult =
+                remote;
+
+              facebookLinksBySourceMarker = {
+                ...facebookLinksBySourceMarker,
+                ...(
+                  remote.snapshot
+                    .facebookLinksBySourceMarker ||
+                  {}
+                )
+              };
+
+              if (liveRendered) {
+                applyFacebookLinks(
+                  facebookLinksBySourceMarker
+                );
+
+                if (latestLiveSnapshot) {
+                  mergeFacebookLinks(
+                    latestLiveSnapshot,
+                    facebookLinksBySourceMarker
+                  );
+
+                  saveBrowserTrackerSnapshot(
+                    latestLiveSnapshot,
+                    {
+                      source: 'live'
+                    }
+                  );
+                }
+
+                return;
+              }
+
+              if (hasRenderedSnapshot) {
+                applyFacebookLinks(
+                  facebookLinksBySourceMarker
+                );
+
+                return;
+              }
+
+              mergeFacebookLinks(
+                remote.snapshot,
+                facebookLinksBySourceMarker
+              );
+
+              saveBrowserTrackerSnapshot(
+                remote.snapshot,
+                {
+                  source:
+                    'remote-cache',
+                  remoteCachedAt:
+                    remote.cachedAt
+                }
+              );
+
+              renderTrackerSnapshot(
+                remote.snapshot,
+                'cached'
+              );
+
+              hasRenderedSnapshot =
+                true;
+            }
+          )
+          .catch(
+            error => {
+              remoteCacheError =
+                error;
+            }
+          );
+
+      const liveTask =
+        PFF.retryAsync(
+          () =>
+            loadLiveTrackerSnapshot(),
+          {
+            attempts:
+              CONFIG.LIVE_ATTEMPTS,
+            delayMs:
+              CONFIG.LIVE_RETRY_DELAY_MS,
+            onAttemptError:
+              error => {
+                liveError =
+                  error;
+              }
+          }
+        )
+          .then(
+            snapshot => {
+              mergeFacebookLinks(
+                snapshot,
+                facebookLinksBySourceMarker
+              );
+
+              latestLiveSnapshot =
+                snapshot;
+
+              saveBrowserTrackerSnapshot(
+                snapshot,
+                {
+                  source: 'live'
+                }
+              );
+
+              renderTrackerSnapshot(
+                snapshot,
+                'live',
+                {
+                  preserveSummaryState:
+                    hasRenderedSnapshot
+                }
+              );
+
+              liveRendered =
+                true;
+
+              hasRenderedSnapshot =
+                true;
+            }
+          )
+          .catch(
+            error => {
+              liveError =
+                error;
+            }
+          );
+
+      await Promise.all([
+        remoteTask,
+        liveTask
+      ]);
+
+      if (liveRendered) {
+        return;
+      }
+
+      /*
+       * If the browser cache gave us an instant first paint but live refresh
+       * failed, prefer the successfully fetched backend cache once both
+       * network attempts have settled.
+       */
+      if (
+        browserRendered &&
+        remoteResult
+      ) {
+        mergeFacebookLinks(
+          remoteResult.snapshot,
+          facebookLinksBySourceMarker
+        );
+
+        saveBrowserTrackerSnapshot(
+          remoteResult.snapshot,
+          {
+            source:
+              'remote-cache',
+            remoteCachedAt:
+              remoteResult.cachedAt
+          }
+        );
+
+        renderTrackerSnapshot(
+          remoteResult.snapshot,
+          'cached',
+          {
+            preserveSummaryState:
+              true
+          }
+        );
+
+        return;
+      }
+
+      if (hasRenderedSnapshot) {
+        return;
+      }
+
+      console.error(
+        'Live clinical job tracker load failed',
+        liveError
+      );
+
+      console.error(
+        'Backend clinical job tracker cache load failed',
+        remoteCacheError
+      );
+
+      console.error(
+        'Browser clinical job tracker cache load failed',
+        browserCacheError
+      );
+
+      showError(
+        browserCacheError ||
+        remoteCacheError ||
+        liveError
+      );
     }
 
     function updateSelectedValues(
