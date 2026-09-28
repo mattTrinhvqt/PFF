@@ -125,7 +125,7 @@
       --directory-row-line: #f8f9fa;
       --directory-action-column: 65px;
       --directory-practice-column: 112px;
-      --directory-frozen-width: 170px;
+      --directory-frozen-width: 177px;
       --directory-current-table-width: 1300px;
       --access-sufficient: #20c9d7;
       --access-saturated: #ff00ff;
@@ -1326,6 +1326,27 @@
 
     .favourite-action:active svg {
       transform: scale(0.88);
+    }
+
+    .favourite-action.is-heart-pop svg {
+      animation: favouriteHeartPop 220ms var(--eat-motion-ease);
+    }
+
+    @keyframes favouriteHeartPop {
+      0% { transform: scale(1); }
+      42% { transform: scale(1.22); }
+      72% { transform: scale(0.92); }
+      100% { transform: scale(1); }
+    }
+
+    .intent-favourite-count[hidden] {
+      display: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .favourite-action.is-heart-pop svg {
+        animation: none;
+      }
     }
 
     .favourite-community-count {
@@ -4288,7 +4309,7 @@
               type="button"
               aria-pressed="false"
               data-service="favourites"
-            ><span class="intent-service-name intent-favourites-name"><span class="intent-favourite-heart-wrap" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z"></path></svg><sup id="intentFavouriteCount" class="intent-favourite-count">0</sup></span><span>FAVOURITES</span></span></button>
+            ><span class="intent-service-name intent-favourites-name"><span class="intent-favourite-heart-wrap" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z"></path></svg><sup id="intentFavouriteCount" class="intent-favourite-count" hidden></sup></span><span>FAVOURITES</span></span></button>
           </div>
 
           <button id="resetAll" class="reset-all-button" type="button" aria-label="Reset all settings">
@@ -5700,7 +5721,10 @@
 
     function updateFavouriteToggleCount() {
       if (intentFavouriteCount) {
-        intentFavouriteCount.textContent = PFF.formatInteger(favouriteKeys.size);
+        const count = favouriteKeys.size;
+        intentFavouriteCount.textContent =
+          count > 0 ? PFF.formatInteger(count) : '';
+        intentFavouriteCount.hidden = count <= 0;
       }
     }
 
@@ -5739,6 +5763,14 @@
         );
       } catch (_) {
         // A failed timestamp write only causes another harmless sync next visit.
+      }
+    }
+
+    function markFavouriteSyncDue() {
+      try {
+        localStorage.removeItem(FAVOURITES_SYNC_STORAGE_KEY);
+      } catch (_) {
+        // The next page visit will still attempt a sync if storage is unavailable.
       }
     }
 
@@ -5894,6 +5926,40 @@
           badge.textContent = PFF.formatInteger(count);
           if (!existing) button.appendChild(badge);
         });
+    }
+
+    function refreshFavouriteActionUi(favouriteKey) {
+      const saved = favouriteKeys.has(favouriteKey);
+
+      document.querySelectorAll('.favourite-action[data-favourite-key]')
+        .forEach(button => {
+          if ((button.dataset.favouriteKey || '') !== favouriteKey) return;
+
+          const practiceName = cleanText(
+            button.dataset.favouritePracticeName || 'practice'
+          );
+          button.classList.toggle('is-favourite', saved);
+          button.setAttribute('aria-pressed', String(saved));
+          button.setAttribute(
+            'aria-label',
+            `${saved ? 'Remove' : 'Add'} ${practiceName} ${saved ? 'from' : 'to'} favourites`
+          );
+          button.title = saved
+            ? 'Remove from favourites'
+            : 'Add to favourites';
+        });
+    }
+
+    function playFavouriteHeartAnimation(button) {
+      if (!button) return;
+      button.classList.remove('is-heart-pop');
+      void button.offsetWidth;
+      button.classList.add('is-heart-pop');
+      button.addEventListener(
+        'animationend',
+        () => button.classList.remove('is-heart-pop'),
+        { once: true }
+      );
     }
 
     function favouriteSpecialtiesSummary(row, service) {
@@ -11195,7 +11261,7 @@
         const favouriteSaved = favouriteKeys.has(favouriteKey);
         const favouriteCount = favouriteCommunityCounts.get(favouriteKey) || 0;
         const favouritePracticeId = practiceIdForFavouriteRow(row, rowServiceType);
-        const favouriteAction = `<button class="practice-action favourite-action${favouriteSaved ? ' is-favourite' : ''}" type="button" data-favourite-key="${escapeHtml(favouriteKey)}" data-favourite-service="${escapeHtml(rowServiceType)}" data-favourite-practice-id="${escapeHtml(favouritePracticeId)}" aria-pressed="${String(favouriteSaved)}" aria-label="${favouriteSaved ? 'Remove' : 'Add'} ${escapeHtml(row.practiceName)} ${favouriteSaved ? 'from' : 'to'} favourites" title="${favouriteSaved ? 'Remove from favourites' : 'Add to favourites'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>${favouriteCount > 0 ? `<sup class="favourite-community-count">${escapeHtml(PFF.formatInteger(favouriteCount))}</sup>` : ''}</button>`;
+        const favouriteAction = `<button class="practice-action favourite-action${favouriteSaved ? ' is-favourite' : ''}" type="button" data-favourite-key="${escapeHtml(favouriteKey)}" data-favourite-service="${escapeHtml(rowServiceType)}" data-favourite-practice-id="${escapeHtml(favouritePracticeId)}" data-favourite-practice-name="${escapeHtml(row.practiceName)}" aria-pressed="${String(favouriteSaved)}" aria-label="${favouriteSaved ? 'Remove' : 'Add'} ${escapeHtml(row.practiceName)} ${favouriteSaved ? 'from' : 'to'} favourites" title="${favouriteSaved ? 'Remove from favourites' : 'Add to favourites'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>${favouriteCount > 0 ? `<sup class="favourite-community-count">${escapeHtml(PFF.formatInteger(favouriteCount))}</sup>` : ''}</button>`;
 
         const mapAction = mapUrl
           ? `<a class="practice-action" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener" aria-label="Open Google Maps for ${escapeHtml(row.practiceName)}" title="Google Maps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s6-5.3 6-11a6 6 0 1 0-12 0c0 5.7 6 11 6 11Z"></path><circle cx="12" cy="10" r="2.2"></circle></svg></a>`
@@ -13579,6 +13645,7 @@
           }
 
           persistFavouriteKeys();
+          markFavouriteSyncDue();
           invalidateFavouritePreparedState();
           updateFavouriteToggleCount();
 
@@ -13589,6 +13656,10 @@
               Math.max(0, currentCount + (saved ? 1 : -1))
             );
           }
+
+          refreshFavouriteActionUi(key);
+          refreshFavouriteCountUi();
+          playFavouriteHeartAnimation(button);
 
           const service = cleanText(button.dataset.favouriteService || '');
           const rowElement = button.closest('tbody tr');
@@ -13606,9 +13677,10 @@
             arrangeServiceControls();
             applyViewUi();
             scheduleRender(false);
-          } else {
-            scheduleRender(false);
           }
+          // In Optometry/Ophthalmology, the heart and count are updated in place.
+          // Avoid rebuilding the table so the frozen Practice-column divider stays still.
+
         }
       );
 
