@@ -4716,6 +4716,12 @@
     const FAVOURITES_CLIENT_KEY =
       'pff-eyecare-access-tool-favourites-client-v1';
 
+    const FAVOURITES_SYNC_STORAGE_KEY =
+      'pff-eyecare-access-tool-favourites-sync-v1';
+
+    const FAVOURITES_SYNC_INTERVAL_MS =
+      7 * 24 * 60 * 60 * 1000;
+
     /* Cloudflare Worker/D1 is the source of truth for shared favourite counts.
      * Paste the deployed Worker URL here. Local favourites continue to work
      * if this is blank or temporarily unavailable. The Google Sheet mirror
@@ -5707,6 +5713,62 @@
         return url.protocol === 'https:';
       } catch (_) {
         return false;
+      }
+    }
+
+    function favouriteSyncIsDue() {
+      try {
+        const lastSync = Number(
+          localStorage.getItem(FAVOURITES_SYNC_STORAGE_KEY) || '0'
+        );
+        return (
+          !Number.isFinite(lastSync) ||
+          lastSync <= 0 ||
+          Date.now() - lastSync >= FAVOURITES_SYNC_INTERVAL_MS
+        );
+      } catch (_) {
+        return true;
+      }
+    }
+
+    function markFavouriteSyncComplete() {
+      try {
+        localStorage.setItem(
+          FAVOURITES_SYNC_STORAGE_KEY,
+          String(Date.now())
+        );
+      } catch (_) {
+        // A failed timestamp write only causes another harmless sync next visit.
+      }
+    }
+
+    async function syncStoredFavouritesIfDue() {
+      if (!favouritesApiEnabled() || !favouriteSyncIsDue()) return;
+
+      try {
+        const response = await fetch(FAVOURITES_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            action: 'sync',
+            clientId: favouriteClientId,
+            favouriteKeys: Array.from(favouriteKeys).sort()
+          }),
+          mode: 'cors',
+          cache: 'no-store',
+          credentials: 'omit'
+        });
+
+        if (!response.ok) return;
+
+        const payload = await response.json();
+        if (payload?.ok) {
+          markFavouriteSyncComplete();
+        }
+      } catch (_) {
+        // Keep local favourites working and try the sync again on a later visit.
       }
     }
 
@@ -13623,6 +13685,7 @@
     }
 
     setupInteractions();
+    syncStoredFavouritesIfDue();
 
     PFF.initialiseApp({
       app,
