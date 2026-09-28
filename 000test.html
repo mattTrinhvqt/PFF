@@ -33,6 +33,7 @@
 
         const app = document.getElementById('app');
         const loadingState = document.getElementById('loadingState');
+        const status = document.getElementById('status');
 
         if (!app || !loadingState) {
           pendingFailure = message;
@@ -44,10 +45,15 @@
         loadingState.classList.add('is-startup-error');
         loadingState.setAttribute('aria-label', 'Unable to load eyecare access data');
 
+        const failureMessage =
+          message || 'Unable to load the Eyecare Access Tool. Refresh to try again.';
+
         const loaderText = loadingState.querySelector('.loader-text');
         if (loaderText) {
-          loaderText.textContent =
-            message || 'Unable to load the Eyecare Access Tool. Refresh to try again.';
+          loaderText.textContent = failureMessage;
+        }
+        if (status) {
+          status.textContent = failureMessage;
         }
       }
 
@@ -163,11 +169,28 @@
     }
 
     #status {
+      position: fixed;
+      right: auto;
+      bottom: max(12px, env(safe-area-inset-bottom));
+      left: 50%;
+      z-index: 3200;
+      width: max-content;
+      max-width: min(460px, calc(100vw - 24px));
       min-height: 0;
-      padding: 0 3px;
-      color: var(--pff-error);
+      box-sizing: border-box;
+      padding: 8px 10px;
+      color: var(--pff-error, #b42318);
+      background: #fff;
+      background: Canvas;
+      border: 1px solid rgba(180, 35, 24, 0.24);
+      border-radius: 6px;
+      box-shadow: 0 8px 24px rgba(21, 21, 21, 0.16);
       font-size: 10px;
-      line-height: 1.3;
+      font-weight: 700;
+      line-height: 1.35;
+      text-align: center;
+      transform: translateX(-50%);
+      color-scheme: light dark;
     }
 
     #status:empty {
@@ -962,6 +985,52 @@
 
     .full-text-popover.is-visible {
       display: block;
+    }
+
+    .action-tooltip {
+      position: fixed;
+      z-index: 3300;
+      display: none;
+      max-width: min(250px, calc(100vw - 16px));
+      padding: 6px 8px;
+      color: #151515;
+      color: CanvasText;
+      background: #fff;
+      background: Canvas;
+      border: 1px solid rgba(21, 21, 21, 0.18);
+      border-color: ButtonBorder;
+      border-radius: 5px;
+      box-shadow: 0 7px 20px rgba(21, 21, 21, 0.16);
+      font-family: Lato, Arial, sans-serif;
+      font-size: 10px;
+      font-weight: 400;
+      line-height: 1.35;
+      text-align: left;
+      white-space: normal;
+      pointer-events: none;
+      color-scheme: light dark;
+    }
+
+    .action-tooltip.is-visible {
+      display: block;
+    }
+
+    .action-tooltip strong {
+      font-weight: 700;
+    }
+
+    .action-tooltip em {
+      font-style: italic;
+    }
+
+    .action-tooltip-line {
+      display: block;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .action-tooltip {
+        box-shadow: 0 7px 20px rgba(0, 0, 0, 0.36);
+      }
     }
 
     .empty-state {
@@ -4666,6 +4735,13 @@
     aria-hidden="true"
   ></div>
 
+  <div
+    id="actionTooltip"
+    class="action-tooltip"
+    role="tooltip"
+    aria-hidden="true"
+  ></div>
+
   <script>
     'use strict';
 
@@ -4742,6 +4818,13 @@
 
     const FAVOURITES_SYNC_INTERVAL_MS =
       7 * 24 * 60 * 60 * 1000;
+
+    const CONTACT_RATE_STORAGE_KEY =
+      'pff-eyecare-access-tool-contact-actions-v1';
+
+    const CONTACT_RATE_LIMIT = 10;
+    const CONTACT_RATE_WINDOW_MS = 5 * 60 * 1000;
+    const CONTACT_ACTION_DEBOUNCE_MS = 1000;
 
     /* Cloudflare Worker/D1 is the source of truth for shared favourite counts.
      * Paste the deployed Worker URL here. Local favourites continue to work
@@ -5333,6 +5416,9 @@
     const fullTextPopover =
       document.getElementById('fullTextPopover');
 
+    const actionTooltip =
+      document.getElementById('actionTooltip');
+
     let optometryRows = [];
     let optometryRowsPracticeAsc = [];
     let ophthalmologyRows = [];
@@ -5408,6 +5494,12 @@
     let favouriteCountRefreshTimer = null;
     const favouriteKeys = loadStoredFavouriteKeys();
     const favouriteClientId = loadOrCreateFavouriteClientId();
+    const contactRowsByKey = new Map();
+    let contactRateFallbackTimes = [];
+    let lastContactActionKey = '';
+    let lastContactActionAt = 0;
+    let statusToastTimer = null;
+    let actionTooltipTarget = null;
 
     const percentileReference = {
       population: [],
@@ -5944,9 +6036,7 @@
             'aria-label',
             `${saved ? 'Remove' : 'Add'} ${practiceName} ${saved ? 'from' : 'to'} favourites`
           );
-          button.title = saved
-            ? 'Remove from favourites'
-            : 'Add to favourites';
+          button.removeAttribute('title');
         });
     }
 
@@ -6111,6 +6201,196 @@
         : '';
     }
 
+    function showStatusToast(message, durationMs = 8000) {
+      if (!statusElement) return;
+
+      clearTimeout(statusToastTimer);
+      statusElement.textContent = cleanText(message);
+
+      if (durationMs > 0) {
+        statusToastTimer = window.setTimeout(
+          () => {
+            if (statusElement.textContent === cleanText(message)) {
+              statusElement.textContent = '';
+            }
+          },
+          durationMs
+        );
+      }
+    }
+
+    function rebuildContactRowIndex() {
+      contactRowsByKey.clear();
+
+      [
+        ['optometry', optometryRows],
+        ['ophthalmology', ophthalmologyRows]
+      ].forEach(([service, rows]) => {
+        rows.forEach(row => {
+          const key = favouriteKeyForRow(row, service);
+          if (key) {
+            contactRowsByKey.set(key, { row, service });
+          }
+        });
+      });
+    }
+
+    function contactRecordForButton(button) {
+      const key = cleanText(button?.dataset?.contactKey || '');
+      if (!key) return null;
+      return contactRowsByKey.get(key) || null;
+    }
+
+    function recentContactActionTimes(now = Date.now()) {
+      const cutoff = now - CONTACT_RATE_WINDOW_MS;
+
+      try {
+        const parsed = JSON.parse(
+          localStorage.getItem(CONTACT_RATE_STORAGE_KEY) || '[]'
+        );
+        const recent = Array.isArray(parsed)
+          ? parsed
+              .map(Number)
+              .filter(value => Number.isFinite(value) && value > cutoff && value <= now)
+          : [];
+        localStorage.setItem(CONTACT_RATE_STORAGE_KEY, JSON.stringify(recent));
+        contactRateFallbackTimes = recent.slice();
+        return recent;
+      } catch (_) {
+        contactRateFallbackTimes = contactRateFallbackTimes
+          .filter(value => Number.isFinite(value) && value > cutoff && value <= now);
+        return contactRateFallbackTimes.slice();
+      }
+    }
+
+    function allowContactAction(actionKey) {
+      const now = Date.now();
+      const key = cleanText(actionKey);
+
+      if (
+        key &&
+        key === lastContactActionKey &&
+        now - lastContactActionAt < CONTACT_ACTION_DEBOUNCE_MS
+      ) {
+        return false;
+      }
+
+      const recent = recentContactActionTimes(now);
+      if (recent.length >= CONTACT_RATE_LIMIT) {
+        showStatusToast(
+          'Too many contact requests. Please try again shortly.'
+        );
+        return false;
+      }
+
+      recent.push(now);
+      contactRateFallbackTimes = recent.slice();
+      try {
+        localStorage.setItem(
+          CONTACT_RATE_STORAGE_KEY,
+          JSON.stringify(recent)
+        );
+      } catch (_) {
+        // In-memory fallback still limits the current page session.
+      }
+
+      lastContactActionKey = key;
+      lastContactActionAt = now;
+      return true;
+    }
+
+    function actionTooltipHtml(target) {
+      const kind = cleanText(target?.dataset?.actionTooltip || '');
+      const service = cleanText(target?.dataset?.contactService || '');
+
+      if (kind === 'email') {
+        return '<strong>Email</strong><span class="action-tooltip-line"><em>Tap to reveal</em></span>';
+      }
+
+      if (kind === 'phone') {
+        return '<strong>Phone</strong><span class="action-tooltip-line"><em>Tap to reveal</em></span>';
+      }
+
+      if (kind === 'copy-referral') {
+        const fields = [
+          'Practice name',
+          'Address',
+          ...(service === 'ophthalmology' ? ['Phone'] : []),
+          'Email'
+        ];
+        return [
+          '<strong>Copy referral:</strong>',
+          ...fields.map(field => `<span class="action-tooltip-line">${escapeHtml(field)}</span>`),
+          '<span class="action-tooltip-line"><em>Tap to reveal</em></span>'
+        ].join('');
+      }
+
+      if (kind === 'favourite') {
+        const saved = target?.getAttribute('aria-pressed') === 'true';
+        return saved
+          ? '<strong>Remove from favourites</strong><span class="action-tooltip-line"><em>Tap to remove</em></span>'
+          : '<strong>Add to favourites</strong><span class="action-tooltip-line"><em>Tap to save</em></span>';
+      }
+
+      if (kind === 'maps') {
+        return '<strong>Google Maps</strong><span class="action-tooltip-line"><em>Tap to open</em></span>';
+      }
+
+      if (kind === 'website') {
+        return '<strong>Website</strong><span class="action-tooltip-line"><em>Tap to open</em></span>';
+      }
+
+      if (kind === 'copy-address') {
+        return '<strong>Copy address</strong><span class="action-tooltip-line"><em>Tap to copy</em></span>';
+      }
+
+      return '';
+    }
+
+    function positionActionTooltip(target) {
+      if (!actionTooltip || !target || !actionTooltip.classList.contains('is-visible')) {
+        return;
+      }
+
+      const targetRect = target.getBoundingClientRect();
+      const tooltipRect = actionTooltip.getBoundingClientRect();
+      const margin = 8;
+      const gap = 6;
+
+      let left = targetRect.left + (targetRect.width - tooltipRect.width) / 2;
+      left = Math.max(margin, Math.min(left, window.innerWidth - tooltipRect.width - margin));
+
+      let top = targetRect.top - tooltipRect.height - gap;
+      if (top < margin) {
+        top = targetRect.bottom + gap;
+      }
+      top = Math.max(margin, Math.min(top, window.innerHeight - tooltipRect.height - margin));
+
+      actionTooltip.style.left = `${Math.round(left)}px`;
+      actionTooltip.style.top = `${Math.round(top)}px`;
+    }
+
+    function showActionTooltip(target) {
+      if (!actionTooltip || !target) return;
+
+      const html = actionTooltipHtml(target);
+      if (!html) return;
+
+      actionTooltipTarget = target;
+      actionTooltip.innerHTML = html;
+      actionTooltip.classList.add('is-visible');
+      actionTooltip.setAttribute('aria-hidden', 'false');
+      positionActionTooltip(target);
+    }
+
+    function hideActionTooltip() {
+      if (!actionTooltip) return;
+      actionTooltipTarget = null;
+      actionTooltip.classList.remove('is-visible');
+      actionTooltip.setAttribute('aria-hidden', 'true');
+      actionTooltip.innerHTML = '';
+    }
+
     async function copyTextToClipboard(
       text,
       preserveLineBreaks = false
@@ -6197,9 +6477,9 @@
         button.innerHTML;
 
       const originalTitle =
-        button.dataset.originalTitle ||
-        button.getAttribute('title') ||
-        'Copy';
+        button.hasAttribute('title')
+          ? button.getAttribute('title')
+          : null;
 
       const originalAria =
         button.dataset.originalAria ||
@@ -6209,8 +6489,9 @@
       button.dataset.originalHtml =
         originalHtml;
 
-      button.dataset.originalTitle =
-        originalTitle;
+      if (originalTitle !== null) {
+        button.dataset.originalTitle = originalTitle;
+      }
 
       button.dataset.originalAria =
         originalAria;
@@ -6219,10 +6500,7 @@
         'copy-success'
       );
 
-      button.setAttribute(
-        'title',
-        successText
-      );
+      button.removeAttribute('title');
 
       button.setAttribute(
         'aria-label',
@@ -6255,10 +6533,14 @@
             button.innerHTML =
               originalHtml;
 
-            button.setAttribute(
-              'title',
-              originalTitle
-            );
+            if (originalTitle === null) {
+              button.removeAttribute('title');
+            } else {
+              button.setAttribute(
+                'title',
+                originalTitle
+              );
+            }
 
             button.setAttribute(
               'aria-label',
@@ -11261,10 +11543,10 @@
         const favouriteSaved = favouriteKeys.has(favouriteKey);
         const favouriteCount = favouriteCommunityCounts.get(favouriteKey) || 0;
         const favouritePracticeId = practiceIdForFavouriteRow(row, rowServiceType);
-        const favouriteAction = `<button class="practice-action favourite-action${favouriteSaved ? ' is-favourite' : ''}" type="button" data-favourite-key="${escapeHtml(favouriteKey)}" data-favourite-service="${escapeHtml(rowServiceType)}" data-favourite-practice-id="${escapeHtml(favouritePracticeId)}" data-favourite-practice-name="${escapeHtml(row.practiceName)}" aria-pressed="${String(favouriteSaved)}" aria-label="${favouriteSaved ? 'Remove' : 'Add'} ${escapeHtml(row.practiceName)} ${favouriteSaved ? 'from' : 'to'} favourites" title="${favouriteSaved ? 'Remove from favourites' : 'Add to favourites'}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>${favouriteCount > 0 ? `<sup class="favourite-community-count">${escapeHtml(PFF.formatInteger(favouriteCount))}</sup>` : ''}</button>`;
+        const favouriteAction = `<button class="practice-action favourite-action${favouriteSaved ? ' is-favourite' : ''}" type="button" data-favourite-key="${escapeHtml(favouriteKey)}" data-favourite-service="${escapeHtml(rowServiceType)}" data-favourite-practice-id="${escapeHtml(favouritePracticeId)}" data-favourite-practice-name="${escapeHtml(row.practiceName)}" aria-pressed="${String(favouriteSaved)}" aria-label="${favouriteSaved ? 'Remove' : 'Add'} ${escapeHtml(row.practiceName)} ${favouriteSaved ? 'from' : 'to'} favourites" data-action-tooltip="favourite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>${favouriteCount > 0 ? `<sup class="favourite-community-count">${escapeHtml(PFF.formatInteger(favouriteCount))}</sup>` : ''}</button>`;
 
         const mapAction = mapUrl
-          ? `<a class="practice-action" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener" aria-label="Open Google Maps for ${escapeHtml(row.practiceName)}" title="Google Maps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s6-5.3 6-11a6 6 0 1 0-12 0c0 5.7 6 11 6 11Z"></path><circle cx="12" cy="10" r="2.2"></circle></svg></a>`
+          ? `<a class="practice-action" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener" data-action-tooltip="maps" aria-label="Open Google Maps for ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s6-5.3 6-11a6 6 0 1 0-12 0c0 5.7 6 11 6 11Z"></path><circle cx="12" cy="10" r="2.2"></circle></svg></a>`
           : '';
 
         const websiteUrl = rowServiceType === 'ophthalmology'
@@ -11272,25 +11554,22 @@
           : '';
 
         const websiteAction = websiteUrl
-          ? `<a class="practice-action" href="${escapeHtml(websiteUrl)}" target="_blank" rel="noopener" aria-label="Open website for ${escapeHtml(row.practiceName)}" title="Website"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4"></path><path d="M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5S14.4 18.2 12 20.5C9.6 18.2 8.4 15.4 8.4 12S9.6 5.8 12 3.5Z"></path></svg></a>`
+          ? `<a class="practice-action" href="${escapeHtml(websiteUrl)}" target="_blank" rel="noopener" data-action-tooltip="website" aria-label="Open website for ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4"></path><path d="M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5S14.4 18.2 12 20.5C9.6 18.2 8.4 15.4 8.4 12S9.6 5.8 12 3.5Z"></path></svg></a>`
           : '';
 
         const emailAction = email
-          ? `<a class="practice-action" href="mailto:${escapeHtml(email)}" aria-label="Email ${escapeHtml(row.practiceName)}" title="Email ${escapeHtml(email)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg></a>`
+          ? `<button class="practice-action contact-email-action" type="button" data-contact-key="${escapeHtml(favouriteKey)}" data-contact-service="${escapeHtml(rowServiceType)}" data-action-tooltip="email" aria-label="Email ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg></button>`
           : '';
 
-        const referralLines = [
-          cleanText(row.practiceName),
-          address,
-          rowServiceType === 'ophthalmology' && phone && !/^x$/i.test(phone)
-            ? phone
-            : '',
-          email || ''
-        ].filter(Boolean);
+        const hasReferralDetails = Boolean(
+          cleanText(row.practiceName) ||
+          address ||
+          (rowServiceType === 'ophthalmology' && phone && !/^x$/i.test(phone)) ||
+          email
+        );
 
-        const referralText = referralLines.join('\n');
-        const copyReferralAction = referralText
-          ? `<button class="practice-action copy-referral-action" type="button" data-copy-referral="${escapeHtml(encodeURIComponent(referralText))}" aria-label="Copy referral details for ${escapeHtml(row.practiceName)}" title="Copy referral details"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"></rect><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-10A1.5 1.5 0 0 0 3 5.5v10A1.5 1.5 0 0 0 4.5 17H8"></path></svg></button>`
+        const copyReferralAction = hasReferralDetails
+          ? `<button class="practice-action copy-referral-action" type="button" data-contact-key="${escapeHtml(favouriteKey)}" data-contact-service="${escapeHtml(rowServiceType)}" data-action-tooltip="copy-referral" aria-label="Copy referral details for ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"></rect><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-10A1.5 1.5 0 0 0 3 5.5v10A1.5 1.5 0 0 0 4.5 17H8"></path></svg></button>`
           : '';
 
         const actionItems = activeServiceType === 'favourites'
@@ -11327,8 +11606,8 @@
         const address = cleanText(value);
 
         const copyAddressAction = address
-          ? `<button class="practice-action address-copy-action copy-address-action" type="button" data-copy-address="${escapeHtml(address)}" aria-label="Copy ${escapeHtml(row.practiceName)} address" title="Copy address"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"></rect><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-10A1.5 1.5 0 0 0 3 5.5v10A1.5 1.5 0 0 0 4.5 17H8"></path></svg></button>`
-          : `<span class="practice-action address-copy-action is-disabled" aria-label="Address unavailable to copy" title="Address unavailable"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"></rect><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-10A1.5 1.5 0 0 0 3 5.5v10A1.5 1.5 0 0 0 4.5 17H8"></path></svg></span>`;
+          ? `<button class="practice-action address-copy-action copy-address-action" type="button" data-copy-address="${escapeHtml(address)}" data-action-tooltip="copy-address" aria-label="Copy ${escapeHtml(row.practiceName)} address"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"></rect><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-10A1.5 1.5 0 0 0 3 5.5v10A1.5 1.5 0 0 0 4.5 17H8"></path></svg></button>`
+          : `<span class="practice-action address-copy-action is-disabled" aria-label="Address unavailable to copy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"></rect><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-10A1.5 1.5 0 0 0 3 5.5v10A1.5 1.5 0 0 0 4.5 17H8"></path></svg></span>`;
 
         return `<span class="address-cell">${copyAddressAction}<span class="address-text">${escapeHtml(address || '–')}</span></span>`;
       }
@@ -11839,11 +12118,12 @@
             const publicPhoneHref = publicPhone && !/^x$/i.test(publicPhone)
               ? publicPhone.replace(/[^0-9+]/g, '')
               : '';
+            const publicContactKey = favouriteKeyForRow(row, 'ophthalmology');
             const websiteAction = publicWebsite
-              ? `<a class="practice-action" href="${escapeHtml(publicWebsite)}" target="_blank" rel="noopener" aria-label="Open website for ${escapeHtml(row.practiceName)}" title="Website"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4"></path><path d="M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5S14.4 18.2 12 20.5C9.6 18.2 8.4 15.4 8.4 12S9.6 5.8 12 3.5Z"></path></svg></a>`
+              ? `<a class="practice-action" href="${escapeHtml(publicWebsite)}" target="_blank" rel="noopener" data-action-tooltip="website" aria-label="Open website for ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4"></path><path d="M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5S14.4 18.2 12 20.5C9.6 18.2 8.4 15.4 8.4 12S9.6 5.8 12 3.5Z"></path></svg></a>`
               : '';
             const phoneAction = publicPhoneHref
-              ? `<a class="practice-action" href="tel:${escapeHtml(publicPhoneHref)}" aria-label="Call ${escapeHtml(row.practiceName)}" title="Call ${escapeHtml(publicPhone)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8 4.9 5c-.7.4-1 1.2-.8 2 1.7 6.4 6.6 11.3 13 13 .8.2 1.6-.1 2-.8l1.2-2.3c.3-.7.1-1.5-.5-1.9l-3.1-2.1c-.6-.4-1.4-.3-1.9.2l-1.4 1.4a15.4 15.4 0 0 1-4-4l1.4-1.4c.5-.5.6-1.3.2-1.9L9.1 4.3c-.4-.6-1.2-.8-1.9-.5Z"></path></svg></a>`
+              ? `<button class="practice-action contact-phone-action" type="button" data-contact-key="${escapeHtml(publicContactKey)}" data-contact-service="ophthalmology" data-action-tooltip="phone" aria-label="Call ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8 4.9 5c-.7.4-1 1.2-.8 2 1.7 6.4 6.6 11.3 13 13 .8.2 1.6-.1 2-.8l1.2-2.3c.3-.7.1-1.5-.5-1.9l-3.1-2.1c-.6-.4-1.4-.3-1.9.2l-1.4 1.4a15.4 15.4 0 0 1-4-4l1.4-1.4c.5-.5.6-1.3.2-1.9L9.1 4.3c-.4-.6-1.2-.8-1.9-.5Z"></path></svg></button>`
               : '';
             const publicActionSlots = [websiteAction, phoneAction]
               .map(
@@ -13687,10 +13967,9 @@
       dataTable.addEventListener(
         'click',
         async event => {
-          const button =
-            event.target.closest(
-              '.copy-referral-action, .copy-address-action'
-            );
+          const button = event.target.closest(
+            '.contact-email-action, .contact-phone-action, .copy-referral-action, .copy-address-action'
+          );
 
           if (!button) {
             return;
@@ -13698,33 +13977,80 @@
 
           event.preventDefault();
           event.stopPropagation();
+          hideActionTooltip();
 
-          const isAddress =
-            button.classList.contains('copy-address-action');
-
-          let textToCopy = '';
-
+          const isAddress = button.classList.contains('copy-address-action');
           if (isAddress) {
-            textToCopy = button.dataset.copyAddress || '';
-          } else {
-            try {
-              textToCopy = decodeURIComponent(button.dataset.copyReferral || '');
-            } catch (_) {
-              textToCopy = '';
+            const copied = await copyTextToClipboard(
+              button.dataset.copyAddress || '',
+              false
+            );
+
+            if (copied) {
+              showCopySuccess(button, 'Address copied');
+            } else {
+              showStatusToast('Unable to copy address. Please try again.');
             }
+            return;
           }
 
-          const copied =
-            await copyTextToClipboard(
-              textToCopy,
-              !isAddress
-            );
+          const record = contactRecordForButton(button);
+          if (!record) {
+            showStatusToast('Contact details are unavailable for this practice.');
+            return;
+          }
+
+          const { row, service } = record;
+          const contactKey = cleanText(button.dataset.contactKey || '');
+          const actionType = button.classList.contains('contact-email-action')
+            ? 'email'
+            : button.classList.contains('contact-phone-action')
+              ? 'phone'
+              : 'referral';
+
+          if (!allowContactAction(`${actionType}:${contactKey}`)) {
+            return;
+          }
+
+          if (actionType === 'email') {
+            const email = cleanText(row.emailAddress || emailAddressForRow(row));
+            if (!email) {
+              showStatusToast('Email address is unavailable for this practice.');
+              return;
+            }
+            window.location.href = `mailto:${email}`;
+            return;
+          }
+
+          if (actionType === 'phone') {
+            const phone = normalisePhoneNumber(row.phoneNumber || row.phone);
+            const phoneHref = phone.replace(/[^0-9+]/g, '');
+            if (!phoneHref) {
+              showStatusToast('Phone number is unavailable for this service.');
+              return;
+            }
+            window.location.href = `tel:${phoneHref}`;
+            return;
+          }
+
+          const referralLines = [
+            cleanText(row.practiceName),
+            cleanText(row.address),
+            service === 'ophthalmology'
+              ? normalisePhoneNumber(row.phoneNumber || row.phone)
+              : '',
+            cleanText(row.emailAddress || emailAddressForRow(row))
+          ].filter(Boolean);
+
+          const copied = await copyTextToClipboard(
+            referralLines.join('\n'),
+            true
+          );
 
           if (copied) {
-            showCopySuccess(
-              button,
-              isAddress ? 'Address copied' : 'Referral details copied'
-            );
+            showCopySuccess(button, 'Referral details copied');
+          } else {
+            showStatusToast('Unable to copy referral details. Please try again.');
           }
         }
       );
@@ -13754,6 +14080,46 @@
           cancelRadiusWorker('warm');
         }
       );
+
+      document.addEventListener(
+        'pointerover',
+        event => {
+          const target = event.target.closest?.('[data-action-tooltip]');
+          if (!target) return;
+          showActionTooltip(target);
+        }
+      );
+
+      document.addEventListener(
+        'pointerout',
+        event => {
+          const target = event.target.closest?.('[data-action-tooltip]');
+          if (!target || target !== actionTooltipTarget) return;
+          if (target.contains(event.relatedTarget)) return;
+          hideActionTooltip();
+        }
+      );
+
+      document.addEventListener(
+        'focusin',
+        event => {
+          const target = event.target.closest?.('[data-action-tooltip]');
+          if (target) showActionTooltip(target);
+        }
+      );
+
+      document.addEventListener(
+        'focusout',
+        event => {
+          const target = event.target.closest?.('[data-action-tooltip]');
+          if (target && target === actionTooltipTarget) {
+            hideActionTooltip();
+          }
+        }
+      );
+
+      window.addEventListener('scroll', hideActionTooltip, true);
+      window.addEventListener('resize', hideActionTooltip);
     }
 
     setupInteractions();
@@ -13860,6 +14226,8 @@
           restored.practices;
         ophthalmologyRows =
           restored.ophthalmology;
+
+        rebuildContactRowIndex();
 
         optometryRowsPracticeAsc =
           optometryRows.slice().sort(
