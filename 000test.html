@@ -1028,6 +1028,11 @@
     }
 
     @media (prefers-color-scheme: dark) {
+      #status {
+        color: #ffb4ab;
+        border-color: rgba(255, 180, 171, 0.38);
+      }
+
       .action-tooltip {
         box-shadow: 0 7px 20px rgba(0, 0, 0, 0.36);
       }
@@ -4756,10 +4761,10 @@
         '1196929681',
 
       sourceRange:
-        'B32:X',
+        'A32:X',
 
       sourceColumnCount:
-        23,
+        24,
 
       ophthalmologySheetName:
         '2026 Ophthal practice directory',
@@ -4816,6 +4821,9 @@
     const FAVOURITES_SYNC_STORAGE_KEY =
       'pff-eyecare-access-tool-favourites-sync-v1';
 
+    const FAVOURITES_ID_ALIAS_STORAGE_KEY =
+      'pff-eyecare-access-tool-favourite-id-aliases-v1';
+
     const FAVOURITES_SYNC_INTERVAL_MS =
       7 * 24 * 60 * 60 * 1000;
 
@@ -4838,8 +4846,9 @@
       'favourites'
     ]);
 
-    /* Optometry B:X. */
-    const OPTOMETRY_SOURCE_KEYS = Object.freeze([
+    /* Optometry A:X. Column A is the assigned practice ID.
+     * Legacy B:X cache rows are still accepted below. */
+    const OPTOMETRY_LEGACY_SOURCE_KEYS = Object.freeze([
       'practiceName',
       'address',
       'suburb',
@@ -4863,6 +4872,11 @@
       'sourceV',
       'sourceW',
       'phn'
+    ]);
+
+    const OPTOMETRY_SOURCE_KEYS = Object.freeze([
+      'practiceId',
+      ...OPTOMETRY_LEGACY_SOURCE_KEYS
     ]);
 
     /* Ophthalmology A:X. Column A is the assigned practice/service ID.
@@ -5491,8 +5505,10 @@
 
     const favouriteCommunityCounts = new Map();
     const pendingFavouriteCountKeys = new Set();
+    const favouriteMutationStates = new Map();
     let favouriteCountRefreshTimer = null;
     const favouriteKeys = loadStoredFavouriteKeys();
+    const favouriteIdAliases = loadFavouriteIdAliases();
     const favouriteClientId = loadOrCreateFavouriteClientId();
     const contactRowsByKey = new Map();
     let contactRateFallbackTimes = [];
@@ -5777,6 +5793,37 @@
       return (hash >>> 0).toString(36);
     }
 
+    function loadFavouriteIdAliases() {
+      try {
+        const stored = JSON.parse(
+          localStorage.getItem(FAVOURITES_ID_ALIAS_STORAGE_KEY) || '{}'
+        );
+        return new Map(
+          stored && typeof stored === 'object' && !Array.isArray(stored)
+            ? Object.entries(stored)
+                .map(([legacyKey, currentKey]) => [
+                  cleanText(legacyKey),
+                  cleanText(currentKey)
+                ])
+                .filter(([legacyKey, currentKey]) => legacyKey && currentKey)
+            : []
+        );
+      } catch (_) {
+        return new Map();
+      }
+    }
+
+    function persistFavouriteIdAliases() {
+      try {
+        localStorage.setItem(
+          FAVOURITES_ID_ALIAS_STORAGE_KEY,
+          JSON.stringify(Object.fromEntries(favouriteIdAliases))
+        );
+      } catch (_) {
+        // Aliases remain available for the current page session.
+      }
+    }
+
     function serviceTypeForRow(row, fallback = activeServiceType) {
       const supplied = cleanText(row?._serviceType || '');
       if (supplied === 'optometry' || supplied === 'ophthalmology') {
@@ -5785,10 +5832,7 @@
       return fallback === 'ophthalmology' ? 'ophthalmology' : 'optometry';
     }
 
-    function practiceIdForFavouriteRow(row, service) {
-      const supplied = cleanText(row?.practiceId || '');
-      if (supplied) return supplied;
-
+    function legacyPracticeIdForFavouriteRow(row, service) {
       const fingerprint = [
         service,
         safeExternalUrl(row?.mapsUrl || ''),
@@ -5800,9 +5844,71 @@
       return `legacy-${favouriteHash(fingerprint)}`;
     }
 
+    function practiceIdForFavouriteRow(row, service) {
+      const supplied = cleanText(row?.practiceId || '');
+      return supplied || legacyPracticeIdForFavouriteRow(row, service);
+    }
+
     function favouriteKeyForRow(row, serviceHint = activeServiceType) {
       const service = serviceTypeForRow(row, serviceHint);
-      return `${service}:${practiceIdForFavouriteRow(row, service)}`;
+      const supplied = cleanText(row?.practiceId || '');
+
+      if (supplied) {
+        return `${service}:${supplied}`;
+      }
+
+      const legacyKey =
+        `${service}:${legacyPracticeIdForFavouriteRow(row, service)}`;
+      return favouriteIdAliases.get(legacyKey) || legacyKey;
+    }
+
+    function favouriteIdentityForRow(row, serviceHint = activeServiceType) {
+      const service = serviceTypeForRow(row, serviceHint);
+      const favouriteKey = favouriteKeyForRow(row, service);
+      const prefix = `${service}:`;
+      const practiceId = favouriteKey.startsWith(prefix)
+        ? favouriteKey.slice(prefix.length)
+        : practiceIdForFavouriteRow(row, service);
+
+      return { service, practiceId, favouriteKey };
+    }
+
+    function refreshOptometryFavouriteIdAliases(rows) {
+      let aliasesChanged = false;
+      let favouritesChanged = false;
+
+      (rows || []).forEach(row => {
+        const practiceId = cleanText(row?.practiceId || '');
+        if (!practiceId) return;
+
+        const legacyKey =
+          `optometry:${legacyPracticeIdForFavouriteRow(row, 'optometry')}`;
+        const currentKey = `optometry:${practiceId}`;
+
+        if (favouriteIdAliases.get(legacyKey) !== currentKey) {
+          favouriteIdAliases.set(legacyKey, currentKey);
+          aliasesChanged = true;
+        }
+
+        if (favouriteKeys.has(legacyKey)) {
+          favouriteKeys.delete(legacyKey);
+          favouriteKeys.add(currentKey);
+          favouriteCommunityCounts.delete(legacyKey);
+          favouritesChanged = true;
+        }
+      });
+
+      if (aliasesChanged) {
+        persistFavouriteIdAliases();
+      }
+
+      if (favouritesChanged) {
+        persistFavouriteKeys();
+        markFavouriteSyncDue();
+        updateFavouriteToggleCount();
+      }
+
+      return favouritesChanged;
     }
 
     function isFavouriteRow(row, serviceHint = activeServiceType) {
@@ -5869,6 +5975,9 @@
     async function syncStoredFavouritesIfDue() {
       if (!favouritesApiEnabled() || !favouriteSyncIsDue()) return;
 
+      const syncedKeys = Array.from(favouriteKeys).sort();
+      const syncedSignature = JSON.stringify(syncedKeys);
+
       try {
         const response = await fetch(FAVOURITES_API_URL, {
           method: 'POST',
@@ -5878,7 +5987,7 @@
           body: JSON.stringify({
             action: 'sync',
             clientId: favouriteClientId,
-            favouriteKeys: Array.from(favouriteKeys).sort()
+            favouriteKeys: syncedKeys
           }),
           mode: 'cors',
           cache: 'no-store',
@@ -5888,7 +5997,9 @@
         if (!response.ok) return;
 
         const payload = await response.json();
-        if (payload?.ok) {
+        const currentSignature =
+          JSON.stringify(Array.from(favouriteKeys).sort());
+        if (payload?.ok && currentSignature === syncedSignature) {
           markFavouriteSyncComplete();
         }
       } catch (_) {
@@ -5896,12 +6007,15 @@
       }
     }
 
-    async function submitFavouriteState(row, saved, serviceHint = activeServiceType) {
-      if (!favouritesApiEnabled()) return;
+    async function sendFavouriteStateRequest(
+      row,
+      saved,
+      serviceHint = activeServiceType
+    ) {
+      if (!favouritesApiEnabled()) return null;
 
-      const service = serviceTypeForRow(row, serviceHint);
-      const practiceId = practiceIdForFavouriteRow(row, service);
-      const favouriteKey = `${service}:${practiceId}`;
+      const { service, practiceId, favouriteKey } =
+        favouriteIdentityForRow(row, serviceHint);
 
       try {
         const response = await fetch(FAVOURITES_API_URL, {
@@ -5922,20 +6036,76 @@
           credentials: 'omit'
         });
 
-        if (!response.ok) return;
+        if (!response.ok) return null;
 
         const payload = await response.json();
         const count = Number(payload?.count);
-        if (Number.isFinite(count)) {
-          favouriteCommunityCounts.set(
-            favouriteKey,
-            Math.max(0, Math.round(count))
-          );
-          refreshFavouriteCountUi();
-        }
+        return {
+          favouriteKey,
+          count: Number.isFinite(count)
+            ? Math.max(0, Math.round(count))
+            : null
+        };
       } catch (_) {
         // Local favourite state remains authoritative for this browser.
+        return null;
       }
+    }
+
+    function submitFavouriteState(row, saved, serviceHint = activeServiceType) {
+      if (!favouritesApiEnabled()) return;
+
+      const { service, favouriteKey } =
+        favouriteIdentityForRow(row, serviceHint);
+      let state = favouriteMutationStates.get(favouriteKey);
+
+      if (!state) {
+        state = {
+          running: false,
+          desiredSaved: Boolean(saved),
+          row,
+          service
+        };
+        favouriteMutationStates.set(favouriteKey, state);
+      } else {
+        state.desiredSaved = Boolean(saved);
+        state.row = row;
+        state.service = service;
+      }
+
+      if (state.running) return;
+      state.running = true;
+
+      void (async () => {
+        try {
+          while (true) {
+            const requestedSaved = state.desiredSaved;
+            const requestedRow = state.row;
+            const requestedService = state.service;
+            const result = await sendFavouriteStateRequest(
+              requestedRow,
+              requestedSaved,
+              requestedService
+            );
+
+            if (state.desiredSaved === requestedSaved) {
+              if (Number.isFinite(result?.count)) {
+                favouriteCommunityCounts.set(
+                  favouriteKey,
+                  result.count
+                );
+                refreshFavouriteCountUi();
+              }
+              break;
+            }
+          }
+        } finally {
+          state.running = false;
+          if (favouriteMutationStates.get(favouriteKey) === state) {
+            favouriteMutationStates.delete(favouriteKey);
+          }
+        }
+      })();
     }
 
     function requestFavouriteCommunityCounts(keys, force = false) {
@@ -6562,15 +6732,23 @@
     ) {
       if (
         !Array.isArray(values) ||
-        values.length <
-          CONFIG.sourceColumnCount
+        values.length < OPTOMETRY_LEGACY_SOURCE_KEYS.length
       ) {
         return null;
       }
 
       const row = {};
+      const hasPracticeIdColumn =
+        values.length >= OPTOMETRY_SOURCE_KEYS.length;
+      const sourceKeys = hasPracticeIdColumn
+        ? OPTOMETRY_SOURCE_KEYS
+        : OPTOMETRY_LEGACY_SOURCE_KEYS;
 
-      OPTOMETRY_SOURCE_KEYS.forEach(
+      if (!hasPracticeIdColumn) {
+        row.practiceId = '';
+      }
+
+      sourceKeys.forEach(
         (key, index) => {
           row[key] =
             cleanText(values[index]);
@@ -11539,10 +11717,11 @@
         const phone = rowServiceType === 'ophthalmology'
           ? cleanText(row.phoneNumber || '')
           : '';
-        const favouriteKey = favouriteKeyForRow(row, rowServiceType);
+        const favouriteIdentity = favouriteIdentityForRow(row, rowServiceType);
+        const favouriteKey = favouriteIdentity.favouriteKey;
         const favouriteSaved = favouriteKeys.has(favouriteKey);
         const favouriteCount = favouriteCommunityCounts.get(favouriteKey) || 0;
-        const favouritePracticeId = practiceIdForFavouriteRow(row, rowServiceType);
+        const favouritePracticeId = favouriteIdentity.practiceId;
         const favouriteAction = `<button class="practice-action favourite-action${favouriteSaved ? ' is-favourite' : ''}" type="button" data-favourite-key="${escapeHtml(favouriteKey)}" data-favourite-service="${escapeHtml(rowServiceType)}" data-favourite-practice-id="${escapeHtml(favouritePracticeId)}" data-favourite-practice-name="${escapeHtml(row.practiceName)}" aria-pressed="${String(favouriteSaved)}" aria-label="${favouriteSaved ? 'Remove' : 'Add'} ${escapeHtml(row.practiceName)} ${favouriteSaved ? 'from' : 'to'} favourites" data-action-tooltip="favourite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>${favouriteCount > 0 ? `<sup class="favourite-community-count">${escapeHtml(PFF.formatInteger(favouriteCount))}</sup>` : ''}</button>`;
 
         const mapAction = mapUrl
@@ -14123,7 +14302,6 @@
     }
 
     setupInteractions();
-    syncStoredFavouritesIfDue();
 
     PFF.initialiseApp({
       app,
@@ -14227,7 +14405,15 @@
         ophthalmologyRows =
           restored.ophthalmology;
 
+        const migratedOptometryFavourites =
+          refreshOptometryFavouriteIdAliases(optometryRows);
+
         rebuildContactRowIndex();
+
+        if (migratedOptometryFavourites) {
+          invalidateFavouritePreparedState();
+        }
+        void syncStoredFavouritesIfDue();
 
         optometryRowsPracticeAsc =
           optometryRows.slice().sort(
