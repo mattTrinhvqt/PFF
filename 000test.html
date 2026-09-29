@@ -959,8 +959,15 @@
 
     .specialty-yes,
     .specialty-no {
-      color: var(--pff-ink);
       font-weight: 400;
+    }
+
+    .specialty-yes {
+      color: var(--pff-ink);
+    }
+
+    .specialty-no {
+      color: var(--pff-muted);
     }
 
     .employer-brand-known {
@@ -2616,8 +2623,8 @@
     .eat-intent-switch {
       --pff-metric-columns: 3;
       --pff-metric-index: 0;
-      width: min(300px, calc(100% - 90px));
-      flex: 0 1 300px;
+      width: min(324px, calc(100% - 90px));
+      flex: 0 1 324px;
     }
 
     .eat-intent-switch .metric-button {
@@ -2744,7 +2751,7 @@
       .view-busy-text { font-size: 6px; }
       .eat-status-slot .eat-live-data { font-size: 7px; }
       .intent-row { gap: 4px; margin-top: 6px; }
-      .eat-intent-switch { width: min(280px, calc(100% - 78px)); flex: 0 1 280px; }
+      .eat-intent-switch { width: min(300px, calc(100% - 78px)); flex: 0 1 300px; }
       .eat-intent-switch .metric-button {
       height: 28px;
       min-height: 28px;
@@ -2765,7 +2772,7 @@
       .eat-title-secondary { font-size: 0.40em; }
       .eat-status-slot { width: 66px; flex-basis: 66px; }
       .view-busy { width: 66px; }
-      .eat-intent-switch { width: min(260px, calc(100% - 74px)); flex: 0 1 260px; }
+      .eat-intent-switch { width: min(276px, calc(100% - 74px)); flex: 0 1 276px; }
       .eat-intent-switch .metric-button { font-size: 6.8px; }
       .reset-all-button { padding-right: 3px; padding-left: 3px; font-size: 6.8px; }
     }
@@ -3380,16 +3387,15 @@
     }
 
     .eat-admin-email-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 2px;
+      display: inline;
       vertical-align: baseline;
     }
 
     .eat-admin-email-link svg {
       width: 10px;
       height: 10px;
-      flex: 0 0 10px;
+      margin-right: 2px;
+      vertical-align: -0.12em;
       fill: none;
       stroke: currentColor;
       stroke-width: 1.7;
@@ -5496,6 +5502,7 @@
     const RADIUS_OPTIONS = Object.freeze([
       3, 5, 10, 20, 30, 50, 75, 100, 150, 200
     ]);
+    const DEFAULT_SORT_KEY = '__default';
 
     let activeServiceType = 'ophthalmology';
     let activeLocation = null;
@@ -5503,7 +5510,7 @@
     let practiceCountScope = 'radius';
     let phnPracticePercentileReference = [];
     let nearbyUnfilteredCount = 0;
-    let sortKey = 'practiceName';
+    let sortKey = DEFAULT_SORT_KEY;
     let sortDirection = 'asc';
     let renderFrame = null;
     let searchTimer = null;
@@ -5557,10 +5564,16 @@
     const favouriteCommunityCounts = new Map();
     const pendingFavouriteCountKeys = new Set();
     const favouriteMutationStates = new Map();
+    const stableDefaultSortRankCache = new WeakMap();
     let favouriteCountRefreshTimer = null;
     const favouriteKeys = loadStoredFavouriteKeys();
     const favouriteIdAliases = loadFavouriteIdAliases();
     const favouriteClientId = loadOrCreateFavouriteClientId();
+    const defaultSortDayKey = (() => {
+      const now = new Date();
+      const pad = value => String(value).padStart(2, '0');
+      return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    })();
     const contactRowsByKey = new Map();
     let contactRateFallbackTimes = [];
     let lastContactActionKey = '';
@@ -9940,7 +9953,7 @@
       updateNearbyMetrics();
 
       if (sortKey === 'distanceKm') {
-        sortKey = 'practiceName';
+        sortKey = DEFAULT_SORT_KEY;
         sortDirection = 'asc';
       }
 
@@ -10947,7 +10960,7 @@
         sortKey = 'distanceKm';
         sortDirection = 'asc';
       } else if (sortKey === 'distanceKm') {
-        sortKey = 'practiceName';
+        sortKey = DEFAULT_SORT_KEY;
         sortDirection = 'asc';
       }
 
@@ -11034,10 +11047,13 @@
 
               activateServiceDataset(activeServiceType, false);
 
-              if (!activeColumns().some(column => column.key === sortKey)) {
+              if (
+                sortKey !== DEFAULT_SORT_KEY &&
+                !activeColumns().some(column => column.key === sortKey)
+              ) {
                 sortKey = activeLocation
                   ? 'distanceKm'
-                  : 'practiceName';
+                  : DEFAULT_SORT_KEY;
                 sortDirection = 'asc';
               }
 
@@ -11717,6 +11733,72 @@
       ]);
     }
 
+    function hasDirectoryNarrowing() {
+      const hasSearchText = Boolean(
+        normaliseSearchText(searchInput.value)
+      );
+
+      return (
+        Boolean(activeLocation) ||
+        hasSearchText ||
+        selectedStates.size !== STATES.length ||
+        (
+          activeServiceType === 'optometry' &&
+          selectedOwnershipTypes.size !== OWNERSHIP_TYPES.length
+        ) ||
+        selectedMMM.size !== MMM_VALUES.length ||
+        selectedPHNs.size !== phnValues.length ||
+        requiredSpecialties.size > 0
+      );
+    }
+
+    function stableDefaultSortHash(value) {
+      const text = String(value || '');
+      let hash = 2166136261;
+
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+
+      return hash >>> 0;
+    }
+
+    function stableDefaultSortRank(row) {
+      if (row && stableDefaultSortRankCache.has(row)) {
+        return stableDefaultSortRankCache.get(row);
+      }
+
+      const rowKey = [
+        activeServiceType,
+        cleanText(row?.practiceId),
+        cleanText(row?.practiceName),
+        cleanText(row?.address),
+        Number.isFinite(row?.sourceIndex) ? row.sourceIndex : ''
+      ].join('|');
+
+      const rank = stableDefaultSortHash(
+        `${favouriteClientId}|${defaultSortDayKey}|${rowKey}`
+      );
+
+      if (row && typeof row === 'object') {
+        stableDefaultSortRankCache.set(row, rank);
+      }
+
+      return rank;
+    }
+
+    function shouldUseStableDefaultOrder() {
+      return (
+        sortKey === DEFAULT_SORT_KEY &&
+        (
+          activeServiceType === 'optometry' ||
+          activeServiceType === 'ophthalmology'
+        ) &&
+        !hasDirectoryNarrowing()
+      );
+    }
+
     function shouldPrioritizePublicServices() {
       if (
         activeServiceType !== 'ophthalmology' &&
@@ -11725,17 +11807,7 @@
         return false;
       }
 
-      const hasSearchText = Boolean(
-        normaliseSearchText(searchInput.value)
-      );
-
-      const hasFilterNarrowing =
-        selectedStates.size !== STATES.length ||
-        selectedMMM.size !== MMM_VALUES.length ||
-        selectedPHNs.size !== phnValues.length ||
-        requiredSpecialties.size > 0;
-
-      return Boolean(activeLocation) || hasSearchText || hasFilterNarrowing;
+      return hasDirectoryNarrowing();
     }
 
     function comparePublicServicePriority(first, second) {
@@ -11758,12 +11830,28 @@
             return publicServiceComparison;
           }
 
-          const comparison = compareValues(first, second, sortKey);
+          if (shouldUseStableDefaultOrder()) {
+            const rankDifference =
+              stableDefaultSortRank(first) -
+              stableDefaultSortRank(second);
 
-          if (comparison !== 0) {
-            return sortDirection === 'asc'
-              ? comparison
-              : -comparison;
+            if (rankDifference !== 0) {
+              return rankDifference;
+            }
+          } else {
+            const effectiveSortKey =
+              sortKey === DEFAULT_SORT_KEY
+                ? 'practiceName'
+                : sortKey;
+
+            const comparison =
+              compareValues(first, second, effectiveSortKey);
+
+            if (comparison !== 0) {
+              return sortKey === DEFAULT_SORT_KEY || sortDirection === 'asc'
+                ? comparison
+                : -comparison;
+            }
           }
 
           return first.sourceIndex - second.sourceIndex;
@@ -12114,8 +12202,8 @@
         return `
           <span
             class="${yes ? 'specialty-yes' : 'specialty-no'}"
-            aria-label="${yes ? 'Yes' : 'Not listed'}"
-          >${yes ? '✓' : '–'}</span>
+            aria-label="${yes ? 'Listed' : 'Not listed'}"
+          >${yes ? '✓' : '—'}</span>
         `;
       }
 
@@ -13395,7 +13483,7 @@
 
     function savedViewSnapshot() {
       return {
-        version: 5,
+        version: 6,
         serviceType: activeServiceType,
         search: searchInput.value,
         practiceCountScope,
@@ -13522,7 +13610,7 @@
         saved.serviceType === 'optometry';
 
       const current =
-        [4, 5].includes(saved.version) &&
+        [4, 5, 6].includes(saved.version) &&
         ['optometry', 'ophthalmology'].includes(saved.serviceType);
 
       if (!legacy && !version3 && !current) {
@@ -13605,6 +13693,16 @@
       applyViewUi();
 
       if (
+        saved.sortKey === DEFAULT_SORT_KEY ||
+        (
+          saved.version <= 5 &&
+          saved.sortKey === 'practiceName' &&
+          saved.sortDirection !== 'desc'
+        )
+      ) {
+        sortKey = DEFAULT_SORT_KEY;
+        sortDirection = 'asc';
+      } else if (
         activeColumns().some(
           column => column.key === saved.sortKey
         )
@@ -13626,7 +13724,7 @@
       nearbyUnfilteredCount = 0;
       hideLocationSuggestions();
       syncSelectedLocationChip();
-      sortKey = 'practiceName';
+      sortKey = DEFAULT_SORT_KEY;
       sortDirection = 'asc';
 
       searchClear.classList.remove('is-visible');
@@ -13674,7 +13772,7 @@
       nearbyUnfilteredCount = 0;
       radiusKm = 20;
       practiceCountScope = 'radius';
-      sortKey = 'practiceName';
+      sortKey = DEFAULT_SORT_KEY;
       sortDirection = 'asc';
       lastRenderedSearchKey = null;
       radiusPercentileBusy = false;
