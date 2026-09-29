@@ -2244,20 +2244,32 @@
     }
 
     .refer-actions-cell {
-      display: inline-flex;
+      display: inline-grid;
+      grid-template-columns: repeat(3, 18px);
+      grid-template-rows: repeat(2, 18px);
       width: 100%;
       align-items: center;
       justify-content: center;
-      gap: 1px;
+      gap: 2px;
     }
 
-    .refer-actions-cell .practice-action,
+    .data-table th[data-key="referActions"],
+    .data-table td[data-key="referActions"] {
+      padding-top: 3px;
+      padding-bottom: 3px;
+    }
+
+    .refer-actions-cell .practice-action {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 18px;
+    }
+
     .address-copy-action {
       width: var(--eat-action-button-width);
       height: var(--eat-action-button-height);
       flex: 0 0 var(--eat-action-button-width);
     }
-
 
     .practice-action-slot {
       display: inline-flex;
@@ -2266,6 +2278,16 @@
       flex: 0 0 var(--eat-action-button-width);
       align-items: center;
       justify-content: center;
+    }
+
+    .refer-actions-cell .practice-action-slot {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 18px;
+    }
+
+    .refer-actions-cell .favourite-community-count {
+      top: -3px;
     }
 
     .practice-action-placeholder {
@@ -2315,6 +2337,11 @@
       color: var(--pff-purple);
       background: rgba(102, 0, 255, 0.06);
       outline: 0;
+    }
+
+    .contact-phone-action,
+    .contact-email-action {
+      touch-action: manipulation;
     }
 
     .practice-action.is-disabled {
@@ -5516,6 +5543,10 @@
     let lastContactActionAt = 0;
     let statusToastTimer = null;
     let actionTooltipTarget = null;
+    let actionTooltipPinnedTarget = null;
+    let revealedContactAction = null;
+    let revealedContactTimer = null;
+    const CONTACT_SECOND_TAP_WINDOW_MS = 2500;
 
     const percentileReference = {
       population: [],
@@ -6469,25 +6500,75 @@
       return true;
     }
 
+    function contactValueForAction(record, actionType) {
+      const row = record?.row;
+      if (!row) return '';
+
+      if (actionType === 'email') {
+        return cleanText(row.emailAddress || emailAddressForRow(row));
+      }
+
+      if (actionType === 'phone') {
+        return normalisePhoneNumber(row.phoneNumber || row.phone);
+      }
+
+      return '';
+    }
+
+    function referralFieldsForButton(target) {
+      const record = contactRecordForButton(target);
+      const row = record?.row;
+      if (!row) {
+        return ['Practice name', 'Address', 'Email'];
+      }
+
+      const fields = [];
+      if (cleanText(row.practiceName)) fields.push('Practice name');
+      if (cleanText(row.address)) fields.push('Address');
+      const phone = normalisePhoneNumber(row.phoneNumber || row.phone);
+      if (phone && !/^x$/i.test(phone)) fields.push('Phone');
+      if (cleanText(row.emailAddress || emailAddressForRow(row))) fields.push('Email');
+      return fields;
+    }
+
     function actionTooltipHtml(target) {
       const kind = cleanText(target?.dataset?.actionTooltip || '');
-      const service = cleanText(target?.dataset?.contactService || '');
+      const isRevealed =
+        revealedContactAction?.target === target &&
+        Date.now() <= revealedContactAction.expiresAt;
 
       if (kind === 'email') {
-        return '<strong>Email</strong><span class="action-tooltip-line"><em>Tap to send email</em></span>';
+        if (isRevealed && revealedContactAction.actionType === 'email') {
+          return [
+            '<strong>Email</strong>',
+            `<span class="action-tooltip-line">${escapeHtml(revealedContactAction.value)}</span>`,
+            '<span class="action-tooltip-line"><em>Double-tap to send email</em></span>'
+          ].join('');
+        }
+        return [
+          '<strong>Email</strong>',
+          '<span class="action-tooltip-line">Tap to reveal</span>',
+          '<span class="action-tooltip-line"><em>Double-tap to send email</em></span>'
+        ].join('');
       }
 
       if (kind === 'phone') {
-        return '<strong>Phone</strong><span class="action-tooltip-line"><em>Tap to reveal</em></span>';
+        if (isRevealed && revealedContactAction.actionType === 'phone') {
+          return [
+            '<strong>Phone</strong>',
+            `<span class="action-tooltip-line">${escapeHtml(revealedContactAction.value)}</span>`,
+            '<span class="action-tooltip-line"><em>Double-tap to call</em></span>'
+          ].join('');
+        }
+        return [
+          '<strong>Phone</strong>',
+          '<span class="action-tooltip-line">Tap to reveal</span>',
+          '<span class="action-tooltip-line"><em>Double-tap to call</em></span>'
+        ].join('');
       }
 
       if (kind === 'copy-referral') {
-        const fields = [
-          'Practice name',
-          'Address',
-          ...(service === 'ophthalmology' ? ['Phone'] : []),
-          'Email'
-        ];
+        const fields = referralFieldsForButton(target);
         return [
           '<strong>Copy referral:</strong>',
           ...fields.map(field => `<span class="action-tooltip-line">${escapeHtml(field)}</span>`),
@@ -6540,11 +6621,28 @@
       actionTooltip.style.top = `${Math.round(top)}px`;
     }
 
-    function showActionTooltip(target) {
+    function clearRevealedContactAction() {
+      if (revealedContactTimer !== null) {
+        clearTimeout(revealedContactTimer);
+        revealedContactTimer = null;
+      }
+      revealedContactAction = null;
+      actionTooltipPinnedTarget = null;
+    }
+
+    function showActionTooltip(target, { pin = false } = {}) {
       if (!actionTooltip || !target) return;
+
+      if (actionTooltipPinnedTarget && actionTooltipPinnedTarget !== target) {
+        clearRevealedContactAction();
+      }
 
       const html = actionTooltipHtml(target);
       if (!html) return;
+
+      if (pin) {
+        actionTooltipPinnedTarget = target;
+      }
 
       actionTooltipTarget = target;
       actionTooltip.innerHTML = html;
@@ -6553,12 +6651,49 @@
       positionActionTooltip(target);
     }
 
-    function hideActionTooltip() {
+    function hideActionTooltip({ preserveReveal = false } = {}) {
       if (!actionTooltip) return;
+      if (!preserveReveal) {
+        clearRevealedContactAction();
+      }
       actionTooltipTarget = null;
       actionTooltip.classList.remove('is-visible');
       actionTooltip.setAttribute('aria-hidden', 'true');
       actionTooltip.innerHTML = '';
+    }
+
+    function revealContactAction(button, actionType, contactKey, value) {
+      clearRevealedContactAction();
+
+      const expiresAt = Date.now() + CONTACT_SECOND_TAP_WINDOW_MS;
+      revealedContactAction = {
+        target: button,
+        actionType,
+        contactKey,
+        value,
+        expiresAt
+      };
+      actionTooltipPinnedTarget = button;
+      showActionTooltip(button, { pin: true });
+
+      revealedContactTimer = window.setTimeout(
+        () => {
+          if (revealedContactAction?.target === button) {
+            hideActionTooltip();
+          }
+        },
+        CONTACT_SECOND_TAP_WINDOW_MS
+      );
+    }
+
+    function isSecondContactTap(button, actionType, contactKey) {
+      return Boolean(
+        revealedContactAction &&
+        revealedContactAction.target === button &&
+        revealedContactAction.actionType === actionType &&
+        revealedContactAction.contactKey === contactKey &&
+        Date.now() <= revealedContactAction.expiresAt
+      );
     }
 
     async function copyTextToClipboard(
@@ -11712,11 +11847,9 @@
       if (column.key === 'referActions') {
         const rowServiceType = serviceTypeForRow(row);
         const mapUrl = mapUrlForRow(row);
-        const email = cleanText(row.emailAddress || '');
+        const email = cleanText(row.emailAddress || emailAddressForRow(row));
         const address = cleanText(row.address || '');
-        const phone = rowServiceType === 'ophthalmology'
-          ? cleanText(row.phoneNumber || '')
-          : '';
+        const phone = normalisePhoneNumber(row.phoneNumber || row.phone);
         const favouriteIdentity = favouriteIdentityForRow(row, rowServiceType);
         const favouriteKey = favouriteIdentity.favouriteKey;
         const favouriteSaved = favouriteKeys.has(favouriteKey);
@@ -11728,22 +11861,27 @@
           ? `<a class="practice-action" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener" data-action-tooltip="maps" aria-label="Open Google Maps for ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s6-5.3 6-11a6 6 0 1 0-12 0c0 5.7 6 11 6 11Z"></path><circle cx="12" cy="10" r="2.2"></circle></svg></a>`
           : '';
 
-        const websiteUrl = rowServiceType === 'ophthalmology'
-          ? safeExternalUrl(row.websiteUrl || row.website)
-          : '';
+        const websiteUrl = safeExternalUrl(row.websiteUrl || row.website);
 
         const websiteAction = websiteUrl
           ? `<a class="practice-action" href="${escapeHtml(websiteUrl)}" target="_blank" rel="noopener" data-action-tooltip="website" aria-label="Open website for ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4"></path><path d="M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5S14.4 18.2 12 20.5C9.6 18.2 8.4 15.4 8.4 12S9.6 5.8 12 3.5Z"></path></svg></a>`
           : '';
 
+        const phoneHref = phone && !/^x$/i.test(phone)
+          ? phone.replace(/[^0-9+]/g, '')
+          : '';
+        const phoneAction = phoneHref
+          ? `<button class="practice-action contact-phone-action" type="button" data-contact-key="${escapeHtml(favouriteKey)}" data-contact-service="${escapeHtml(rowServiceType)}" data-action-tooltip="phone" aria-label="Reveal phone number for ${escapeHtml(row.practiceName)}; activate again to call"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8 4.9 5c-.7.4-1 1.2-.8 2 1.7 6.4 6.6 11.3 13 13 .8.2 1.6-.1 2-.8l1.2-2.3c.3-.7.1-1.5-.5-1.9l-3.1-2.1c-.6-.4-1.4-.3-1.9.2l-1.4 1.4a15.4 15.4 0 0 1-4-4l1.4-1.4c.5-.5.6-1.3.2-1.9L9.1 4.3c-.4-.6-1.2-.8-1.9-.5Z"></path></svg></button>`
+          : '';
+
         const emailAction = email
-          ? `<button class="practice-action contact-email-action" type="button" data-contact-key="${escapeHtml(favouriteKey)}" data-contact-service="${escapeHtml(rowServiceType)}" data-action-tooltip="email" aria-label="Email ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg></button>`
+          ? `<button class="practice-action contact-email-action" type="button" data-contact-key="${escapeHtml(favouriteKey)}" data-contact-service="${escapeHtml(rowServiceType)}" data-action-tooltip="email" aria-label="Reveal email address for ${escapeHtml(row.practiceName)}; activate again to send email"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg></button>`
           : '';
 
         const hasReferralDetails = Boolean(
           cleanText(row.practiceName) ||
           address ||
-          (rowServiceType === 'ophthalmology' && phone && !/^x$/i.test(phone)) ||
+          (phone && !/^x$/i.test(phone)) ||
           email
         );
 
@@ -11751,11 +11889,14 @@
           ? `<button class="practice-action copy-referral-action" type="button" data-contact-key="${escapeHtml(favouriteKey)}" data-contact-service="${escapeHtml(rowServiceType)}" data-action-tooltip="copy-referral" aria-label="Copy referral details for ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1.5"></rect><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-10A1.5 1.5 0 0 0 3 5.5v10A1.5 1.5 0 0 0 4.5 17H8"></path></svg></button>`
           : '';
 
-        const actionItems = activeServiceType === 'favourites'
-          ? [favouriteAction, mapAction, websiteAction, emailAction, copyReferralAction]
-          : rowServiceType === 'ophthalmology'
-            ? [favouriteAction, mapAction, websiteAction, emailAction, copyReferralAction]
-            : [favouriteAction, mapAction, emailAction, copyReferralAction];
+        const actionItems = [
+          favouriteAction,
+          mapAction,
+          websiteAction,
+          phoneAction,
+          emailAction,
+          copyReferralAction
+        ];
 
         const hasActions = actionItems.some(Boolean);
         const actionSlots = actionItems.map(
@@ -12302,7 +12443,7 @@
               ? `<a class="practice-action" href="${escapeHtml(publicWebsite)}" target="_blank" rel="noopener" data-action-tooltip="website" aria-label="Open website for ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4"></path><path d="M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5S14.4 18.2 12 20.5C9.6 18.2 8.4 15.4 8.4 12S9.6 5.8 12 3.5Z"></path></svg></a>`
               : '';
             const phoneAction = publicPhoneHref
-              ? `<button class="practice-action contact-phone-action" type="button" data-contact-key="${escapeHtml(publicContactKey)}" data-contact-service="ophthalmology" data-action-tooltip="phone" aria-label="Call ${escapeHtml(row.practiceName)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8 4.9 5c-.7.4-1 1.2-.8 2 1.7 6.4 6.6 11.3 13 13 .8.2 1.6-.1 2-.8l1.2-2.3c.3-.7.1-1.5-.5-1.9l-3.1-2.1c-.6-.4-1.4-.3-1.9.2l-1.4 1.4a15.4 15.4 0 0 1-4-4l1.4-1.4c.5-.5.6-1.3.2-1.9L9.1 4.3c-.4-.6-1.2-.8-1.9-.5Z"></path></svg></button>`
+              ? `<button class="practice-action contact-phone-action" type="button" data-contact-key="${escapeHtml(publicContactKey)}" data-contact-service="ophthalmology" data-action-tooltip="phone" aria-label="Reveal phone number for ${escapeHtml(row.practiceName)}; activate again to call"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.8 4.9 5c-.7.4-1 1.2-.8 2 1.7 6.4 6.6 11.3 13 13 .8.2 1.6-.1 2-.8l1.2-2.3c.3-.7.1-1.5-.5-1.9l-3.1-2.1c-.6-.4-1.4-.3-1.9.2l-1.4 1.4a15.4 15.4 0 0 1-4-4l1.4-1.4c.5-.5.6-1.3.2-1.9L9.1 4.3c-.4-.6-1.2-.8-1.9-.5Z"></path></svg></button>`
               : '';
             const publicActionSlots = [websiteAction, phoneAction]
               .map(
@@ -14156,10 +14297,10 @@
 
           event.preventDefault();
           event.stopPropagation();
-          hideActionTooltip();
 
           const isAddress = button.classList.contains('copy-address-action');
           if (isAddress) {
+            hideActionTooltip();
             const copied = await copyTextToClipboard(
               button.dataset.copyAddress || '',
               false
@@ -14175,11 +14316,12 @@
 
           const record = contactRecordForButton(button);
           if (!record) {
+            hideActionTooltip();
             showStatusToast('Contact details are unavailable for this practice.');
             return;
           }
 
-          const { row, service } = record;
+          const { row } = record;
           const contactKey = cleanText(button.dataset.contactKey || '');
           const actionType = button.classList.contains('contact-email-action')
             ? 'email'
@@ -14187,36 +14329,51 @@
               ? 'phone'
               : 'referral';
 
-          if (!allowContactAction(`${actionType}:${contactKey}`)) {
-            return;
-          }
+          if (actionType === 'email' || actionType === 'phone') {
+            const value = contactValueForAction(record, actionType);
+            const actionValue = actionType === 'phone'
+              ? value.replace(/[^0-9+]/g, '')
+              : value;
 
-          if (actionType === 'email') {
-            const email = cleanText(row.emailAddress || emailAddressForRow(row));
-            if (!email) {
-              showStatusToast('Email address is unavailable for this practice.');
+            if (!actionValue) {
+              hideActionTooltip();
+              showStatusToast(
+                actionType === 'email'
+                  ? 'Email address is unavailable for this practice.'
+                  : 'Phone number is unavailable for this service.'
+              );
               return;
             }
-            window.location.href = `mailto:${email}`;
-            return;
-          }
 
-          if (actionType === 'phone') {
-            const phone = normalisePhoneNumber(row.phoneNumber || row.phone);
-            const phoneHref = phone.replace(/[^0-9+]/g, '');
-            if (!phoneHref) {
-              showStatusToast('Phone number is unavailable for this service.');
+            if (isSecondContactTap(button, actionType, contactKey)) {
+              hideActionTooltip();
+              window.location.href = actionType === 'email'
+                ? `mailto:${actionValue}`
+                : `tel:${actionValue}`;
               return;
             }
-            window.location.href = `tel:${phoneHref}`;
+
+            if (!allowContactAction(`${actionType}:${contactKey}`)) {
+              return;
+            }
+
+            revealContactAction(button, actionType, contactKey, value);
             return;
           }
 
+          hideActionTooltip();
+
+          if (!allowContactAction(`referral:${contactKey}`)) {
+            return;
+          }
+
+          const referralPhone =
+            normalisePhoneNumber(row.phoneNumber || row.phone);
           const referralLines = [
             cleanText(row.practiceName),
             cleanText(row.address),
-            service === 'ophthalmology'
-              ? normalisePhoneNumber(row.phoneNumber || row.phone)
+            referralPhone && !/^x$/i.test(referralPhone)
+              ? referralPhone
               : '',
             cleanText(row.emailAddress || emailAddressForRow(row))
           ].filter(Boolean);
@@ -14275,6 +14432,7 @@
           const target = event.target.closest?.('[data-action-tooltip]');
           if (!target || target !== actionTooltipTarget) return;
           if (target.contains(event.relatedTarget)) return;
+          if (target === actionTooltipPinnedTarget) return;
           hideActionTooltip();
         }
       );
@@ -14291,14 +14449,27 @@
         'focusout',
         event => {
           const target = event.target.closest?.('[data-action-tooltip]');
-          if (target && target === actionTooltipTarget) {
+          if (
+            target &&
+            target === actionTooltipTarget &&
+            target !== actionTooltipPinnedTarget
+          ) {
             hideActionTooltip();
           }
         }
       );
 
-      window.addEventListener('scroll', hideActionTooltip, true);
-      window.addEventListener('resize', hideActionTooltip);
+      document.addEventListener(
+        'pointerdown',
+        event => {
+          if (!actionTooltipPinnedTarget) return;
+          if (actionTooltipPinnedTarget.contains(event.target)) return;
+          hideActionTooltip();
+        }
+      );
+
+      window.addEventListener('scroll', () => hideActionTooltip(), true);
+      window.addEventListener('resize', () => hideActionTooltip());
     }
 
     setupInteractions();
