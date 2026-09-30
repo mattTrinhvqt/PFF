@@ -174,23 +174,25 @@
       bottom: max(12px, env(safe-area-inset-bottom));
       left: 50%;
       z-index: 3200;
-      width: max-content;
-      max-width: min(460px, calc(100vw - 24px));
+      width: fit-content;
+      max-width: min(420px, calc(100vw - 24px));
+      min-width: 0;
       min-height: 0;
       box-sizing: border-box;
-      padding: 8px 10px;
+      padding: 6px 9px;
       color: var(--pff-error, #b42318);
-      background: #fff;
-      background: Canvas;
-      border: 1px solid rgba(180, 35, 24, 0.24);
-      border-radius: 6px;
-      box-shadow: 0 8px 24px rgba(21, 21, 21, 0.16);
-      font-size: 10px;
+      background: rgba(255, 255, 255, 0.97);
+      border: 1px solid rgba(180, 35, 24, 0.20);
+      border-radius: var(--eat-control-radius);
+      box-shadow: 0 3px 10px rgba(21, 21, 21, 0.10);
+      font-size: 9px;
       font-weight: 700;
-      line-height: 1.35;
+      line-height: 1.2;
       text-align: center;
+      white-space: normal;
+      overflow-wrap: anywhere;
       transform: translateX(-50%);
-      color-scheme: light dark;
+      pointer-events: none;
     }
 
     #status:empty {
@@ -1049,8 +1051,10 @@
 
     @media (prefers-color-scheme: dark) {
       #status {
-        color: #ffb4ab;
-        border-color: rgba(255, 180, 171, 0.38);
+        color: var(--pff-error, #b42318);
+        background: rgba(255, 255, 255, 0.97);
+        border-color: rgba(180, 35, 24, 0.20);
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
       }
 
       .action-tooltip {
@@ -3396,6 +3400,7 @@
       height: 10px;
       margin-right: 2px;
       vertical-align: -0.12em;
+      transform: translateY(1px);
       fill: none;
       stroke: currentColor;
       stroke-width: 1.7;
@@ -5583,7 +5588,12 @@
     let actionTooltipPinnedTarget = null;
     let revealedContactAction = null;
     let revealedContactTimer = null;
+    let touchActionPreview = null;
+    let touchActionPreviewTimer = null;
+    let lastTouchPointerTarget = null;
+    let lastTouchPointerAt = 0;
     const CONTACT_SECOND_TAP_WINDOW_MS = 2500;
+    const TOUCH_ACTION_PREVIEW_WINDOW_MS = 2500;
 
     const percentileReference = {
       population: [],
@@ -6577,7 +6587,7 @@
       const recent = recentContactActionTimes(now);
       if (recent.length >= CONTACT_RATE_LIMIT) {
         showStatusToast(
-          'Too many contact requests. Please try again shortly.'
+          'Too many contact requests. Please try again later.'
         );
         return false;
       }
@@ -6641,13 +6651,13 @@
           return [
             '<strong>Email</strong>',
             `<span class="action-tooltip-line">${escapeHtml(revealedContactAction.value)}</span>`,
-            '<span class="action-tooltip-line"><em>Double-tap to send email</em></span>'
+            `<span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to send email' : 'Double-tap to send email'}</em></span>`
           ].join('');
         }
         return [
           '<strong>Email</strong>',
           '<span class="action-tooltip-line"><em>Tap to reveal</em></span>',
-          '<span class="action-tooltip-line"><em>Double-tap to send email</em></span>'
+          `<span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to send email' : 'Double-tap to send email'}</em></span>`
         ].join('');
       }
 
@@ -6656,13 +6666,13 @@
           return [
             '<strong>Phone</strong>',
             `<span class="action-tooltip-line">${escapeHtml(revealedContactAction.value)}</span>`,
-            '<span class="action-tooltip-line"><em>Double-tap to call</em></span>'
+            `<span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to call' : 'Double-tap to call'}</em></span>`
           ].join('');
         }
         return [
           '<strong>Phone</strong>',
           '<span class="action-tooltip-line"><em>Tap to reveal</em></span>',
-          '<span class="action-tooltip-line"><em>Double-tap to call</em></span>'
+          `<span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to call' : 'Double-tap to call'}</em></span>`
         ].join('');
       }
 
@@ -6671,7 +6681,7 @@
         return [
           '<strong>Copy referral:</strong>',
           ...fields.map(field => `<span class="action-tooltip-line">${escapeHtml(field)}</span>`),
-          `<span class="action-tooltip-line"><em>${touchPreview ? 'Double-tap to copy' : 'Tap to copy'}</em></span>`
+          `<span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to copy' : 'Tap to copy'}</em></span>`
         ].join('');
       }
 
@@ -6683,11 +6693,11 @@
       }
 
       if (kind === 'maps') {
-        return `<strong>Google Maps</strong><span class="action-tooltip-line"><em>${touchPreview ? 'Double-tap to open' : 'Tap to open'}</em></span>`;
+        return `<strong>Google Maps</strong><span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to open' : 'Tap to open'}</em></span>`;
       }
 
       if (kind === 'website') {
-        return `<strong>Website</strong><span class="action-tooltip-line"><em>${touchPreview ? 'Double-tap to open' : 'Tap to open'}</em></span>`;
+        return `<strong>Website</strong><span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to open' : 'Tap to open'}</em></span>`;
       }
 
       if (kind === 'copy-address') {
@@ -6726,7 +6736,44 @@
         revealedContactTimer = null;
       }
       revealedContactAction = null;
-      actionTooltipPinnedTarget = null;
+      if (!touchActionPreview) {
+        actionTooltipPinnedTarget = null;
+      }
+    }
+
+    function clearTouchActionPreview() {
+      if (touchActionPreviewTimer !== null) {
+        clearTimeout(touchActionPreviewTimer);
+        touchActionPreviewTimer = null;
+      }
+      touchActionPreview = null;
+      if (!revealedContactAction) {
+        actionTooltipPinnedTarget = null;
+      }
+    }
+
+    function isSecondTouchActionTap(target) {
+      return Boolean(
+        touchActionPreview &&
+        touchActionPreview.target === target &&
+        Date.now() <= touchActionPreview.expiresAt
+      );
+    }
+
+    function revealTouchActionPreview(target) {
+      clearTouchActionPreview();
+      const expiresAt = Date.now() + TOUCH_ACTION_PREVIEW_WINDOW_MS;
+      touchActionPreview = { target, expiresAt };
+      actionTooltipPinnedTarget = target;
+      showActionTooltip(target, { pin: true });
+      touchActionPreviewTimer = window.setTimeout(
+        () => {
+          if (touchActionPreview?.target === target) {
+            hideActionTooltip();
+          }
+        },
+        TOUCH_ACTION_PREVIEW_WINDOW_MS
+      );
     }
 
     function showActionTooltip(target, { pin = false } = {}) {
@@ -6734,6 +6781,7 @@
 
       if (actionTooltipPinnedTarget && actionTooltipPinnedTarget !== target) {
         clearRevealedContactAction();
+        clearTouchActionPreview();
       }
 
       const html = actionTooltipHtml(target);
@@ -6755,6 +6803,7 @@
       if (!preserveReveal) {
         clearRevealedContactAction();
       }
+      clearTouchActionPreview();
       actionTooltipTarget = null;
       actionTooltip.classList.remove('is-visible');
       actionTooltip.setAttribute('aria-hidden', 'true');
@@ -6763,6 +6812,7 @@
 
     function revealContactAction(button, actionType, contactKey, value) {
       clearRevealedContactAction();
+      clearTouchActionPreview();
 
       const expiresAt = Date.now() + CONTACT_SECOND_TAP_WINDOW_MS;
       revealedContactAction = {
@@ -14754,11 +14804,46 @@
       );
 
       document.addEventListener(
+        'click',
+        event => {
+          const target = event.target.closest?.(
+            '.map-action, .website-action, .copy-referral-action'
+          );
+          if (!target) return;
+
+          const now = Date.now();
+          const isTouchAction = Boolean(
+            lastTouchPointerTarget === target &&
+            now - lastTouchPointerAt <= 1000 &&
+            window.matchMedia('(hover: none)').matches
+          );
+
+          lastTouchPointerTarget = null;
+          lastTouchPointerAt = 0;
+
+          if (!isTouchAction) return;
+
+          if (isSecondTouchActionTap(target)) {
+            clearTouchActionPreview();
+            hideActionTooltip();
+            return;
+          }
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          revealTouchActionPreview(target);
+        },
+        true
+      );
+
+      document.addEventListener(
         'pointerdown',
         event => {
           if (!event.target.closest) return;
           const target = event.target.closest('[data-action-tooltip]');
           if (!target || event.pointerType === 'mouse') return;
+          lastTouchPointerTarget = target;
+          lastTouchPointerAt = Date.now();
           showActionTooltip(target, { pin: true });
         },
         { passive: true }
