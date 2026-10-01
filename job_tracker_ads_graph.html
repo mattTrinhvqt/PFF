@@ -820,8 +820,8 @@ role="note"
 >
 <p class="repeat-info-note-title">How to read this</p>
 <ul class="repeat-info-note-list">
-<li><strong>Count:</strong> number of repeat ads from each employer in the latest 12 months</li>
-<li><strong>Proportion:</strong> each employer’s share of all repeat ads in the latest 12 months</li>
+<li><strong>Count:</strong> number of repeat ads from each employer/category in the latest 12 months</li>
+<li><strong>Proportion:</strong> percentage of each employer/category’s ads that were repeat ads in the latest 12 months</li>
 <li><strong>Repeat ad:</strong> same employer, suburb and employment type re-advertised within 180 days; ±14-day duplicates excluded</li>
 </ul>
 </aside>
@@ -830,7 +830,7 @@ role="note"
   id="repeatThresholdNote"
   class="repeat-threshold-note is-hidden"
   role="note"
->Employers with &lt;1% of repeat ads omitted</aside>
+>Employers/categories with &lt;5 total ads omitted</aside>
 
 <aside
 id="smallNumbersNote"
@@ -1556,35 +1556,27 @@ grouped.set(label, {
 label,
 employerType: row.employerType || 'Other',
 colour: getRepeatEmployerColour(row),
-repeatAds: 0
+repeatAds: 0,
+totalAds: 0
 });
 }
+
+const entry = grouped.get(label);
+entry.totalAds += 1;
 
 if (row.isRepeat) {
-grouped.get(label).repeatAds += 1;
+entry.repeatAds += 1;
 }
 });
 
-const summaries = [...grouped.values()]
-.filter(entry => entry.repeatAds > 0);
-
-const totalRepeatAds = summaries.reduce(
-(total, entry) => total + entry.repeatAds,
-0
-);
-
-return summaries
+return [...grouped.values()]
+.filter(entry => entry.totalAds >= 5)
 .map(entry => ({
 ...entry,
-proportion:
-totalRepeatAds > 0
-? entry.repeatAds / totalRepeatAds * 100
-: 0,
-totalRepeatAds,
+proportion: entry.repeatAds / entry.totalAds * 100,
 windowStart,
 windowEnd
-}))
-.filter(entry => entry.proportion >= 1);
+}));
 }
 
 function getRepeatMetricValue(summary) {
@@ -1595,13 +1587,23 @@ return selectedRepeatMeasure === 'proportion'
 
 function getRepeatChartRows() {
 return buildRepeatEmployerSummary()
-.sort((first, second) =>
-second.repeatAds - first.repeatAds ||
+.sort((first, second) => {
+const firstValue = selectedRepeatMeasure === 'proportion'
+? first.proportion
+: first.repeatAds;
+
+const secondValue = selectedRepeatMeasure === 'proportion'
+? second.proportion
+: second.repeatAds;
+
+return (
+secondValue - firstValue ||
 first.label.localeCompare(second.label, 'en-AU', {
 sensitivity: 'base',
 numeric: true
 })
 );
+});
 }
 
 function parseColour(value, fallback = '#777777') {
@@ -5225,7 +5227,7 @@ selectedRepeatMeasure
 axisTitle:
 selectedRepeatMeasure ===
 'proportion'
-? '% of repeat ads'
+? 'Repeat ad rate (%)'
 : 'Repeat ads/year',
 
 legendLabel:
@@ -5255,9 +5257,16 @@ if (!dataset) {
 return;
 }
 
+const currentValuesByLabel = new Map(
+(chart.data.labels || []).map((label, index) => [
+label,
+Number(dataset.data?.[index]) || 0
+])
+);
+
 const startValues =
-(dataset.data || []).map(value =>
-Number(value) || 0
+model.rows.map(row =>
+currentValuesByLabel.get(row.label) ?? 0
 );
 
 const targetValues =
@@ -5389,7 +5398,7 @@ chart.options.scales.x.title.text =
 progress < 0.5
 ? (
 startMeasure === 'proportion'
-? '% of repeat ads'
+? 'Repeat ad rate (%)'
 : 'Repeat ads/year'
 )
 : model.axisTitle;
@@ -5632,7 +5641,7 @@ items?.[0]
 
 label(item) {
 const summary =
-model.rows[
+item.dataset?.repeatSummaries?.[
 item.dataIndex
 ];
 
@@ -5641,8 +5650,8 @@ return '';
 }
 
 return [
-`Repeat ads/year: ${summary.repeatAds} of ${summary.totalRepeatAds}`,
-`Proportion: ${summary.proportion.toFixed(1)}%`,
+`Repeat ads: ${summary.repeatAds} of ${summary.totalAds} ads`,
+`Repeat rate: ${summary.proportion.toFixed(1)}%`,
 `Rolling year: ${formatTooltipDate(summary.windowStart)}–${formatTooltipDate(summary.windowEnd)}`,
 'Repeat ad: same employer, suburb and employment type re-advertised within 180 days; ±14-day duplicates excluded'
 ];
