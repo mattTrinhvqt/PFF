@@ -293,7 +293,10 @@
       fetchTimeoutMs:
         25000,
 
-      cacheFetchTimeoutMs:
+      jsonFallbackUrl:
+        './assets/practice_directory_fallback.json',
+
+      jsonFetchTimeoutMs:
         15000,
 
       appKey:
@@ -326,8 +329,6 @@
       })
     });
 
-    const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbx7MftpgGcsWY2uFvIt6BPXVWeCPLFjjGAeE4h1m46EG-xqFZ7_-wpYh0ccxo-yPmIG/exec';
 
     /* Testing switch only. Leave false in production. */
     const FORCE_CACHED_DATA = false;
@@ -527,16 +528,38 @@
         : [];
 
       return rows
-        .filter(row =>
-          Array.isArray(row) &&
-          row.length >= CONFIG.sourceColumnCount
-        )
-        .map(row =>
-          Array.from(
+        .map(row => {
+          if (!Array.isArray(row)) {
+            return null;
+          }
+
+          /*
+           * Current Practice Directory fallback rows are A:X (24 columns)
+           * and include the practice ID in column A. This chart's live
+           * source remains B:X (23 columns), so drop the ID when present.
+           * Legacy 23-column cache rows are still accepted.
+           */
+          const offset =
+            row.length >= CONFIG.sourceColumnCount + 1
+              ? 1
+              : 0;
+
+          if (
+            row.length <
+            CONFIG.sourceColumnCount + offset
+          ) {
+            return null;
+          }
+
+          return Array.from(
             { length: CONFIG.sourceColumnCount },
-            (_, index) => PFF.cleanText(row[index])
-          )
-        )
+            (_, index) =>
+              PFF.cleanText(
+                row[index + offset]
+              )
+          );
+        })
+        .filter(Boolean)
         .filter(values =>
           Boolean(
             PFF.cleanText(
@@ -584,6 +607,79 @@
         .filter(Boolean);
     }
 
+    async function loadJsonFallback() {
+      const controller =
+        new AbortController();
+
+      const timeout =
+        window.setTimeout(
+          () => controller.abort(),
+          CONFIG.jsonFetchTimeoutMs
+        );
+
+      try {
+        const url = new URL(
+          CONFIG.jsonFallbackUrl,
+          window.location.href
+        );
+
+        url.searchParams.set(
+          '_',
+          String(Date.now())
+        );
+
+        const response = await fetch(
+          url.toString(),
+          {
+            cache: 'no-store',
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Static JSON fallback returned HTTP ${response.status}.`
+          );
+        }
+
+        const payload =
+          await response.json();
+
+        if (
+          !payload ||
+          payload.ok !== true ||
+          !payload.data
+        ) {
+          throw new Error(
+            payload?.error ||
+            'Static JSON fallback has an invalid snapshot structure.'
+          );
+        }
+
+        if (
+          payload.appKey !==
+          CONFIG.appKey
+        ) {
+          throw new Error(
+            'Static JSON fallback has the wrong app key.'
+          );
+        }
+
+        return payload;
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw new Error(
+            'Timed out loading the static JSON fallback.'
+          );
+        }
+
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+
     function setLoadedSourceIndicator(loaded) {
       const source = loaded?.source;
       const remote = Boolean(loaded?.remote);
@@ -604,7 +700,7 @@
           text: dataSourceText
         });
 
-        dataSourceText.textContent = 'BACKEND cache';
+        dataSourceText.textContent = 'JSON cache';
         return;
       }
 
@@ -642,25 +738,21 @@
 
         parseLive: sourceRowsFromTable,
 
-        loadRemoteCache: () =>
-          PFFCharts.loadAppsScriptCache({
-            url: CACHE_WEB_APP_URL,
-            appKey: CONFIG.appKey,
-            timeoutMs: CONFIG.cacheFetchTimeoutMs
-          }),
+        loadRemoteCache:
+          loadJsonFallback,
 
         parseRemoteCache: sourceRowsFromRemoteCache,
 
         onLiveError(error) {
           console.warn(
-            'Live practice-landscape data unavailable; trying Practice Directory backend cache.',
+            'Live practice-landscape data unavailable; trying static JSON fallback.',
             error
           );
         },
 
         onRemoteCacheError(error) {
           console.warn(
-            'Practice Directory backend cache unavailable; trying browser cache.',
+            'Practice Directory static JSON fallback unavailable; trying browser cache.',
             error
           );
         }
