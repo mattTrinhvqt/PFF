@@ -311,11 +311,12 @@
       sourceRange: 'B32:X',
       sourceColumnCount: 23,
       fetchTimeoutMs: 25000,
-      cacheFetchTimeoutMs: 15000,
+      jsonFallbackUrl: './assets/practice_directory_fallback.json',
+      jsonFetchTimeoutMs: 15000,
       appKey: 'pff-optom-practice-directory',
       localCacheKey: 'pff-practice-ownership-rows-v1',
       minimumRows: 100,
-      spineTransitionMs: 220,
+      barTransitionMs: 500,
       columns: Object.freeze({
         practiceName: 0,
         state: 3,
@@ -325,8 +326,6 @@
       })
     });
 
-    const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbx7MftpgGcsWY2uFvIt6BPXVWeCPLFjjGAeE4h1m46EG-xqFZ7_-wpYh0ccxo-yPmIG/exec';
 
     /* Testing switch only. Leave false in production. */
     const FORCE_CACHED_DATA = false;
@@ -475,7 +474,6 @@
     let chartInteractionController = null;
     let responsiveController = null;
     let chartSummary = null;
-    let spineTransitionFrame = null;
 
     const spineTransitionState = {
       active: false,
@@ -578,16 +576,38 @@
         : [];
 
       return rows
-        .filter(row =>
-          Array.isArray(row) &&
-          row.length >= CONFIG.sourceColumnCount
-        )
-        .map(row =>
-          Array.from(
+        .map(row => {
+          if (!Array.isArray(row)) {
+            return null;
+          }
+
+          /*
+           * Current Practice Directory fallback rows are A:X (24 columns)
+           * and include the practice ID in column A. This chart's live
+           * source remains B:X (23 columns), so drop the ID when present.
+           * Legacy 23-column cache rows are still accepted.
+           */
+          const offset =
+            row.length >= CONFIG.sourceColumnCount + 1
+              ? 1
+              : 0;
+
+          if (
+            row.length <
+            CONFIG.sourceColumnCount + offset
+          ) {
+            return null;
+          }
+
+          return Array.from(
             { length: CONFIG.sourceColumnCount },
-            (_, index) => PFF.cleanText(row[index])
-          )
-        )
+            (_, index) =>
+              PFF.cleanText(
+                row[index + offset]
+              )
+          );
+        })
+        .filter(Boolean)
         .filter(values =>
           Boolean(
             PFF.cleanText(
@@ -635,6 +655,79 @@
         .filter(Boolean);
     }
 
+    async function loadJsonFallback() {
+      const controller =
+        new AbortController();
+
+      const timeout =
+        window.setTimeout(
+          () => controller.abort(),
+          CONFIG.jsonFetchTimeoutMs
+        );
+
+      try {
+        const url = new URL(
+          CONFIG.jsonFallbackUrl,
+          window.location.href
+        );
+
+        url.searchParams.set(
+          '_',
+          String(Date.now())
+        );
+
+        const response = await fetch(
+          url.toString(),
+          {
+            cache: 'no-store',
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Static JSON fallback returned HTTP ${response.status}.`
+          );
+        }
+
+        const payload =
+          await response.json();
+
+        if (
+          !payload ||
+          payload.ok !== true ||
+          !payload.data
+        ) {
+          throw new Error(
+            payload?.error ||
+            'Static JSON fallback has an invalid snapshot structure.'
+          );
+        }
+
+        if (
+          payload.appKey !==
+          CONFIG.appKey
+        ) {
+          throw new Error(
+            'Static JSON fallback has the wrong app key.'
+          );
+        }
+
+        return payload;
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw new Error(
+            'Timed out loading the static JSON fallback.'
+          );
+        }
+
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+
     function setLoadedSourceIndicator(loaded) {
       const source = loaded?.source;
       const remote = Boolean(loaded?.remote);
@@ -655,7 +748,7 @@
           text: dataSourceText
         });
 
-        dataSourceText.textContent = 'BACKEND cache';
+        dataSourceText.textContent = 'JSON cache';
         return;
       }
 
@@ -693,25 +786,21 @@
 
         parseLive: sourceRowsFromTable,
 
-        loadRemoteCache: () =>
-          PFFCharts.loadAppsScriptCache({
-            url: CACHE_WEB_APP_URL,
-            appKey: CONFIG.appKey,
-            timeoutMs: CONFIG.cacheFetchTimeoutMs
-          }),
+        loadRemoteCache:
+          loadJsonFallback,
 
         parseRemoteCache: sourceRowsFromRemoteCache,
 
         onLiveError(error) {
           console.warn(
-            'Live practice-ownership data unavailable; trying Practice Directory backend cache.',
+            'Live practice-ownership data unavailable; trying static JSON fallback.',
             error
           );
         },
 
         onRemoteCacheError(error) {
           console.warn(
-            'Practice Directory backend cache unavailable; trying browser cache.',
+            'Practice Directory static JSON fallback unavailable; trying browser cache.',
             error
           );
         }
@@ -1335,68 +1424,6 @@
       spineTransitionState.bottom = geometry.bottom;
     }
 
-    function animateSpineGeometry(
-      fromArea,
-      toArea,
-      duration = CONFIG.spineTransitionMs
-    ) {
-      if (spineTransitionFrame !== null) {
-        cancelAnimationFrame(spineTransitionFrame);
-        spineTransitionFrame = null;
-      }
-
-      const from = copyChartArea(fromArea);
-      const to = copyChartArea(toArea);
-
-      if (!from || !to) {
-        spineTransitionState.active = false;
-        setSpineGeometry(to || from);
-        chart?.draw();
-        return;
-      }
-
-      spineTransitionState.active = true;
-      setSpineGeometry(from);
-
-      if (PFF.reducedMotion() || duration <= 0) {
-        setSpineGeometry(to);
-        spineTransitionState.active = false;
-        chart?.draw();
-        return;
-      }
-
-      const startedAt = performance.now();
-
-      function frame(now) {
-        const progress = Math.min(
-          (now - startedAt) / duration,
-          1
-        );
-        const eased = PFFCharts.easeInOutCubic(progress);
-
-        spineTransitionState.left =
-          from.left + (to.left - from.left) * eased;
-        spineTransitionState.right =
-          from.right + (to.right - from.right) * eased;
-        spineTransitionState.top =
-          from.top + (to.top - from.top) * eased;
-        spineTransitionState.bottom =
-          from.bottom + (to.bottom - from.bottom) * eased;
-
-        chart?.draw();
-
-        if (progress < 1) {
-          spineTransitionFrame = requestAnimationFrame(frame);
-        } else {
-          spineTransitionFrame = null;
-          setSpineGeometry(to);
-          spineTransitionState.active = false;
-          chart?.draw();
-        }
-      }
-
-      spineTransitionFrame = requestAnimationFrame(frame);
-    }
 
     const constantSpinePlugin = {
       id: 'pffPracticeConstantSpines',
@@ -1706,8 +1733,14 @@
         return minimumSize;
       }
 
-      context.font = `700 ${preferredSize}px Lato, sans-serif`;
-      const measured = context.measureText(text).width;
+      const font =
+        `700 ${preferredSize}px Lato, sans-serif`;
+      const measured =
+        measuredTextWidth(
+          context,
+          text,
+          font
+        );
 
       if (!Number.isFinite(measured) || measured <= maximumWidth) {
         return preferredSize;
@@ -2110,6 +2143,58 @@
       );
     }
 
+    const textMeasurementCache =
+      new Map();
+
+    if (document.fonts?.ready) {
+      document.fonts.ready
+        .then(() => textMeasurementCache.clear())
+        .catch(() => {});
+    }
+
+    function measuredTextWidth(
+      context,
+      text,
+      font
+    ) {
+      const key =
+        `${font}\u0000${text}`;
+
+      const cached =
+        textMeasurementCache.get(key);
+
+      if (Number.isFinite(cached)) {
+        return cached;
+      }
+
+      const previousFont =
+        context.font;
+
+      context.font =
+        font;
+
+      const measured =
+        context.measureText(text).width;
+
+      context.font =
+        previousFont;
+
+      if (
+        Number.isFinite(measured) &&
+        (
+          !document.fonts ||
+          document.fonts.status === 'loaded'
+        )
+      ) {
+        textMeasurementCache.set(
+          key,
+          measured
+        );
+      }
+
+      return measured;
+    }
+
     function fittedPhnFontSize(label, baseSize) {
       const text = String(label || '');
 
@@ -2122,11 +2207,14 @@
         phnAxisWidth() - 10
       );
       const context = chartCanvas.getContext('2d');
-
-      context.save();
-      context.font = `400 ${baseSize}px Lato, sans-serif`;
-      const measuredWidth = context.measureText(text).width;
-      context.restore();
+      const font =
+        `400 ${baseSize}px Lato, sans-serif`;
+      const measuredWidth =
+        measuredTextWidth(
+          context,
+          text,
+          font
+        );
 
       if (
         !Number.isFinite(measuredWidth) ||
@@ -2214,7 +2302,26 @@
     }
 
     function barOptions(model) {
+      const duration =
+        PFF.reducedMotion()
+          ? 0
+          : CONFIG.barTransitionMs;
+
       return PFFCharts.baseChartOptions({
+        animation: {
+          duration,
+          easing: 'easeInOutCubic'
+        },
+        animations: {
+          x: {
+            duration,
+            easing: 'easeInOutCubic'
+          },
+          y: {
+            duration,
+            easing: 'easeInOutCubic'
+          }
+        },
         indexAxis: 'y',
         interaction: {
           mode: 'index',
@@ -2369,9 +2476,9 @@
     function updateBarChart(model, animate = true) {
       const previousArea = copyChartArea(chart?.chartArea);
 
+      spineTransitionState.active = false;
+
       if (previousArea) {
-        spineTransitionState.active =
-          animate && !PFF.reducedMotion();
         setSpineGeometry(previousArea);
       }
 
@@ -2454,22 +2561,10 @@
 
       const nextArea = copyChartArea(chart.chartArea);
 
-      if (
-        animate &&
-        !PFF.reducedMotion() &&
-        previousArea &&
-        nextArea
-      ) {
-        animateSpineGeometry(
-          previousArea,
-          nextArea,
-          CONFIG.spineTransitionMs
-        );
-      } else {
-        spineTransitionState.active = false;
-        setSpineGeometry(nextArea || previousArea);
-        chart.draw();
-      }
+      spineTransitionState.active = false;
+      setSpineGeometry(
+        nextArea || previousArea
+      );
     }
 
     function updatePieChart(model) {
