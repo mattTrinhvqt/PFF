@@ -4872,23 +4872,29 @@
       ophthalmologySourceColumnCount:
         24,
 
+      locationSheetName:
+        'Localities',
+
       locationRange:
-        'AA32:AM',
+        'A4:J',
 
       locationSourceColumnCount:
-        13,
+        10,
 
       fetchTimeoutMs:
         25000,
 
-      cacheFetchTimeoutMs:
+      jsonFallbackUrl:
+        './assets/practice_directory_fallback.json',
+
+      jsonFetchTimeoutMs:
         15000,
 
       appKey:
         'pff-optom-practice-directory',
 
       localCacheKey:
-        'pff-eyecare-access-tool-v4',
+        'pff-eyecare-access-tool-v5',
 
       minimumRows:
         100,
@@ -4897,10 +4903,8 @@
         100
     });
 
-    const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbx7MftpgGcsWY2uFvIt6BPXVWeCPLFjjGAeE4h1m46EG-xqFZ7_-wpYh0ccxo-yPmIG/exec';
-
-    /* Testing switch only. Leave false in production. */
+    /* Testing switch only. Leave false in production.
+     * true = skip live Sheets and test JSON/browser fallbacks. */
     const FORCE_CACHED_DATA = false;
 
     const SAVED_VIEW_KEY =
@@ -5022,11 +5026,8 @@
       'mmm',
       'state',
       'population',
-      'populationPercentileSource',
       'optometrists',
-      'optometristsPercentileSource',
-      'clinicianDensity',
-      'densityPercentileSource'
+      'populationCoverage'
     ]);
 
     const CACHE_ROW_TYPE = Object.freeze({
@@ -5629,8 +5630,7 @@
     const percentileReference = {
       population: [],
       optometrists: [],
-      clinicianDensity: [],
-      peoplePerClinician: []
+      populationCoverage: []
     };
 
     const selectedStates =
@@ -7326,8 +7326,8 @@
       row.optometristsNumber =
         dataNumber(row.optometrists);
 
-      row.clinicianDensityNumber =
-        dataNumber(row.clinicianDensity);
+      row.populationCoverageNumber =
+        dataNumber(row.populationCoverage);
 
       if (
         !row.suburb ||
@@ -7394,7 +7394,7 @@
         row.state,
         row.population,
         row.optometrists,
-        row.clinicianDensity
+        row.populationCoverage
       ];
     }
 
@@ -7485,6 +7485,78 @@
       );
     }
 
+    async function loadJsonFallback() {
+      const controller =
+        new AbortController();
+
+      const timeout =
+        window.setTimeout(
+          () => controller.abort(),
+          CONFIG.jsonFetchTimeoutMs
+        );
+
+      try {
+        const url = new URL(
+          CONFIG.jsonFallbackUrl,
+          window.location.href
+        );
+
+        url.searchParams.set(
+          '_',
+          String(Date.now())
+        );
+
+        const response = await fetch(
+          url.toString(),
+          {
+            cache: 'no-store',
+            signal: controller.signal
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Static JSON fallback returned HTTP ${response.status}.`
+          );
+        }
+
+        const payload =
+          await response.json();
+
+        if (
+          !payload ||
+          payload.ok !== true ||
+          !payload.data
+        ) {
+          throw new Error(
+            payload?.error ||
+            'Static JSON fallback has an invalid snapshot structure.'
+          );
+        }
+
+        if (
+          payload.appKey !==
+          CONFIG.appKey
+        ) {
+          throw new Error(
+            'Static JSON fallback has the wrong app key.'
+          );
+        }
+
+        return payload;
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw new Error(
+            'Timed out loading the static JSON fallback.'
+          );
+        }
+
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
     function parseRemoteCache(payload) {
       const practiceRows =
         Array.isArray(payload?.data?.rows)
@@ -7519,7 +7591,7 @@
         !locations.length
       ) {
         throw new Error(
-          'Practice-directory backend cache is missing required E.A.T. data.'
+          'Static JSON fallback is missing required E.A.T. data.'
         );
       }
 
@@ -7562,27 +7634,14 @@
           }
 
           if (type === CACHE_ROW_TYPE.location) {
-            const compact = values.slice(1);
-            const expanded = [
-              compact[0],
-              compact[1],
-              compact[2],
-              compact[3],
-              compact[4],
-              compact[5],
-              compact[6],
-              compact[7],
-              '',
-              compact[8],
-              '',
-              compact[9],
-              ''
-            ];
+            const compact =
+              values.slice(1);
 
-            const row = normaliseLocationRow(
-              expanded,
-              locations.length
-            );
+            const row =
+              normaliseLocationRow(
+                compact,
+                locations.length
+              );
             if (row) locations.push(row);
           }
         }
@@ -7595,6 +7654,98 @@
       };
     }
 
+
+    function exportEatJsonFallback() {
+      const raw =
+        localStorage.getItem(
+          CONFIG.localCacheKey
+        );
+
+      if (!raw) {
+        throw new Error(
+          'No E.A.T. browser cache exists yet. Load E.A.T. successfully from the live sheet first.'
+        );
+      }
+
+      const cached =
+        JSON.parse(raw);
+
+      if (!Array.isArray(cached?.rows)) {
+        throw new Error(
+          'The E.A.T. browser cache is not in the expected format.'
+        );
+      }
+
+      const data = {
+        rows: [],
+        ophthalRows: [],
+        locationRows: []
+      };
+
+      cached.rows.forEach(values => {
+        if (!Array.isArray(values)) {
+          return;
+        }
+
+        const type = values[0];
+        const row = values.slice(1);
+
+        if (type === CACHE_ROW_TYPE.practice) {
+          data.rows.push(row);
+        } else if (type === CACHE_ROW_TYPE.ophthalmology) {
+          data.ophthalRows.push(row);
+        } else if (type === CACHE_ROW_TYPE.location) {
+          data.locationRows.push(row);
+        }
+      });
+
+      const snapshot = {
+        ok: true,
+        version: 5,
+        appKey: CONFIG.appKey,
+        cachedAt:
+          cached.savedAt ||
+          new Date().toISOString(),
+        data
+      };
+
+      /* Reuse the normal JSON parser as a final validation step before export. */
+      parseRemoteCache(snapshot);
+
+      const blob =
+        new Blob(
+          [JSON.stringify(snapshot)],
+          { type: 'application/json' }
+        );
+
+      const objectUrl =
+        URL.createObjectURL(blob);
+
+      const link =
+        document.createElement('a');
+
+      link.href = objectUrl;
+      link.download =
+        'practice_directory_fallback.json';
+      link.style.display =
+        'none';
+
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      window.setTimeout(
+        () => URL.revokeObjectURL(objectUrl),
+        0
+      );
+
+      return snapshot;
+    }
+
+    /* Maintenance helper: after a successful live load, run
+     * exportEatJsonFallback() in DevTools to refresh the static snapshot. */
+    window.exportEatJsonFallback =
+      exportEatJsonFallback;
 
     function setLoadedSourceIndicator(loaded) {
       if (loaded?.source === 'live') {
@@ -7629,11 +7780,11 @@
         );
 
         dataSourceText.textContent =
-          'BACKEND cache';
+          'JSON cache';
 
         dataSourceIndicator.setAttribute(
           'aria-label',
-          'Backend cached data'
+          'Static JSON fallback data'
         );
 
         return;
@@ -7700,24 +7851,10 @@
           )
         );
 
-      percentileReference.clinicianDensity =
+      percentileReference.populationCoverage =
         uniqueNumericValues(
           locationRows.map(
-            row => row.clinicianDensityNumber
-          )
-        );
-
-      percentileReference.peoplePerClinician =
-        uniqueNumericValues(
-          locationRows.map(
-            row => {
-              const density =
-                Number(row.clinicianDensityNumber);
-
-              return Number.isFinite(density) && density > 0
-                ? 10000 / density
-                : NaN;
-            }
+            row => row.populationCoverageNumber
           )
         );
     }
@@ -10531,32 +10668,27 @@
         activeLocation.optometristsNumber
       );
 
-      const density =
-        activeLocation.clinicianDensityNumber;
-
-      const peoplePerClinician =
-        Number.isFinite(density) && density > 0
-          ? 10000 / density
-          : NaN;
+      const populationCoverage =
+        activeLocation.populationCoverageNumber;
 
       nearbyPeoplePerClinician.textContent =
-        Number.isFinite(peoplePerClinician)
-          ? `1 FTE clinician / ${PFF.formatInteger(peoplePerClinician)} people`
+        Number.isFinite(populationCoverage)
+          ? `1 FTE clinician / ${PFF.formatInteger(populationCoverage)} people`
           : '–';
 
       nearbyDensity.textContent = '';
 
       /*
-       * Rank coverage on people per clinician. A higher percentile therefore
-       * means more people per clinician and relatively less clinician supply.
+       * Rank population coverage directly. A higher percentile means
+       * more people per optometrist FTE and relatively less clinician supply.
        */
       renderPercentile(
         nearbyDensityPercentile,
-        percentileReference.peoplePerClinician,
-        peoplePerClinician
+        percentileReference.populationCoverage,
+        populationCoverage
       );
 
-      updateCoverageBenchmarks(peoplePerClinician);
+      updateCoverageBenchmarks(populationCoverage);
       nearbyContext.innerHTML = '';
       scheduleNearbyMetricFit();
     }
@@ -14980,7 +15112,7 @@
 
           PFFCharts.loadGVizSheet({
             sheetId: CONFIG.spreadsheetId,
-            sheetName: CONFIG.sheetName,
+            sheetName: CONFIG.locationSheetName,
             range: CONFIG.locationRange,
             headers: '1',
             timeoutMs: CONFIG.fetchTimeoutMs
@@ -14997,18 +15129,8 @@
       parseLive:
         parseLiveBundle,
 
-      loadRemoteCache() {
-        return PFFCharts.loadAppsScriptCache({
-          url:
-            CACHE_WEB_APP_URL,
-
-          appKey:
-            CONFIG.appKey,
-
-          timeoutMs:
-            CONFIG.cacheFetchTimeoutMs
-        });
-      },
+      loadRemoteCache:
+        loadJsonFallback,
 
       parseRemoteCache,
 
@@ -15023,14 +15145,14 @@
 
       onLiveError(error) {
         console.warn(
-          'Live Eyecare Access Tool data unavailable; trying Apps Script cache.',
+          'Live Eyecare Access Tool data unavailable; trying static JSON fallback.',
           error
         );
       },
 
       onRemoteCacheError(error) {
         console.warn(
-          'Eyecare Access Tool Apps Script cache unavailable; trying browser cache.',
+          'Eyecare Access Tool static JSON fallback unavailable; trying browser cache.',
           error
         );
       },
@@ -15167,7 +15289,7 @@
       },
 
       errorMessage:
-        'Eyecare access data are unavailable from the live sheet, backend cache and browser cache.'
+        'Eyecare access data are unavailable from the live sheet, JSON fallback and browser cache.'
     });
   </script>
 </body>
