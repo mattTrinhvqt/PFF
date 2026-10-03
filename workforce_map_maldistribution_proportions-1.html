@@ -1,0 +1,2084 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Rurality</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
+
+  <style>
+    /* App-specific styling only. Shared PFF chart styling lives in pff_chart_core.js. */
+
+    :root {
+      --rurality-metro: #30475d;
+      --rurality-nonmetro: #b54a0a;
+    }
+
+    .single-tab-shell .tab-list {
+      min-width: 0;
+    }
+
+    .single-tab-shell .chart-tab {
+      cursor: default;
+    }
+
+    .single-tab-shell .tab-list::after {
+      display: none;
+    }
+
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-heading-row {
+      align-items: flex-start;
+    }
+
+    .chart-heading {
+      min-width: 0;
+      max-width: calc(100% - 92px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .heading-controls {
+      margin-left: auto;
+      padding-top: 2px;
+    }
+
+    .state-button {
+      min-width: 84px;
+    }
+
+    .state-menu {
+      min-width: 128px;
+    }
+
+    .state-option-code {
+      font-weight: 700;
+    }
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .chart-options-row .legend-nav {
+      min-width: 54px;
+      flex: 1 1 auto;
+    }
+
+    .chart-legend .legend-item {
+      color: var(--pff-muted);
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .chart-legend .legend-item:hover {
+      color: var(--pff-muted);
+    }
+
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: left;
+    }
+
+    .method-note-line {
+      display: block;
+    }
+
+    .method-note-line + .method-note-line {
+      margin-top: 2px;
+    }
+
+    @media (max-width: 430px) {
+      .chart-heading {
+        max-width: calc(100% - 86px);
+      }
+
+      .state-button {
+        min-width: 80px;
+      }
+
+      .state-menu {
+        min-width: 118px;
+      }
+
+      .method-note {
+        font-size: 10.5px;
+      }
+    }
+  </style>
+</head>
+
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div
+        id="loadingState"
+        class="app-loading"
+        role="status"
+        aria-live="polite"
+        aria-label="Loading rurality proportions"
+      >
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p id="loaderText" class="loader-text">Loading rurality data…</p>
+      </div>
+
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div
+            class="tab-list"
+            role="tablist"
+            aria-label="Rurality chart"
+          >
+            <button
+              class="chart-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              tabindex="0"
+            >Rurality</button>
+          </div>
+        </div>
+
+        <div
+          id="sourceIndicator"
+          class="live-data"
+          aria-label="Live data"
+          aria-live="polite"
+        >
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="sourceText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 class="chart-heading">Maldistribution by rurality</h2>
+          </div>
+        </div>
+
+        <div class="heading-controls">
+          <div id="stateControl" class="state-control">
+            <button
+              id="stateButton"
+              class="state-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="stateMenu"
+            >
+              <span>State</span>
+              <span id="stateButtonValue" class="state-button-value">AUS</span>
+              <span class="menu-arrow" aria-hidden="true"></span>
+            </button>
+
+            <div id="stateMenu" class="state-menu" role="menu">
+              <div class="state-menu-title">Show state</div>
+              <div id="stateOptions"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <div class="legend-viewport">
+            <div class="chart-legend" aria-label="Rurality legend">
+              <span class="legend-item">
+                <span class="legend-line" style="--legend-colour: var(--rurality-metro)"></span>
+                <span>Metro (MM1)</span>
+              </span>
+              <span class="legend-item">
+                <span class="legend-line" style="--legend-colour: var(--rurality-nonmetro)"></span>
+                <span>Non-metro (MM2–7)</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas
+          id="ruralityChart"
+          aria-label="Population and clinician proportions by rurality"
+          role="img"
+        ></canvas>
+      </div>
+
+      <p class="method-note">
+        Metro (MM1) vs non-metro (MM2–MM7) distribution by population (<em>top</em>) and clinicians (<em>bottom</em>)
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    // ============================================================
+    // DATA SOURCE
+    // ============================================================
+
+    const CONFIG = Object.freeze({
+      sheetId:
+        '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+
+      clinicianSheet:
+        'OptomsbystatebyMMM',
+
+      /*
+        A = year; B:AO = State × MMM active clinician counts.
+        These are the same active clinician counts used elsewhere in the
+        workforce apps, rather than general-registration headcounts.
+      */
+      clinicianRange:
+        'A29:AO',
+
+      populationSheet:
+        'AuspopnbystatebyMMM',
+
+      populationRange:
+        'A29:AO',
+
+      localCacheKey:
+        'pff-workforce-rurality-proportions-v1',
+
+      barTransitionMs:
+        500
+    });
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    // Backend 1 stores the raw State × MMM workforce snapshot.
+    const CACHE_APP_KEY =
+      'pff-state-mmm-workforce-v1';
+
+    const ACTIVE_CLINICIAN_FIRST_INDEX =
+      1; // B
+
+    const POPULATION_FIRST_INDEX =
+      1; // B
+
+    const SERIES_SCHEMA = [
+      { state: 'NSW', mmm: 1 },
+      { state: 'NSW', mmm: 2 },
+      { state: 'NSW', mmm: 3 },
+      { state: 'NSW', mmm: 4 },
+      { state: 'NSW', mmm: 5 },
+      { state: 'NSW', mmm: 6 },
+      { state: 'NSW', mmm: 7 },
+
+      { state: 'VIC', mmm: 1 },
+      { state: 'VIC', mmm: 2 },
+      { state: 'VIC', mmm: 3 },
+      { state: 'VIC', mmm: 4 },
+      { state: 'VIC', mmm: 5 },
+
+      { state: 'QLD', mmm: 1 },
+      { state: 'QLD', mmm: 2 },
+      { state: 'QLD', mmm: 3 },
+      { state: 'QLD', mmm: 4 },
+      { state: 'QLD', mmm: 5 },
+      { state: 'QLD', mmm: 6 },
+      { state: 'QLD', mmm: 7 },
+
+      { state: 'SA', mmm: 1 },
+      { state: 'SA', mmm: 2 },
+      { state: 'SA', mmm: 3 },
+      { state: 'SA', mmm: 4 },
+      { state: 'SA', mmm: 5 },
+      { state: 'SA', mmm: 6 },
+      { state: 'SA', mmm: 7 },
+
+      { state: 'WA', mmm: 1 },
+      { state: 'WA', mmm: 2 },
+      { state: 'WA', mmm: 3 },
+      { state: 'WA', mmm: 4 },
+      { state: 'WA', mmm: 5 },
+      { state: 'WA', mmm: 6 },
+      { state: 'WA', mmm: 7 },
+
+      { state: 'TAS', mmm: 2 },
+      { state: 'TAS', mmm: 3 },
+      { state: 'TAS', mmm: 5 },
+
+      { state: 'NT', mmm: 2 },
+      { state: 'NT', mmm: 6 },
+      { state: 'NT', mmm: 7 },
+
+      { state: 'ACT', mmm: 1 }
+    ];
+
+    const ALL_STATES = [
+      'NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'
+    ];
+
+    const METRO_COLOUR =
+      '#30475d';
+
+    const NON_METRO_COLOUR =
+      '#b54a0a';
+
+    const AUSTRALIA_COLOUR =
+      '#0b5d1e';
+
+    const AUSTRALIA_OUTLINE =
+      '#69718a';
+
+    const Y_AXIS_GUTTER =
+      82;
+
+    // ============================================================
+    // DOM + STATE
+    // ============================================================
+
+    const app =
+      document.getElementById('app');
+
+    const loaderText =
+      document.getElementById('loaderText');
+
+    const statusEl =
+      document.getElementById('status');
+
+    const sourceIndicator =
+      document.getElementById('sourceIndicator');
+
+    const sourceText =
+      document.getElementById('sourceText');
+
+    const chartShell =
+      document.getElementById('chartShell');
+
+    const chartCanvas =
+      document.getElementById('ruralityChart');
+
+    const stateControl =
+      document.getElementById('stateControl');
+
+    const stateButton =
+      document.getElementById('stateButton');
+
+    const stateButtonValue =
+      document.getElementById('stateButtonValue');
+
+    const stateMenu =
+      document.getElementById('stateMenu');
+
+    const stateOptions =
+      document.getElementById('stateOptions');
+
+    const state = {
+      scope: 'AUS',
+      clinicianByYear: {},
+      populationByYear: {}
+    };
+
+    let chart = null;
+    let chartSummary = null;
+    let stateMenuController = null;
+    let interactionsController = null;
+    let responsiveController = null;
+
+    // ============================================================
+    // DATA PARSING
+    // ============================================================
+
+    function dataNumber(value) {
+      if (
+        value &&
+        typeof value === 'object' &&
+        (
+          Object.prototype.hasOwnProperty.call(value, 'v') ||
+          Object.prototype.hasOwnProperty.call(value, 'f')
+        )
+      ) {
+        const direct =
+          PFFCharts.numericCell(value);
+
+        return Number.isFinite(direct)
+          ? direct
+          : null;
+      }
+
+      if (
+        value === null ||
+        value === undefined ||
+        value === ''
+      ) {
+        return null;
+      }
+
+      const cleaned =
+        PFF.cleanText(value)
+          .replace(/,/g, '')
+          .replace(/[^0-9.+-]/g, '');
+
+      if (
+        !cleaned ||
+        !/\d/.test(cleaned)
+      ) {
+        return null;
+      }
+
+      const number =
+        Number(cleaned);
+
+      return Number.isFinite(number)
+        ? number
+        : null;
+    }
+
+    function yearValue(value) {
+      const numeric =
+        dataNumber(value);
+
+      if (!Number.isFinite(numeric)) {
+        return null;
+      }
+
+      const year =
+        Math.round(numeric);
+
+      return year >= 1900 && year <= 2200
+        ? year
+        : null;
+    }
+
+    function activeClinicianValues(getValue) {
+      return SERIES_SCHEMA.map(
+        (_, index) => {
+          const value =
+            dataNumber(
+              getValue(
+                ACTIVE_CLINICIAN_FIRST_INDEX +
+                index
+              )
+            );
+
+          if (!Number.isFinite(value) || value < 0) {
+            return null;
+          }
+
+          return value;
+        }
+      );
+    }
+
+    function populationValues(getValue) {
+      return SERIES_SCHEMA.map(
+        (_, index) => {
+          const value =
+            dataNumber(
+              getValue(
+                POPULATION_FIRST_INDEX +
+                index
+              )
+            );
+
+          if (!Number.isFinite(value) || value < 0) {
+            return null;
+          }
+
+          return value;
+        }
+      );
+    }
+
+    function parseClinicianTable(table) {
+      const result = {};
+
+      (table?.rows || []).forEach(sourceRow => {
+        const cells =
+          sourceRow?.c || [];
+
+        const year =
+          yearValue(cells[0]);
+
+        if (!year) {
+          return;
+        }
+
+        const values =
+          activeClinicianValues(
+            index => cells[index]
+          );
+
+        if (values.some(Number.isFinite)) {
+          result[year] = values;
+        }
+      });
+
+      return result;
+    }
+
+    function parsePopulationTable(table) {
+      const result = {};
+
+      (table?.rows || []).forEach(sourceRow => {
+        const cells =
+          sourceRow?.c || [];
+
+        const year =
+          yearValue(cells[0]);
+
+        if (!year) {
+          return;
+        }
+
+        const values =
+          populationValues(
+            index => cells[index]
+          );
+
+        if (values.some(Number.isFinite)) {
+          result[year] = values;
+        }
+      });
+
+      return result;
+    }
+
+    function parseRemoteClinicianRows(sourceRows) {
+      const result = {};
+
+      (Array.isArray(sourceRows) ? sourceRows : [])
+        .forEach(row => {
+          const year =
+            yearValue(row?.[0]);
+
+          if (!year) {
+            return;
+          }
+
+          const values =
+            activeClinicianValues(
+              index => row?.[index]
+            );
+
+          if (values.some(Number.isFinite)) {
+            result[year] = values;
+          }
+        });
+
+      return result;
+    }
+
+    function parseRemotePopulationRows(sourceRows) {
+      const result = {};
+
+      (Array.isArray(sourceRows) ? sourceRows : [])
+        .forEach(row => {
+          const year =
+            yearValue(row?.[0]);
+
+          if (!year) {
+            return;
+          }
+
+          const values =
+            populationValues(
+              index => row?.[index]
+            );
+
+          if (values.some(Number.isFinite)) {
+            result[year] = values;
+          }
+        });
+
+      return result;
+    }
+
+    function normaliseSeries(values) {
+      if (
+        !Array.isArray(values) ||
+        values.length < SERIES_SCHEMA.length
+      ) {
+        return null;
+      }
+
+      const normalised =
+        values
+          .slice(0, SERIES_SCHEMA.length)
+          .map(value => {
+            if (
+              value === null ||
+              value === undefined ||
+              value === ''
+            ) {
+              return null;
+            }
+
+            const number =
+              Number(value);
+
+            return Number.isFinite(number)
+              ? number
+              : null;
+          });
+
+      return normalised.some(Number.isFinite)
+        ? normalised
+        : null;
+    }
+
+    function combineYearMaps(
+      clinicianByYear,
+      populationByYear
+    ) {
+      const years =
+        Array.from(
+          new Set([
+            ...Object.keys(clinicianByYear || {}).map(Number),
+            ...Object.keys(populationByYear || {}).map(Number)
+          ])
+        )
+          .filter(Number.isFinite)
+          .sort((first, second) => first - second);
+
+      return years.map(year => ({
+        year,
+        clinician:
+          normaliseSeries(
+            clinicianByYear?.[year]
+          ),
+        population:
+          normaliseSeries(
+            populationByYear?.[year]
+          )
+      }));
+    }
+
+    function validateCombinedRows(sourceRows) {
+      const rows =
+        (Array.isArray(sourceRows) ? sourceRows : [])
+          .map(row => {
+            const year =
+              Number(row?.year);
+
+            if (
+              !Number.isFinite(year) ||
+              year < 1900 ||
+              year > 2200
+            ) {
+              return null;
+            }
+
+            const clinician =
+              normaliseSeries(row?.clinician);
+
+            const population =
+              normaliseSeries(row?.population);
+
+            if (!clinician && !population) {
+              return null;
+            }
+
+            return {
+              year: Math.round(year),
+              clinician,
+              population
+            };
+          })
+          .filter(Boolean)
+          .sort(
+            (first, second) =>
+              first.year - second.year
+          );
+
+      if (
+        !rows.some(row => row.clinician) ||
+        !rows.some(row => row.population) ||
+        !rows.some(
+          row => row.clinician && row.population
+        )
+      ) {
+        throw new Error(
+          'State × MMM rurality data were incomplete.'
+        );
+      }
+
+      return rows;
+    }
+
+    function parseLiveData(raw) {
+      return validateCombinedRows(
+        combineYearMaps(
+          parseClinicianTable(
+            raw?.clinicianTable
+          ),
+          parsePopulationTable(
+            raw?.populationTable
+          )
+        )
+      );
+    }
+
+    function parseRemoteCache(snapshot) {
+      return validateCombinedRows(
+        combineYearMaps(
+          parseRemoteClinicianRows(
+            snapshot?.data?.clinicianRows
+          ),
+          parseRemotePopulationRows(
+            snapshot?.data?.populationRows
+          )
+        )
+      );
+    }
+
+    function applyLoadedRows(sourceRows) {
+      const rows =
+        validateCombinedRows(sourceRows);
+
+      state.clinicianByYear = {};
+      state.populationByYear = {};
+
+      rows.forEach(row => {
+        if (row.clinician) {
+          state.clinicianByYear[row.year] =
+            [...row.clinician];
+        }
+
+        if (row.population) {
+          state.populationByYear[row.year] =
+            [...row.population];
+        }
+      });
+    }
+
+    // ============================================================
+    // AGGREGATION
+    // ============================================================
+
+    function commonYears() {
+      const clinicianYears =
+        new Set(
+          Object.keys(state.clinicianByYear)
+            .map(Number)
+            .filter(Number.isFinite)
+        );
+
+      return Object.keys(state.populationByYear)
+        .map(Number)
+        .filter(
+          year =>
+            Number.isFinite(year) &&
+            clinicianYears.has(year)
+        )
+        .sort((first, second) => first - second);
+    }
+
+    function scopeIndices(scope = state.scope) {
+      return SERIES_SCHEMA
+        .map(
+          (item, index) => ({
+            ...item,
+            index
+          })
+        )
+        .filter(
+          item =>
+            scope === 'AUS' ||
+            item.state === scope
+        )
+        .map(item => item.index);
+    }
+
+    function groupIndices(scope, group) {
+      return scopeIndices(scope)
+        .filter(index => {
+          const mmm =
+            SERIES_SCHEMA[index].mmm;
+
+          if (group === 'metro') {
+            return mmm === 1;
+          }
+
+          if (group === 'nonmetro') {
+            return mmm >= 2;
+          }
+
+          return true;
+        });
+    }
+
+    function aggregateYear(
+      year,
+      scope = state.scope,
+      group = 'all'
+    ) {
+      const clinician =
+        state.clinicianByYear[year] || [];
+
+      const population =
+        state.populationByYear[year] || [];
+
+      const indices =
+        group === 'all'
+          ? scopeIndices(scope)
+          : groupIndices(scope, group);
+
+      let activeClinicians = 0;
+      let people = 0;
+      let hasClinicians = false;
+      let hasPopulation = false;
+      let incompleteClinicians = false;
+      let incompletePopulation = false;
+
+      indices.forEach(index => {
+        const clinicianValue =
+          clinician[index];
+
+        const populationValue =
+          population[index];
+
+        if (Number.isFinite(clinicianValue)) {
+          activeClinicians += clinicianValue;
+          hasClinicians = true;
+        } else if (
+          Number.isFinite(populationValue) &&
+          populationValue > 0
+        ) {
+          incompleteClinicians = true;
+        }
+
+        if (Number.isFinite(populationValue)) {
+          people += populationValue;
+          hasPopulation = true;
+        } else if (
+          Number.isFinite(clinicianValue) &&
+          clinicianValue > 0
+        ) {
+          incompletePopulation = true;
+        }
+      });
+
+      return {
+        activeClinicians:
+          hasClinicians && !incompleteClinicians
+            ? activeClinicians
+            : null,
+
+        population:
+          hasPopulation && !incompletePopulation
+            ? people
+            : null,
+
+        indices
+      };
+    }
+
+    function latestUsableYear(scope = state.scope) {
+      const years =
+        commonYears();
+
+      for (
+        let index = years.length - 1;
+        index >= 0;
+        index -= 1
+      ) {
+        const year =
+          years[index];
+
+        const totals =
+          aggregateYear(
+            year,
+            scope,
+            'all'
+          );
+
+        if (
+          Number.isFinite(totals.activeClinicians) &&
+          totals.activeClinicians > 0 &&
+          Number.isFinite(totals.population) &&
+          totals.population > 0
+        ) {
+          return year;
+        }
+      }
+
+      return null;
+    }
+
+    function distributionFor(year, scope) {
+      const metro =
+        aggregateYear(
+          year,
+          scope,
+          'metro'
+        );
+
+      const nonMetro =
+        aggregateYear(
+          year,
+          scope,
+          'nonmetro'
+        );
+
+      const metroExpected =
+        metro.indices.length > 0;
+
+      const nonMetroExpected =
+        nonMetro.indices.length > 0;
+
+      if (
+        (
+          metroExpected &&
+          (
+            !Number.isFinite(metro.activeClinicians) ||
+            !Number.isFinite(metro.population)
+          )
+        ) ||
+        (
+          nonMetroExpected &&
+          (
+            !Number.isFinite(nonMetro.activeClinicians) ||
+            !Number.isFinite(nonMetro.population)
+          )
+        )
+      ) {
+        return null;
+      }
+
+      const metroPopulation =
+        metroExpected
+          ? metro.population
+          : 0;
+
+      const nonMetroPopulation =
+        nonMetroExpected
+          ? nonMetro.population
+          : 0;
+
+      const metroClinicians =
+        metroExpected
+          ? metro.activeClinicians
+          : 0;
+
+      const nonMetroClinicians =
+        nonMetroExpected
+          ? nonMetro.activeClinicians
+          : 0;
+
+      const populationTotal =
+        metroPopulation +
+        nonMetroPopulation;
+
+      const clinicianTotal =
+        metroClinicians +
+        nonMetroClinicians;
+
+      if (
+        !(populationTotal > 0) ||
+        !(clinicianTotal > 0)
+      ) {
+        return null;
+      }
+
+      return {
+        year,
+
+        metroPopulation,
+        nonMetroPopulation,
+        metroClinicians,
+        nonMetroClinicians,
+
+        metroPopulationPct:
+          metroPopulation /
+          populationTotal *
+          100,
+
+        nonMetroPopulationPct:
+          nonMetroPopulation /
+          populationTotal *
+          100,
+
+        metroClinicianPct:
+          metroClinicians /
+          clinicianTotal *
+          100,
+
+        nonMetroClinicianPct:
+          nonMetroClinicians /
+          clinicianTotal *
+          100
+      };
+    }
+
+    // ============================================================
+    // STATE FILTER
+    // ============================================================
+
+    function stateOutlineColour() {
+      if (state.scope === 'AUS') {
+        return AUSTRALIA_OUTLINE;
+      }
+
+      return PFF.stateColours?.[state.scope] ||
+        AUSTRALIA_OUTLINE;
+    }
+
+    function buildStateOptions() {
+      stateOptions.textContent = '';
+
+      ['AUS', ...ALL_STATES]
+        .forEach(code => {
+          const label =
+            document.createElement('label');
+
+          label.className =
+            'state-option';
+
+          const input =
+            document.createElement('input');
+
+          input.type = 'radio';
+          input.name = 'stateScope';
+          input.value = code;
+          input.checked = code === state.scope;
+
+          const box =
+            document.createElement('span');
+
+          box.className =
+            'state-option-box';
+
+          box.setAttribute(
+            'aria-hidden',
+            'true'
+          );
+
+          const text =
+            document.createElement('span');
+
+          text.className =
+            'state-option-code';
+
+          text.textContent =
+            code;
+
+          text.style.color =
+            code === 'AUS'
+              ? AUSTRALIA_COLOUR
+              : PFF.stateColours?.[code] ||
+                '#151515';
+
+          label.append(
+            input,
+            box,
+            text
+          );
+
+          stateOptions.appendChild(label);
+        });
+    }
+
+    function syncStateFilterUi(animate = true) {
+      stateOptions
+        .querySelectorAll('input[name="stateScope"]')
+        .forEach(input => {
+          input.checked =
+            input.value === state.scope;
+        });
+
+      const colour =
+        state.scope === 'AUS'
+          ? AUSTRALIA_COLOUR
+          : stateOutlineColour();
+
+      stateButtonValue.style.color =
+        colour;
+
+      if (!animate) {
+        stateButtonValue.textContent =
+          state.scope;
+        return;
+      }
+
+      PFF.animateHeading({
+        fixed: stateButtonValue,
+        fixedText: state.scope,
+        duration: 180
+      });
+    }
+
+    function setupStateFilter(onChange) {
+      buildStateOptions();
+      syncStateFilterUi(false);
+
+      stateMenuController =
+        PFF.setupMenu({
+          menu: stateControl,
+          button: stateButton,
+          panel: stateMenu,
+          focusOnOpen: false
+        });
+
+      stateOptions.addEventListener(
+        'change',
+        event => {
+          const input =
+            event.target.closest(
+              'input[name="stateScope"]'
+            );
+
+          if (
+            !input ||
+            !input.checked ||
+            input.value === state.scope
+          ) {
+            return;
+          }
+
+          state.scope =
+            input.value;
+
+          syncStateFilterUi(true);
+          stateMenuController?.closeMenu();
+          onChange?.();
+        }
+      );
+    }
+
+    // ============================================================
+    // CHART PRESENTATION
+    // ============================================================
+
+    function formatPercent(value) {
+      return Number.isFinite(Number(value))
+        ? `${PFF.formatNumber(value, 1)}%`
+        : '—';
+    }
+
+    function renderedBarBounds(
+      chartInstance,
+      index
+    ) {
+      let left =
+        Number.POSITIVE_INFINITY;
+
+      let right =
+        Number.NEGATIVE_INFINITY;
+
+      let y =
+        NaN;
+
+      let height =
+        0;
+
+      chartInstance.data.datasets
+        .forEach((dataset, datasetIndex) => {
+          const meta =
+            chartInstance.getDatasetMeta(
+              datasetIndex
+            );
+
+          const element =
+            meta?.data?.[index];
+
+          if (!element || element.skip) {
+            return;
+          }
+
+          const properties =
+            element.getProps(
+              ['x', 'base', 'y', 'height'],
+              true
+            );
+
+          if (
+            !Number.isFinite(properties.x) ||
+            !Number.isFinite(properties.base) ||
+            !Number.isFinite(properties.y)
+          ) {
+            return;
+          }
+
+          left = Math.min(
+            left,
+            properties.x,
+            properties.base
+          );
+
+          right = Math.max(
+            right,
+            properties.x,
+            properties.base
+          );
+
+          y =
+            properties.y;
+
+          height = Math.max(
+            height,
+            Number(properties.height) || 0
+          );
+        });
+
+      if (
+        !Number.isFinite(left) ||
+        !Number.isFinite(right) ||
+        !Number.isFinite(y) ||
+        height <= 0
+      ) {
+        return null;
+      }
+
+      return {
+        left,
+        right,
+        y,
+        height
+      };
+    }
+
+    const barOutlinePlugin = {
+      id: 'pffRuralityStateOutline',
+
+      afterDatasetsDraw(chartInstance) {
+        if (!chartInstance.chartArea) {
+          return;
+        }
+
+        const context =
+          chartInstance.ctx;
+
+        context.save();
+        context.lineWidth = 1.05;
+        context.lineJoin = 'round';
+
+        chartInstance.data.labels
+          .forEach((_, index) => {
+            const bounds =
+              renderedBarBounds(
+                chartInstance,
+                index
+              );
+
+            if (!bounds) {
+              return;
+            }
+
+            const top =
+              bounds.y -
+              bounds.height / 2;
+
+            const width =
+              Math.max(
+                0,
+                bounds.right - bounds.left
+              );
+
+            const height =
+              Math.max(
+                0,
+                bounds.height
+              );
+
+            const radius =
+              Math.min(
+                2,
+                height / 2
+              );
+
+            context.beginPath();
+
+            if (
+              typeof context.roundRect === 'function'
+            ) {
+              context.roundRect(
+                bounds.left + 0.5,
+                top + 0.5,
+                Math.max(0, width - 1),
+                Math.max(0, height - 1),
+                radius
+              );
+            } else {
+              context.rect(
+                bounds.left + 0.5,
+                top + 0.5,
+                Math.max(0, width - 1),
+                Math.max(0, height - 1)
+              );
+            }
+
+            context.strokeStyle =
+              stateOutlineColour();
+
+            context.stroke();
+          });
+
+        context.restore();
+      }
+    };
+
+    function xAxisPixel(
+      geometry,
+      value
+    ) {
+      return geometry.left +
+        (
+          geometry.right -
+          geometry.left
+        ) *
+        (Number(value) / 100);
+    }
+
+    const barAxisPresentationPlugin = {
+      id: 'pffRuralityAxisPresentation',
+
+      beforeDatasetsDraw(chartInstance) {
+        const geometry =
+          chartInstance.chartArea;
+
+        if (!geometry) {
+          return;
+        }
+
+        const context =
+          chartInstance.ctx;
+
+        context.save();
+        context.lineCap = 'butt';
+
+        for (
+          let value = 0;
+          value <= 100;
+          value += 10
+        ) {
+          const x =
+            xAxisPixel(
+              geometry,
+              value
+            );
+
+          const major =
+            value % 20 === 0;
+
+          context.strokeStyle =
+            major
+              ? 'rgba(105, 113, 138, 0.075)'
+              : 'rgba(105, 113, 138, 0.035)';
+
+          context.lineWidth =
+            major
+              ? 1
+              : 0.7;
+
+          context.beginPath();
+          context.moveTo(
+            Math.round(x) + 0.5,
+            geometry.top
+          );
+          context.lineTo(
+            Math.round(x) + 0.5,
+            geometry.bottom
+          );
+          context.stroke();
+        }
+
+        context.restore();
+      },
+
+      afterDraw(chartInstance) {
+        const geometry =
+          chartInstance.chartArea;
+
+        if (!geometry) {
+          return;
+        }
+
+        const context =
+          chartInstance.ctx;
+
+        const mobile =
+          PFF.mobileLayout();
+
+        const tickFontSize =
+          mobile
+            ? 9
+            : 10;
+
+        const titleFontSize =
+          mobile
+            ? 12
+            : 13;
+
+        context.save();
+        context.lineCap = 'butt';
+        context.strokeStyle = '#151515';
+        context.lineWidth = 1;
+
+        // Black x and y spines, matching practice_ownership.html.
+        context.beginPath();
+        context.moveTo(
+          geometry.left,
+          geometry.bottom
+        );
+        context.lineTo(
+          geometry.right,
+          geometry.bottom
+        );
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(
+          geometry.left,
+          geometry.top
+        );
+        context.lineTo(
+          geometry.left,
+          geometry.bottom
+        );
+        context.stroke();
+
+        const firstDatasetMeta =
+          chartInstance.getDatasetMeta(0);
+
+        context.fillStyle = '#151515';
+        context.textAlign = 'right';
+        context.textBaseline = 'middle';
+        context.font =
+          `400 ${tickFontSize}px Lato, sans-serif`;
+
+        chartInstance.data.labels
+          .forEach((label, index) => {
+            const bar =
+              firstDatasetMeta?.data?.[index];
+
+            if (!Number.isFinite(bar?.y)) {
+              return;
+            }
+
+            context.fillText(
+              String(label || ''),
+              geometry.left - 5,
+              bar.y
+            );
+          });
+
+        for (
+          let value = 0;
+          value <= 100;
+          value += 10
+        ) {
+          const x =
+            xAxisPixel(
+              geometry,
+              value
+            );
+
+          const major =
+            value % 20 === 0;
+
+          const tickLength =
+            major
+              ? 6
+              : 2;
+
+          context.beginPath();
+          context.lineWidth =
+            major
+              ? 1
+              : 0.7;
+
+          context.moveTo(
+            Math.round(x) + 0.5,
+            geometry.bottom
+          );
+
+          context.lineTo(
+            Math.round(x) + 0.5,
+            geometry.bottom + tickLength
+          );
+
+          context.stroke();
+        }
+
+        context.fillStyle = '#151515';
+        context.font =
+          `400 ${tickFontSize}px Lato, sans-serif`;
+        context.textBaseline = 'top';
+
+        for (
+          let value = 0;
+          value <= 100;
+          value += 20
+        ) {
+          const x =
+            xAxisPixel(
+              geometry,
+              value
+            );
+
+          context.textAlign =
+            value === 0
+              ? 'left'
+              : value === 100
+                ? 'right'
+                : 'center';
+
+          context.fillText(
+            `${value}%`,
+            x,
+            geometry.bottom + 9
+          );
+        }
+
+        context.font =
+          `700 ${titleFontSize}px Lato, sans-serif`;
+        context.textAlign = 'center';
+        context.textBaseline = 'alphabetic';
+
+        context.fillText(
+          'Proportion by rurality (%)',
+          geometry.left +
+            (
+              geometry.right -
+              geometry.left
+            ) / 2,
+          geometry.bottom + 42
+        );
+
+        context.restore();
+      }
+    };
+
+    const segmentLabelsPlugin = {
+      id: 'pffRuralitySegmentLabels',
+
+      afterDatasetsDraw(chartInstance) {
+        const context =
+          chartInstance.ctx;
+
+        context.save();
+        context.font =
+          `700 ${PFF.mobileLayout() ? 9 : 10}px Lato, sans-serif`;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillStyle = '#ffffff';
+
+        chartInstance.data.datasets
+          .forEach((dataset, datasetIndex) => {
+            const meta =
+              chartInstance.getDatasetMeta(
+                datasetIndex
+              );
+
+            meta.data.forEach((bar, index) => {
+              const value =
+                Number(dataset.data[index]);
+
+              if (
+                !Number.isFinite(value) ||
+                value < 6
+              ) {
+                return;
+              }
+
+              const properties =
+                bar.getProps(
+                  ['x', 'base', 'y'],
+                  true
+                );
+
+              const left =
+                Math.min(
+                  properties.x,
+                  properties.base
+                );
+
+              const right =
+                Math.max(
+                  properties.x,
+                  properties.base
+                );
+
+              if (right - left < 30) {
+                return;
+              }
+
+              context.fillText(
+                formatPercent(value),
+                (left + right) / 2,
+                properties.y
+              );
+            });
+          });
+
+        context.restore();
+      }
+    };
+
+    function tooltipOptions() {
+      return PFFCharts.tooltipOptions({
+        callbacks: {
+          title(items) {
+            return items?.[0]?.label || '';
+          },
+
+          label(item) {
+            const rowIndex =
+              item.dataIndex;
+
+            const raw =
+              item.dataset
+                ._rawValues?.[rowIndex];
+
+            const rawText =
+              rowIndex === 0
+                ? PFFCharts.formatCompactNumber(
+                    Math.round(raw || 0)
+                  )
+                : `${PFFCharts.formatInteger(
+                    Math.round(raw || 0)
+                  )} clinicians`;
+
+            return `${item.dataset.label}: ${formatPercent(item.raw)} · ${rawText}`;
+          },
+
+          footer() {
+            const year =
+              chart?._distribution?.year;
+
+            return Number.isFinite(year)
+              ? String(year)
+              : '';
+          }
+        }
+      });
+    }
+
+    function chartOptions() {
+      const duration =
+        PFF.reducedMotion()
+          ? 0
+          : CONFIG.barTransitionMs;
+
+      return PFFCharts.baseChartOptions({
+        animation: {
+          duration,
+          easing: 'easeInOutCubic'
+        },
+
+        animations: {
+          x: {
+            duration,
+            easing: 'easeInOutCubic'
+          },
+          y: {
+            duration,
+            easing: 'easeInOutCubic'
+          }
+        },
+
+        indexAxis: 'y',
+
+        interaction: {
+          mode: 'index',
+          axis: 'y',
+          intersect: true,
+          includeInvisible: false
+        },
+
+        layout: {
+          autoPadding: false,
+          padding: {
+            top: 6,
+            right: 7,
+            bottom: 0,
+            left: 0
+          }
+        },
+
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip:
+            tooltipOptions()
+        },
+
+        scales: {
+          x: {
+            type: 'linear',
+            stacked: true,
+            beginAtZero: true,
+            min: 0,
+            max: 100,
+
+            afterFit(scale) {
+              scale.height =
+                PFF.mobileLayout()
+                  ? 50
+                  : 48;
+            },
+
+            afterBuildTicks(scale) {
+              scale.ticks =
+                Array.from(
+                  { length: 11 },
+                  (_, index) => ({
+                    value: index * 10
+                  })
+                );
+            },
+
+            title: {
+              display: false
+            },
+
+            ticks: {
+              display: false,
+              autoSkip: false
+            },
+
+            grid: {
+              drawOnChartArea: false,
+              drawTicks: false
+            },
+
+            border: {
+              display: false
+            }
+          },
+
+          y: {
+            stacked: true,
+            offset: true,
+
+            // Keep the left plotting edge fixed at the same position
+            // on first render and after every state update.
+            afterFit(scale) {
+              scale.width = Y_AXIS_GUTTER;
+            },
+
+            ticks: {
+              display: false,
+              autoSkip: false
+            },
+
+            grid: {
+              display: false,
+              drawTicks: false
+            },
+
+            border: {
+              display: false
+            }
+          }
+        }
+      });
+    }
+
+    function datasetsFor(distribution) {
+      return [
+        {
+          label: 'Metro',
+          data: [
+            distribution.metroPopulationPct,
+            distribution.metroClinicianPct
+          ],
+          _rawValues: [
+            distribution.metroPopulation,
+            distribution.metroClinicians
+          ],
+          backgroundColor: METRO_COLOUR,
+          hoverBackgroundColor: METRO_COLOUR,
+          borderColor: 'transparent',
+          hoverBorderColor: 'transparent',
+          borderWidth: 0,
+          hoverBorderWidth: 0,
+          borderSkipped: false,
+          borderRadius: 2,
+          barPercentage: 0.78,
+          categoryPercentage: 0.82
+        },
+        {
+          label: 'Non-metro',
+          data: [
+            distribution.nonMetroPopulationPct,
+            distribution.nonMetroClinicianPct
+          ],
+          _rawValues: [
+            distribution.nonMetroPopulation,
+            distribution.nonMetroClinicians
+          ],
+          backgroundColor: NON_METRO_COLOUR,
+          hoverBackgroundColor: NON_METRO_COLOUR,
+          borderColor: 'transparent',
+          hoverBorderColor: 'transparent',
+          borderWidth: 0,
+          hoverBorderWidth: 0,
+          borderSkipped: false,
+          borderRadius: 2,
+          barPercentage: 0.78,
+          categoryPercentage: 0.82
+        }
+      ];
+    }
+
+    function updateAccessibleSummary() {
+      if (
+        !chartSummary ||
+        !chart?._distribution
+      ) {
+        return;
+      }
+
+      const distribution =
+        chart._distribution;
+
+      const scope =
+        state.scope === 'AUS'
+          ? 'Australia'
+          : state.scope;
+
+      PFFCharts.updateChartSummary(
+        `${scope}, ${distribution.year}. Non-metro areas contained ${formatPercent(distribution.nonMetroPopulationPct)} of the population and ${formatPercent(distribution.nonMetroClinicianPct)} of clinicians.`,
+        chartSummary
+      );
+    }
+
+    function renderLoaded(animate = true) {
+      if (!Object.keys(state.clinicianByYear).length) {
+        return;
+      }
+
+      const year =
+        latestUsableYear(state.scope);
+
+      const distribution =
+        distributionFor(
+          year,
+          state.scope
+        );
+
+      if (!distribution) {
+        throw new Error(
+          `No usable rurality data for ${state.scope}.`
+        );
+      }
+
+      const datasets =
+        datasetsFor(distribution);
+
+      if (!chart) {
+        chart =
+          new Chart(
+            chartCanvas.getContext('2d'),
+            {
+              type: 'bar',
+              data: {
+                labels: [
+                  'Population',
+                  'Clinicians'
+                ],
+                datasets
+              },
+              options:
+                chartOptions(),
+              plugins: [
+                barAxisPresentationPlugin,
+                segmentLabelsPlugin,
+                barOutlinePlugin
+              ]
+            }
+          );
+      } else {
+        const duration =
+          animate && !PFF.reducedMotion()
+            ? CONFIG.barTransitionMs
+            : 0;
+
+        chart.data.datasets =
+          datasets;
+
+        chart.options.animation.duration =
+          duration;
+
+        chart.options.animation.easing =
+          'easeInOutCubic';
+
+        if (chart.options.animations?.x) {
+          chart.options.animations.x.duration =
+            duration;
+        }
+
+        if (chart.options.animations?.y) {
+          chart.options.animations.y.duration =
+            duration;
+        }
+
+        chart.update();
+      }
+
+      chart._distribution =
+        distribution;
+
+      updateAccessibleSummary();
+    }
+
+    // ============================================================
+    // APP STARTUP
+    // ============================================================
+
+    function startApp() {
+      setupStateFilter(
+        () => renderLoaded(true)
+      );
+
+      PFF.initialiseApp({
+        app,
+        status: statusEl,
+
+        async loadLive() {
+          loaderText.textContent =
+            'Loading live State × MMM data…';
+
+          const [
+            clinicianTable,
+            populationTable
+          ] =
+            await Promise.all([
+              PFFCharts.loadGVizSheet({
+                sheetId: CONFIG.sheetId,
+                sheetName: CONFIG.clinicianSheet,
+                range: CONFIG.clinicianRange,
+                headers: '2'
+              }),
+
+              PFFCharts.loadGVizSheet({
+                sheetId: CONFIG.sheetId,
+                sheetName: CONFIG.populationSheet,
+                range: CONFIG.populationRange,
+                headers: '2'
+              })
+            ]);
+
+          return {
+            clinicianTable,
+            populationTable
+          };
+        },
+
+        parseLive:
+          parseLiveData,
+
+        loadRemoteCache() {
+          loaderText.textContent =
+            'Loading cached PFF data…';
+
+          return PFFCharts.loadAppsScriptCache({
+            url: CACHE_WEB_APP_URL,
+            appKey: CACHE_APP_KEY
+          });
+        },
+
+        parseRemoteCache,
+
+        cacheKey:
+          CONFIG.localCacheKey,
+
+        minRows:
+          1,
+
+        onLiveError(error) {
+          console.warn(
+            'Live State × MMM data unavailable; trying Apps Script cache.',
+            error
+          );
+        },
+
+        onRemoteCacheError(error) {
+          console.warn(
+            'Apps Script State × MMM cache unavailable; trying browser cache.',
+            error
+          );
+        },
+
+        dataSourceOptions: {
+          indicator: sourceIndicator,
+          text: sourceText
+        },
+
+        render(loaded) {
+          applyLoadedRows(
+            loaded.rows
+          );
+
+          renderLoaded(false);
+
+          chartSummary =
+            PFFCharts.ensureChartSummary({
+              parent: app
+            });
+
+          chartCanvas.setAttribute(
+            'aria-describedby',
+            chartSummary.id
+          );
+
+          updateAccessibleSummary();
+
+          interactionsController =
+            PFFCharts.setupChartInteractions({
+              canvas: chartCanvas,
+              getChart() {
+                return chart;
+              }
+            });
+
+          responsiveController =
+            PFFCharts.createResponsiveController({
+              getChart() {
+                return chart;
+              },
+              observe: [
+                app,
+                chartShell
+              ],
+              onRefresh() {
+                chart?.resize();
+                chart?.draw();
+              }
+            });
+
+          return chart;
+        },
+
+        onError() {
+          sourceIndicator.style.visibility =
+            'hidden';
+        },
+
+        errorMessage:
+          'Rurality proportions unavailable.'
+      });
+    }
+
+    startApp();
+  </script>
+</body>
+</html>
