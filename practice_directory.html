@@ -5561,13 +5561,11 @@
     let suggestionItems = [];
     let activeSuggestionIndex = -1;
     let suggestionViewportFrame = null;
-    let mobileSearchRepositionActive = false;
-    let mobileSearchUserReleasedPosition = false;
-    let mobileSearchTouchGesture = null;
+    let mobileSearchHasAutoPositioned = false;
+    let mobileSearchAutoPositionTimers = [];
     const MOBILE_SEARCH_TOP_GAP_PX = 8;
     const MOBILE_SEARCH_POSITION_TOLERANCE_PX = 8;
     const MOBILE_SEARCH_SETTLE_MS = 420;
-    const MOBILE_SEARCH_GESTURE_THRESHOLD_PX = 12;
     let suggestionPointerState = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
@@ -9958,30 +9956,21 @@
       );
     }
 
-    function resetMobileSearchPositionInteraction() {
-      mobileSearchRepositionActive = false;
-      mobileSearchUserReleasedPosition = false;
-      mobileSearchTouchGesture = null;
+    function clearMobileSearchAutoPositionTimers() {
+      mobileSearchAutoPositionTimers.forEach(
+        timerId => window.clearTimeout(timerId)
+      );
+      mobileSearchAutoPositionTimers = [];
     }
 
-    function releaseMobileSearchPosition() {
-      mobileSearchUserReleasedPosition = true;
-      mobileSearchRepositionActive = false;
-      mobileSearchTouchGesture = null;
+    function resetMobileSearchAutoPosition() {
+      mobileSearchHasAutoPositioned = false;
+      clearMobileSearchAutoPositionTimers();
     }
 
-    function activateMobileSearchPositioning() {
-      if (mobileSearchUserReleasedPosition) {
-        return;
-      }
-
-      mobileSearchRepositionActive = true;
-    }
-
-    function shouldMaintainMobileSearchPosition() {
+    function shouldAutoPositionMobileSearch() {
       return (
-        mobileSearchRepositionActive &&
-        !mobileSearchUserReleasedPosition &&
+        !mobileSearchHasAutoPositioned &&
         window.matchMedia('(max-width: 700px)').matches &&
         locationSuggestions.classList.contains('is-visible') &&
         document.activeElement === searchInput &&
@@ -9991,8 +9980,8 @@
       );
     }
 
-    function maintainMobileSearchPosition() {
-      if (!shouldMaintainMobileSearchPosition()) {
+    function autoPositionMobileSearchOnce() {
+      if (!shouldAutoPositionMobileSearch()) {
         return;
       }
 
@@ -10005,16 +9994,40 @@
       const desiredTop = viewport.offsetTop + MOBILE_SEARCH_TOP_GAP_PX;
       const scrollAmount = searchRect.top - desiredTop;
 
-      /* Only move the search upward when it sits materially below its target.
-       * Never pull the page back down if the user/browser already has it
-       * higher. A small tolerance prevents viewport rounding jitter. */
+      /* Treat this search as positioned as soon as the keyboard is ready.
+       * From this point, suggestion count changes, viewport changes and
+       * further typing cannot move the page again. */
+      mobileSearchHasAutoPositioned = true;
+      clearMobileSearchAutoPositionTimers();
+
       if (scrollAmount > MOBILE_SEARCH_POSITION_TOLERANCE_PX) {
         window.scrollBy({
           top: scrollAmount,
           left: 0,
-          behavior: 'auto'
+          behavior: 'smooth'
         });
       }
+    }
+
+    function scheduleMobileSearchAutoPosition() {
+      if (mobileSearchHasAutoPositioned) {
+        return;
+      }
+
+      clearMobileSearchAutoPositionTimers();
+
+      /* The first check often runs before the mobile keyboard has finished
+       * opening. Retry briefly while it settles, but stop permanently for
+       * this search immediately after the first successful position. */
+      [0, 80, 220, MOBILE_SEARCH_SETTLE_MS].forEach(
+        delay => {
+          const timerId = window.setTimeout(
+            autoPositionMobileSearchOnce,
+            delay
+          );
+          mobileSearchAutoPositionTimers.push(timerId);
+        }
+      );
     }
 
     function scheduleSearchSuggestionViewportUpdate() {
@@ -10024,14 +10037,12 @@
 
       suggestionViewportFrame = requestAnimationFrame(() => {
         suggestionViewportFrame = null;
-        maintainMobileSearchPosition();
         updateSearchSuggestionViewport();
       });
     }
 
     function hideLocationSuggestions() {
-      mobileSearchRepositionActive = false;
-      mobileSearchTouchGesture = null;
+      clearMobileSearchAutoPositionTimers();
 
       locationSuggestions.classList.remove(
         'is-visible'
@@ -10128,22 +10139,10 @@
       locationSuggestions.innerHTML = sections.join('');
       locationSuggestions.classList.add('is-visible');
 
-      if (repositionMobile) {
-        activateMobileSearchPositioning();
-      }
-
       scheduleSearchSuggestionViewportUpdate();
 
-      /* Re-check while the keyboard/browser chrome finishes settling. This
-       * short window is renewed by typing, but a deliberate user scroll
-       * releases positioning for the remainder of the current interaction. */
-      if (repositionMobile && !mobileSearchUserReleasedPosition) {
-        window.setTimeout(scheduleSearchSuggestionViewportUpdate, 80);
-        window.setTimeout(scheduleSearchSuggestionViewportUpdate, 220);
-        window.setTimeout(
-          scheduleSearchSuggestionViewportUpdate,
-          MOBILE_SEARCH_SETTLE_MS
-        );
+      if (repositionMobile) {
+        scheduleMobileSearchAutoPosition();
       }
     }
 
@@ -10248,6 +10247,10 @@
       searchInput.value = value;
       searchValuesByService[currentServiceKey()] = value;
       searchClear.classList.toggle('is-visible', Boolean(value));
+
+      if (!cleanText(value)) {
+        resetMobileSearchAutoPosition();
+      }
     }
 
     function setSpecialtySelection(key, selected, { removeQueryTerm = false, matchedAlias = '' } = {}) {
@@ -10270,8 +10273,6 @@
 
     function selectSearchSuggestion(item) {
       if (!item) return;
-
-      resetMobileSearchPositionInteraction();
 
       if (item.type === 'specialty') {
         setSpecialtySelection(
@@ -10310,6 +10311,7 @@
         searchInput.value = '';
         searchValuesByService[currentServiceKey()] = '';
         searchClear.classList.remove('is-visible');
+        resetMobileSearchAutoPosition();
       }
 
       lastFilterSignature = '';
@@ -10837,6 +10839,10 @@
         'is-visible',
         Boolean(remainingQuery)
       );
+
+      if (!remainingQuery) {
+        resetMobileSearchAutoPosition();
+      }
 
       hideLocationSuggestions();
       syncSelectedLocationChip();
@@ -14071,6 +14077,7 @@
     function resetFilters() {
       searchInput.value = '';
       searchValuesByService[currentServiceKey()] = '';
+      resetMobileSearchAutoPosition();
       activeLocation = null;
       activeDistanceLocationKey = '';
       activeRadiusCounts = new Uint32Array(201);
@@ -14138,6 +14145,7 @@
         });
 
       searchInput.value = '';
+      resetMobileSearchAutoPosition();
       searchClear.classList.remove('is-visible');
       hideLocationSuggestions();
       syncSelectedLocationChip();
@@ -14371,7 +14379,7 @@
           );
 
           if (!cleanText(searchInput.value)) {
-            resetMobileSearchPositionInteraction();
+            resetMobileSearchAutoPosition();
           }
 
           clearTimeout(searchTimer);
@@ -14385,16 +14393,8 @@
       searchInput.addEventListener(
         'focus',
         () => {
-          resetMobileSearchPositionInteraction();
           clearTimeout(locationSuggestionTimer);
           renderLocationSuggestions();
-        }
-      );
-
-      searchInput.addEventListener(
-        'blur',
-        () => {
-          resetMobileSearchPositionInteraction();
         }
       );
 
@@ -14594,7 +14594,7 @@
         () => {
           clearTimeout(searchTimer);
           clearTimeout(locationSuggestionTimer);
-          resetMobileSearchPositionInteraction();
+          resetMobileSearchAutoPosition();
           searchInput.value = '';
           searchValuesByService[currentServiceKey()] = '';
 
@@ -14639,74 +14639,6 @@
             }
           );
         }
-      );
-
-      document.addEventListener(
-        'touchstart',
-        event => {
-          if (
-            !mobileSearchRepositionActive ||
-            mobileSearchUserReleasedPosition ||
-            !event.touches.length
-          ) {
-            mobileSearchTouchGesture = null;
-            return;
-          }
-
-          const touch = event.touches[0];
-          mobileSearchTouchGesture = {
-            startX: touch.clientX,
-            startY: touch.clientY
-          };
-        },
-        { passive: true }
-      );
-
-      document.addEventListener(
-        'touchmove',
-        event => {
-          if (!mobileSearchTouchGesture || !event.touches.length) {
-            return;
-          }
-
-          const touch = event.touches[0];
-          const deltaX = touch.clientX - mobileSearchTouchGesture.startX;
-          const deltaY = touch.clientY - mobileSearchTouchGesture.startY;
-
-          if (
-            Math.hypot(deltaX, deltaY) >
-            MOBILE_SEARCH_GESTURE_THRESHOLD_PX
-          ) {
-            releaseMobileSearchPosition();
-          }
-        },
-        { passive: true }
-      );
-
-      document.addEventListener(
-        'touchend',
-        () => {
-          mobileSearchTouchGesture = null;
-        },
-        { passive: true }
-      );
-
-      document.addEventListener(
-        'touchcancel',
-        () => {
-          mobileSearchTouchGesture = null;
-        },
-        { passive: true }
-      );
-
-      window.addEventListener(
-        'wheel',
-        () => {
-          if (mobileSearchRepositionActive) {
-            releaseMobileSearchPosition();
-          }
-        },
-        { passive: true }
       );
 
       if (window.visualViewport) {
