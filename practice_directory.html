@@ -5561,6 +5561,13 @@
     let suggestionItems = [];
     let activeSuggestionIndex = -1;
     let suggestionViewportFrame = null;
+    let mobileSearchRepositionActive = false;
+    let mobileSearchUserReleasedPosition = false;
+    let mobileSearchTouchGesture = null;
+    const MOBILE_SEARCH_TOP_GAP_PX = 8;
+    const MOBILE_SEARCH_POSITION_TOLERANCE_PX = 8;
+    const MOBILE_SEARCH_SETTLE_MS = 420;
+    const MOBILE_SEARCH_GESTURE_THRESHOLD_PX = 12;
     let suggestionPointerState = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
@@ -9918,6 +9925,98 @@
         `${Math.min(232, Math.floor(availableHeight))}px`;
     }
 
+    function isLikelyMobileKeyboardOpen() {
+      const viewport = window.visualViewport;
+      if (!viewport) {
+        return false;
+      }
+
+      const hasTouchInput =
+        navigator.maxTouchPoints > 0 ||
+        window.matchMedia('(pointer: coarse)').matches;
+
+      if (!hasTouchInput) {
+        return false;
+      }
+
+      const layoutHeight = Math.max(
+        window.innerHeight || 0,
+        document.documentElement?.clientHeight || 0
+      );
+      const viewportReduction = layoutHeight - viewport.height;
+      const screenHeight = window.screen?.height || 0;
+
+      /* Most mobile browsers leave the layout viewport taller than the
+       * visual viewport while the keyboard is open. The screen-height
+       * fallback also covers browsers that resize both viewports together. */
+      return (
+        viewportReduction >= 80 ||
+        (
+          screenHeight > 0 &&
+          viewport.height <= screenHeight * 0.78
+        )
+      );
+    }
+
+    function resetMobileSearchPositionInteraction() {
+      mobileSearchRepositionActive = false;
+      mobileSearchUserReleasedPosition = false;
+      mobileSearchTouchGesture = null;
+    }
+
+    function releaseMobileSearchPosition() {
+      mobileSearchUserReleasedPosition = true;
+      mobileSearchRepositionActive = false;
+      mobileSearchTouchGesture = null;
+    }
+
+    function activateMobileSearchPositioning() {
+      if (mobileSearchUserReleasedPosition) {
+        return;
+      }
+
+      mobileSearchRepositionActive = true;
+    }
+
+    function shouldMaintainMobileSearchPosition() {
+      return (
+        mobileSearchRepositionActive &&
+        !mobileSearchUserReleasedPosition &&
+        window.matchMedia('(max-width: 700px)').matches &&
+        locationSuggestions.classList.contains('is-visible') &&
+        document.activeElement === searchInput &&
+        Boolean(cleanText(searchInput.value)) &&
+        Boolean(searchWrap) &&
+        isLikelyMobileKeyboardOpen()
+      );
+    }
+
+    function maintainMobileSearchPosition() {
+      if (!shouldMaintainMobileSearchPosition()) {
+        return;
+      }
+
+      const viewport = window.visualViewport;
+      if (!viewport) {
+        return;
+      }
+
+      const searchRect = searchWrap.getBoundingClientRect();
+      const desiredTop = viewport.offsetTop + MOBILE_SEARCH_TOP_GAP_PX;
+      const scrollAmount = searchRect.top - desiredTop;
+
+      /* Only move the search upward when it sits materially below its target.
+       * Never pull the page back down if the user/browser already has it
+       * higher. A small tolerance prevents viewport rounding jitter. */
+      if (scrollAmount > MOBILE_SEARCH_POSITION_TOLERANCE_PX) {
+        window.scrollBy({
+          top: scrollAmount,
+          left: 0,
+          behavior: 'auto'
+        });
+      }
+    }
+
     function scheduleSearchSuggestionViewportUpdate() {
       if (suggestionViewportFrame !== null) {
         cancelAnimationFrame(suggestionViewportFrame);
@@ -9925,46 +10024,15 @@
 
       suggestionViewportFrame = requestAnimationFrame(() => {
         suggestionViewportFrame = null;
+        maintainMobileSearchPosition();
         updateSearchSuggestionViewport();
       });
     }
 
-    function makeMobileSearchSuggestionsVisible() {
-      if (!window.matchMedia('(max-width: 700px)').matches) {
-        return;
-      }
-
-      if (!locationSuggestions.classList.contains('is-visible')) {
-        return;
-      }
-
-      const viewport = window.visualViewport;
-      if (!viewport || !searchWrap) {
-        return;
-      }
-
-      const searchRect = searchWrap.getBoundingClientRect();
-      const desiredTop =
-        viewport.offsetTop + Math.max(12, viewport.height * 0.15);
-      const scrollAmount = searchRect.top - desiredTop;
-
-      /* Only move the page when the search is meaningfully lower than the
-       * preferred position. This is called from the typing path only, so
-       * autofocus/focus by itself never deliberately scrolls the search. */
-      if (scrollAmount > 20) {
-        window.scrollBy({
-          top: scrollAmount,
-          behavior: 'smooth'
-        });
-
-        window.setTimeout(
-          scheduleSearchSuggestionViewportUpdate,
-          180
-        );
-      }
-    }
-
     function hideLocationSuggestions() {
+      mobileSearchRepositionActive = false;
+      mobileSearchTouchGesture = null;
+
       locationSuggestions.classList.remove(
         'is-visible'
       );
@@ -10061,10 +10129,22 @@
       locationSuggestions.classList.add('is-visible');
 
       if (repositionMobile) {
-        makeMobileSearchSuggestionsVisible();
+        activateMobileSearchPositioning();
       }
 
       scheduleSearchSuggestionViewportUpdate();
+
+      /* Re-check while the keyboard/browser chrome finishes settling. This
+       * short window is renewed by typing, but a deliberate user scroll
+       * releases positioning for the remainder of the current interaction. */
+      if (repositionMobile && !mobileSearchUserReleasedPosition) {
+        window.setTimeout(scheduleSearchSuggestionViewportUpdate, 80);
+        window.setTimeout(scheduleSearchSuggestionViewportUpdate, 220);
+        window.setTimeout(
+          scheduleSearchSuggestionViewportUpdate,
+          MOBILE_SEARCH_SETTLE_MS
+        );
+      }
     }
 
     function syncLocationChipTooltip() {
@@ -10190,6 +10270,8 @@
 
     function selectSearchSuggestion(item) {
       if (!item) return;
+
+      resetMobileSearchPositionInteraction();
 
       if (item.type === 'specialty') {
         setSpecialtySelection(
@@ -14288,6 +14370,10 @@
             Boolean(searchInput.value)
           );
 
+          if (!cleanText(searchInput.value)) {
+            resetMobileSearchPositionInteraction();
+          }
+
           clearTimeout(searchTimer);
           clearTimeout(locationSuggestionTimer);
 
@@ -14299,8 +14385,16 @@
       searchInput.addEventListener(
         'focus',
         () => {
+          resetMobileSearchPositionInteraction();
           clearTimeout(locationSuggestionTimer);
           renderLocationSuggestions();
+        }
+      );
+
+      searchInput.addEventListener(
+        'blur',
+        () => {
+          resetMobileSearchPositionInteraction();
         }
       );
 
@@ -14500,6 +14594,7 @@
         () => {
           clearTimeout(searchTimer);
           clearTimeout(locationSuggestionTimer);
+          resetMobileSearchPositionInteraction();
           searchInput.value = '';
           searchValuesByService[currentServiceKey()] = '';
 
@@ -14544,6 +14639,74 @@
             }
           );
         }
+      );
+
+      document.addEventListener(
+        'touchstart',
+        event => {
+          if (
+            !mobileSearchRepositionActive ||
+            mobileSearchUserReleasedPosition ||
+            !event.touches.length
+          ) {
+            mobileSearchTouchGesture = null;
+            return;
+          }
+
+          const touch = event.touches[0];
+          mobileSearchTouchGesture = {
+            startX: touch.clientX,
+            startY: touch.clientY
+          };
+        },
+        { passive: true }
+      );
+
+      document.addEventListener(
+        'touchmove',
+        event => {
+          if (!mobileSearchTouchGesture || !event.touches.length) {
+            return;
+          }
+
+          const touch = event.touches[0];
+          const deltaX = touch.clientX - mobileSearchTouchGesture.startX;
+          const deltaY = touch.clientY - mobileSearchTouchGesture.startY;
+
+          if (
+            Math.hypot(deltaX, deltaY) >
+            MOBILE_SEARCH_GESTURE_THRESHOLD_PX
+          ) {
+            releaseMobileSearchPosition();
+          }
+        },
+        { passive: true }
+      );
+
+      document.addEventListener(
+        'touchend',
+        () => {
+          mobileSearchTouchGesture = null;
+        },
+        { passive: true }
+      );
+
+      document.addEventListener(
+        'touchcancel',
+        () => {
+          mobileSearchTouchGesture = null;
+        },
+        { passive: true }
+      );
+
+      window.addEventListener(
+        'wheel',
+        () => {
+          if (mobileSearchRepositionActive) {
+            releaseMobileSearchPosition();
+          }
+        },
+        { passive: true }
       );
 
       if (window.visualViewport) {
