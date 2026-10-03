@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Maldistribution MMM FTE Balance</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
+
+  <style>
+    :root {
+      --metro-colour: #3f4851;
+      --nonmetro-colour: #c87452;
+      --surplus-colour: #6600ff;
+      --shortage-colour: #c25e00;
+    }
+
+    .single-tab-shell .tab-list { min-width: 0; }
+    .single-tab-shell .chart-tab { cursor: default; }
+    .single-tab-shell .tab-list::after { display: none; }
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-heading-row { align-items: flex-start; }
+    .chart-heading { white-space: nowrap; }
+    .heading-controls { padding-top: 2px; }
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .chart-legend .legend-item {
+      color: var(--pff-muted);
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .chart-legend .legend-item:hover { color: var(--pff-muted); }
+
+    .legend-line.is-dashed {
+      height: 0;
+      border-top: 2px dashed var(--legend-colour);
+      background: transparent !important;
+    }
+
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: left;
+    }
+
+    .method-note-line { display: block; }
+    .method-note-line + .method-note-line { margin-top: 2px; }
+
+    .state-menu { min-width: 176px; }
+    .state-option-code { font-weight: 700; }
+
+    @media (max-width: 430px) {
+      .method-note { font-size: 10.5px; }
+      .state-menu { min-width: 164px; }
+    }
+  </style>
+  <style>
+    .chart-shell { margin-top: -1px; }
+  </style>
+</head>
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div id="loadingState" class="app-loading" role="status" aria-label="Loading optometry full-time-equivalent surplus and shortage by Modified Monash category">
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p id="loaderText" class="loader-text">Loading FTE balance by MMM…</p>
+      </div>
+
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div class="tab-list" role="tablist" aria-label="FTE balance chart">
+            <button class="chart-tab is-active" type="button" role="tab" aria-selected="true" tabindex="0">FTE balance</button>
+          </div>
+        </div>
+
+        <div id="liveData" class="live-data" aria-label="Live data" aria-live="polite">
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="liveDataText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">FTE surplus / shortage by MMM</h2>
+          </div>
+        </div>
+
+        <div class="heading-controls">
+          <div id="stateControl" class="state-control">
+            <button id="stateButton" class="state-button" type="button" aria-expanded="false" aria-controls="stateMenu">
+              <span>State</span>
+              <span id="stateButtonValue" class="state-button-value">AUS</span>
+              <span class="menu-arrow" aria-hidden="true"></span>
+            </button>
+            <div id="stateMenu" class="state-menu" role="menu">
+              <div class="state-menu-title">Filter geography</div>
+              <div id="stateOptions"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <div class="legend-viewport">
+            <div class="chart-legend" aria-label="Chart legend">
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--surplus-colour)"></span><span>Surplus</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--shortage-colour)"></span><span>Shortage</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas id="chartCanvas" aria-label="Optometry full-time-equivalent workforce surplus or shortage by Modified Monash Model category" role="img"></canvas>
+      </div>
+
+      <p class="method-note">
+        <span id="shortfallNote" class="method-note-line"></span>
+        <span class="method-note-line"><strong>Balance:</strong> actual FTE − population ÷ 10,000. Positive = surplus; negative = shortage.</span>
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    const CONFIG = Object.freeze({
+      sheetId: '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+      clinicianSheet: 'OptomsbystatebyMMM',
+      clinicianRange: 'A29:CC',
+      populationSheet: 'AuspopnbystatebyMMM',
+      populationRange: 'A29:AO',
+      localCacheKey: 'pff_state_mmm_workforce_raw_v1'
+    });
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY = 'pff-state-mmm-workforce-v1';
+    const COUNT_FIRST_INDEX = 1;
+    const HOURS_FIRST_INDEX = 41;
+    const POPULATION_FIRST_INDEX = 1;
+    const FULL_TIME_HOURS = 38;
+
+    const SERIES_SCHEMA = [
+      { state: 'NSW', mmm: 1 }, { state: 'NSW', mmm: 2 },
+      { state: 'NSW', mmm: 3 }, { state: 'NSW', mmm: 4 },
+      { state: 'NSW', mmm: 5 }, { state: 'NSW', mmm: 6 },
+      { state: 'NSW', mmm: 7 },
+      { state: 'VIC', mmm: 1 }, { state: 'VIC', mmm: 2 },
+      { state: 'VIC', mmm: 3 }, { state: 'VIC', mmm: 4 },
+      { state: 'VIC', mmm: 5 },
+      { state: 'QLD', mmm: 1 }, { state: 'QLD', mmm: 2 },
+      { state: 'QLD', mmm: 3 }, { state: 'QLD', mmm: 4 },
+      { state: 'QLD', mmm: 5 }, { state: 'QLD', mmm: 6 },
+      { state: 'QLD', mmm: 7 },
+      { state: 'SA', mmm: 1 }, { state: 'SA', mmm: 2 },
+      { state: 'SA', mmm: 3 }, { state: 'SA', mmm: 4 },
+      { state: 'SA', mmm: 5 }, { state: 'SA', mmm: 6 },
+      { state: 'SA', mmm: 7 },
+      { state: 'WA', mmm: 1 }, { state: 'WA', mmm: 2 },
+      { state: 'WA', mmm: 3 }, { state: 'WA', mmm: 4 },
+      { state: 'WA', mmm: 5 }, { state: 'WA', mmm: 6 },
+      { state: 'WA', mmm: 7 },
+      { state: 'TAS', mmm: 2 }, { state: 'TAS', mmm: 3 },
+      { state: 'TAS', mmm: 5 },
+      { state: 'NT', mmm: 2 }, { state: 'NT', mmm: 6 },
+      { state: 'NT', mmm: 7 },
+      { state: 'ACT', mmm: 1 }
+    ];
+
+    const ALL_STATES = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'];
+    const STATE_NAMES = {
+      NSW: 'New South Wales', VIC: 'Victoria', QLD: 'Queensland',
+      SA: 'South Australia', WA: 'Western Australia', TAS: 'Tasmania',
+      NT: 'Northern Territory', ACT: 'Australian Capital Territory'
+    };
+
+    const app = document.getElementById('app');
+    const loaderText = document.getElementById('loaderText');
+    const statusEl = document.getElementById('status');
+    const liveData = document.getElementById('liveData');
+    const liveDataText = document.getElementById('liveDataText');
+    const chartHeading = document.getElementById('chartHeading');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('chartCanvas');
+    const stateControl = document.getElementById('stateControl');
+    const stateButton = document.getElementById('stateButton');
+    const stateButtonValue = document.getElementById('stateButtonValue');
+    const stateMenu = document.getElementById('stateMenu');
+    const stateOptions = document.getElementById('stateOptions');
+
+    const state = {
+      scope: 'AUS',
+      clinicianByYear: {},
+      populationByYear: {}
+    };
+
+    let chart = null;
+    let chartSummary = null;
+    let stateMenuController = null;
+    let interactionsController = null;
+    let responsiveController = null;
+
+    function dataNumber(value) {
+      if (
+        value && typeof value === 'object' &&
+        (Object.prototype.hasOwnProperty.call(value, 'v') ||
+         Object.prototype.hasOwnProperty.call(value, 'f'))
+      ) {
+        const direct = PFFCharts.numericCell(value);
+        return Number.isFinite(direct) ? direct : null;
+      }
+
+      if (value === null || value === undefined || value === '') return null;
+
+      const cleaned = PFF.cleanText(value)
+        .replace(/,/g, '')
+        .replace(/[^0-9.+-]/g, '');
+
+      if (!cleaned || !/\d/.test(cleaned)) return null;
+      const number = Number(cleaned);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function yearValue(value) {
+      const numeric = dataNumber(value);
+      if (!Number.isFinite(numeric)) return null;
+      const year = Math.round(numeric);
+      return year >= 1900 && year <= 2200 ? year : null;
+    }
+
+    function clinicianValues(getValue) {
+      return SERIES_SCHEMA.map((_, index) => {
+        const count = dataNumber(getValue(COUNT_FIRST_INDEX + index));
+        const hours = dataNumber(getValue(HOURS_FIRST_INDEX + index));
+
+        if (count === 0) return 0;
+        if (!Number.isFinite(count) || !Number.isFinite(hours) || count < 0 || hours <= 0) {
+          return null;
+        }
+
+        const fte = count * hours / FULL_TIME_HOURS;
+        return Number.isFinite(fte) ? fte : null;
+      });
+    }
+
+    function populationValues(getValue) {
+      return SERIES_SCHEMA.map((_, index) =>
+        dataNumber(getValue(POPULATION_FIRST_INDEX + index))
+      );
+    }
+
+    function parseClinicianTable(table) {
+      const result = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = clinicianValues(index => cells[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parsePopulationTable(table) {
+      const result = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = populationValues(index => cells[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parseRemoteClinicianRows(sourceRows) {
+      const result = {};
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = clinicianValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parseRemotePopulationRows(sourceRows) {
+      const result = {};
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = populationValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function normaliseSeries(values) {
+      if (!Array.isArray(values) || values.length < SERIES_SCHEMA.length) return null;
+      const normalised = values.slice(0, SERIES_SCHEMA.length).map(value => {
+        if (value === null || value === undefined || value === '') return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      });
+      return normalised.some(Number.isFinite) ? normalised : null;
+    }
+
+    function combineYearMaps(clinicianByYear, populationByYear) {
+      const years = Array.from(new Set([
+        ...Object.keys(clinicianByYear || {}).map(Number),
+        ...Object.keys(populationByYear || {}).map(Number)
+      ])).filter(Number.isFinite).sort((a, b) => a - b);
+
+      return years.map(year => ({
+        year,
+        clinician: normaliseSeries(clinicianByYear?.[year]),
+        population: normaliseSeries(populationByYear?.[year])
+      }));
+    }
+
+    function validateCombinedRows(sourceRows) {
+      const rows = (Array.isArray(sourceRows) ? sourceRows : [])
+        .map(row => {
+          const year = Number(row?.year);
+          if (!Number.isFinite(year) || year < 1900 || year > 2200) return null;
+          const clinician = normaliseSeries(row?.clinician);
+          const population = normaliseSeries(row?.population);
+          if (!clinician && !population) return null;
+          return { year: Math.round(year), clinician, population };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.year - b.year);
+
+      if (
+        !rows.some(row => row.clinician) ||
+        !rows.some(row => row.population) ||
+        !rows.some(row => row.clinician && row.population)
+      ) {
+        throw new Error('State × MMM workforce data were incomplete.');
+      }
+
+      return rows;
+    }
+
+    function parseLiveData(raw) {
+      return validateCombinedRows(combineYearMaps(
+        parseClinicianTable(raw?.clinicianTable),
+        parsePopulationTable(raw?.populationTable)
+      ));
+    }
+
+    function parseRemoteCache(snapshot) {
+      return validateCombinedRows(combineYearMaps(
+        parseRemoteClinicianRows(snapshot?.data?.clinicianRows),
+        parseRemotePopulationRows(snapshot?.data?.populationRows)
+      ));
+    }
+
+    function applyLoadedRows(sourceRows) {
+      const rows = validateCombinedRows(sourceRows);
+      state.clinicianByYear = {};
+      state.populationByYear = {};
+
+      rows.forEach(row => {
+        if (row.clinician) state.clinicianByYear[row.year] = [...row.clinician];
+        if (row.population) state.populationByYear[row.year] = [...row.population];
+      });
+    }
+
+    function commonYears() {
+      const clinicianYears = new Set(
+        Object.keys(state.clinicianByYear).map(Number).filter(Number.isFinite)
+      );
+      return Object.keys(state.populationByYear)
+        .map(Number)
+        .filter(year => Number.isFinite(year) && clinicianYears.has(year))
+        .sort((a, b) => a - b);
+    }
+
+    function scopeIndices(scope = state.scope) {
+      return SERIES_SCHEMA
+        .map((item, index) => ({ ...item, index }))
+        .filter(item => scope === 'AUS' || item.state === scope)
+        .map(item => item.index);
+    }
+
+    function groupIndices(scope, group) {
+      return scopeIndices(scope).filter(index => {
+        const mmm = SERIES_SCHEMA[index].mmm;
+        if (group === 'metro') return mmm === 1;
+        if (group === 'nonmetro') return mmm >= 2;
+        return true;
+      });
+    }
+
+    function aggregateYear(year, scope = state.scope, group = 'all') {
+      const clinician = state.clinicianByYear[year] || [];
+      const population = state.populationByYear[year] || [];
+      const indices = group === 'all' ? scopeIndices(scope) : groupIndices(scope, group);
+
+      let fte = 0;
+      let people = 0;
+      let hasFte = false;
+      let hasPopulation = false;
+      let incompleteFte = false;
+
+      indices.forEach(index => {
+        const f = clinician[index];
+        const p = population[index];
+
+        if (Number.isFinite(f)) {
+          fte += f;
+          hasFte = true;
+        } else if (Number.isFinite(p) && p > 0) {
+          incompleteFte = true;
+        }
+
+        if (Number.isFinite(p)) {
+          people += p;
+          hasPopulation = true;
+        }
+      });
+
+      return {
+        fte: hasFte && !incompleteFte ? fte : null,
+        population: hasPopulation ? people : null,
+        indices
+      };
+    }
+
+    function latestUsableYear(scope = state.scope) {
+      const years = commonYears();
+      for (let index = years.length - 1; index >= 0; index -= 1) {
+        const year = years[index];
+        const totals = aggregateYear(year, scope, 'all');
+        if (
+          Number.isFinite(totals.fte) &&
+          Number.isFinite(totals.population) &&
+          totals.population > 0
+        ) return year;
+      }
+      return null;
+    }
+
+    function scopeLabel(scope = state.scope) {
+      return scope === 'AUS' ? 'Australia' : (STATE_NAMES[scope] || scope);
+    }
+
+    function buildStateOptions() {
+      stateOptions.innerHTML = '';
+      const options = [
+        { code: 'AUS', label: 'Australia' },
+        ...ALL_STATES.map(code => ({ code, label: STATE_NAMES[code] }))
+      ];
+
+      options.forEach(({ code, label }) => {
+        const option = document.createElement('label');
+        option.className = 'state-option';
+
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'stateScope';
+        input.value = code;
+        input.checked = code === state.scope;
+
+        const box = document.createElement('span');
+        box.className = 'state-option-box';
+        box.setAttribute('aria-hidden', 'true');
+
+        const text = document.createElement('span');
+        text.className = 'state-option-code';
+        text.textContent = code;
+        text.title = label;
+        if (code !== 'AUS') text.style.color = PFF.stateColours[code];
+
+        const name = document.createElement('span');
+        name.textContent = code === 'AUS' ? 'Australia' : label;
+        name.style.color = 'var(--pff-muted)';
+        name.style.fontSize = '10px';
+
+        option.append(input, box, text, name);
+        stateOptions.appendChild(option);
+      });
+    }
+
+    function syncStateFilterUi() {
+      stateButtonValue.textContent = state.scope;
+      stateOptions.querySelectorAll('input[name="stateScope"]').forEach(input => {
+        input.checked = input.value === state.scope;
+      });
+    }
+
+    function setupStateFilter(onChange) {
+      buildStateOptions();
+      syncStateFilterUi();
+
+      stateMenuController = PFF.setupMenu({
+        menu: stateControl,
+        button: stateButton,
+        panel: stateMenu,
+        focusOnOpen: false
+      });
+
+      stateOptions.addEventListener('change', event => {
+        const input = event.target.closest('input[name="stateScope"]');
+        if (!input || !input.checked || input.value === state.scope) return;
+        state.scope = input.value;
+        syncStateFilterUi();
+        stateMenuController?.closeMenu();
+        onChange?.();
+      });
+    }
+
+    function startApp(renderLoaded) {
+      setupStateFilter(() => renderLoaded(true));
+
+      PFF.initialiseApp({
+        app,
+        status: statusEl,
+
+        async loadLive() {
+          loaderText.textContent = 'Loading live State × MMM data…';
+          const [clinicianTable, populationTable] = await Promise.all([
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.clinicianSheet,
+              range: CONFIG.clinicianRange,
+              headers: '2'
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.populationSheet,
+              range: CONFIG.populationRange,
+              headers: '2'
+            })
+          ]);
+          return { clinicianTable, populationTable };
+        },
+
+        parseLive: parseLiveData,
+
+        loadRemoteCache() {
+          loaderText.textContent = 'Loading cached PFF data…';
+          return PFFCharts.loadAppsScriptCache({
+            url: CACHE_WEB_APP_URL,
+            appKey: CACHE_APP_KEY
+          });
+        },
+
+        parseRemoteCache,
+        cacheKey: CONFIG.localCacheKey,
+        minRows: 1,
+
+        onLiveError(error) {
+          console.warn('Live State × MMM data unavailable; trying Apps Script cache.', error);
+        },
+
+        onRemoteCacheError(error) {
+          console.warn('Apps Script State × MMM cache unavailable; trying browser cache.', error);
+        },
+
+        dataSourceOptions: { indicator: liveData, text: liveDataText },
+
+        render(loaded) {
+          applyLoadedRows(loaded.rows);
+          renderLoaded(false);
+
+          chartSummary = PFFCharts.ensureChartSummary({ parent: app });
+          chartCanvas.setAttribute('aria-describedby', chartSummary.id);
+          updateAccessibleSummary();
+
+          interactionsController = PFFCharts.setupChartInteractions({
+            canvas: chartCanvas,
+            getChart() { return chart; }
+          });
+
+          responsiveController = PFFCharts.createResponsiveController({
+            getChart() { return chart; },
+            observe: [app, chartShell],
+            onRefresh() {
+              chart?.resize();
+              chart?.draw();
+            }
+          });
+
+          return chart;
+        },
+
+        onError() { liveData.style.visibility = 'hidden'; },
+        errorMessage: 'Maldistribution data unavailable.'
+      });
+    }
+
+    const shortfallNote = document.getElementById('shortfallNote');
+    const SURPLUS = '#6600ff';
+    const SHORTAGE = '#c25e00';
+    const BENCHMARK = 10000;
+
+    function balanceRows(year, scope = state.scope) {
+      const clinician = state.clinicianByYear[year] || [];
+      const population = state.populationByYear[year] || [];
+      const indices = scopeIndices(scope);
+      const rows = [];
+
+      for (let mmm = 1; mmm <= 7; mmm += 1) {
+        const relevant = indices.filter(index => SERIES_SCHEMA[index].mmm === mmm);
+        if (!relevant.length) continue;
+
+        let fte = 0;
+        let people = 0;
+        let hasFte = false;
+        let hasPopulation = false;
+        let incomplete = false;
+
+        relevant.forEach(index => {
+          const f = clinician[index];
+          const p = population[index];
+          if (Number.isFinite(f)) { fte += f; hasFte = true; }
+          else if (Number.isFinite(p) && p > 0) incomplete = true;
+          if (Number.isFinite(p)) { people += p; hasPopulation = true; }
+        });
+
+        if (!hasPopulation || people <= 0 || !hasFte || incomplete) continue;
+        const required = people / BENCHMARK;
+        rows.push({
+          mmm,
+          label: `MM${mmm}`,
+          fte,
+          population: people,
+          required,
+          balance: fte - required
+        });
+      }
+
+      return rows;
+    }
+
+    function niceSymmetricLimit(values) {
+      const maxAbs = Math.max(1, ...values.filter(Number.isFinite).map(value => Math.abs(value)));
+      const target = maxAbs * 1.18;
+      const magnitude = 10 ** Math.floor(Math.log10(target));
+      const normalised = target / magnitude;
+      const nice = normalised <= 1 ? 1 : normalised <= 2 ? 2 : normalised <= 5 ? 5 : 10;
+      return nice * magnitude;
+    }
+
+    const zeroLinePlugin = {
+      id: 'pffBalanceZeroLine',
+      beforeDatasetsDraw(chartInstance) {
+        const { ctx, chartArea, scales } = chartInstance;
+        if (!chartArea || !scales?.x) return;
+        const x = scales.x.getPixelForValue(0);
+        ctx.save();
+        ctx.strokeStyle = '#151515';
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.72;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+        ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+        ctx.stroke();
+        ctx.restore();
+      }
+    };
+
+    const valueLabelsPlugin = {
+      id: 'pffBalanceValueLabels',
+      afterDatasetsDraw(chartInstance) {
+        const meta = chartInstance.getDatasetMeta(0);
+        const dataset = chartInstance.data.datasets[0];
+        const { ctx, chartArea } = chartInstance;
+        if (!meta || !chartArea) return;
+        ctx.save();
+        ctx.font = `700 ${PFFCharts.mobileLayout() ? 9 : 10}px Lato`;
+        ctx.textBaseline = 'middle';
+
+        meta.data.forEach((bar, index) => {
+          const value = Number(dataset.data[index]);
+          if (!Number.isFinite(value)) return;
+          const props = bar.getProps(['x', 'base', 'y'], true);
+          const text = `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(1)}`;
+          const positive = value >= 0;
+          let x = props.x + (positive ? 5 : -5);
+          ctx.textAlign = positive ? 'left' : 'right';
+          const width = ctx.measureText(text).width;
+          if (positive && x + width > chartArea.right) {
+            x = props.x - 5;
+            ctx.textAlign = 'right';
+          }
+          if (!positive && x - width < chartArea.left) {
+            x = props.x + 5;
+            ctx.textAlign = 'left';
+          }
+          ctx.fillStyle = positive ? SURPLUS : SHORTAGE;
+          ctx.fillText(text, x, props.y);
+        });
+        ctx.restore();
+      }
+    };
+
+    function chartOptions(rows) {
+      const limit = niceSymmetricLimit(rows.map(row => row.balance));
+      return PFFCharts.baseChartOptions({
+        indexAxis: 'y',
+        interaction: { mode: 'nearest', axis: 'y', intersect: true },
+        layout: { padding: { top: 7, right: 20, bottom: 1, left: 0 } },
+        plugins: {
+          tooltip: PFFCharts.tooltipOptions({
+            callbacks: {
+              title(items) { return items?.[0]?.label || ''; },
+              label(context) {
+                const row = rows[context.dataIndex];
+                if (!row) return '';
+                const label = row.balance >= 0 ? 'Surplus' : 'Shortage';
+                return [
+                  `${label}: ${Math.abs(row.balance).toFixed(1)} FTE`,
+                  `Actual: ${row.fte.toFixed(1)} FTE`,
+                  `1 / 10k benchmark: ${row.required.toFixed(1)} FTE`
+                ];
+              }
+            }
+          })
+        },
+        scales: {
+          x: {
+            min: -limit,
+            max: limit,
+            grid: { color: '#e8eaf0', drawTicks: false },
+            border: { display: false },
+            ticks: {
+              color: '#69718a',
+              padding: 5,
+              maxTicksLimit: 7,
+              callback(value) {
+                const number = Number(value);
+                if (!Number.isFinite(number)) return '';
+                return number === 0 ? '0' : `${number > 0 ? '+' : '−'}${PFFCharts.formatAxisValue(Math.abs(number), Math.abs(number) < 10 ? 1 : 0)}`;
+              },
+              font: { family: 'Lato', size: PFFCharts.mobileLayout() ? 9 : 10 }
+            },
+            title: {
+              display: true,
+              text: 'FTE balance',
+              color: '#151515',
+              padding: { top: 3 },
+              font: { family: 'Lato', size: PFFCharts.mobileLayout() ? 11 : 12, weight: '700' }
+            }
+          },
+          y: {
+            grid: { display: false },
+            border: { display: false },
+            ticks: {
+              color: '#151515',
+              padding: 6,
+              font: { family: 'Lato', size: PFFCharts.mobileLayout() ? 10 : 11, weight: '700' }
+            }
+          }
+        }
+      });
+    }
+
+    function updateAccessibleSummary() {
+      if (!chartSummary || !chart?._rows?.length) return;
+      const rows = chart._rows;
+      const shortages = rows.filter(row => row.balance < 0);
+      const shortageFte = shortages.reduce((sum, row) => sum + Math.abs(row.balance), 0);
+      PFFCharts.updateChartSummary(
+        `${scopeLabel()} in ${chart._year}. FTE balance is calculated against a one-clinician-FTE-per-10,000-people benchmark. ${shortages.length ? `Combined shortage across MMM categories below benchmark was ${shortageFte.toFixed(1)} FTE.` : 'No MMM category was below the benchmark.'}`,
+        chartSummary
+      );
+    }
+
+    function renderLoaded(animate = true) {
+      if (!Object.keys(state.clinicianByYear).length) return;
+      const year = latestUsableYear();
+      const rows = balanceRows(year);
+      if (!rows.length) throw new Error(`No usable MMM balance data for ${scopeLabel()}.`);
+
+      chartHeading.textContent = `FTE balance by MMM (${year})`;
+      const shortages = rows.filter(row => row.balance < 0);
+      const shortageFte = shortages.reduce((sum, row) => sum + Math.abs(row.balance), 0);
+      shortfallNote.innerHTML = shortages.length
+        ? `<strong>Combined shortfall:</strong> ${shortageFte.toFixed(1)} FTE across ${shortages.map(row => row.label).join(', ')}.`
+        : '<strong>Combined shortfall:</strong> none at the 1 / 10k benchmark.';
+
+      const dataset = {
+        label: 'FTE balance',
+        data: rows.map(row => row.balance),
+        backgroundColor: rows.map(row => row.balance >= 0 ? SURPLUS : SHORTAGE),
+        borderColor: rows.map(row => row.balance >= 0 ? SURPLUS : SHORTAGE),
+        borderWidth: 0,
+        barPercentage: 0.66,
+        categoryPercentage: 0.78
+      };
+      const options = chartOptions(rows);
+
+      if (!chart) {
+        chart = new Chart(chartCanvas.getContext('2d'), {
+          type: 'bar',
+          data: { labels: rows.map(row => row.label), datasets: [dataset] },
+          options,
+          plugins: [zeroLinePlugin, valueLabelsPlugin]
+        });
+      } else {
+        chart.data.labels = rows.map(row => row.label);
+        chart.data.datasets = [dataset];
+        chart.options.scales.x.min = options.scales.x.min;
+        chart.options.scales.x.max = options.scales.x.max;
+        chart.options.animation.duration = animate ? PFFCharts.chartAnimationDuration() : 0;
+        chart.options.animation.easing = 'easeInOutCubic';
+        chart.update();
+      }
+
+      chart._rows = rows;
+      chart._year = year;
+      updateAccessibleSummary();
+    }
+
+    startApp(renderLoaded);
+  </script>
+</body>
+</html>
