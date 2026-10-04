@@ -5562,10 +5562,17 @@
     let activeSuggestionIndex = -1;
     let suggestionViewportFrame = null;
     let mobileSearchHasAutoPositioned = false;
+    let mobileSearchAutoPositionInFlight = false;
+    let mobileSearchAutoPositionAttempts = 0;
     let mobileSearchAutoPositionTimers = [];
     const MOBILE_SEARCH_TOP_GAP_PX = 8;
     const MOBILE_SEARCH_POSITION_TOLERANCE_PX = 8;
     const MOBILE_SEARCH_SETTLE_MS = 420;
+    const MOBILE_SEARCH_VERIFY_INTERVAL_MS = 120;
+    const MOBILE_SEARCH_STALL_DELTA_PX = 2;
+    const MOBILE_SEARCH_STALL_CHECKS = 2;
+    const MOBILE_SEARCH_MAX_SMOOTH_SCROLL_MS = 1600;
+    const MOBILE_SEARCH_MAX_ATTEMPTS = 4;
     let suggestionPointerState = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
@@ -9963,9 +9970,15 @@
       mobileSearchAutoPositionTimers = [];
     }
 
-    function resetMobileSearchAutoPosition() {
-      mobileSearchHasAutoPositioned = false;
+    function cancelMobileSearchAutoPositionAttempt() {
       clearMobileSearchAutoPositionTimers();
+      mobileSearchAutoPositionInFlight = false;
+    }
+
+    function resetMobileSearchAutoPosition() {
+      cancelMobileSearchAutoPositionAttempt();
+      mobileSearchHasAutoPositioned = false;
+      mobileSearchAutoPositionAttempts = 0;
     }
 
     function shouldAutoPositionMobileSearch() {
@@ -9978,6 +9991,82 @@
         Boolean(searchWrap) &&
         isLikelyMobileKeyboardOpen()
       );
+    }
+
+    function completeMobileSearchAutoPosition() {
+      mobileSearchHasAutoPositioned = true;
+      cancelMobileSearchAutoPositionAttempt();
+    }
+
+    function verifyMobileSearchAutoPosition(
+      previousDistance,
+      stalledChecks,
+      startedAt
+    ) {
+      if (!mobileSearchAutoPositionInFlight) {
+        return;
+      }
+
+      if (!shouldAutoPositionMobileSearch()) {
+        cancelMobileSearchAutoPositionAttempt();
+        return;
+      }
+
+      const viewport = window.visualViewport;
+      if (!viewport) {
+        cancelMobileSearchAutoPositionAttempt();
+        return;
+      }
+
+      const searchRect = searchWrap.getBoundingClientRect();
+      const desiredTop = viewport.offsetTop + MOBILE_SEARCH_TOP_GAP_PX;
+      const distance = Math.abs(searchRect.top - desiredTop);
+
+      if (distance <= MOBILE_SEARCH_POSITION_TOLERANCE_PX) {
+        completeMobileSearchAutoPosition();
+        return;
+      }
+
+      const progress = previousDistance - distance;
+      const nextStalledChecks =
+        progress >= MOBILE_SEARCH_STALL_DELTA_PX
+          ? 0
+          : stalledChecks + 1;
+      const elapsed = performance.now() - startedAt;
+
+      /* Keep observing while the browser's smooth scroll is genuinely
+       * progressing. Retry only after it has stalled outside the target
+       * area (for example because typing or keyboard movement interrupted
+       * it), rather than assuming a fixed animation duration. */
+      if (
+        nextStalledChecks >= MOBILE_SEARCH_STALL_CHECKS ||
+        elapsed >= MOBILE_SEARCH_MAX_SMOOTH_SCROLL_MS
+      ) {
+        cancelMobileSearchAutoPositionAttempt();
+
+        if (
+          mobileSearchAutoPositionAttempts < MOBILE_SEARCH_MAX_ATTEMPTS
+        ) {
+          const retryTimer = window.setTimeout(
+            autoPositionMobileSearchOnce,
+            MOBILE_SEARCH_VERIFY_INTERVAL_MS
+          );
+          mobileSearchAutoPositionTimers.push(retryTimer);
+        }
+        return;
+      }
+
+      const verifyTimer = window.setTimeout(
+        () => {
+          verifyMobileSearchAutoPosition(
+            distance,
+            nextStalledChecks,
+            startedAt
+          );
+        },
+        MOBILE_SEARCH_VERIFY_INTERVAL_MS
+      );
+      mobileSearchAutoPositionTimers.push(verifyTimer);
     }
 
     function autoPositionMobileSearchOnce() {
@@ -9994,31 +10083,64 @@
       const desiredTop = viewport.offsetTop + MOBILE_SEARCH_TOP_GAP_PX;
       const scrollAmount = searchRect.top - desiredTop;
 
-      /* Treat this search as positioned as soon as the keyboard is ready.
-       * From this point, suggestion count changes, viewport changes and
-       * further typing cannot move the page again. */
-      mobileSearchHasAutoPositioned = true;
+      /* Consider the search positioned only when it is actually close to
+       * the target from either direction. */
+      if (
+        Math.abs(scrollAmount) <=
+        MOBILE_SEARCH_POSITION_TOLERANCE_PX
+      ) {
+        completeMobileSearchAutoPosition();
+        return;
+      }
+
+      if (
+        mobileSearchAutoPositionInFlight ||
+        mobileSearchAutoPositionAttempts >= MOBILE_SEARCH_MAX_ATTEMPTS
+      ) {
+        return;
+      }
+
+      mobileSearchAutoPositionInFlight = true;
+      mobileSearchAutoPositionAttempts += 1;
       clearMobileSearchAutoPositionTimers();
 
-      if (scrollAmount > MOBILE_SEARCH_POSITION_TOLERANCE_PX) {
-        window.scrollBy({
-          top: scrollAmount,
-          left: 0,
-          behavior: 'smooth'
-        });
-      }
+      const startedAt = performance.now();
+      const startingDistance = Math.abs(scrollAmount);
+
+      window.scrollBy({
+        top: scrollAmount,
+        left: 0,
+        behavior: 'smooth'
+      });
+
+      const verifyTimer = window.setTimeout(
+        () => {
+          verifyMobileSearchAutoPosition(
+            startingDistance,
+            0,
+            startedAt
+          );
+        },
+        MOBILE_SEARCH_VERIFY_INTERVAL_MS
+      );
+      mobileSearchAutoPositionTimers.push(verifyTimer);
     }
 
     function scheduleMobileSearchAutoPosition() {
-      if (mobileSearchHasAutoPositioned) {
+      if (
+        mobileSearchHasAutoPositioned ||
+        mobileSearchAutoPositionInFlight ||
+        mobileSearchAutoPositionAttempts >= MOBILE_SEARCH_MAX_ATTEMPTS
+      ) {
         return;
       }
 
       clearMobileSearchAutoPositionTimers();
 
       /* The first check often runs before the mobile keyboard has finished
-       * opening. Retry briefly while it settles, but stop permanently for
-       * this search immediately after the first successful position. */
+       * opening. Retry briefly while it settles. Once scrolling begins,
+       * separate verification checks decide whether the target was reached
+       * or whether an interrupted smooth scroll needs a bounded retry. */
       [0, 80, 220, MOBILE_SEARCH_SETTLE_MS].forEach(
         delay => {
           const timerId = window.setTimeout(
@@ -10042,7 +10164,7 @@
     }
 
     function hideLocationSuggestions() {
-      clearMobileSearchAutoPositionTimers();
+      cancelMobileSearchAutoPositionAttempt();
 
       locationSuggestions.classList.remove(
         'is-visible'
