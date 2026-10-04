@@ -5567,7 +5567,7 @@
     let mobileSearchAutoPositionTimer = null;
     const MOBILE_SEARCH_TOP_GAP_PX = 8;
     const MOBILE_SEARCH_POSITION_TOLERANCE_PX = 8;
-    const MOBILE_SEARCH_AUTO_POSITION_DELAY_MS = 400;
+    const MOBILE_SEARCH_VIEWPORT_SETTLE_MS = 150;
     let suggestionPointerState = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
@@ -9925,39 +9925,6 @@
         `${Math.min(232, Math.floor(availableHeight))}px`;
     }
 
-    function isLikelyMobileKeyboardOpen() {
-      const viewport = window.visualViewport;
-      if (!viewport) {
-        return false;
-      }
-
-      const hasTouchInput =
-        navigator.maxTouchPoints > 0 ||
-        window.matchMedia('(pointer: coarse)').matches;
-
-      if (!hasTouchInput) {
-        return false;
-      }
-
-      const layoutHeight = Math.max(
-        window.innerHeight || 0,
-        document.documentElement?.clientHeight || 0
-      );
-      const viewportReduction = layoutHeight - viewport.height;
-      const screenHeight = window.screen?.height || 0;
-
-      /* Most mobile browsers leave the layout viewport taller than the
-       * visual viewport while the keyboard is open. The screen-height
-       * fallback also covers browsers that resize both viewports together. */
-      return (
-        viewportReduction >= 80 ||
-        (
-          screenHeight > 0 &&
-          viewport.height <= screenHeight * 0.78
-        )
-      );
-    }
-
     function clearMobileSearchAutoPositionTimer() {
       if (mobileSearchAutoPositionTimer !== null) {
         window.clearTimeout(mobileSearchAutoPositionTimer);
@@ -10011,23 +9978,41 @@
       });
     }
 
-    function scheduleMobileSearchAutoPosition() {
+    function scheduleMobileSearchAutoPosition({ restart = false } = {}) {
       if (
         mobileSearchHasAutoPositioned ||
-        mobileSearchAutoPositionTimer !== null ||
         !window.matchMedia('(max-width: 700px)').matches ||
         !cleanText(searchInput.value)
       ) {
         return;
       }
 
-      /* Start this once from the first non-empty input. Do not debounce it:
-       * fast typing must not postpone the movement. The short fixed delay
-       * gives the mobile keyboard/browser viewport time to settle first. */
+      /* The first non-empty input arms one automatic movement. Continued
+       * typing does not restart the timer. Only actual visual-viewport
+       * movement (for example, the keyboard settling) postpones it. */
+      if (mobileSearchAutoPositionTimer !== null) {
+        if (!restart) {
+          return;
+        }
+
+        clearMobileSearchAutoPositionTimer();
+      }
+
       mobileSearchAutoPositionTimer = window.setTimeout(
         autoPositionMobileSearchOnce,
-        MOBILE_SEARCH_AUTO_POSITION_DELAY_MS
+        MOBILE_SEARCH_VIEWPORT_SETTLE_MS
       );
+    }
+
+    function handleMobileSearchVisualViewportChange() {
+      scheduleSearchSuggestionViewportUpdate();
+
+      /* While the one-time search movement is still pending, wait until
+       * the keyboard/visual viewport has been stable briefly. Once the
+       * search has moved, viewport events can never reposition it. */
+      if (mobileSearchAutoPositionTimer !== null) {
+        scheduleMobileSearchAutoPosition({ restart: true });
+      }
     }
 
     function scheduleSearchSuggestionViewportUpdate() {
@@ -14640,12 +14625,12 @@
       if (window.visualViewport) {
         window.visualViewport.addEventListener(
           'resize',
-          scheduleSearchSuggestionViewportUpdate
+          handleMobileSearchVisualViewportChange
         );
 
         window.visualViewport.addEventListener(
           'scroll',
-          scheduleSearchSuggestionViewportUpdate
+          handleMobileSearchVisualViewportChange
         );
       }
 
