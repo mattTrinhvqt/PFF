@@ -220,13 +220,13 @@
       <div id="chartShell" class="chart-shell">
         <canvas
           id="ruralityChart"
-          aria-label="Population and clinician proportions by rurality"
+          aria-label="Clinician and population proportions by rurality"
           role="img"
         ></canvas>
       </div>
 
       <p class="method-note">
-        Metro (MM1) vs non-metro (MM2–MM7) distribution by population (<em>top</em>) and clinicians (<em>bottom</em>)
+        Metro (MM1) vs non-metro (MM2–MM7) distribution by supply (clinicians, <em>top</em>) and demand (population, <em>bottom</em>)
       </p>
     </main>
   </div>
@@ -1204,7 +1204,7 @@
           const properties =
             element.getProps(
               ['x', 'base', 'y', 'height'],
-              true
+              false
             );
 
           if (
@@ -1587,20 +1587,10 @@
               );
 
             meta.data.forEach((bar, index) => {
-              const value =
-                Number(dataset.data[index]);
-
-              if (
-                !Number.isFinite(value) ||
-                value < 6
-              ) {
-                return;
-              }
-
               const properties =
                 bar.getProps(
                   ['x', 'base', 'y'],
-                  true
+                  false
                 );
 
               const left =
@@ -1615,12 +1605,25 @@
                   properties.base
                 );
 
-              if (right - left < 30) {
+              const plotWidth =
+                chartInstance.chartArea.right -
+                chartInstance.chartArea.left;
+
+              const renderedValue =
+                plotWidth > 0
+                  ? ((right - left) / plotWidth) * 100
+                  : Number(dataset.data[index]);
+
+              if (
+                !Number.isFinite(renderedValue) ||
+                renderedValue < 6 ||
+                right - left < 30
+              ) {
                 return;
               }
 
               context.fillText(
-                formatPercent(value),
+                formatPercent(renderedValue),
                 (left + right) / 2,
                 properties.y
               );
@@ -1648,12 +1651,12 @@
 
             const rawText =
               rowIndex === 0
-                ? PFFCharts.formatCompactNumber(
+                ? `${PFFCharts.formatInteger(
                     Math.round(raw || 0)
-                  )
-                : `${PFFCharts.formatInteger(
+                  )} clinicians`
+                : PFFCharts.formatCompactNumber(
                     Math.round(raw || 0)
-                  )} clinicians`;
+                  );
 
             return `${item.dataset.label}: ${formatPercent(item.raw)} · ${rawText}`;
           },
@@ -1684,6 +1687,10 @@
 
         animations: {
           x: {
+            duration,
+            easing: 'easeInOutCubic'
+          },
+          base: {
             duration,
             easing: 'easeInOutCubic'
           },
@@ -1797,12 +1804,12 @@
         {
           label: 'Metro',
           data: [
-            distribution.metroPopulationPct,
-            distribution.metroClinicianPct
+            distribution.metroClinicianPct,
+            distribution.metroPopulationPct
           ],
           _rawValues: [
-            distribution.metroPopulation,
-            distribution.metroClinicians
+            distribution.metroClinicians,
+            distribution.metroPopulation
           ],
           backgroundColor: METRO_COLOUR,
           hoverBackgroundColor: METRO_COLOUR,
@@ -1818,12 +1825,12 @@
         {
           label: 'Non-metro',
           data: [
-            distribution.nonMetroPopulationPct,
-            distribution.nonMetroClinicianPct
+            distribution.nonMetroClinicianPct,
+            distribution.nonMetroPopulationPct
           ],
           _rawValues: [
-            distribution.nonMetroPopulation,
-            distribution.nonMetroClinicians
+            distribution.nonMetroClinicians,
+            distribution.nonMetroPopulation
           ],
           backgroundColor: NON_METRO_COLOUR,
           hoverBackgroundColor: NON_METRO_COLOUR,
@@ -1837,6 +1844,35 @@
           categoryPercentage: 0.82
         }
       ];
+    }
+
+    function morphDatasetsTo(distribution) {
+      const nextDatasets =
+        datasetsFor(distribution);
+
+      nextDatasets.forEach(
+        (nextDataset, datasetIndex) => {
+          const currentDataset =
+            chart.data.datasets[datasetIndex];
+
+          if (!currentDataset) {
+            chart.data.datasets.push(
+              nextDataset
+            );
+            return;
+          }
+
+          nextDataset.data.forEach(
+            (value, dataIndex) => {
+              currentDataset.data[dataIndex] =
+                value;
+            }
+          );
+
+          currentDataset._rawValues =
+            nextDataset._rawValues.slice();
+        }
+      );
     }
 
     function updateAccessibleSummary() {
@@ -1892,8 +1928,8 @@
               type: 'bar',
               data: {
                 labels: [
-                  'Population',
-                  'Clinicians'
+                  'Clinicians',
+                  'Population'
                 ],
                 datasets
               },
@@ -1912,8 +1948,10 @@
             ? CONFIG.barTransitionMs
             : 0;
 
-        chart.data.datasets =
-          datasets;
+        // Keep the existing Chart.js dataset and bar elements so the
+        // state change morphs from the previous proportions instead of
+        // redrawing each stack from zero.
+        morphDatasetsTo(distribution);
 
         chart.options.animation.duration =
           duration;
@@ -1923,6 +1961,11 @@
 
         if (chart.options.animations?.x) {
           chart.options.animations.x.duration =
+            duration;
+        }
+
+        if (chart.options.animations?.base) {
+          chart.options.animations.base.duration =
             duration;
         }
 
