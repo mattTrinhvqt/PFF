@@ -3809,7 +3809,7 @@
       }
 
       .eat-data-note {
-        font-size: 7.2px;
+        font-size: clamp(6.6px, 2vw, 7.2px);
         line-height: 1.16;
       }
 
@@ -4431,8 +4431,7 @@
             </div>
             <div class="eat-title-rule" aria-hidden="true"></div>
             <div class="eat-data-note">
-              <span>Data last updated 13/05/2026 from Google Places (Google Maps)</span>
-              <span>Does something need updating? <a id="adminEmailLink" class="eat-admin-email-link contact-email-action" href="#" data-contact-key="admin:email" data-admin-contact="email" data-action-tooltip="email" aria-label="Reveal admin email address; activate again to send email"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg><span>Email us</span></a></span>
+              <span>Last updated 13/05/2026 from Google Services <span aria-hidden="true">·</span> Anything need updating? <a id="adminEmailLink" class="eat-admin-email-link contact-email-action" href="#" data-contact-key="admin:email" data-admin-contact="email" data-action-tooltip="email" aria-label="Reveal admin email address; activate again to send email"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg><span>Email us</span></a></span>
             </div>
           </div>
 
@@ -5565,9 +5564,15 @@
     let suggestionViewportFrame = null;
     let mobileSearchHasAutoPositioned = false;
     let mobileSearchAutoPositionTimer = null;
+    let mobileSearchCorrectionTimer = null;
+    let mobileSearchLastInputAt = 0;
+    let mobileSearchInitialScrollAt = 0;
+    let mobileSearchCorrectionFinished = false;
     const MOBILE_SEARCH_TOP_GAP_PX = 8;
-    const MOBILE_SEARCH_POSITION_TOLERANCE_PX = 8;
+    const MOBILE_SEARCH_POSITION_TOLERANCE_PX = 15;
     const MOBILE_SEARCH_VIEWPORT_SETTLE_MS = 150;
+    const MOBILE_SEARCH_TYPING_IDLE_MS = 600;
+    const MOBILE_SEARCH_POST_SCROLL_GRACE_MS = 450;
     let suggestionPointerState = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
@@ -9932,9 +9937,20 @@
       }
     }
 
+    function clearMobileSearchCorrectionTimer() {
+      if (mobileSearchCorrectionTimer !== null) {
+        window.clearTimeout(mobileSearchCorrectionTimer);
+        mobileSearchCorrectionTimer = null;
+      }
+    }
+
     function resetMobileSearchAutoPosition() {
       clearMobileSearchAutoPositionTimer();
+      clearMobileSearchCorrectionTimer();
       mobileSearchHasAutoPositioned = false;
+      mobileSearchLastInputAt = 0;
+      mobileSearchInitialScrollAt = 0;
+      mobileSearchCorrectionFinished = false;
     }
 
     function shouldAutoPositionMobileSearch() {
@@ -9945,6 +9961,98 @@
         Boolean(cleanText(searchInput.value)) &&
         Boolean(searchWrap)
       );
+    }
+
+    function canCorrectMobileSearchPosition() {
+      return (
+        mobileSearchHasAutoPositioned &&
+        !mobileSearchCorrectionFinished &&
+        window.matchMedia('(max-width: 700px)').matches &&
+        document.activeElement === searchInput &&
+        Boolean(cleanText(searchInput.value)) &&
+        Boolean(searchWrap)
+      );
+    }
+
+    function runMobileSearchCorrectionCheck() {
+      mobileSearchCorrectionTimer = null;
+
+      if (!canCorrectMobileSearchPosition()) {
+        if (mobileSearchHasAutoPositioned) {
+          mobileSearchCorrectionFinished = true;
+        }
+        return;
+      }
+
+      const now = performance.now();
+      const idleFor = now - mobileSearchLastInputAt;
+      const sinceInitialScroll = now - mobileSearchInitialScrollAt;
+      const remainingIdle = MOBILE_SEARCH_TYPING_IDLE_MS - idleFor;
+      const remainingGrace =
+        MOBILE_SEARCH_POST_SCROLL_GRACE_MS - sinceInitialScroll;
+
+      if (remainingIdle > 0 || remainingGrace > 0) {
+        mobileSearchCorrectionTimer = window.setTimeout(
+          runMobileSearchCorrectionCheck,
+          Math.max(0, remainingIdle, remainingGrace)
+        );
+        return;
+      }
+
+      const viewport = window.visualViewport;
+      const searchRect = searchWrap.getBoundingClientRect();
+      const desiredTop =
+        (viewport?.offsetTop || 0) + MOBILE_SEARCH_TOP_GAP_PX;
+      const downwardDisplacement = searchRect.top - desiredTop;
+
+      /* At most one corrective movement is allowed. Ignore tiny offsets or
+       * cases where the browser has left the search at/above the target. */
+      mobileSearchCorrectionFinished = true;
+
+      if (
+        downwardDisplacement <=
+        MOBILE_SEARCH_POSITION_TOLERANCE_PX
+      ) {
+        return;
+      }
+
+      window.scrollBy({
+        top: downwardDisplacement,
+        left: 0,
+        behavior: 'smooth'
+      });
+    }
+
+    function scheduleMobileSearchCorrectionCheck() {
+      clearMobileSearchCorrectionTimer();
+
+      if (!canCorrectMobileSearchPosition()) {
+        return;
+      }
+
+      const now = performance.now();
+      const idleFor = now - mobileSearchLastInputAt;
+      const sinceInitialScroll = now - mobileSearchInitialScrollAt;
+      mobileSearchCorrectionTimer = window.setTimeout(
+        runMobileSearchCorrectionCheck,
+        Math.max(
+          0,
+          MOBILE_SEARCH_TYPING_IDLE_MS - idleFor,
+          MOBILE_SEARCH_POST_SCROLL_GRACE_MS - sinceInitialScroll
+        )
+      );
+    }
+
+    function cancelMobileSearchCorrectionForUserNavigation() {
+      if (
+        !mobileSearchHasAutoPositioned ||
+        mobileSearchCorrectionFinished
+      ) {
+        return;
+      }
+
+      clearMobileSearchCorrectionTimer();
+      mobileSearchCorrectionFinished = true;
     }
 
     function autoPositionMobileSearchOnce() {
@@ -9960,22 +10068,24 @@
         (viewport?.offsetTop || 0) + MOBILE_SEARCH_TOP_GAP_PX;
       const scrollAmount = searchRect.top - desiredTop;
 
-      /* This search gets one automatic movement only. Subsequent typing,
-       * suggestion changes and viewport changes must not move it again. */
+      /* The first movement happens once after the keyboard/viewport settles.
+       * A separate idle check may make one correction if later typing causes
+       * the browser to push the focused search field back down. */
       mobileSearchHasAutoPositioned = true;
+      mobileSearchInitialScrollAt = performance.now();
 
       if (
-        Math.abs(scrollAmount) <=
+        Math.abs(scrollAmount) >
         MOBILE_SEARCH_POSITION_TOLERANCE_PX
       ) {
-        return;
+        window.scrollBy({
+          top: scrollAmount,
+          left: 0,
+          behavior: 'smooth'
+        });
       }
 
-      window.scrollBy({
-        top: scrollAmount,
-        left: 0,
-        behavior: 'smooth'
-      });
+      scheduleMobileSearchCorrectionCheck();
     }
 
     function scheduleMobileSearchAutoPosition({ restart = false } = {}) {
@@ -9988,8 +10098,8 @@
       }
 
       /* The first non-empty input arms one automatic movement. Continued
-       * typing does not restart the timer. Only actual visual-viewport
-       * movement (for example, the keyboard settling) postpones it. */
+       * typing does not restart it; only visual-viewport movement while the
+       * keyboard settles postpones the initial scroll. */
       if (mobileSearchAutoPositionTimer !== null) {
         if (!restart) {
           return;
@@ -10007,9 +10117,8 @@
     function handleMobileSearchVisualViewportChange() {
       scheduleSearchSuggestionViewportUpdate();
 
-      /* While the one-time search movement is still pending, wait until
-       * the keyboard/visual viewport has been stable briefly. Once the
-       * search has moved, viewport events can never reposition it. */
+      /* Viewport changes only postpone the still-pending initial movement.
+       * They never trigger or repeat the later corrective movement. */
       if (mobileSearchAutoPositionTimer !== null) {
         scheduleMobileSearchAutoPosition({ restart: true });
       }
@@ -14360,7 +14469,9 @@
           if (!cleanText(searchInput.value)) {
             resetMobileSearchAutoPosition();
           } else {
+            mobileSearchLastInputAt = performance.now();
             scheduleMobileSearchAutoPosition();
+            scheduleMobileSearchCorrectionCheck();
           }
 
           clearTimeout(searchTimer);
@@ -14633,6 +14744,18 @@
           handleMobileSearchVisualViewportChange
         );
       }
+
+      document.addEventListener(
+        'touchmove',
+        cancelMobileSearchCorrectionForUserNavigation,
+        { passive: true }
+      );
+
+      document.addEventListener(
+        'wheel',
+        cancelMobileSearchCorrectionForUserNavigation,
+        { passive: true }
+      );
 
       window.addEventListener(
         'resize',
