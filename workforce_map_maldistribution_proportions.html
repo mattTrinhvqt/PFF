@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PFF Supply vs demand</title>
+  <title>PFF Distribution gap</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
@@ -146,7 +146,7 @@
           <div
             class="tab-list"
             role="tablist"
-            aria-label="Supply vs demand chart"
+            aria-label="Distribution gap chart"
           >
             <button
               class="chart-tab is-active"
@@ -154,7 +154,7 @@
               role="tab"
               aria-selected="true"
               tabindex="0"
-            >Supply vs demand</button>
+            >Distribution gap</button>
           </div>
         </div>
 
@@ -174,7 +174,7 @@
       <div class="chart-heading-row">
         <div class="heading-scroll-shell">
           <div class="heading-scroll-viewport">
-            <h2 class="chart-heading">Maldistribution by rurality</h2>
+            <h2 class="chart-heading">Supply vs demand by rurality</h2>
           </div>
         </div>
 
@@ -344,6 +344,9 @@
 
     const AUSTRALIA_OUTLINE =
       '#69718a';
+
+    const DISTRIBUTION_GAP_COLOUR =
+      '#6600ff';
 
     const CHART_RIGHT_GUTTER = 7;
 
@@ -1611,6 +1614,269 @@
       }
     };
 
+    const distributionGapPlugin = {
+      id: 'pffRuralityDistributionGap',
+
+      afterDatasetsDraw(chartInstance) {
+        const geometry =
+          chartInstance.chartArea;
+
+        const metroMeta =
+          chartInstance.getDatasetMeta(0);
+
+        const clinicianBar =
+          metroMeta?.data?.[0];
+
+        const populationBar =
+          metroMeta?.data?.[1];
+
+        if (
+          !geometry ||
+          !clinicianBar ||
+          !populationBar
+        ) {
+          return;
+        }
+
+        const clinician =
+          clinicianBar.getProps(
+            ['x', 'y', 'height'],
+            false
+          );
+
+        const population =
+          populationBar.getProps(
+            ['x', 'y', 'height'],
+            false
+          );
+
+        if (
+          ![
+            clinician.x,
+            clinician.y,
+            population.x,
+            population.y
+          ].every(Number.isFinite)
+        ) {
+          return;
+        }
+
+        const plotWidth =
+          geometry.right -
+          geometry.left;
+
+        if (!(plotWidth > 0)) {
+          return;
+        }
+
+        const gapPp =
+          Math.abs(
+            clinician.x -
+            population.x
+          ) / plotWidth * 100;
+
+        if (!Number.isFinite(gapPp)) {
+          return;
+        }
+
+        const top =
+          clinician.y < population.y
+            ? clinician
+            : population;
+
+        const bottom =
+          clinician.y < population.y
+            ? population
+            : clinician;
+
+        const xFirst =
+          Math.min(
+            clinician.x,
+            population.x
+          );
+
+        const xSecond =
+          Math.max(
+            clinician.x,
+            population.x
+          );
+
+        const yBracket =
+          (top.y + bottom.y) / 2;
+
+        const topEdge =
+          top.y +
+          (Number(top.height) || 0) / 2;
+
+        const bottomEdge =
+          bottom.y -
+          (Number(bottom.height) || 0) / 2;
+
+        const context =
+          chartInstance.ctx;
+
+        const mobile =
+          PFF.mobileLayout();
+
+        const fontSize =
+          mobile ? 8.7 : 9.5;
+
+        const label =
+          `${PFF.formatNumber(gapPp, 1)} pp gap`;
+
+        const pillHeight =
+          mobile ? 15 : 17;
+
+        const pillPadX =
+          mobile ? 4 : 5;
+
+        context.save();
+        context.lineCap = 'round';
+
+        // Subtle guides connect each bar's Metro/non-metro boundary
+        // to the measurement bracket in the whitespace between rows.
+        context.strokeStyle =
+          'rgba(102, 0, 255, 0.28)';
+
+        context.lineWidth =
+          mobile ? 0.9 : 1;
+
+        context.setLineDash([2, 2]);
+        context.beginPath();
+        context.moveTo(
+          clinician.x,
+          top === clinician
+            ? topEdge
+            : bottomEdge
+        );
+        context.lineTo(
+          clinician.x,
+          yBracket
+        );
+        context.moveTo(
+          population.x,
+          top === population
+            ? topEdge
+            : bottomEdge
+        );
+        context.lineTo(
+          population.x,
+          yBracket
+        );
+        context.stroke();
+
+        // Solid bracket measures the absolute percentage-point gap.
+        context.setLineDash([]);
+        context.strokeStyle =
+          'rgba(102, 0, 255, 0.82)';
+
+        context.lineWidth =
+          mobile ? 1.2 : 1.35;
+
+        context.beginPath();
+        context.moveTo(
+          xFirst,
+          yBracket
+        );
+        context.lineTo(
+          xSecond,
+          yBracket
+        );
+
+        const capHalf =
+          mobile ? 3.2 : 3.8;
+
+        context.moveTo(
+          xFirst,
+          yBracket - capHalf
+        );
+        context.lineTo(
+          xFirst,
+          yBracket + capHalf
+        );
+        context.moveTo(
+          xSecond,
+          yBracket - capHalf
+        );
+        context.lineTo(
+          xSecond,
+          yBracket + capHalf
+        );
+        context.stroke();
+
+        // A compact white pill keeps the value readable even when the
+        // distribution gap itself is narrower than the text label.
+        context.font =
+          `700 ${fontSize}px Lato, sans-serif`;
+
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+
+        const textWidth =
+          context.measureText(label).width;
+
+        const pillWidth =
+          textWidth +
+          pillPadX * 2;
+
+        const pillLeft =
+          PFF.clamp(
+            (xFirst + xSecond) / 2 -
+              pillWidth / 2,
+            geometry.left + 2,
+            geometry.right - pillWidth - 2
+          );
+
+        const pillTop =
+          yBracket -
+          pillHeight / 2;
+
+        const radius = 3.5;
+
+        context.beginPath();
+
+        if (
+          typeof context.roundRect ===
+          'function'
+        ) {
+          context.roundRect(
+            pillLeft,
+            pillTop,
+            pillWidth,
+            pillHeight,
+            radius
+          );
+        } else {
+          context.rect(
+            pillLeft,
+            pillTop,
+            pillWidth,
+            pillHeight
+          );
+        }
+
+        context.fillStyle =
+          'rgba(255, 255, 255, 0.94)';
+        context.fill();
+
+        context.strokeStyle =
+          'rgba(102, 0, 255, 0.28)';
+        context.lineWidth = 0.7;
+        context.stroke();
+
+        context.fillStyle =
+          DISTRIBUTION_GAP_COLOUR;
+
+        context.fillText(
+          label,
+          pillLeft + pillWidth / 2,
+          yBracket + 0.2
+        );
+
+        context.restore();
+      }
+    };
+
     const segmentLabelsPlugin = {
       id: 'pffRuralitySegmentLabels',
 
@@ -1708,12 +1974,37 @@
           },
 
           footer() {
-            const year =
-              chart?._distribution?.year;
+            const distribution =
+              chart?._distribution;
 
-            return Number.isFinite(year)
-              ? String(year)
-              : '';
+            const year =
+              distribution?.year;
+
+            const metroGap =
+              Number(distribution?.metroClinicianPct) -
+              Number(distribution?.metroPopulationPct);
+
+            const lines = [];
+
+            if (Number.isFinite(year)) {
+              lines.push(String(year));
+            }
+
+            if (Number.isFinite(metroGap)) {
+              const direction =
+                metroGap >= 0
+                  ? 'more metropolitan'
+                  : 'less metropolitan';
+
+              lines.push(
+                `Supply is ${PFF.formatNumber(
+                  Math.abs(metroGap),
+                  1
+                )} pp ${direction} than demand`
+              );
+            }
+
+            return lines;
           }
         }
       });
@@ -1935,8 +2226,14 @@
           ? 'Australia'
           : state.scope;
 
+      const gapPp =
+        Math.abs(
+          distribution.metroClinicianPct -
+          distribution.metroPopulationPct
+        );
+
       PFFCharts.updateChartSummary(
-        `${scope}, ${distribution.year}. Non-metro areas contained ${formatPercent(distribution.nonMetroPopulationPct)} of the population and ${formatPercent(distribution.nonMetroClinicianPct)} of clinicians.`,
+        `${scope}, ${distribution.year}. Non-metro areas contained ${formatPercent(distribution.nonMetroPopulationPct)} of the population and ${formatPercent(distribution.nonMetroClinicianPct)} of clinicians, a ${PFF.formatNumber(gapPp, 1)} percentage-point distribution gap.`,
         chartSummary
       );
     }
@@ -1982,6 +2279,7 @@
               plugins: [
                 fixedPlotGeometryPlugin,
                 barAxisPresentationPlugin,
+                distributionGapPlugin,
                 segmentLabelsPlugin,
                 barOutlinePlugin
               ]
