@@ -5562,17 +5562,10 @@
     let activeSuggestionIndex = -1;
     let suggestionViewportFrame = null;
     let mobileSearchHasAutoPositioned = false;
-    let mobileSearchAutoPositionInFlight = false;
-    let mobileSearchAutoPositionAttempts = 0;
-    let mobileSearchAutoPositionTimers = [];
+    let mobileSearchAutoPositionTimer = null;
     const MOBILE_SEARCH_TOP_GAP_PX = 8;
     const MOBILE_SEARCH_POSITION_TOLERANCE_PX = 8;
-    const MOBILE_SEARCH_SETTLE_MS = 420;
-    const MOBILE_SEARCH_VERIFY_INTERVAL_MS = 120;
-    const MOBILE_SEARCH_STALL_DELTA_PX = 2;
-    const MOBILE_SEARCH_STALL_CHECKS = 2;
-    const MOBILE_SEARCH_MAX_SMOOTH_SCROLL_MS = 1600;
-    const MOBILE_SEARCH_MAX_ATTEMPTS = 4;
+    const MOBILE_SEARCH_AUTO_POSITION_DELAY_MS = 400;
     let suggestionPointerState = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
@@ -9963,192 +9956,75 @@
       );
     }
 
-    function clearMobileSearchAutoPositionTimers() {
-      mobileSearchAutoPositionTimers.forEach(
-        timerId => window.clearTimeout(timerId)
-      );
-      mobileSearchAutoPositionTimers = [];
-    }
-
-    function cancelMobileSearchAutoPositionAttempt() {
-      clearMobileSearchAutoPositionTimers();
-      mobileSearchAutoPositionInFlight = false;
+    function clearMobileSearchAutoPositionTimer() {
+      if (mobileSearchAutoPositionTimer !== null) {
+        window.clearTimeout(mobileSearchAutoPositionTimer);
+        mobileSearchAutoPositionTimer = null;
+      }
     }
 
     function resetMobileSearchAutoPosition() {
-      cancelMobileSearchAutoPositionAttempt();
+      clearMobileSearchAutoPositionTimer();
       mobileSearchHasAutoPositioned = false;
-      mobileSearchAutoPositionAttempts = 0;
     }
 
     function shouldAutoPositionMobileSearch() {
       return (
         !mobileSearchHasAutoPositioned &&
         window.matchMedia('(max-width: 700px)').matches &&
-        locationSuggestions.classList.contains('is-visible') &&
         document.activeElement === searchInput &&
         Boolean(cleanText(searchInput.value)) &&
-        Boolean(searchWrap) &&
-        isLikelyMobileKeyboardOpen()
+        Boolean(searchWrap)
       );
-    }
-
-    function completeMobileSearchAutoPosition() {
-      mobileSearchHasAutoPositioned = true;
-      cancelMobileSearchAutoPositionAttempt();
-    }
-
-    function verifyMobileSearchAutoPosition(
-      previousDistance,
-      stalledChecks,
-      startedAt
-    ) {
-      if (!mobileSearchAutoPositionInFlight) {
-        return;
-      }
-
-      if (!shouldAutoPositionMobileSearch()) {
-        cancelMobileSearchAutoPositionAttempt();
-        return;
-      }
-
-      const viewport = window.visualViewport;
-      if (!viewport) {
-        cancelMobileSearchAutoPositionAttempt();
-        return;
-      }
-
-      const searchRect = searchWrap.getBoundingClientRect();
-      const desiredTop = viewport.offsetTop + MOBILE_SEARCH_TOP_GAP_PX;
-      const distance = Math.abs(searchRect.top - desiredTop);
-
-      if (distance <= MOBILE_SEARCH_POSITION_TOLERANCE_PX) {
-        completeMobileSearchAutoPosition();
-        return;
-      }
-
-      const progress = previousDistance - distance;
-      const nextStalledChecks =
-        progress >= MOBILE_SEARCH_STALL_DELTA_PX
-          ? 0
-          : stalledChecks + 1;
-      const elapsed = performance.now() - startedAt;
-
-      /* Keep observing while the browser's smooth scroll is genuinely
-       * progressing. Retry only after it has stalled outside the target
-       * area (for example because typing or keyboard movement interrupted
-       * it), rather than assuming a fixed animation duration. */
-      if (
-        nextStalledChecks >= MOBILE_SEARCH_STALL_CHECKS ||
-        elapsed >= MOBILE_SEARCH_MAX_SMOOTH_SCROLL_MS
-      ) {
-        cancelMobileSearchAutoPositionAttempt();
-
-        if (
-          mobileSearchAutoPositionAttempts < MOBILE_SEARCH_MAX_ATTEMPTS
-        ) {
-          const retryTimer = window.setTimeout(
-            autoPositionMobileSearchOnce,
-            MOBILE_SEARCH_VERIFY_INTERVAL_MS
-          );
-          mobileSearchAutoPositionTimers.push(retryTimer);
-        }
-        return;
-      }
-
-      const verifyTimer = window.setTimeout(
-        () => {
-          verifyMobileSearchAutoPosition(
-            distance,
-            nextStalledChecks,
-            startedAt
-          );
-        },
-        MOBILE_SEARCH_VERIFY_INTERVAL_MS
-      );
-      mobileSearchAutoPositionTimers.push(verifyTimer);
     }
 
     function autoPositionMobileSearchOnce() {
+      mobileSearchAutoPositionTimer = null;
+
       if (!shouldAutoPositionMobileSearch()) {
         return;
       }
 
       const viewport = window.visualViewport;
-      if (!viewport) {
-        return;
-      }
-
       const searchRect = searchWrap.getBoundingClientRect();
-      const desiredTop = viewport.offsetTop + MOBILE_SEARCH_TOP_GAP_PX;
+      const desiredTop =
+        (viewport?.offsetTop || 0) + MOBILE_SEARCH_TOP_GAP_PX;
       const scrollAmount = searchRect.top - desiredTop;
 
-      /* Consider the search positioned only when it is actually close to
-       * the target from either direction. */
+      /* This search gets one automatic movement only. Subsequent typing,
+       * suggestion changes and viewport changes must not move it again. */
+      mobileSearchHasAutoPositioned = true;
+
       if (
         Math.abs(scrollAmount) <=
         MOBILE_SEARCH_POSITION_TOLERANCE_PX
       ) {
-        completeMobileSearchAutoPosition();
         return;
       }
-
-      if (
-        mobileSearchAutoPositionInFlight ||
-        mobileSearchAutoPositionAttempts >= MOBILE_SEARCH_MAX_ATTEMPTS
-      ) {
-        return;
-      }
-
-      mobileSearchAutoPositionInFlight = true;
-      mobileSearchAutoPositionAttempts += 1;
-      clearMobileSearchAutoPositionTimers();
-
-      const startedAt = performance.now();
-      const startingDistance = Math.abs(scrollAmount);
 
       window.scrollBy({
         top: scrollAmount,
         left: 0,
         behavior: 'smooth'
       });
-
-      const verifyTimer = window.setTimeout(
-        () => {
-          verifyMobileSearchAutoPosition(
-            startingDistance,
-            0,
-            startedAt
-          );
-        },
-        MOBILE_SEARCH_VERIFY_INTERVAL_MS
-      );
-      mobileSearchAutoPositionTimers.push(verifyTimer);
     }
 
     function scheduleMobileSearchAutoPosition() {
       if (
         mobileSearchHasAutoPositioned ||
-        mobileSearchAutoPositionInFlight ||
-        mobileSearchAutoPositionAttempts >= MOBILE_SEARCH_MAX_ATTEMPTS
+        mobileSearchAutoPositionTimer !== null ||
+        !window.matchMedia('(max-width: 700px)').matches ||
+        !cleanText(searchInput.value)
       ) {
         return;
       }
 
-      clearMobileSearchAutoPositionTimers();
-
-      /* The first check often runs before the mobile keyboard has finished
-       * opening. Retry briefly while it settles. Once scrolling begins,
-       * separate verification checks decide whether the target was reached
-       * or whether an interrupted smooth scroll needs a bounded retry. */
-      [0, 80, 220, MOBILE_SEARCH_SETTLE_MS].forEach(
-        delay => {
-          const timerId = window.setTimeout(
-            autoPositionMobileSearchOnce,
-            delay
-          );
-          mobileSearchAutoPositionTimers.push(timerId);
-        }
+      /* Start this once from the first non-empty input. Do not debounce it:
+       * fast typing must not postpone the movement. The short fixed delay
+       * gives the mobile keyboard/browser viewport time to settle first. */
+      mobileSearchAutoPositionTimer = window.setTimeout(
+        autoPositionMobileSearchOnce,
+        MOBILE_SEARCH_AUTO_POSITION_DELAY_MS
       );
     }
 
@@ -10164,8 +10040,6 @@
     }
 
     function hideLocationSuggestions() {
-      cancelMobileSearchAutoPositionAttempt();
-
       locationSuggestions.classList.remove(
         'is-visible'
       );
@@ -10216,7 +10090,7 @@
       `;
     }
 
-    function renderLocationSuggestions({ repositionMobile = false } = {}) {
+    function renderLocationSuggestions() {
       const query = cleanText(searchInput.value);
 
       if (!query) {
@@ -10262,10 +10136,6 @@
       locationSuggestions.classList.add('is-visible');
 
       scheduleSearchSuggestionViewportUpdate();
-
-      if (repositionMobile) {
-        scheduleMobileSearchAutoPosition();
-      }
     }
 
     function syncLocationChipTooltip() {
@@ -13684,7 +13554,7 @@
 
       locationSuggestionTimer =
         setTimeout(
-          () => renderLocationSuggestions({ repositionMobile: true }),
+          () => renderLocationSuggestions(),
           LOCATION_SUGGESTION_DEBOUNCE_MS
         );
     }
@@ -14502,6 +14372,8 @@
 
           if (!cleanText(searchInput.value)) {
             resetMobileSearchAutoPosition();
+          } else {
+            scheduleMobileSearchAutoPosition();
           }
 
           clearTimeout(searchTimer);
