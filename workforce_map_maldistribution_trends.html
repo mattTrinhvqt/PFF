@@ -13,6 +13,8 @@
       --metro-colour: #30475d;
       --nonmetro-colour: #b54a0a;
       --access-gap-colour: #6600ff;
+      --pff-sufficient: #20c9d7;
+      --pff-saturated: #ff00ff;
     }
 
     .single-tab-shell .tab-list { min-width: 0; }
@@ -60,6 +62,48 @@
       background: rgba(102, 0, 255, 0.08) !important;
     }
 
+    .benchmark-legend {
+      position: absolute;
+      top: 8px;
+      right: 5px;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 3px;
+      padding: 4px 6px;
+      color: var(--pff-muted);
+      background: rgba(255, 255, 255, 0.90);
+      border: 1px solid rgba(105, 113, 138, 0.14);
+      border-radius: 4px;
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      pointer-events: none;
+    }
+
+    .benchmark-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .benchmark-legend-line {
+      width: 17px;
+      height: 0;
+      flex: 0 0 17px;
+      border-top: 2px dotted var(--pff-saturated);
+    }
+
+    .benchmark-legend-line.is-sufficient {
+      border-top-color: var(--pff-sufficient);
+    }
+
+    .benchmark-legend-line.is-saturated {
+      border-top-color: var(--pff-saturated);
+    }
+
     .method-note {
       margin: 5px 3px 0;
       color: var(--pff-muted);
@@ -80,6 +124,11 @@
       .method-note { font-size: 10.5px; }
       .state-button { min-width: 80px; }
       .state-menu { min-width: 118px; }
+      .benchmark-legend {
+        top: 7px;
+        right: 3px;
+        font-size: 8px;
+      }
     }
   </style>
   <style>
@@ -116,7 +165,7 @@
       <div class="chart-heading-row">
         <div class="heading-scroll-shell">
           <div class="heading-scroll-viewport">
-            <h2 id="chartHeading" class="chart-heading">Metro vs non-metro access over time</h2>
+            <h2 id="chartHeading" class="chart-heading">Metro vs non-metro access</h2>
           </div>
         </div>
 
@@ -148,13 +197,24 @@
       </div>
 
       <div id="chartShell" class="chart-shell">
+        <div class="benchmark-legend" aria-label="Access benchmarks">
+          <span class="benchmark-legend-item">
+            <span class="benchmark-legend-line is-sufficient" aria-hidden="true"></span>
+            <span>Sufficient · 1 / 10k</span>
+          </span>
+          <span class="benchmark-legend-item">
+            <span class="benchmark-legend-line is-saturated" aria-hidden="true"></span>
+            <span>Saturated · 1 / 5k</span>
+          </span>
+        </div>
         <canvas id="chartCanvas" aria-label="Metro and non-metro population per active clinician over time, with the access gap highlighted" role="img"></canvas>
       </div>
 
       <p class="method-note">
         <span class="method-note-line"><strong>Access:</strong> population per active clinician, comparing Metro (MM1) with non-metro (MM2–MM7)</span>
         <span class="method-note-line"><strong>Active clinicians:</strong> optometrists counted as clinically active in the workforce data rather than all generally registered optometrists</span>
-        <span class="method-note-line"><strong>Interpretation:</strong> lower values indicate more active clinicians relative to population, suggesting greater public access to optometry eyecare</span>
+        <span class="method-note-line"><strong>Benchmarks:</strong> sufficient = 1 active clinician per 10,000 people; saturated = 1 per 5,000</span>
+        <span class="method-note-line"><strong>Interpretation:</strong> lower values indicate more active clinicians relative to population and potentially greater public access to optometry eyecare</span>
         <span class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends</span>
       </p>
     </main>
@@ -170,7 +230,7 @@
       clinicianRange: 'A29:AO',
       populationSheet: 'AuspopnbystatebyMMM',
       populationRange: 'A29:AO',
-      localCacheKey: 'pff_state_mmm_workforce_raw_v1'
+      localCacheKey: 'pff-workforce-maldistribution-trends-v2'
     });
 
     const CACHE_WEB_APP_URL =
@@ -653,6 +713,10 @@
     const METRO = '#30475d';
     const NONMETRO = '#b54a0a';
     const ACCESS_GAP = '#6600ff';
+    const SUFFICIENT_BENCHMARK = 10000;
+    const SATURATED_BENCHMARK = 5000;
+    const SUFFICIENT_COLOUR = '#20c9d7';
+    const SATURATED_COLOUR = '#ff00ff';
     const AUSTRALIA_COLOUR = '#0b5d1e';
     const CHART_TRANSITION_MS = 500;
     const FIXED_TREND_WINDOW = 10;
@@ -669,23 +733,78 @@
       }).filter(row => Number.isFinite(row.metro) || Number.isFinite(row.nonmetro));
     }
 
-    function niceMaximum(values) {
-      const maximum = Math.max(0, ...values.filter(Number.isFinite));
-      const target = Math.max(1000, maximum * 1.08);
-      const magnitude = 10 ** Math.floor(Math.log10(target || 1));
-      const normalised = target / magnitude;
-      const nice = normalised <= 1 ? 1 : normalised <= 2 ? 2 : normalised <= 2.5 ? 2.5 : normalised <= 5 ? 5 : 10;
-      return nice * magnitude;
+    function niceStep(rawStep) {
+      if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+      const exponent = Math.floor(Math.log10(rawStep));
+      const magnitude = 10 ** exponent;
+      const fraction = rawStep / magnitude;
+      const niceFraction = fraction <= 1
+        ? 1
+        : fraction <= 2
+          ? 2
+          : fraction <= 2.5
+            ? 2.5
+            : fraction <= 5
+              ? 5
+              : 10;
+      return niceFraction * magnitude;
+    }
+
+    function nextNiceStep(step) {
+      const value = Math.max(1e-9, Number(step) || 1);
+      const exponent = Math.floor(Math.log10(value));
+      const magnitude = 10 ** exponent;
+      const fraction = value / magnitude;
+      if (fraction < 1.5) return 2 * magnitude;
+      if (fraction < 2.25) return 2.5 * magnitude;
+      if (fraction < 3.75) return 5 * magnitude;
+      if (fraction < 7.5) return 10 * magnitude;
+      return 20 * magnitude;
     }
 
     function scaleForRows(rows) {
-      const max = niceMaximum(rows.flatMap(row => [row.metro, row.nonmetro]));
-      return {
-        min: 0,
-        max,
-        intervals: 5,
-        step: max / 5
-      };
+      const values = rows
+        .flatMap(row => [row.metro, row.nonmetro])
+        .filter(Number.isFinite);
+
+      values.push(SATURATED_BENCHMARK, SUFFICIENT_BENCHMARK);
+
+      if (!values.length) {
+        return { min: 4000, max: 11000, step: 1000, intervals: 7 };
+      }
+
+      const lowest = Math.min(...values);
+      const highest = Math.max(...values);
+      const span = Math.max(1, highest - lowest);
+      let step = niceStep(span / 7);
+      let min = Math.max(0, Math.floor(lowest / step) * step);
+      let max = Math.ceil(highest / step) * step;
+
+      if (
+        lowest < SATURATED_BENCHMARK &&
+        lowest - min < step * 0.28 &&
+        min - step >= 0
+      ) {
+        min -= step;
+      }
+
+      if (max - highest < step * 0.35) max += step;
+
+      let intervals = Math.round((max - min) / step);
+      while (intervals > 8) {
+        step = nextNiceStep(step);
+        min = Math.max(0, Math.floor(lowest / step) * step);
+        max = Math.ceil(highest / step) * step;
+        if (max - highest < step * 0.35) max += step;
+        intervals = Math.round((max - min) / step);
+      }
+
+      while (intervals < 5) {
+        max += step;
+        intervals += 1;
+      }
+
+      return { min, max, step, intervals };
     }
 
     function trendForSeries(seriesKey) {
@@ -739,9 +858,6 @@
       return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
     }
 
-    function tintFromHex(hex, alpha = 0.20) {
-      return rgbaFromHex(hex, alpha);
-    }
 
     const accessTrendLabelsPlugin = {
       id: 'pffAccessGapFixed10yrTrendPills',
@@ -883,7 +999,7 @@
           const top = item.labelY - labelHeight / 2;
           const bottom = item.labelY + labelHeight / 2;
           drawRoundedRect(ctx, item.labelLeft, top, item.labelWidth, labelHeight, radius);
-          ctx.fillStyle = tintFromHex(item.colour, 0.20);
+          ctx.fillStyle = PFFCharts.seriesTint(item.colour, 0.20, 0.84);
           ctx.fill();
           ctx.strokeStyle = rgbaFromHex(item.colour, 0.42);
           ctx.lineWidth = 0.65;
@@ -916,27 +1032,38 @@
         const nonMetroMeta = chartInstance.getDatasetMeta(1);
         if (!metroMeta?.data?.length || !nonMetroMeta?.data?.length) return;
 
-        const top = [];
-        const bottom = [];
+        const segments = [];
+        let current = [];
         const count = Math.min(metroMeta.data.length, nonMetroMeta.data.length);
+
         for (let index = 0; index < count; index += 1) {
           const metro = renderedPoint(metroMeta, index);
           const nonmetro = renderedPoint(nonMetroMeta, index);
-          if (!metro || !nonmetro) continue;
-          top.push({ x: metro.x, y: Math.min(metro.y, nonmetro.y) });
-          bottom.push({ x: metro.x, y: Math.max(metro.y, nonmetro.y) });
+          if (!metro || !nonmetro) {
+            if (current.length >= 2) segments.push(current);
+            current = [];
+            continue;
+          }
+          current.push({
+            x: metro.x,
+            top: Math.min(metro.y, nonmetro.y),
+            bottom: Math.max(metro.y, nonmetro.y)
+          });
         }
-        if (top.length < 2) return;
+        if (current.length >= 2) segments.push(current);
+        if (!segments.length) return;
 
         const { ctx } = chartInstance;
         ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(top[0].x, top[0].y);
-        top.slice(1).forEach(point => ctx.lineTo(point.x, point.y));
-        [...bottom].reverse().forEach(point => ctx.lineTo(point.x, point.y));
-        ctx.closePath();
         ctx.fillStyle = 'rgba(102, 0, 255, 0.08)';
-        ctx.fill();
+        segments.forEach(segment => {
+          ctx.beginPath();
+          ctx.moveTo(segment[0].x, segment[0].top);
+          segment.slice(1).forEach(point => ctx.lineTo(point.x, point.top));
+          [...segment].reverse().forEach(point => ctx.lineTo(point.x, point.bottom));
+          ctx.closePath();
+          ctx.fill();
+        });
         ctx.restore();
       },
 
@@ -1018,6 +1145,56 @@
         ctx.stroke();
         ctx.fillStyle = ACCESS_GAP;
         ctx.fillText(gapLabel, pillLeft + pillWidth / 2, pillTop + pillHeight / 2 + 0.2);
+        ctx.restore();
+      }
+    };
+
+    const accessBenchmarksPlugin = {
+      id: 'pffAccessGapBenchmarks',
+      beforeDatasetsDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea || !yAxisController) return;
+
+        const benchmarks = [
+          { value: SUFFICIENT_BENCHMARK, colour: SUFFICIENT_COLOUR },
+          { value: SATURATED_BENCHMARK, colour: SATURATED_COLOUR }
+        ];
+
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([1, 4]);
+
+        benchmarks.forEach(benchmark => {
+          const ratio = PFF.clamp(yAxisController.valueToRatio(benchmark.value), 0, 1);
+          const y = chartArea.bottom - chartArea.height * ratio;
+          ctx.strokeStyle = benchmark.colour;
+          ctx.beginPath();
+          ctx.moveTo(chartArea.left, y);
+          ctx.lineTo(chartArea.right, y);
+          ctx.stroke();
+        });
+
+        ctx.restore();
+      }
+    };
+
+    const accessYAxisTitlePlugin = {
+      id: 'pffAccessGapYAxisTitle',
+      afterDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const mobile = PFF.mobileLayout();
+        const x = chartArea.left - (mobile ? 53 : 60);
+        const y = chartArea.top + chartArea.height / 2;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillStyle = '#151515';
+        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('People per clinician', 0, 0);
         ctx.restore();
       }
     };
@@ -1236,7 +1413,7 @@
           pointBorderColor: '#ffffff',
           pointBorderWidth: 1,
           borderWidth: 2.7,
-          pointRadius: 2.2,
+          pointRadius: 0,
           pointHoverRadius: 4,
           pointHitRadius: PFF.mobileLayout() ? 9 : 5,
           spanGaps: false,
@@ -1254,7 +1431,7 @@
           pointBorderColor: '#ffffff',
           pointBorderWidth: 1,
           borderWidth: 2.7,
-          pointRadius: 2.2,
+          pointRadius: 0,
           pointHoverRadius: 4,
           pointHitRadius: PFF.mobileLayout() ? 9 : 5,
           spanGaps: false,
@@ -1282,6 +1459,7 @@
       if (Number.isFinite(latest.metro) && Number.isFinite(latest.nonmetro)) {
         parts.push(`The latest access gap was ${Math.round(Math.abs(latest.nonmetro - latest.metro))} people per active clinician.`);
       }
+      parts.push('Reference lines mark sufficient access at one active clinician per 10,000 people and saturated access at one per 5,000.');
       if (Number.isFinite(metroTrend) || Number.isFinite(nonmetroTrend)) {
         parts.push('Fixed 10-year log-linear annual trend annotations are shown where defined.');
       }
@@ -1306,13 +1484,13 @@
           getChart() { return chart; },
           getScale() { return yScale; },
           getDecimals() { return 0; },
-          getTitle() { return 'People per clinician'; },
+          getTitle() { return ''; },
           formatValue(value) {
             return PFFCharts.formatInteger(Math.round(value));
           }
         });
         yAxisController.setImmediately(yScale, 0);
-        yAxisController.setTitleImmediately('People per clinician');
+        yAxisController.setTitleImmediately('');
 
         chart = new Chart(chartCanvas.getContext('2d'), {
           type: 'line',
@@ -1324,6 +1502,8 @@
           plugins: [
             accessPresentationPlugin,
             yAxisController.plugin,
+            accessBenchmarksPlugin,
+            accessYAxisTitlePlugin,
             yearTicksPlugin,
             accessTrendLabelsPlugin,
             tooltipTopLayerPlugin
