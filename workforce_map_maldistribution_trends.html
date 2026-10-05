@@ -211,8 +211,8 @@
       </div>
 
       <p class="method-note">
-        <span class="method-note-line"><strong>Access:</strong> population per active clinician; lower values indicate greater public access to optometry eyecare, reflecting higher clinician supply relative to population; Metro (MM1) vs non-metro (MM2–MM7); TAS/NT excluded (all non-metro), ACT excluded (all Metro)</span>
-        <span class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends</span>
+        <span class="method-note-line"><strong>Access:</strong> population per active clinician; lower values indicate greater public access to optometry eyecare, albeit reflecting higher clinician supply relative to population; TAS/NT excluded (all non-metro), ACT excluded (all Metro)</span>
+        <span class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends<span id="projectionNote"></span></span>
       </p>
     </main>
   </div>
@@ -289,6 +289,7 @@
     const stateButton = document.getElementById('stateButton');
     const stateButtonValue = document.getElementById('stateButtonValue');
     const stateMenu = document.getElementById('stateMenu');
+    const projectionNote = document.getElementById('projectionNote');
     const stateOptions = document.getElementById('stateOptions');
 
     const state = {
@@ -690,7 +691,9 @@
             observe: [app, chartShell],
             beforeResize(chartInstance) {
               chartInstance.data.datasets.forEach(dataset => {
-                dataset.pointHitRadius = PFF.mobileLayout() ? 9 : 5;
+                dataset.pointHitRadius = dataset?._projected
+                  ? 0
+                  : (PFF.mobileLayout() ? 9 : 5);
               });
             },
             onRefresh() {
@@ -717,6 +720,9 @@
     const AUSTRALIA_COLOUR = '#0b5d1e';
     const CHART_TRANSITION_MS = 500;
     const FIXED_TREND_WINDOW = 10;
+    const PROJECTION_END_YEAR = 2050;
+
+    let chartYears = [];
 
     function coverageSeries(scope = state.scope) {
       return commonYears().map(year => {
@@ -728,6 +734,111 @@
           ? nonmetro.population / nonmetro.clinicians : null;
         return { year, metro: metroCoverage, nonmetro: nonmetroCoverage };
       }).filter(row => Number.isFinite(row.metro) || Number.isFinite(row.nonmetro));
+    }
+
+    function linearProjectionModel(rows, seriesKey) {
+      const points = (Array.isArray(rows) ? rows : [])
+        .map(row => ({
+          year: Number(row?.year),
+          value: Number(row?.[seriesKey])
+        }))
+        .filter(point => Number.isFinite(point.year) && Number.isFinite(point.value))
+        .sort((a, b) => a.year - b.year);
+
+      if (points.length < 2) return null;
+
+      const meanYear = points.reduce((sum, point) => sum + point.year, 0) / points.length;
+      const meanValue = points.reduce((sum, point) => sum + point.value, 0) / points.length;
+      let numerator = 0;
+      let denominator = 0;
+
+      points.forEach(point => {
+        const dx = point.year - meanYear;
+        numerator += dx * (point.value - meanValue);
+        denominator += dx * dx;
+      });
+
+      const latest = points[points.length - 1];
+      const slope = denominator > 0 ? numerator / denominator : 0;
+
+      return {
+        latestYear: latest.year,
+        latestValue: latest.value,
+        slope,
+        valueAt(year) {
+          const targetYear = Number(year);
+          if (!Number.isFinite(targetYear)) return null;
+          const projected = latest.value + slope * (targetYear - latest.year);
+          return Number.isFinite(projected) ? Math.max(0, projected) : null;
+        }
+      };
+    }
+
+    function projectionModels(rows) {
+      return {
+        metro: linearProjectionModel(rows, 'metro'),
+        nonmetro: linearProjectionModel(rows, 'nonmetro')
+      };
+    }
+
+    function chartYearsForRows(rows) {
+      const historicalYears = (Array.isArray(rows) ? rows : [])
+        .map(row => Number(row?.year))
+        .filter(Number.isFinite);
+      if (!historicalYears.length) return [];
+
+      const years = [...historicalYears];
+      const latestYear = Math.max(...historicalYears);
+      for (let year = latestYear + 1; year <= PROJECTION_END_YEAR; year += 1) {
+        years.push(year);
+      }
+      return years;
+    }
+
+    function projectionDataForYears(years, model) {
+      return (Array.isArray(years) ? years : []).map(year => {
+        if (!model || year < model.latestYear) return null;
+        return model.valueAt(year);
+      });
+    }
+
+    function convergenceYearForRows(rows) {
+      const models = projectionModels(rows);
+      const metro = models.metro;
+      const nonmetro = models.nonmetro;
+      if (!metro || !nonmetro) return null;
+
+      const slopeDifference = metro.slope - nonmetro.slope;
+      if (!Number.isFinite(slopeDifference) || Math.abs(slopeDifference) < 1e-9) return null;
+
+      const metroIntercept = metro.latestValue - metro.slope * metro.latestYear;
+      const nonmetroIntercept = nonmetro.latestValue - nonmetro.slope * nonmetro.latestYear;
+      const year = (nonmetroIntercept - metroIntercept) / slopeDifference;
+      const latestObservedYear = Math.max(metro.latestYear, nonmetro.latestYear);
+
+      return Number.isFinite(year) && year > latestObservedYear ? year : null;
+    }
+
+    function projectionFootnoteText(rows) {
+      const convergenceYear = convergenceYearForRows(rows);
+      if (Number.isFinite(convergenceYear)) {
+        const roundedYear = Math.ceil(convergenceYear);
+        if (roundedYear <= PROJECTION_END_YEAR) {
+          return `; based on historical trends, straight-line projections to ${PROJECTION_END_YEAR} suggest the gap converges by ${roundedYear}`;
+        }
+        return `; based on historical trends, straight-line projections suggest convergence after ${PROJECTION_END_YEAR}`;
+      }
+      return `; based on historical trends, straight-line projections do not suggest convergence by ${PROJECTION_END_YEAR}`;
+    }
+
+    function hexRgba(hex, alpha) {
+      const value = String(hex || '').replace('#', '');
+      if (!/^[0-9a-f]{6}$/i.test(value)) return `rgba(105,113,138,${alpha})`;
+      const number = Number.parseInt(value, 16);
+      const red = (number >> 16) & 255;
+      const green = (number >> 8) & 255;
+      const blue = number & 255;
+      return `rgba(${red},${green},${blue},${alpha})`;
     }
 
     function niceStep(rawStep) {
@@ -763,6 +874,12 @@
       const values = rows
         .flatMap(row => [row.metro, row.nonmetro])
         .filter(Number.isFinite);
+
+      const projections = projectionModels(rows);
+      [projections.metro, projections.nonmetro].forEach(model => {
+        const endpoint = model?.valueAt(PROJECTION_END_YEAR);
+        if (Number.isFinite(endpoint)) values.push(endpoint);
+      });
 
       values.push(SATURATED_BENCHMARK, SUFFICIENT_BENCHMARK);
 
@@ -815,7 +932,7 @@
     const yearTicksPlugin = PFFCharts.createYearTickMarksPlugin({
       id: 'pffAccessGapYearTicks',
       getValue({ index }) {
-        return displayRows[index]?.year;
+        return chartYears[index] ?? displayRows[index]?.year;
       }
     });
 
@@ -923,8 +1040,12 @@
 
           for (const horizontalOffset of horizontalOffsets) {
             for (const verticalOffset of verticalOffsets) {
+              const observedRight = Math.min(
+                chartArea.right - 4,
+                Math.max(metroPoint.x, nonMetroPoint.x) - 4
+              );
               const right = PFFCharts.clamp(
-                chartArea.right - 4 + horizontalOffset,
+                observedRight + horizontalOffset,
                 chartArea.left + labelWidth + 5,
                 chartArea.right - 4
               );
@@ -1670,6 +1791,10 @@
     }
 
     function buildDatasets(rows) {
+      const projections = projectionModels(rows);
+      const metroProjection = projectionDataForYears(chartYears, projections.metro);
+      const nonMetroProjection = projectionDataForYears(chartYears, projections.nonmetro);
+
       return [
         PFFCharts.lineDataset({
           label: 'Metro (MM1)',
@@ -1713,6 +1838,42 @@
           cubicInterpolationMode: 'monotone',
           tension: 0.28,
           order: 3
+        }),
+        PFFCharts.lineDataset({
+          label: 'Metro projection',
+          _seriesKey: 'metroProjection',
+          _projected: true,
+          data: metroProjection,
+          borderColor: hexRgba(METRO, 0.78),
+          backgroundColor: hexRgba(METRO, 0.78),
+          borderWidth: 2.7,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 0,
+          borderDash: [1.5, 3.5],
+          borderCapStyle: 'round',
+          tension: 0,
+          fill: false,
+          spanGaps: true,
+          order: 4
+        }),
+        PFFCharts.lineDataset({
+          label: 'Non-metro projection',
+          _seriesKey: 'nonmetroProjection',
+          _projected: true,
+          data: nonMetroProjection,
+          borderColor: hexRgba(NONMETRO, 0.78),
+          backgroundColor: hexRgba(NONMETRO, 0.78),
+          borderWidth: 2.7,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 0,
+          borderDash: [1.5, 3.5],
+          borderCapStyle: 'round',
+          tension: 0,
+          fill: false,
+          spanGaps: true,
+          order: 5
         })
       ];
     }
@@ -1740,6 +1901,12 @@
       if (Number.isFinite(metroTrend) || Number.isFinite(nonmetroTrend)) {
         parts.push('Fixed 10-year log-linear annual trend annotations are shown where defined.');
       }
+      const convergenceYear = convergenceYearForRows(displayRows);
+      if (Number.isFinite(convergenceYear) && Math.ceil(convergenceYear) <= PROJECTION_END_YEAR) {
+        parts.push(`Straight-line projections based on historical trends extend to ${PROJECTION_END_YEAR} and suggest the access gap converges by ${Math.ceil(convergenceYear)}.`);
+      } else {
+        parts.push(`Straight-line projections based on historical trends extend to ${PROJECTION_END_YEAR}.`);
+      }
       PFFCharts.updateChartSummary(parts.join(' '), chartSummary);
     }
 
@@ -1750,6 +1917,8 @@
 
       clearGapSelection();
       displayRows = rows;
+      chartYears = chartYearsForRows(rows);
+      if (projectionNote) projectionNote.textContent = projectionFootnoteText(rows);
       const previousScale = yAxisController?.currentScale?.() || yScale;
       const nextScale = scaleForRows(rows);
       yScale = nextScale;
@@ -1772,7 +1941,7 @@
         chart = new Chart(chartCanvas.getContext('2d'), {
           type: 'line',
           data: {
-            labels: rows.map(row => String(row.year)),
+            labels: chartYears.map(year => String(year)),
             datasets: buildDatasets(rows)
           },
           options: chartOptions(false),
@@ -1788,9 +1957,12 @@
         });
         setupGapInteractions();
       } else {
-        chart.data.labels = rows.map(row => String(row.year));
-        chart.data.datasets[0].data = rows.map(row => row.metro);
-        chart.data.datasets[1].data = rows.map(row => row.nonmetro);
+        const nextDatasets = buildDatasets(rows);
+        chart.data.labels = chartYears.map(year => String(year));
+        chart.data.datasets[0].data = nextDatasets[0].data;
+        chart.data.datasets[1].data = nextDatasets[1].data;
+        chart.data.datasets[2].data = nextDatasets[2].data;
+        chart.data.datasets[3].data = nextDatasets[3].data;
         chart.options.scales.y.min = nextScale.min;
         chart.options.scales.y.max = nextScale.max;
         chart.options.animation.duration = duration;
