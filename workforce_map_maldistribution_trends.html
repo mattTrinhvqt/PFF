@@ -211,8 +211,8 @@
       </div>
 
       <p class="method-note">
-        <span class="method-note-line"><strong>Access:</strong> population per active clinician (clinically active optometrist); lower values indicate greater public access to optometry eyecare; Metro (MM1) vs non-metro (MM2–MM7); TAS/NT excluded (all non-metro), ACT excluded (all Metro)</span>
-        <span class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends</span>
+        <span class="method-note-line"><strong>Access:</strong> population per active clinician; lower values indicate greater public access to optometry eyecare (albeit higher supply of optometrists relative to population); TAS/NT excluded (all non-metro), ACT excluded (all Metro)</span>
+        <span id="trendsNote" class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends</span>
       </p>
     </main>
   </div>
@@ -812,6 +812,78 @@
       );
     }
 
+    function linearFitForSeries(seriesKey) {
+      const points = displayRows
+        .map(row => ({
+          year: Number(row?.year),
+          value: Number(row?.[seriesKey])
+        }))
+        .filter(point => Number.isFinite(point.year) && Number.isFinite(point.value));
+
+      if (points.length < 2) return null;
+
+      const meanYear = points.reduce((sum, point) => sum + point.year, 0) / points.length;
+      const meanValue = points.reduce((sum, point) => sum + point.value, 0) / points.length;
+      let numerator = 0;
+      let denominator = 0;
+
+      points.forEach(point => {
+        const yearOffset = point.year - meanYear;
+        numerator += yearOffset * (point.value - meanValue);
+        denominator += yearOffset * yearOffset;
+      });
+
+      if (!Number.isFinite(denominator) || denominator <= 0) return null;
+
+      const slope = numerator / denominator;
+      const intercept = meanValue - slope * meanYear;
+      if (!Number.isFinite(slope) || !Number.isFinite(intercept)) return null;
+
+      return {
+        slope,
+        intercept,
+        lastYear: Math.max(...points.map(point => point.year))
+      };
+    }
+
+    function linearConvergenceYear() {
+      const metroFit = linearFitForSeries('metro');
+      const nonmetroFit = linearFitForSeries('nonmetro');
+      if (!metroFit || !nonmetroFit) return null;
+
+      const slopeDifference = metroFit.slope - nonmetroFit.slope;
+      if (!Number.isFinite(slopeDifference) || Math.abs(slopeDifference) < 1e-9) {
+        return null;
+      }
+
+      const year = (nonmetroFit.intercept - metroFit.intercept) / slopeDifference;
+      const latestObservedYear = Math.max(metroFit.lastYear, nonmetroFit.lastYear);
+
+      // Only describe a plausible future convergence; otherwise keep the terse
+      // trend note without making a projection claim.
+      if (
+        !Number.isFinite(year) ||
+        year <= latestObservedYear ||
+        year > 2100
+      ) {
+        return null;
+      }
+
+      return Math.round(year);
+    }
+
+    function updateTrendsNote() {
+      const note = document.getElementById('trendsNote');
+      if (!note) return;
+
+      const convergenceYear = linearConvergenceYear();
+      const projectionText = Number.isFinite(convergenceYear)
+        ? `; linear projections suggest the Metro–non-metro access gap closes by ${convergenceYear}`
+        : '';
+
+      note.innerHTML = `<strong>Trends:</strong> pills show fixed 10-year log-linear annual trends${projectionText}`;
+    }
+
     const yearTicksPlugin = PFFCharts.createYearTickMarksPlugin({
       id: 'pffAccessGapYearTicks',
       getValue({ index }) {
@@ -1289,6 +1361,10 @@
       if (Number.isFinite(metroTrend) || Number.isFinite(nonmetroTrend)) {
         parts.push('Fixed 10-year log-linear annual trend annotations are shown where defined.');
       }
+      const convergenceYear = linearConvergenceYear();
+      if (Number.isFinite(convergenceYear)) {
+        parts.push(`Straight-line projections of the observed Metro and non-metro series converge by ${convergenceYear}.`);
+      }
       PFFCharts.updateChartSummary(parts.join(' '), chartSummary);
     }
 
@@ -1299,6 +1375,7 @@
 
       clearChartTooltip();
       displayRows = rows;
+      updateTrendsNote();
       const previousScale = yAxisController?.currentScale?.() || yScale;
       const nextScale = scaleForRows(rows);
       yScale = nextScale;
