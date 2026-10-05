@@ -211,10 +211,7 @@
       </div>
 
       <p class="method-note">
-        <span class="method-note-line"><strong>Access:</strong> population per active clinician, comparing Metro (MM1) with non-metro (MM2–MM7)</span>
-        <span class="method-note-line"><strong>Active clinicians:</strong> optometrists counted as clinically active in the workforce data rather than all generally registered optometrists</span>
-        <span class="method-note-line"><strong>Benchmarks:</strong> sufficient = 1 active clinician per 10,000 people; saturated = 1 per 5,000</span>
-        <span class="method-note-line"><strong>Interpretation:</strong> lower values indicate more active clinicians relative to population and potentially greater public access to optometry eyecare</span>
+        <span class="method-note-line"><strong>Access:</strong> population per active clinician (clinically active optometrist); lower values indicate greater public access to optometry eyecare; Metro (MM1) vs non-metro (MM2–MM7); TAS/NT excluded (all non-metro), ACT excluded (all Metro)</span>
         <span class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends</span>
       </p>
     </main>
@@ -859,170 +856,29 @@
     }
 
 
-    const accessTrendLabelsPlugin = {
-      id: 'pffAccessGapFixed10yrTrendPills',
-      afterDatasetsDraw(chartInstance) {
-        if (!displayRows.length || !chartInstance?.chartArea) return;
+    const accessTrendLabelsPlugin =
+      PFFCharts.createTrendLabelsPlugin({
+        id: 'pffAccessGapFixed10yrTrendPills',
 
-        const items = [
-          { datasetIndex: 0, trend: trendForSeries('metro'), colour: METRO },
-          { datasetIndex: 1, trend: trendForSeries('nonmetro'), colour: NONMETRO }
-        ].filter(item => Number.isFinite(item.trend));
+        enabled() {
+          return true;
+        },
 
-        if (!items.length) return;
+        isActive({ dataset, meta }) {
+          return Boolean(
+            dataset?._activeSeries &&
+            !meta?.hidden
+          );
+        },
 
-        const { ctx, chartArea } = chartInstance;
-        const mobile = PFF.mobileLayout();
-        const fontSize = mobile ? 8.2 : 9.1;
-        const labelHeight = mobile ? 14 : 15;
-        const paddingX = mobile ? 4 : 5;
-        const arrowGap = mobile ? 2.5 : 3;
-        const placed = [];
+        getTrendValue({ dataset }) {
+          return trendForSeries(dataset?._seriesKey);
+        },
 
-        ctx.save();
-        ctx.font = `700 ${fontSize}px Lato, sans-serif`;
-        ctx.textBaseline = 'middle';
-
-        items.forEach(item => {
-          const meta = chartInstance.getDatasetMeta(item.datasetIndex);
-          let anchorIndex = -1;
-          for (let index = displayRows.length - 1; index >= 0; index -= 1) {
-            if (
-              Number.isFinite(Number(chartInstance.data.datasets[item.datasetIndex]?.data?.[index])) &&
-              Number.isFinite(meta?.data?.[index]?.x) &&
-              Number.isFinite(meta?.data?.[index]?.y)
-            ) {
-              anchorIndex = index;
-              break;
-            }
-          }
-          if (anchorIndex < 0) return;
-
-          const point = meta.data[anchorIndex];
-          const isIncrease = item.trend > 0.05;
-          const isDecrease = item.trend < -0.05;
-          const arrow = isIncrease ? '↑' : isDecrease ? '↓' : '';
-          const valueText = `${Math.abs(item.trend).toFixed(1)}% p.a.`;
-          const arrowWidth = arrow ? ctx.measureText(arrow).width : 0;
-          const valueWidth = ctx.measureText(valueText).width;
-          const labelWidth = paddingX * 2 + arrowWidth + (arrow ? arrowGap : 0) + valueWidth;
-
-          item.anchorX = point.x;
-          item.anchorY = point.y;
-          item.arrow = arrow;
-          item.arrowWidth = arrowWidth;
-          item.valueText = valueText;
-          item.labelWidth = labelWidth;
-          item.isIncrease = isIncrease;
-          item.isDecrease = isDecrease;
-        });
-
-        const validItems = items.filter(item => Number.isFinite(item.anchorX) && Number.isFinite(item.anchorY));
-        validItems.sort((a, b) => a.anchorY - b.anchorY);
-
-        validItems.forEach((item, itemIndex) => {
-          const offsets = [0, -68, -34, -102, -136];
-          let chosen = null;
-          for (const horizontalOffset of offsets) {
-            const right = PFF.clamp(
-              chartArea.right - 4 + horizontalOffset,
-              chartArea.left + item.labelWidth + 5,
-              chartArea.right - 4
-            );
-            for (const verticalOffset of [0, -4, 4, -8, 8]) {
-              const y = PFF.clamp(
-                item.anchorY + verticalOffset,
-                chartArea.top + labelHeight / 2,
-                chartArea.bottom - labelHeight / 2
-              );
-              const rect = {
-                left: right - item.labelWidth,
-                right,
-                top: y - labelHeight / 2,
-                bottom: y + labelHeight / 2,
-                y
-              };
-              const overlaps = placed.some(existing => !(
-                rect.right + 5 < existing.left ||
-                rect.left - 5 > existing.right ||
-                rect.bottom + 5 < existing.top ||
-                rect.top - 5 > existing.bottom
-              ));
-              if (!overlaps) {
-                chosen = rect;
-                break;
-              }
-            }
-            if (chosen) break;
-          }
-
-          if (!chosen) {
-            const right = chartArea.right - 4 - itemIndex * 68;
-            const y = PFF.clamp(item.anchorY, chartArea.top + labelHeight / 2, chartArea.bottom - labelHeight / 2);
-            chosen = {
-              left: right - item.labelWidth,
-              right,
-              top: y - labelHeight / 2,
-              bottom: y + labelHeight / 2,
-              y
-            };
-          }
-
-          item.labelLeft = chosen.left;
-          item.labelRight = chosen.right;
-          item.labelY = chosen.y;
-          placed.push(chosen);
-        });
-
-        validItems.forEach(item => {
-          const targetX = item.anchorX < item.labelLeft
-            ? item.labelLeft
-            : item.anchorX > item.labelRight
-              ? item.labelRight
-              : PFF.clamp(item.anchorX, item.labelLeft, item.labelRight);
-          if (
-            Math.abs(targetX - item.anchorX) > 7 ||
-            Math.abs(item.labelY - item.anchorY) > 2 ||
-            item.labelLeft < item.anchorX - 4
-          ) {
-            ctx.beginPath();
-            ctx.moveTo(item.anchorX, item.anchorY);
-            ctx.lineTo(targetX, item.labelY);
-            ctx.strokeStyle = 'rgba(105, 113, 138, 0.58)';
-            ctx.lineWidth = 0.8;
-            ctx.stroke();
-          }
-        });
-
-        validItems.forEach(item => {
-          const radius = 3;
-          const top = item.labelY - labelHeight / 2;
-          const bottom = item.labelY + labelHeight / 2;
-          drawRoundedRect(ctx, item.labelLeft, top, item.labelWidth, labelHeight, radius);
-          ctx.fillStyle = PFFCharts.seriesTint(item.colour, 0.20, 0.84);
-          ctx.fill();
-          ctx.strokeStyle = rgbaFromHex(item.colour, 0.42);
-          ctx.lineWidth = 0.65;
-          ctx.stroke();
-
-          let textX = item.labelLeft + paddingX;
-          ctx.textAlign = 'left';
-          // For access, a falling people-per-clinician ratio means improved access.
-          ctx.fillStyle = item.isDecrease
-            ? '#14823b'
-            : item.isIncrease
-              ? '#b42318'
-              : '#69718a';
-          if (item.arrow) {
-            ctx.fillText(item.arrow, textX, item.labelY - 0.2);
-            textX += item.arrowWidth + arrowGap;
-          }
-          ctx.fillText(item.valueText, textX, item.labelY);
-        });
-
-        ctx.restore();
-      }
-    };
+        getSeriesColour({ dataset }) {
+          return dataset?.borderColor || '#69718a';
+        }
+      });
 
     const accessPresentationPlugin = {
       id: 'pffAccessGapPresentation',
@@ -1199,77 +1055,42 @@
       }
     };
 
-    function alignedTooltipLabel(context) {
-      const value = Number(context.raw);
-      if (!Number.isFinite(value)) return '';
-
-      const dataIndex = context.dataIndex;
-      const tooltipRows = [
-        { key: 'metro', label: 'Metro (MM1):' },
-        { key: 'nonmetro', label: 'Non-metro (MM2–7):' }
-      ].map(series => {
-        const rowValue = Number(displayRows[dataIndex]?.[series.key]);
-        if (!Number.isFinite(rowValue)) return null;
-        const trend = trendForSeries(series.key);
-        return {
-          key: series.key,
-          label: series.label,
-          count: PFFCharts.formatInteger(Math.round(rowValue)),
-          trend: Number.isFinite(trend)
-            ? `· ${trend >= 0 ? '+' : '−'}${Math.abs(trend).toFixed(1)}% p.a. (10yr)`
-            : ''
-        };
-      }).filter(Boolean);
-
-      const current = tooltipRows.find(item => item.key === context.dataset?._seriesKey);
-      if (!current) return '';
-
-      const canvasContext = context.chart?.ctx;
-      const tooltip = context.chart?.tooltip;
-      const toFont = Chart?.helpers?.toFont;
-      if (!canvasContext || typeof toFont !== 'function') {
-        return `${current.label}  ${current.count}${current.trend ? `  ${current.trend}` : ''}`;
-      }
-
-      const previousFont = canvasContext.font;
-      try {
-        const bodyFont = toFont(tooltip?.options?.bodyFont || {});
-        if (bodyFont?.string) canvasContext.font = bodyFont.string;
-        const measure = text => canvasContext.measureText(String(text)).width;
-        const maxLabelWidth = Math.max(...tooltipRows.map(item => measure(item.label)));
-        const maxCountWidth = Math.max(...tooltipRows.map(item => measure(item.count)));
-        const spaceWidth = Math.max(measure(' '), 1);
-        const columnGap = PFF.mobileLayout() ? 8 : 10;
-        const spacesFor = pixels => ' '.repeat(Math.max(2, Math.ceil(pixels / spaceWidth)));
-        const beforeCount = spacesFor(maxLabelWidth - measure(current.label) + columnGap);
-        const beforeTrend = spacesFor(maxCountWidth - measure(current.count) + columnGap);
-        return current.trend
-          ? `${current.label}${beforeCount}${current.count}${beforeTrend}${current.trend}`
-          : `${current.label}${beforeCount}${current.count}`;
-      } finally {
-        canvasContext.font = previousFont;
-      }
-    }
-
     function tooltipOptions() {
       return PFFCharts.tooltipOptions({
         mode: 'index',
         intersect: true,
+        filter(item) {
+          return item.datasetIndex === 0;
+        },
         callbacks: {
           title(items) {
             const index = items?.[0]?.dataIndex;
-            return Number.isInteger(index) ? String(displayRows[index]?.year ?? '') : '';
+            return Number.isInteger(index)
+              ? String(displayRows[index]?.year ?? '')
+              : '';
           },
           label(context) {
-            return alignedTooltipLabel(context);
-          },
-          footer(items) {
-            const index = items?.[0]?.dataIndex;
-            const row = Number.isInteger(index) ? displayRows[index] : null;
-            if (!row || !Number.isFinite(row.metro) || !Number.isFinite(row.nonmetro)) return '';
-            const gap = Math.abs(row.nonmetro - row.metro);
-            const direction = row.nonmetro >= row.metro ? 'Non-metro higher' : 'Metro higher';
-            return `Access gap: ${PFFCharts.formatInteger(Math.round(gap))} people per clinician · ${direction}`;
+            const row = displayRows[context.dataIndex];
+            if (!row) return '';
+
+            const trendText = value => Number.isFinite(value)
+              ? ` · ${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(1)}% p.a. (10yr)`
+              : '';
+
+            const gap = Number.isFinite(row.metro) && Number.isFinite(row.nonmetro)
+              ? Math.abs(row.nonmetro - row.metro)
+              : null;
+            const direction = Number.isFinite(gap)
+              ? (row.nonmetro >= row.metro ? 'Non-metro higher' : 'Metro higher')
+              : '';
+
+            return [
+              `Metro (MM1): ${PFFCharts.formatInteger(Math.round(row.metro))}${trendText(trendForSeries('metro'))}`,
+              `Non-metro (MM2–7): ${PFFCharts.formatInteger(Math.round(row.nonmetro))}${trendText(trendForSeries('nonmetro'))}`,
+              Number.isFinite(gap)
+                ? `Access gap: ${PFFCharts.formatInteger(Math.round(gap))} people per clinician · ${direction}`
+                : ''
+            ].filter(Boolean);
           }
         }
       });
@@ -1357,8 +1178,10 @@
 
     function setupTooltipTapInteractions() {
       tooltipInteractionCleanup?.();
+
       const handleCanvasPress = event => {
         if (!chart) return;
+
         const hits = chart.getElementsAtEventForMode(
           event,
           'nearest',
@@ -1372,31 +1195,33 @@
           const x = (Number(event.clientX) - rect.left) * (chart.width / rect.width);
           const y = (Number(event.clientY) - rect.top) * (chart.height / rect.height);
           const insideTooltip =
-            tooltip && Number(tooltip.opacity) > 0 &&
+            tooltip &&
+            Number(tooltip.opacity) > 0 &&
             [x, y, tooltip.x, tooltip.y, tooltip.width, tooltip.height].every(Number.isFinite) &&
-            x >= tooltip.x && x <= tooltip.x + tooltip.width &&
-            y >= tooltip.y && y <= tooltip.y + tooltip.height;
-          if (!insideTooltip) requestAnimationFrame(clearChartTooltip);
+            x >= tooltip.x &&
+            x <= tooltip.x + tooltip.width &&
+            y >= tooltip.y &&
+            y <= tooltip.y + tooltip.height;
+
+          if (!insideTooltip) {
+            requestAnimationFrame(clearChartTooltip);
+          }
           return;
         }
 
         const hit = hits[0];
-        const anchorElement = chart.getDatasetMeta(hit.datasetIndex)?.data?.[hit.index];
-        requestAnimationFrame(() => activateTooltipIndex(hit.index, anchorElement));
-      };
+        const anchorElement =
+          chart.getDatasetMeta(hit.datasetIndex)?.data?.[hit.index];
 
-      const handleDocumentPress = event => {
-        if (event.target === chartCanvas || chartCanvas.contains(event.target)) return;
-        if (pinnedGapIndex !== null || Number(chart?.tooltip?.opacity) > 0) {
-          requestAnimationFrame(clearChartTooltip);
-        }
+        requestAnimationFrame(() =>
+          activateTooltipIndex(hit.index, anchorElement)
+        );
       };
 
       chartCanvas.addEventListener('pointerdown', handleCanvasPress, { passive: true });
-      document.addEventListener('pointerdown', handleDocumentPress, { passive: true });
+
       tooltipInteractionCleanup = () => {
         chartCanvas.removeEventListener('pointerdown', handleCanvasPress);
-        document.removeEventListener('pointerdown', handleDocumentPress);
       };
     }
 
@@ -1460,6 +1285,7 @@
         parts.push(`The latest access gap was ${Math.round(Math.abs(latest.nonmetro - latest.metro))} people per active clinician.`);
       }
       parts.push('Reference lines mark sufficient access at one active clinician per 10,000 people and saturated access at one per 5,000.');
+      parts.push('Tasmania and the Northern Territory are excluded because all areas are non-metropolitan; the ACT is excluded because all areas are metropolitan.');
       if (Number.isFinite(metroTrend) || Number.isFinite(nonmetroTrend)) {
         parts.push('Fixed 10-year log-linear annual trend annotations are shown where defined.');
       }
