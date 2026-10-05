@@ -211,7 +211,7 @@
       </div>
 
       <p class="method-note">
-        <span class="method-note-line"><strong>Access:</strong> population per active clinician (clinically active optometrist); lower values indicate greater public access to optometry eyecare; Metro (MM1) vs non-metro (MM2–MM7); TAS/NT excluded (all non-metro), ACT excluded (all Metro)</span>
+        <span class="method-note-line"><strong>Access:</strong> population per active clinician; lower values indicate greater public access to optometry eyecare, reflecting higher clinician supply relative to population; Metro (MM1) vs non-metro (MM2–MM7); TAS/NT excluded (all non-metro), ACT excluded (all Metro)</span>
         <span class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends</span>
       </p>
     </main>
@@ -302,7 +302,7 @@
     let stateMenuController = null;
     let interactionsController = null;
     let responsiveController = null;
-    let tooltipInteractionCleanup = null;
+    let gapInteractionCleanup = null;
     let yAxisController = null;
     let displayRows = [];
     let yScale = { min: 0, max: 10000, intervals: 5, step: 2000 };
@@ -837,127 +837,228 @@
         : null;
     }
 
-    function drawRoundedRect(context, x, y, width, height, radius) {
-      context.beginPath();
-      if (typeof context.roundRect === 'function') {
-        context.roundRect(x, y, width, height, radius);
-      } else {
-        context.rect(x, y, width, height);
+    function rectanglesOverlap(first, second, padding = 0) {
+      if (!first || !second) return false;
+      return !(
+        first.right + padding < second.left ||
+        first.left - padding > second.right ||
+        first.bottom + padding < second.top ||
+        first.top - padding > second.bottom
+      );
+    }
+
+    function visibleTooltipRectangle(chartInstance, padding = 5) {
+      const tooltip = chartInstance?.tooltip;
+      if (
+        !tooltip ||
+        !(Number(tooltip.opacity) > 0) ||
+        ![tooltip.x, tooltip.y, tooltip.width, tooltip.height]
+          .every(Number.isFinite)
+      ) {
+        return null;
       }
+
+      return {
+        left: tooltip.x - padding,
+        right: tooltip.x + tooltip.width + padding,
+        top: tooltip.y - padding,
+        bottom: tooltip.y + tooltip.height + padding
+      };
     }
 
-    function rgbaFromHex(hex, alpha) {
-      const value = String(hex || '').replace('#', '');
-      if (!/^[0-9a-f]{6}$/i.test(value)) return `rgba(105, 113, 138, ${alpha})`;
-      const red = parseInt(value.slice(0, 2), 16);
-      const green = parseInt(value.slice(2, 4), 16);
-      const blue = parseInt(value.slice(4, 6), 16);
-      return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-    }
+    const fixedTrendPillsPlugin = {
+      id: 'pffAccessGapFixed10yrTrendPills',
+      afterDatasetsDraw(chartInstance) {
+        chartInstance.$pffTrendPillRects = [];
+        if (!displayRows.length || !chartInstance?.chartArea) return;
 
-
-    const accessTrendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
-        id: 'pffAccessGapFixed10yrTrendPills',
-
-        enabled() {
-          return true;
-        },
-
-        isActive({ dataset, meta }) {
-          return Boolean(
-            dataset?._activeSeries &&
-            !meta?.hidden
-          );
-        },
-
-        getTrendValue({ dataset }) {
-          return trendForSeries(dataset?._seriesKey);
-        },
-
-        getSeriesColour({ dataset }) {
-          return dataset?.borderColor || '#69718a';
-        }
-      });
-
-    const accessPresentationPlugin = {
-      id: 'pffAccessGapPresentation',
-
-      beforeDatasetsDraw(chartInstance) {
         const metroMeta = chartInstance.getDatasetMeta(0);
         const nonMetroMeta = chartInstance.getDatasetMeta(1);
-        if (!metroMeta?.data?.length || !nonMetroMeta?.data?.length) return;
+        const lastIndex = displayRows.length - 1;
+        const metroPoint = metroMeta?.data?.[lastIndex];
+        const nonMetroPoint = nonMetroMeta?.data?.[lastIndex];
 
-        const segments = [];
-        let current = [];
-        const count = Math.min(metroMeta.data.length, nonMetroMeta.data.length);
+        if (!metroPoint || !nonMetroPoint) return;
+        if (![metroPoint.x, metroPoint.y, nonMetroPoint.y].every(Number.isFinite)) return;
 
-        for (let index = 0; index < count; index += 1) {
-          const metro = renderedPoint(metroMeta, index);
-          const nonmetro = renderedPoint(nonMetroMeta, index);
-          if (!metro || !nonmetro) {
-            if (current.length >= 2) segments.push(current);
-            current = [];
-            continue;
-          }
-          current.push({
-            x: metro.x,
-            top: Math.min(metro.y, nonmetro.y),
-            bottom: Math.max(metro.y, nonmetro.y)
-          });
+        const trendItems = [
+          { key: 'metro', trend: trendForSeries('metro'), colour: METRO, anchorY: metroPoint.y },
+          { key: 'nonmetro', trend: trendForSeries('nonmetro'), colour: NONMETRO, anchorY: nonMetroPoint.y }
+        ].filter(item => Number.isFinite(item.trend));
+
+        if (!trendItems.length) return;
+
+        const { ctx, chartArea } = chartInstance;
+        const mobile = PFFCharts.mobileLayout();
+        const fontSize = mobile ? 8.2 : 9.1;
+        const labelHeight = mobile ? 14 : 15;
+        const paddingX = mobile ? 4 : 5;
+        const arrowGap = mobile ? 2.5 : 3;
+        const placed = [];
+
+        function rgbaFromHex(hex, alpha) {
+          const value = String(hex || '').replace('#', '');
+          if (!/^[0-9a-f]{6}$/i.test(value)) return `rgba(105, 113, 138, ${alpha})`;
+          const red = parseInt(value.slice(0, 2), 16);
+          const green = parseInt(value.slice(2, 4), 16);
+          const blue = parseInt(value.slice(4, 6), 16);
+          return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
         }
-        if (current.length >= 2) segments.push(current);
-        if (!segments.length) return;
 
-        const { ctx } = chartInstance;
         ctx.save();
-        ctx.fillStyle = 'rgba(102, 0, 255, 0.08)';
-        segments.forEach(segment => {
-          ctx.beginPath();
-          ctx.moveTo(segment[0].x, segment[0].top);
-          segment.slice(1).forEach(point => ctx.lineTo(point.x, point.top));
-          [...segment].reverse().forEach(point => ctx.lineTo(point.x, point.bottom));
-          ctx.closePath();
-          ctx.fill();
-        });
-        ctx.restore();
-      },
+        ctx.font = `700 ${fontSize}px Lato, sans-serif`;
+        ctx.textBaseline = 'middle';
 
+        trendItems.forEach(item => {
+          const isIncrease = item.trend > 0.05;
+          const isDecrease = item.trend < -0.05;
+          const arrow = isIncrease ? '↑' : isDecrease ? '↓' : '';
+          const valueText = `${Math.abs(item.trend).toFixed(1)}% p.a.`;
+          const arrowWidth = arrow ? ctx.measureText(arrow).width : 0;
+          const valueWidth = ctx.measureText(valueText).width;
+          const labelWidth = paddingX * 2 + arrowWidth + (arrow ? arrowGap : 0) + valueWidth;
+          const horizontalOffsets = [0, -68, -136, -34, -102, -170];
+          const verticalOffsets = [0, -2, 2, -4, 4, -6, 6, -8, 8];
+          let chosen = null;
+
+          for (const horizontalOffset of horizontalOffsets) {
+            for (const verticalOffset of verticalOffsets) {
+              const right = PFFCharts.clamp(
+                chartArea.right - 4 + horizontalOffset,
+                chartArea.left + labelWidth + 5,
+                chartArea.right - 4
+              );
+              const left = right - labelWidth;
+              const y = PFFCharts.clamp(
+                item.anchorY + verticalOffset,
+                chartArea.top + labelHeight / 2,
+                chartArea.bottom - labelHeight / 2
+              );
+              const rectangle = {
+                left,
+                right,
+                top: y - labelHeight / 2,
+                bottom: y + labelHeight / 2,
+                y
+              };
+              const overlap = placed.some(existing => !(
+                rectangle.right + 5 < existing.left ||
+                rectangle.left - 5 > existing.right ||
+                rectangle.bottom + 5 < existing.top ||
+                rectangle.top - 5 > existing.bottom
+              ));
+              if (!overlap) {
+                chosen = rectangle;
+                break;
+              }
+            }
+            if (chosen) break;
+          }
+
+          if (!chosen) return;
+          placed.push(chosen);
+
+          const radius = 3;
+          const top = chosen.top;
+          const bottom = chosen.bottom;
+          ctx.beginPath();
+          ctx.moveTo(chosen.left + radius, top);
+          ctx.lineTo(chosen.right - radius, top);
+          ctx.quadraticCurveTo(chosen.right, top, chosen.right, top + radius);
+          ctx.lineTo(chosen.right, bottom - radius);
+          ctx.quadraticCurveTo(chosen.right, bottom, chosen.right - radius, bottom);
+          ctx.lineTo(chosen.left + radius, bottom);
+          ctx.quadraticCurveTo(chosen.left, bottom, chosen.left, bottom - radius);
+          ctx.lineTo(chosen.left, top + radius);
+          ctx.quadraticCurveTo(chosen.left, top, chosen.left + radius, top);
+          ctx.closePath();
+          ctx.fillStyle = rgbaFromHex(item.colour, 0.16);
+          ctx.fill();
+          ctx.strokeStyle = rgbaFromHex(item.colour, 0.42);
+          ctx.lineWidth = 0.65;
+          ctx.stroke();
+
+          let textX = chosen.left + paddingX;
+          ctx.textAlign = 'left';
+          ctx.fillStyle = isIncrease
+            ? '#14823b'
+            : isDecrease
+              ? '#b42318'
+              : '#69718a';
+
+          if (arrow) {
+            ctx.fillText(arrow, textX, chosen.y - 0.2);
+            textX += arrowWidth + arrowGap;
+          }
+          ctx.fillText(valueText, textX, chosen.y);
+        });
+
+        chartInstance.$pffTrendPillRects = placed.map(rectangle => ({
+          left: rectangle.left,
+          right: rectangle.right,
+          top: rectangle.top,
+          bottom: rectangle.bottom
+        }));
+
+        ctx.restore();
+      }
+    };
+
+    const accessGapMeasurementPlugin = {
+      id: 'pffAccessGapMeasurement',
       afterDatasetsDraw(chartInstance) {
         if (!displayRows.length) return;
+
         const metroMeta = chartInstance.getDatasetMeta(0);
         const nonMetroMeta = chartInstance.getDatasetMeta(1);
         if (!metroMeta?.data?.length || !nonMetroMeta?.data?.length) return;
 
-        const activeElements = typeof chartInstance.getActiveElements === 'function'
-          ? chartInstance.getActiveElements()
-          : [];
-        const hoveredIndex = activeElements.find(item => Number.isInteger(item?.index))?.index;
+        const activeElements =
+          typeof chartInstance.getActiveElements === 'function'
+            ? chartInstance.getActiveElements()
+            : [];
+
+        const hoveredIndex = activeElements.find(
+          item => Number.isInteger(item?.index)
+        )?.index;
+
         const index = Number.isInteger(pinnedGapIndex)
           ? pinnedGapIndex
           : Number.isInteger(hoveredIndex)
             ? hoveredIndex
             : displayRows.length - 1;
 
-        const metro = renderedPoint(metroMeta, index);
-        const nonmetro = renderedPoint(nonMetroMeta, index);
         const row = displayRows[index];
-        if (!metro || !nonmetro || !row) return;
+        const metroPoint = renderedPoint(metroMeta, index);
+        const nonMetroPoint = renderedPoint(nonMetroMeta, index);
+
+        if (!row || !metroPoint || !nonMetroPoint) return;
         if (!Number.isFinite(row.metro) || !Number.isFinite(row.nonmetro)) return;
 
         const { ctx, chartArea } = chartInstance;
-        const mobile = PFF.mobileLayout();
-        const lineX = PFF.clamp(metro.x, chartArea.left + 1, chartArea.right - 1);
-        const yTop = Math.min(metro.y, nonmetro.y);
-        const yBottom = Math.max(metro.y, nonmetro.y);
-        const yScale = chartInstance.scales?.y;
-        const renderedMetro = yScale?.getValueForPixel?.(metro.y);
-        const renderedNonmetro = yScale?.getValueForPixel?.(nonmetro.y);
-        const renderedGap = Number.isFinite(renderedMetro) && Number.isFinite(renderedNonmetro)
-          ? Math.abs(renderedNonmetro - renderedMetro)
+        const mobile = PFFCharts.mobileLayout();
+        const lineX = PFFCharts.clamp(
+          metroPoint.x,
+          chartArea.left + 1,
+          chartArea.right - 1
+        );
+        const yTop = Math.min(metroPoint.y, nonMetroPoint.y);
+        const yBottom = Math.max(metroPoint.y, nonMetroPoint.y);
+        const yMid = (yTop + yBottom) / 2;
+        const yAxis = chartInstance.scales?.y;
+        const renderedMetro = yAxis?.getValueForPixel?.(metroPoint.y);
+        const renderedNonMetro = yAxis?.getValueForPixel?.(nonMetroPoint.y);
+        const renderedGap = Number.isFinite(renderedMetro) && Number.isFinite(renderedNonMetro)
+          ? Math.abs(renderedNonMetro - renderedMetro)
           : Math.abs(row.nonmetro - row.metro);
 
+        const fontSize = mobile ? 8.7 : 9.5;
+        const boxHeight = mobile ? 16 : 17;
+        const padX = mobile ? 5 : 6;
+        const label = `${PFFCharts.formatInteger(Math.round(renderedGap))} access gap`;
+
         ctx.save();
+
         ctx.strokeStyle = 'rgba(102, 0, 255, 0.82)';
         ctx.lineWidth = mobile ? 1.2 : 1.35;
         ctx.lineCap = 'round';
@@ -974,34 +1075,201 @@
         ctx.lineTo(lineX + capHalf, yBottom);
         ctx.stroke();
 
-        const gapLabel = `${PFFCharts.formatInteger(Math.round(renderedGap))} gap`;
-        const fontSize = mobile ? 8.7 : 9.5;
-        const pillHeight = mobile ? 16 : 17;
-        const pillPadX = mobile ? 5 : 6;
-        const gapFromLine = mobile ? 5 : 6;
         ctx.font = `700 ${fontSize}px Lato, sans-serif`;
-        ctx.textAlign = 'center';
+        ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        const pillWidth = ctx.measureText(gapLabel).width + pillPadX * 2;
-        let pillLeft = lineX - gapFromLine - pillWidth;
-        if (pillLeft < chartArea.left + 2) {
-          pillLeft = Math.min(lineX + gapFromLine, chartArea.right - pillWidth - 2);
+
+        const textWidth = ctx.measureText(label).width;
+        const boxWidth = textWidth + padX * 2;
+        const gapFromLine = mobile ? 5 : 6;
+        const radius = 3.5;
+        const tooltipRect = visibleTooltipRectangle(chartInstance, mobile ? 5 : 4);
+        const trendRects = Array.isArray(chartInstance.$pffTrendPillRects)
+          ? chartInstance.$pffTrendPillRects
+          : [];
+        const blockers = [tooltipRect, ...trendRects].filter(Boolean);
+
+        const verticalStep = boxHeight + (mobile ? 5 : 6);
+        const verticalOffsets = [
+          0,
+          -verticalStep,
+          verticalStep,
+          -verticalStep * 2,
+          verticalStep * 2,
+          -verticalStep * 3,
+          verticalStep * 3
+        ];
+        const horizontalGaps = [
+          gapFromLine,
+          gapFromLine + (mobile ? 6 : 8),
+          gapFromLine + (mobile ? 12 : 16)
+        ];
+        const sides = ['right', 'left'];
+        let chosen = null;
+
+        for (const side of sides) {
+          for (const horizontalGap of horizontalGaps) {
+            for (const verticalOffset of verticalOffsets) {
+              let left = side === 'right'
+                ? lineX + horizontalGap
+                : lineX - horizontalGap - boxWidth;
+
+              left = PFFCharts.clamp(
+                left,
+                chartArea.left + 2,
+                chartArea.right - boxWidth - 2
+              );
+
+              const top = PFFCharts.clamp(
+                yMid - boxHeight / 2 + verticalOffset,
+                chartArea.top + 1,
+                chartArea.bottom - boxHeight - 1
+              );
+
+              const rectangle = {
+                left,
+                right: left + boxWidth,
+                top,
+                bottom: top + boxHeight
+              };
+
+              const overlaps = blockers.some(
+                blocker => rectanglesOverlap(rectangle, blocker, mobile ? 3 : 4)
+              );
+
+              if (!overlaps) {
+                chosen = rectangle;
+                break;
+              }
+            }
+            if (chosen) break;
+          }
+          if (chosen) break;
         }
-        const pillTop = PFF.clamp(
-          (yTop + yBottom) / 2 - pillHeight / 2,
-          chartArea.top + 2,
-          chartArea.bottom - pillHeight - 2
+
+        if (!chosen) {
+          const left = PFFCharts.clamp(
+            lineX - gapFromLine - boxWidth,
+            chartArea.left + 2,
+            chartArea.right - boxWidth - 2
+          );
+          const top = PFFCharts.clamp(
+            yMid - boxHeight / 2,
+            chartArea.top + 1,
+            chartArea.bottom - boxHeight - 1
+          );
+          chosen = {
+            left,
+            right: left + boxWidth,
+            top,
+            bottom: top + boxHeight
+          };
+        }
+
+        const now = typeof performance !== 'undefined' && performance.now
+          ? performance.now()
+          : Date.now();
+        const reducedMotion =
+          typeof PFFCharts.reducedMotion === 'function' &&
+          PFFCharts.reducedMotion();
+
+        let motion = chartInstance.$pffGapPillMotion;
+        if (
+          !motion ||
+          !Number.isFinite(motion.left) ||
+          !Number.isFinite(motion.top)
+        ) {
+          motion = {
+            left: chosen.left,
+            top: chosen.top,
+            targetLeft: chosen.left,
+            targetTop: chosen.top,
+            lastTime: now,
+            rafId: null
+          };
+          chartInstance.$pffGapPillMotion = motion;
+        }
+
+        motion.targetLeft = chosen.left;
+        motion.targetTop = chosen.top;
+
+        if (reducedMotion) {
+          motion.left = motion.targetLeft;
+          motion.top = motion.targetTop;
+          motion.lastTime = now;
+        } else {
+          const elapsed = PFFCharts.clamp(
+            now - (Number.isFinite(motion.lastTime) ? motion.lastTime : now - 16),
+            8,
+            40
+          );
+          const timeConstant = mobile ? 68 : 78;
+          const easing = 1 - Math.exp(-elapsed / timeConstant);
+
+          motion.left += (motion.targetLeft - motion.left) * easing;
+          motion.top += (motion.targetTop - motion.top) * easing;
+          motion.lastTime = now;
+
+          const distance = Math.hypot(
+            motion.targetLeft - motion.left,
+            motion.targetTop - motion.top
+          );
+
+          if (distance < 0.25) {
+            motion.left = motion.targetLeft;
+            motion.top = motion.targetTop;
+          } else if (motion.rafId === null) {
+            motion.rafId = requestAnimationFrame(() => {
+              motion.rafId = null;
+              if (chartInstance?.ctx) {
+                chartInstance.draw();
+              }
+            });
+          }
+        }
+
+        const left = PFFCharts.clamp(
+          motion.left,
+          chartArea.left + 2,
+          chartArea.right - boxWidth - 2
+        );
+        const top = PFFCharts.clamp(
+          motion.top,
+          chartArea.top + 1,
+          chartArea.bottom - boxHeight - 1
         );
 
-        drawRoundedRect(ctx, pillLeft, pillTop, pillWidth, pillHeight, 3.5);
+        ctx.beginPath();
+        ctx.moveTo(left + radius, top);
+        ctx.lineTo(left + boxWidth - radius, top);
+        ctx.quadraticCurveTo(left + boxWidth, top, left + boxWidth, top + radius);
+        ctx.lineTo(left + boxWidth, top + boxHeight - radius);
+        ctx.quadraticCurveTo(left + boxWidth, top + boxHeight, left + boxWidth - radius, top + boxHeight);
+        ctx.lineTo(left + radius, top + boxHeight);
+        ctx.quadraticCurveTo(left, top + boxHeight, left, top + boxHeight - radius);
+        ctx.lineTo(left, top + radius);
+        ctx.quadraticCurveTo(left, top, left + radius, top);
+        ctx.closePath();
         ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
         ctx.fill();
         ctx.strokeStyle = 'rgba(102, 0, 255, 0.28)';
         ctx.lineWidth = 0.7;
         ctx.stroke();
+
         ctx.fillStyle = ACCESS_GAP;
-        ctx.fillText(gapLabel, pillLeft + pillWidth / 2, pillTop + pillHeight / 2 + 0.2);
+        ctx.fillText(label, left + padX, top + boxHeight / 2 + 0.2);
+
         ctx.restore();
+      },
+
+      afterDestroy(chartInstance) {
+        const motion = chartInstance?.$pffGapPillMotion;
+        if (motion?.rafId !== null && motion?.rafId !== undefined) {
+          cancelAnimationFrame(motion.rafId);
+        }
+        if (chartInstance) {
+          chartInstance.$pffGapPillMotion = null;
+        }
       }
     };
 
@@ -1107,6 +1375,14 @@
     function chartOptions(animate = false) {
       const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
       return PFFCharts.baseChartOptions({
+        layout: {
+          padding: {
+            top: PFFCharts.mobileLayout() ? 8 : 9,
+            right: 0,
+            bottom: 0,
+            left: 0
+          }
+        },
         animation: {
           duration,
           easing: 'easeInOutCubic'
@@ -1131,97 +1407,265 @@
           tooltip: tooltipOptions()
         },
         scales: {
-          x: PFFCharts.xYearScaleOptions({
-            ticks: {
-              callback(value, index) {
-                const year = Number(displayRows[index]?.year);
-                return Number.isFinite(year) && year % 2 === 0 ? String(year) : '';
-              }
-            }
-          }),
+          x: PFFCharts.xYearScaleOptions(),
           y: leftScaleOptions()
         }
       });
     }
 
-    function clearChartTooltip() {
-      pinnedGapIndex = null;
+    // ============================================================
+    // GAP TOUCH / POINTER INTERACTION
+    // ============================================================
+
+    function eventPointInChart(event) {
+      if (!chart || !chartCanvas) return null;
+
+      const source = event?.touches?.[0] || event?.changedTouches?.[0] || event;
+      const clientX = Number(source?.clientX);
+      const clientY = Number(source?.clientY);
+      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+
+      const rect = chartCanvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+
+      return {
+        x: (clientX - rect.left) * (chart.width / rect.width),
+        y: (clientY - rect.top) * (chart.height / rect.height)
+      };
+    }
+
+    function gapGeometryAtX(x) {
+      if (!chart || !displayRows.length) return null;
+
+      const metroPoints = chart.getDatasetMeta(0)?.data || [];
+      const nonMetroPoints = chart.getDatasetMeta(1)?.data || [];
+      if (!metroPoints.length || metroPoints.length !== nonMetroPoints.length) return null;
+
+      const validIndices = metroPoints
+        .map((point, index) => {
+          const metro = renderedPoint({ data: metroPoints }, index);
+          const nonmetro = renderedPoint({ data: nonMetroPoints }, index);
+          return metro && nonmetro &&
+            Number.isFinite(displayRows[index]?.metro) &&
+            Number.isFinite(displayRows[index]?.nonmetro)
+            ? index
+            : null;
+        })
+        .filter(Number.isInteger);
+
+      if (!validIndices.length) return null;
+
+      const firstIndex = validIndices[0];
+      const lastIndex = validIndices[validIndices.length - 1];
+      const firstX = metroPoints[firstIndex]?.x;
+      const lastX = metroPoints[lastIndex]?.x;
+      if (!Number.isFinite(firstX) || !Number.isFinite(lastX)) return null;
+
+      const clampedX = PFFCharts.clamp(x, firstX, lastX);
+      let rightPosition = validIndices.findIndex(index =>
+        Number.isFinite(metroPoints[index]?.x) && metroPoints[index].x >= clampedX
+      );
+      if (rightPosition < 0) rightPosition = validIndices.length - 1;
+      const rightIndex = validIndices[rightPosition];
+      const leftIndex = validIndices[Math.max(0, rightPosition - 1)];
+
+      // Do not make missing-year gaps interactive when the native fill is broken.
+      if (rightIndex !== leftIndex && rightIndex - leftIndex > 1) return null;
+
+      const leftMetro = renderedPoint({ data: metroPoints }, leftIndex);
+      const rightMetro = renderedPoint({ data: metroPoints }, rightIndex);
+      const leftNonMetro = renderedPoint({ data: nonMetroPoints }, leftIndex);
+      const rightNonMetro = renderedPoint({ data: nonMetroPoints }, rightIndex);
+
+      if (!leftMetro || !rightMetro || !leftNonMetro || !rightNonMetro) return null;
+
+      const span = rightMetro.x - leftMetro.x;
+      const t = span > 0
+        ? PFFCharts.clamp((clampedX - leftMetro.x) / span, 0, 1)
+        : 0;
+
+      const metroY = leftMetro.y + (rightMetro.y - leftMetro.y) * t;
+      const nonMetroY = leftNonMetro.y + (rightNonMetro.y - leftNonMetro.y) * t;
+
+      return {
+        yTop: Math.min(metroY, nonMetroY),
+        yBottom: Math.max(metroY, nonMetroY),
+        firstX,
+        lastX
+      };
+    }
+
+    function nearestGapYearIndex(x) {
+      const metroPoints = chart?.getDatasetMeta(0)?.data || [];
+      const nonMetroPoints = chart?.getDatasetMeta(1)?.data || [];
+      let bestIndex = -1;
+      let bestDistance = Infinity;
+
+      metroPoints.forEach((point, index) => {
+        const nonMetroPoint = nonMetroPoints[index];
+        if (
+          !Number.isFinite(point?.x) ||
+          !Number.isFinite(point?.y) ||
+          !Number.isFinite(nonMetroPoint?.y) ||
+          !Number.isFinite(displayRows[index]?.metro) ||
+          !Number.isFinite(displayRows[index]?.nonmetro)
+        ) return;
+        const distance = Math.abs(point.x - x);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      });
+
+      return bestIndex;
+    }
+
+    function clearGapSelection() {
       if (!chart) return;
+
+      pinnedGapIndex = null;
       chart.setActiveElements([]);
       chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
       chart.draw();
     }
 
-    function activateTooltipIndex(index, anchorElement) {
-      if (!chart || !Number.isInteger(index)) return;
-      const active = chart.data.datasets
-        .map((dataset, datasetIndex) => {
-          const value = Number(dataset?.data?.[index]);
-          return Number.isFinite(value) ? { datasetIndex, index } : null;
-        })
-        .filter(Boolean);
-      if (!active.length) {
-        clearChartTooltip();
-        return;
-      }
+    function activateGapYear(index, { pin = false } = {}) {
+      if (!chart || !Number.isInteger(index) || !displayRows[index]) return;
+      if (
+        !Number.isFinite(displayRows[index].metro) ||
+        !Number.isFinite(displayRows[index].nonmetro)
+      ) return;
 
-      pinnedGapIndex = index;
-      const x = Number(anchorElement?.x);
-      const y = Number(anchorElement?.y);
+      const metroPoint = renderedPoint(chart.getDatasetMeta(0), index);
+      const nonMetroPoint = renderedPoint(chart.getDatasetMeta(1), index);
+      if (!metroPoint || !nonMetroPoint) return;
+
+      pinnedGapIndex = pin ? index : null;
+
+      const active = [
+        { datasetIndex: 0, index },
+        { datasetIndex: 1, index }
+      ];
+
       chart.setActiveElements(active);
-      chart.tooltip?.setActiveElements(active, {
-        x: Number.isFinite(x) ? x : chart.chartArea.left,
-        y: Number.isFinite(y) ? y : chart.chartArea.top
-      });
+
+      const anchorY = (metroPoint.y + nonMetroPoint.y) / 2;
+      chart.tooltip?.setActiveElements(
+        active,
+        { x: metroPoint.x, y: anchorY }
+      );
+
       chart.draw();
     }
 
-    function setupTooltipTapInteractions() {
-      tooltipInteractionCleanup?.();
+    function gapHitAtPoint(point, hitTolerance = 0) {
+      if (!point) return null;
 
-      const handleCanvasPress = event => {
-        if (!chart) return;
+      const geometry = gapGeometryAtX(point.x);
+      if (!geometry) return null;
 
-        const hits = chart.getElementsAtEventForMode(
-          event,
-          'nearest',
-          { intersect: true },
-          true
-        );
+      const insideHorizontal =
+        point.x >= geometry.firstX - hitTolerance &&
+        point.x <= geometry.lastX + hitTolerance;
+      const insideGap =
+        point.y >= geometry.yTop - hitTolerance &&
+        point.y <= geometry.yBottom + hitTolerance;
 
-        if (!hits.length) {
-          const rect = chartCanvas.getBoundingClientRect();
-          const tooltip = chart.tooltip;
-          const x = (Number(event.clientX) - rect.left) * (chart.width / rect.width);
-          const y = (Number(event.clientY) - rect.top) * (chart.height / rect.height);
-          const insideTooltip =
-            tooltip &&
-            Number(tooltip.opacity) > 0 &&
-            [x, y, tooltip.x, tooltip.y, tooltip.width, tooltip.height].every(Number.isFinite) &&
-            x >= tooltip.x &&
-            x <= tooltip.x + tooltip.width &&
-            y >= tooltip.y &&
-            y <= tooltip.y + tooltip.height;
+      if (!insideHorizontal || !insideGap) return null;
 
-          if (!insideTooltip) {
-            requestAnimationFrame(clearChartTooltip);
-          }
+      const index = nearestGapYearIndex(point.x);
+      return index >= 0 ? index : null;
+    }
+
+    function setupGapInteractions() {
+      gapInteractionCleanup?.();
+
+      const pressTolerance = () => PFFCharts.mobileLayout() ? 14 : 10;
+      const hoverTolerance = () => PFFCharts.mobileLayout() ? 6 : 4;
+      let hoverRafId = null;
+      let hoveredGapIndex = null;
+
+      const handleGapHover = event => {
+        if (!chart?.chartArea || event.pointerType === 'touch') return;
+
+        if (Number.isInteger(pinnedGapIndex)) {
+          const pinnedIndex = pinnedGapIndex;
+          if (hoverRafId) cancelAnimationFrame(hoverRafId);
+          hoverRafId = requestAnimationFrame(() => {
+            hoverRafId = null;
+            activateGapYear(pinnedIndex, { pin: true });
+          });
           return;
         }
 
-        const hit = hits[0];
-        const anchorElement =
-          chart.getDatasetMeta(hit.datasetIndex)?.data?.[hit.index];
+        const point = eventPointInChart(event);
+        const index = gapHitAtPoint(point, hoverTolerance());
 
-        requestAnimationFrame(() =>
-          activateTooltipIndex(hit.index, anchorElement)
-        );
+        if (hoverRafId) cancelAnimationFrame(hoverRafId);
+
+        if (!Number.isInteger(index)) {
+          const hasVisibleSelection =
+            Number.isInteger(hoveredGapIndex) ||
+            (chart.getActiveElements?.().length || 0) > 0 ||
+            Number(chart.tooltip?.opacity) > 0;
+
+          if (!hasVisibleSelection) return;
+
+          hoveredGapIndex = null;
+          hoverRafId = requestAnimationFrame(() => {
+            hoverRafId = null;
+            clearGapSelection();
+          });
+          return;
+        }
+
+        if (index === hoveredGapIndex) return;
+        hoveredGapIndex = index;
+
+        hoverRafId = requestAnimationFrame(() => {
+          hoverRafId = null;
+          activateGapYear(index, { pin: false });
+        });
       };
 
-      chartCanvas.addEventListener('pointerdown', handleCanvasPress, { passive: true });
+      const handleGapPress = event => {
+        if (!chart?.chartArea) return;
 
-      tooltipInteractionCleanup = () => {
-        chartCanvas.removeEventListener('pointerdown', handleCanvasPress);
+        const point = eventPointInChart(event);
+        const index = gapHitAtPoint(point, pressTolerance());
+
+        if (Number.isInteger(index)) {
+          if (event.cancelable) event.preventDefault();
+          hoveredGapIndex = null;
+          requestAnimationFrame(() => activateGapYear(index, { pin: true }));
+          return;
+        }
+
+        requestAnimationFrame(clearGapSelection);
+      };
+
+      const handlePointerLeave = () => {
+        if (Number.isInteger(pinnedGapIndex)) return;
+        hoveredGapIndex = null;
+        requestAnimationFrame(clearGapSelection);
+      };
+
+      const handleOutsidePress = event => {
+        if (event.target === chartCanvas || chartCanvas.contains(event.target)) return;
+        requestAnimationFrame(clearGapSelection);
+      };
+
+      chartCanvas.addEventListener('pointermove', handleGapHover, { passive: true });
+      chartCanvas.addEventListener('pointerdown', handleGapPress, { passive: false });
+      chartCanvas.addEventListener('pointerleave', handlePointerLeave, { passive: true });
+      document.addEventListener('pointerdown', handleOutsidePress);
+
+      gapInteractionCleanup = () => {
+        if (hoverRafId) cancelAnimationFrame(hoverRafId);
+        chartCanvas.removeEventListener('pointermove', handleGapHover);
+        chartCanvas.removeEventListener('pointerdown', handleGapPress);
+        chartCanvas.removeEventListener('pointerleave', handlePointerLeave);
+        document.removeEventListener('pointerdown', handleOutsidePress);
       };
     }
 
@@ -1233,7 +1677,7 @@
           _activeSeries: true,
           data: rows.map(row => row.metro),
           borderColor: METRO,
-          backgroundColor: METRO,
+          backgroundColor: 'rgba(102, 0, 255, 0.065)',
           pointBackgroundColor: METRO,
           pointBorderColor: '#ffffff',
           pointBorderWidth: 1,
@@ -1241,9 +1685,15 @@
           pointRadius: 0,
           pointHoverRadius: 4,
           pointHitRadius: PFF.mobileLayout() ? 9 : 5,
+          fill: {
+            target: 1,
+            above: 'rgba(102, 0, 255, 0.08)',
+            below: 'rgba(102, 0, 255, 0.08)'
+          },
           spanGaps: false,
           cubicInterpolationMode: 'monotone',
-          tension: 0.28
+          tension: 0.28,
+          order: 2
         }),
         PFFCharts.lineDataset({
           label: 'Non-metro (MM2–7)',
@@ -1261,7 +1711,8 @@
           pointHitRadius: PFF.mobileLayout() ? 9 : 5,
           spanGaps: false,
           cubicInterpolationMode: 'monotone',
-          tension: 0.28
+          tension: 0.28,
+          order: 3
         })
       ];
     }
@@ -1297,7 +1748,7 @@
       const rows = coverageSeries();
       if (!rows.length) throw new Error(`No usable access trend data for ${scopeLabel()}.`);
 
-      clearChartTooltip();
+      clearGapSelection();
       displayRows = rows;
       const previousScale = yAxisController?.currentScale?.() || yScale;
       const nextScale = scaleForRows(rows);
@@ -1326,16 +1777,16 @@
           },
           options: chartOptions(false),
           plugins: [
-            accessPresentationPlugin,
             yAxisController.plugin,
             accessBenchmarksPlugin,
             accessYAxisTitlePlugin,
             yearTicksPlugin,
-            accessTrendLabelsPlugin,
+            fixedTrendPillsPlugin,
+            accessGapMeasurementPlugin,
             tooltipTopLayerPlugin
           ]
         });
-        setupTooltipTapInteractions();
+        setupGapInteractions();
       } else {
         chart.data.labels = rows.map(row => String(row.year));
         chart.data.datasets[0].data = rows.map(row => row.metro);
