@@ -794,11 +794,9 @@
     const valueLabelsPlugin = {
       id: 'pffMaldistributionBalanceValueLabels',
       afterDatasetsDraw(chartInstance) {
-        const meta = chartInstance.getDatasetMeta(0);
-        const dataset = chartInstance.data.datasets[0];
         const { ctx, chartArea } = chartInstance;
         const xScale = chartInstance.scales?.x;
-        if (!meta?.data?.length || !chartArea || !xScale) return;
+        if (!chartArea || !xScale) return;
 
         const mobile = PFF.mobileLayout();
         ctx.save();
@@ -806,9 +804,13 @@
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#151515';
 
-        meta.data.forEach((bar, index) => {
-          const targetValue = Number(dataset.data[index]);
-          if (!Number.isFinite(targetValue)) return;
+        chartInstance.data.datasets.forEach((dataset, datasetIndex) => {
+          const meta = chartInstance.getDatasetMeta(datasetIndex);
+          const raw = dataset.data?.[0];
+          const targetValue = Number(raw?.x);
+          const bar = meta?.data?.[0];
+          if (!Number.isFinite(targetValue) || !bar) return;
+
           const props = bar.getProps(['x', 'base', 'y'], false);
           if (![props.x, props.base, props.y].every(Number.isFinite)) return;
 
@@ -840,12 +842,16 @@
 
     function tooltipOptions(rows) {
       return PFFCharts.tooltipOptions({
+        mode: 'nearest',
+        intersect: true,
         callbacks: {
           title(items) {
-            return items?.[0]?.label || '';
+            const mmm = Number(items?.[0]?.dataset?._mmm);
+            return Number.isFinite(mmm) ? `MM${mmm}` : '';
           },
           label(context) {
-            const row = rows[context.dataIndex];
+            const mmm = Number(context.dataset?._mmm);
+            const row = rows.find(item => item.mmm === mmm);
             if (!row) return '';
             const balanceLabel = row.balance >= 0 ? 'Excess' : 'Shortfall';
             return [
@@ -870,7 +876,7 @@
         },
         animations: {
           x: { duration, easing: 'easeInOutCubic' },
-          y: { duration: 0 },
+          y: { duration, easing: 'easeInOutCubic' },
           base: { duration: 0 },
           width: { duration: 0 },
           height: { duration: 0 },
@@ -879,8 +885,8 @@
         indexAxis: 'y',
         normalized: true,
         interaction: {
-          mode: 'index',
-          axis: 'y',
+          mode: 'nearest',
+          axis: 'xy',
           intersect: true,
           includeInvisible: false
         },
@@ -953,18 +959,37 @@
       });
     }
 
-    function datasetFor(rows) {
-      return {
-        label: 'Clinician balance',
-        data: rows.map(row => row.balance),
-        backgroundColor: rows.map(row => MMM_COLOURS[row.mmm] || '#69718a'),
-        borderColor: rows.map(row => MMM_COLOURS[row.mmm] || '#69718a'),
-        borderWidth: 0,
-        borderRadius: 2,
-        borderSkipped: false,
-        categoryPercentage: 0.78,
-        barPercentage: 0.80
-      };
+    function datasetsFor(rows) {
+      const byMmm = new Map(rows.map(row => [row.mmm, row]));
+
+      return Array.from({ length: 7 }, (_, offset) => {
+        const mmm = offset + 1;
+        const row = byMmm.get(mmm);
+        const colour = MMM_COLOURS[mmm] || '#69718a';
+
+        return {
+          label: `MM${mmm}`,
+          _mmm: mmm,
+          data: row ? [{ x: row.balance, y: row.label }] : [],
+          backgroundColor: colour,
+          borderColor: colour,
+          borderWidth: 0,
+          borderRadius: 2,
+          borderSkipped: false,
+          categoryPercentage: 0.78,
+          barPercentage: 0.80,
+          grouped: false
+        };
+      });
+    }
+
+    function syncDatasets(rows) {
+      const byMmm = new Map(rows.map(row => [row.mmm, row]));
+
+      chart.data.datasets.forEach(dataset => {
+        const row = byMmm.get(Number(dataset?._mmm));
+        dataset.data = row ? [{ x: row.balance, y: row.label }] : [];
+      });
     }
 
     function updateFootnote() {
@@ -999,7 +1024,7 @@
       updateFootnote();
 
       const options = chartOptions(rows, animate);
-      const dataset = datasetFor(rows);
+      const datasets = datasetsFor(rows);
       const nextScale = symmetricScale(rows);
       const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
 
@@ -1010,7 +1035,7 @@
           type: 'bar',
           data: {
             labels: rows.map(row => row.label),
-            datasets: [dataset]
+            datasets
           },
           options: chartOptions(rows, false),
           plugins: [balanceAxisPlugin, valueLabelsPlugin]
@@ -1018,9 +1043,7 @@
       } else {
         currentScale = nextScale;
         chart.data.labels = rows.map(row => row.label);
-        chart.data.datasets[0].data = dataset.data;
-        chart.data.datasets[0].backgroundColor = dataset.backgroundColor;
-        chart.data.datasets[0].borderColor = dataset.borderColor;
+        syncDatasets(rows);
         chart.options.scales.x.min = options.scales.x.min;
         chart.options.scales.x.max = options.scales.x.max;
         chart.options.scales.x.afterBuildTicks = options.scales.x.afterBuildTicks;
@@ -1029,7 +1052,8 @@
         chart.options.animation.easing = 'easeInOutCubic';
         chart.options.animations.x.duration = duration;
         chart.options.animations.x.easing = 'easeInOutCubic';
-        chart.options.animations.y.duration = 0;
+        chart.options.animations.y.duration = duration;
+        chart.options.animations.y.easing = 'easeInOutCubic';
         chart.options.animations.base.duration = 0;
         chart.options.animations.width.duration = 0;
         chart.options.animations.height.duration = 0;
