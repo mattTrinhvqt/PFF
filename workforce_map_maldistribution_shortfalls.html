@@ -3,15 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PFF Remaining shortfalls</title>
+  <title>PFF Clinician balance</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
 
   <style>
     :root {
-      --surplus-colour: #6600ff;
-      --shortfall-colour: #c25e00;
+      --mmm1-colour: #2c3e50;
+      --mmm2-colour: #4f1500;
+      --mmm3-colour: #7e2800;
+      --mmm4-colour: #a14216;
+      --mmm5-colour: #c87452;
+      --mmm6-colour: #e1b69a;
+      --mmm7-colour: #f3e0d3;
     }
 
     .single-tab-shell .tab-list { min-width: 0; }
@@ -80,13 +85,13 @@
 <body class="pff-chart-app">
   <div id="fit">
     <main id="app" class="is-loading" aria-busy="true">
-      <div id="loadingState" class="app-loading" role="status" aria-live="polite" aria-label="Loading clinician surplus and shortfall by rurality">
+      <div id="loadingState" class="app-loading" role="status" aria-live="polite" aria-label="Loading clinician balance by rurality">
         <div class="cone-loader" aria-hidden="true">
           <span class="cone blue"></span>
           <span class="cone green"></span>
           <span class="cone red"></span>
         </div>
-        <p id="loaderText" class="loader-text">Loading rurality shortfalls…</p>
+        <p id="loaderText" class="loader-text">Loading rurality balance…</p>
       </div>
 
       <div class="module-top single-tab-shell">
@@ -107,7 +112,7 @@
       <div class="chart-heading-row">
         <div class="heading-scroll-shell">
           <div class="heading-scroll-viewport">
-            <h2 id="chartHeading" class="chart-heading">Clinician surplus and shortfall by rurality</h2>
+            <h2 id="chartHeading" class="chart-heading">Clinician balance by rurality</h2>
           </div>
         </div>
 
@@ -129,21 +134,26 @@
       <div class="chart-options-row">
         <div class="legend-nav">
           <div class="legend-viewport">
-            <div class="chart-legend" aria-label="Chart legend">
-              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--surplus-colour)"></span><span>Surplus</span></span>
-              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--shortfall-colour)"></span><span>Shortfall</span></span>
+            <div class="chart-legend" aria-label="Modified Monash colour legend">
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm1-colour)"></span><span>MM1</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm2-colour)"></span><span>MM2</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm3-colour)"></span><span>MM3</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm4-colour)"></span><span>MM4</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm5-colour)"></span><span>MM5</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm6-colour)"></span><span>MM6</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm7-colour)"></span><span>MM7</span></span>
             </div>
           </div>
         </div>
       </div>
 
       <div id="chartShell" class="chart-shell">
-        <canvas id="chartCanvas" aria-label="Active clinician surplus or shortfall by Modified Monash category against a one clinician per ten thousand population benchmark" role="img"></canvas>
+        <canvas id="chartCanvas" aria-label="Clinician balance by Modified Monash category against a one active clinician per ten thousand population benchmark; left indicates shortfall and right indicates excess" role="img"></canvas>
       </div>
 
       <p class="method-note">
-        <span id="shortfallsNote" class="method-note-line"><strong>Shortfalls:</strong> loading…</span>
-        <span class="method-note-line"><strong>Balance:</strong> active clinicians − population ÷ 10,000; positive = surplus, negative = shortfall</span>
+        <span id="balanceNote" class="method-note-line"><strong>Balance:</strong> loading…</span>
+        <span class="method-note-line"><strong>Benchmark:</strong> active clinicians − population ÷ 10,000; left = shortfall, right = excess</span>
       </p>
     </main>
   </div>
@@ -201,11 +211,20 @@
       NT: 'Northern Territory', ACT: 'Australian Capital Territory'
     };
 
-    const SURPLUS = '#6600ff';
-    const SHORTFALL = '#c25e00';
+    const MMM_COLOURS = Object.freeze({
+      1: '#2c3e50',
+      2: '#4f1500',
+      3: '#7e2800',
+      4: '#a14216',
+      5: '#c87452',
+      6: '#e1b69a',
+      7: '#f3e0d3'
+    });
     const AUSTRALIA_COLOUR = '#0b5d1e';
     const BENCHMARK_POPULATION = 10000;
     const CHART_TRANSITION_MS = 500;
+    const X_AXIS_MAJOR_INTERVALS = 6;
+    const X_AXIS_MAJOR_TICK_COUNT = X_AXIS_MAJOR_INTERVALS + 1;
 
     const app = document.getElementById('app');
     const loaderText = document.getElementById('loaderText');
@@ -219,7 +238,7 @@
     const stateButtonValue = document.getElementById('stateButtonValue');
     const stateMenu = document.getElementById('stateMenu');
     const stateOptions = document.getElementById('stateOptions');
-    const shortfallsNote = document.getElementById('shortfallsNote');
+    const balanceNote = document.getElementById('balanceNote');
 
     const state = {
       scope: 'AUS',
@@ -234,6 +253,13 @@
     let responsiveController = null;
     let displayRows = [];
     let displayYear = null;
+    let currentScale = null;
+
+    const axisTickAnimation = {
+      values: [],
+      token: 0,
+      raf: null
+    };
 
     function dataNumber(value) {
       if (
@@ -566,9 +592,75 @@
         1,
         ...rows.map(row => Math.abs(Number(row.balance))).filter(Number.isFinite)
       );
-      const step = niceStep((maxAbs * 1.22) / 3);
-      const limit = Math.max(step * 3, Math.ceil((maxAbs * 1.16) / step) * step);
-      return { min: -limit, max: limit, step };
+      const step = niceStep((maxAbs * 1.16) / 3);
+      const limit = step * 3;
+      return {
+        min: -limit,
+        max: limit,
+        step,
+        intervals: X_AXIS_MAJOR_INTERVALS
+      };
+    }
+
+    function axisTickTargets(scale = currentScale) {
+      if (!scale) return Array.from({ length: X_AXIS_MAJOR_TICK_COUNT }, (_, index) => index - 3);
+      return Array.from(
+        { length: X_AXIS_MAJOR_TICK_COUNT },
+        (_, index) => scale.min + scale.step * index
+      );
+    }
+
+    function setAxisTickValuesImmediately(scale = currentScale) {
+      axisTickAnimation.values = axisTickTargets(scale);
+    }
+
+    function animateAxisTickValues(scale, duration = CHART_TRANSITION_MS) {
+      const targetValues = axisTickTargets(scale);
+      if (!targetValues.length) return;
+
+      if (axisTickAnimation.raf) {
+        cancelAnimationFrame(axisTickAnimation.raf);
+        axisTickAnimation.raf = null;
+      }
+
+      const token = ++axisTickAnimation.token;
+      const startValues = axisTickAnimation.values.length === targetValues.length
+        ? [...axisTickAnimation.values]
+        : [...targetValues];
+
+      if (PFF.reducedMotion() || duration <= 0) {
+        axisTickAnimation.values = [...targetValues];
+        chart?.draw();
+        return;
+      }
+
+      const startedAt = performance.now();
+      function frame(now) {
+        if (token !== axisTickAnimation.token) return;
+        const progress = Math.min((now - startedAt) / duration, 1);
+        const eased = PFFCharts.easeInOutCubic(progress);
+        axisTickAnimation.values = targetValues.map((target, index) => {
+          const start = Number(startValues[index]);
+          return Number.isFinite(start) ? start + (target - start) * eased : target;
+        });
+        chart?.draw();
+        if (progress < 1) {
+          axisTickAnimation.raf = requestAnimationFrame(frame);
+        } else {
+          axisTickAnimation.raf = null;
+          axisTickAnimation.values = [...targetValues];
+          chart?.draw();
+        }
+      }
+      axisTickAnimation.raf = requestAnimationFrame(frame);
+    }
+
+    function formatAxisTick(value, step = currentScale?.step) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '';
+      if (Math.abs(number) < 1e-7) return '0';
+      const decimals = Number(step) < 10 ? 1 : 0;
+      return `${number > 0 ? '+' : '−'}${PFFCharts.formatAxisValue(Math.abs(number), decimals)}`;
     }
 
     function signedValue(value, decimals = 1) {
@@ -585,61 +677,160 @@
       return PFFCharts.formatInteger(Math.round(number));
     }
 
-    const zeroLinePlugin = {
-      id: 'pffMaldistributionShortfallZeroLine',
+    const balanceAxisPlugin = {
+      id: 'pffMaldistributionBalanceAxis',
+
       beforeDatasetsDraw(chartInstance) {
-        const { ctx, chartArea, scales } = chartInstance;
-        if (!chartArea || !scales?.x) return;
-        const x = scales.x.getPixelForValue(0);
-        if (!Number.isFinite(x)) return;
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const intervals = X_AXIS_MAJOR_INTERVALS;
+
+        ctx.save();
+
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.035)';
+        ctx.lineWidth = 0.7;
+        for (let index = 0; index < intervals; index += 1) {
+          const ratio = (index + 0.5) / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.075)';
+        ctx.lineWidth = 1;
+        for (let index = 0; index <= intervals; index += 1) {
+          if (index === intervals / 2) continue;
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.stroke();
+        }
+
+        const zeroX = chartArea.left + chartArea.width / 2;
+        ctx.strokeStyle = '#151515';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(zeroX) + 0.5, chartArea.top);
+        ctx.lineTo(Math.round(zeroX) + 0.5, chartArea.bottom);
+        ctx.stroke();
+
+        ctx.restore();
+      },
+
+      afterDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const intervals = X_AXIS_MAJOR_INTERVALS;
+        const mobile = PFF.mobileLayout();
 
         ctx.save();
         ctx.strokeStyle = '#151515';
-        ctx.lineWidth = 1.1;
-        ctx.lineCap = 'butt';
+        ctx.lineWidth = 1;
+
         ctx.beginPath();
-        ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
-        ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+        ctx.moveTo(chartArea.left, Math.round(chartArea.bottom) + 0.5);
+        ctx.lineTo(chartArea.right, Math.round(chartArea.bottom) + 0.5);
         ctx.stroke();
+
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 5);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = '#69718a';
+        ctx.globalAlpha = 0.60;
+        ctx.lineWidth = 0.7;
+        for (let index = 0; index < intervals; index += 1) {
+          const ratio = (index + 0.5) / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 2);
+          ctx.stroke();
+        }
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#151515';
+        ctx.textBaseline = 'top';
+        ctx.font = `${mobile ? 9 : 10}px Lato, sans-serif`;
+        const values = axisTickAnimation.values.length === X_AXIS_MAJOR_TICK_COUNT
+          ? axisTickAnimation.values
+          : axisTickTargets();
+
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          if (index === 0) ctx.textAlign = 'left';
+          else if (index === intervals) ctx.textAlign = 'right';
+          else ctx.textAlign = 'center';
+          ctx.fillText(formatAxisTick(values[index]), x, chartArea.bottom + 8);
+        }
+
+        const directionY = chartArea.bottom + (mobile ? 23 : 24);
+        ctx.font = `700 ${mobile ? 9 : 10}px Lato, sans-serif`;
+        ctx.fillStyle = '#69718a';
+        ctx.textAlign = 'left';
+        ctx.fillText('← Shortfall', chartArea.left, directionY);
+        ctx.textAlign = 'right';
+        ctx.fillText('Excess →', chartArea.right, directionY);
+
+        ctx.fillStyle = '#151515';
+        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('Clinician balance', chartArea.left + chartArea.width / 2, chartArea.bottom + (mobile ? 39 : 40));
+
         ctx.restore();
       }
     };
 
     const valueLabelsPlugin = {
-      id: 'pffMaldistributionShortfallValueLabels',
+      id: 'pffMaldistributionBalanceValueLabels',
       afterDatasetsDraw(chartInstance) {
         const meta = chartInstance.getDatasetMeta(0);
         const dataset = chartInstance.data.datasets[0];
         const { ctx, chartArea } = chartInstance;
-        if (!meta?.data?.length || !chartArea) return;
+        const xScale = chartInstance.scales?.x;
+        if (!meta?.data?.length || !chartArea || !xScale) return;
 
         const mobile = PFF.mobileLayout();
         ctx.save();
-        ctx.font = `700 ${mobile ? 9 : 10}px Lato, sans-serif`;
+        ctx.font = `${mobile ? 8.8 : 9.8}px Lato, sans-serif`;
         ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#151515';
 
         meta.data.forEach((bar, index) => {
-          const value = Number(dataset.data[index]);
-          if (!Number.isFinite(value)) return;
+          const targetValue = Number(dataset.data[index]);
+          if (!Number.isFinite(targetValue)) return;
           const props = bar.getProps(['x', 'base', 'y'], false);
           if (![props.x, props.base, props.y].every(Number.isFinite)) return;
 
-          const text = signedValue(value, 1);
-          const positive = value >= 0;
+          let currentValue = xScale.getValueForPixel(props.x);
+          if (!Number.isFinite(currentValue)) currentValue = targetValue;
+          if (Math.abs(currentValue) < 1e-7) currentValue = 0;
+
+          const text = signedValue(currentValue, 1);
+          const positive = currentValue >= 0;
           const gap = mobile ? 4 : 5;
           let x = props.x + (positive ? gap : -gap);
           ctx.textAlign = positive ? 'left' : 'right';
           const width = ctx.measureText(text).width;
 
           if (positive && x + width > chartArea.right - 1) {
-            x = props.x - gap;
+            x = chartArea.right - 1;
             ctx.textAlign = 'right';
           } else if (!positive && x - width < chartArea.left + 1) {
-            x = props.x + gap;
+            x = chartArea.left + 1;
             ctx.textAlign = 'left';
           }
 
-          ctx.fillStyle = positive ? SURPLUS : SHORTFALL;
           ctx.fillText(text, x, props.y);
         });
 
@@ -656,9 +847,9 @@
           label(context) {
             const row = rows[context.dataIndex];
             if (!row) return '';
-            const balanceLabel = row.balance >= 0 ? 'Surplus' : 'Shortfall';
+            const balanceLabel = row.balance >= 0 ? 'Excess' : 'Shortfall';
             return [
-              `${balanceLabel}: ${Math.abs(row.balance).toFixed(1)} active clinicians`,
+              `Clinician balance: ${signedValue(row.balance, 1)} active clinicians · ${balanceLabel.toLowerCase()}`,
               `Active clinicians: ${PFFCharts.formatInteger(Math.round(row.activeClinicians))}`,
               `1 / 10k benchmark: ${row.required.toFixed(1)} clinicians`,
               `Population: ${populationLabel(row.population)}`
@@ -679,9 +870,11 @@
         },
         animations: {
           x: { duration, easing: 'easeInOutCubic' },
-          y: { duration, easing: 'easeInOutCubic' }
+          y: { duration: 0 },
+          base: { duration, easing: 'easeInOutCubic' }
         },
         indexAxis: 'y',
+        normalized: true,
         interaction: {
           mode: 'index',
           axis: 'y',
@@ -689,11 +882,12 @@
           includeInvisible: false
         },
         layout: {
+          autoPadding: false,
           padding: {
-            top: PFF.mobileLayout() ? 6 : 7,
-            right: PFF.mobileLayout() ? 16 : 20,
-            bottom: 1,
-            left: PFF.mobileLayout() ? 2 : 3
+            top: PFF.mobileLayout() ? 3 : 4,
+            right: PFF.mobileLayout() ? 3 : 4,
+            bottom: 0,
+            left: 0
           }
         },
         plugins: {
@@ -706,61 +900,45 @@
             min: scale.min,
             max: scale.max,
             afterFit(axis) {
-              axis.height = PFF.mobileLayout() ? 50 : 48;
+              axis.height = PFF.mobileLayout() ? 60 : 62;
             },
+            afterBuildTicks(axis) {
+              axis.ticks = axisTickTargets(scale).map(value => ({ value }));
+            },
+            border: { display: false },
             grid: {
-              drawTicks: false,
-              color(context) {
-                const value = Number(context.tick?.value);
-                if (!Number.isFinite(value) || Math.abs(value) < 1e-9) return 'rgba(0,0,0,0)';
-                return 'rgba(105, 113, 138, 0.075)';
-              },
-              lineWidth: 1
-            },
-            border: {
-              display: true,
-              color: '#151515',
-              width: 1
+              drawOnChartArea: false,
+              drawTicks: false
             },
             ticks: {
-              stepSize: scale.step,
-              color: '#151515',
-              padding: 5,
+              display: false,
               autoSkip: false,
-              callback(value) {
-                const number = Number(value);
-                if (!Number.isFinite(number)) return '';
-                if (Math.abs(number) < 1e-9) return '0';
-                const decimals = Math.abs(scale.step) < 10 ? 1 : 0;
-                return `${number > 0 ? '+' : '−'}${PFFCharts.formatAxisValue(Math.abs(number), decimals)}`;
-              },
-              font: {
-                family: 'Lato',
-                size: PFF.mobileLayout() ? 9 : 10
-              }
+              maxRotation: 0,
+              minRotation: 0
             },
-            title: {
-              display: true,
-              text: 'Active clinician balance',
-              color: '#151515',
-              padding: { top: 3 },
-              font: {
-                family: 'Lato',
-                size: PFF.mobileLayout() ? 12 : 13,
-                weight: '700'
-              }
-            }
+            title: { display: false }
           },
           y: {
-            grid: { display: false },
+            position: 'left',
+            afterFit(axis) {
+              axis.width = PFF.mobileLayout() ? 39 : 43;
+            },
+            grid: {
+              display: false,
+              drawTicks: true,
+              tickLength: 3,
+              tickWidth: 1,
+              tickColor: '#151515'
+            },
             border: {
               display: true,
               color: '#151515',
               width: 1
             },
             ticks: {
+              autoSkip: false,
               color: '#151515',
-              padding: 6,
+              padding: 3,
               font: {
                 family: 'Lato',
                 size: PFF.mobileLayout() ? 10 : 11,
@@ -774,15 +952,15 @@
 
     function datasetFor(rows) {
       return {
-        label: 'Active clinician balance',
+        label: 'Clinician balance',
         data: rows.map(row => row.balance),
-        backgroundColor: rows.map(row => row.balance >= 0 ? SURPLUS : SHORTFALL),
-        borderColor: rows.map(row => row.balance >= 0 ? SURPLUS : SHORTFALL),
+        backgroundColor: rows.map(row => MMM_COLOURS[row.mmm] || '#69718a'),
+        borderColor: rows.map(row => MMM_COLOURS[row.mmm] || '#69718a'),
         borderWidth: 0,
         borderRadius: 2,
         borderSkipped: false,
-        barPercentage: 0.66,
-        categoryPercentage: 0.78
+        barPercentage: 0.72,
+        categoryPercentage: 0.84
       };
     }
 
@@ -791,9 +969,9 @@
       const shortfalls = displayRows.filter(row => row.balance < -0.05);
       const total = shortfalls.reduce((sum, row) => sum + Math.abs(row.balance), 0);
 
-      shortfallsNote.innerHTML = shortfalls.length
-        ? `<strong>Shortfalls (${displayYear}):</strong> ${total.toFixed(1)} active clinicians across ${shortfalls.map(row => row.label).join(', ')} at the 1 / 10k benchmark`
-        : `<strong>Shortfalls (${displayYear}):</strong> none at the 1 / 10k benchmark`;
+      balanceNote.innerHTML = shortfalls.length
+        ? `<strong>Balance (${displayYear}):</strong> ${total.toFixed(1)} clinician shortfall across ${shortfalls.map(row => row.label).join(', ')} at the 1 / 10k benchmark`
+        : `<strong>Balance (${displayYear}):</strong> no MMM shortfalls at the 1 / 10k benchmark`;
     }
 
     function updateAccessibleSummary() {
@@ -801,8 +979,8 @@
       const shortfalls = displayRows.filter(row => row.balance < -0.05);
       const total = shortfalls.reduce((sum, row) => sum + Math.abs(row.balance), 0);
       const message = shortfalls.length
-        ? `${scopeLabel()} in ${displayYear}. Against one active clinician per 10,000 population, the combined shortfall was ${total.toFixed(1)} active clinicians across ${shortfalls.map(row => row.label).join(', ')}.`
-        : `${scopeLabel()} in ${displayYear}. No Modified Monash category was below the one active clinician per 10,000 population benchmark.`;
+        ? `${scopeLabel()} in ${displayYear}. Against one active clinician per 10,000 population, the combined shortfall was ${total.toFixed(1)} clinicians across ${shortfalls.map(row => row.label).join(', ')}; categories to the right of zero indicate excess.`
+        : `${scopeLabel()} in ${displayYear}. No Modified Monash category was below the one active clinician per 10,000 population benchmark; categories to the right of zero indicate excess.`;
       PFFCharts.updateChartSummary(message, chartSummary);
     }
 
@@ -819,8 +997,12 @@
 
       const options = chartOptions(rows, animate);
       const dataset = datasetFor(rows);
+      const nextScale = symmetricScale(rows);
+      const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
 
       if (!chart) {
+        currentScale = nextScale;
+        setAxisTickValuesImmediately(nextScale);
         chart = new Chart(chartCanvas.getContext('2d'), {
           type: 'bar',
           data: {
@@ -828,24 +1010,27 @@
             datasets: [dataset]
           },
           options: chartOptions(rows, false),
-          plugins: [zeroLinePlugin, valueLabelsPlugin]
+          plugins: [balanceAxisPlugin, valueLabelsPlugin]
         });
       } else {
+        currentScale = nextScale;
         chart.data.labels = rows.map(row => row.label);
         chart.data.datasets[0].data = dataset.data;
         chart.data.datasets[0].backgroundColor = dataset.backgroundColor;
         chart.data.datasets[0].borderColor = dataset.borderColor;
         chart.options.scales.x.min = options.scales.x.min;
         chart.options.scales.x.max = options.scales.x.max;
-        chart.options.scales.x.ticks.stepSize = options.scales.x.ticks.stepSize;
+        chart.options.scales.x.afterBuildTicks = options.scales.x.afterBuildTicks;
         chart.options.plugins.tooltip = tooltipOptions(rows);
-        chart.options.animation.duration = options.animation.duration;
+        chart.options.animation.duration = duration;
         chart.options.animation.easing = 'easeInOutCubic';
-        chart.options.animations.x.duration = options.animation.duration;
+        chart.options.animations.x.duration = duration;
         chart.options.animations.x.easing = 'easeInOutCubic';
-        chart.options.animations.y.duration = options.animation.duration;
-        chart.options.animations.y.easing = 'easeInOutCubic';
+        chart.options.animations.y.duration = 0;
+        chart.options.animations.base.duration = duration;
+        chart.options.animations.base.easing = 'easeInOutCubic';
         chart.update();
+        animateAxisTickValues(nextScale, duration);
       }
 
       updateAccessibleSummary();
@@ -927,7 +1112,7 @@
         },
 
         onError() { liveData.style.visibility = 'hidden'; },
-        errorMessage: 'Maldistribution data unavailable.'
+        errorMessage: 'Maldistribution balance data unavailable.'
       });
     }
 
