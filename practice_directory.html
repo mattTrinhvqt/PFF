@@ -702,6 +702,30 @@
       -webkit-overflow-scrolling: touch;
     }
 
+    .table-scroll-proxy {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      z-index: 1500;
+      display: none;
+      height: 17px;
+      box-sizing: border-box;
+      overflow-x: auto;
+      overflow-y: hidden;
+      background: var(--pff-white);
+      overscroll-behavior-x: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .table-scroll-proxy.is-visible {
+      display: block;
+    }
+
+    .table-scroll-proxy-inner {
+      height: 1px;
+      pointer-events: none;
+    }
+
     .data-table {
       width: max-content;
       min-width: max-content;
@@ -4899,6 +4923,16 @@
 
         <div id="emptyState" class="empty-state">No practices/services match the current search and filters.</div>
       </div>
+
+      <div
+        id="tableScrollProxy"
+        class="table-scroll-proxy"
+        tabindex="0"
+        aria-label="Horizontal table scrollbar"
+        aria-hidden="true"
+      >
+        <div id="tableScrollProxyInner" class="table-scroll-proxy-inner"></div>
+      </div>
     </main>
   </div>
 
@@ -5662,6 +5696,12 @@
     const tableScroll =
       document.getElementById('tableScroll');
 
+    const tableScrollProxy =
+      document.getElementById('tableScrollProxy');
+
+    const tableScrollProxyInner =
+      document.getElementById('tableScrollProxyInner');
+
     const dataTable =
       document.getElementById('dataTable');
 
@@ -5739,6 +5779,7 @@
     const MOBILE_SEARCH_TYPING_IDLE_MS = 1000;
     const MOBILE_SEARCH_POST_SCROLL_GRACE_MS = 450;
     let suggestionPointerState = null;
+    let tableHorizontalProxyFrame = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
     let automaticViewPersistenceReady = false;
@@ -11897,6 +11938,93 @@
       );
     }
 
+    function syncTableHorizontalProxy() {
+      if (
+        !tableShell ||
+        !tableScroll ||
+        !tableScrollProxy ||
+        !tableScrollProxyInner
+      ) {
+        return;
+      }
+
+      const scrollerRect =
+        tableScroll.getBoundingClientRect();
+
+      const viewportWidth =
+        document.documentElement.clientWidth || window.innerWidth;
+
+      const viewportHeight =
+        window.innerHeight;
+
+      const overflowsHorizontally =
+        tableScroll.scrollWidth > tableScroll.clientWidth + 1;
+
+      const tableIsVisible =
+        scrollerRect.bottom > 0 &&
+        scrollerRect.top < viewportHeight;
+
+      /* Once the table's own bottom edge is visible, its native horizontal
+       * scrollbar is available and the fixed proxy would only duplicate it. */
+      const nativeScrollbarIsVisible =
+        scrollerRect.bottom <= viewportHeight;
+
+      const shouldShow =
+        overflowsHorizontally &&
+        tableIsVisible &&
+        !nativeScrollbarIsVisible &&
+        tableScroll.offsetParent !== null;
+
+      if (!shouldShow) {
+        tableScrollProxy.classList.remove('is-visible');
+        tableScrollProxy.setAttribute('aria-hidden', 'true');
+        return;
+      }
+
+      const left =
+        Math.max(0, scrollerRect.left);
+
+      const right =
+        Math.min(viewportWidth, scrollerRect.right);
+
+      const width =
+        Math.max(0, right - left);
+
+      if (width <= 1) {
+        tableScrollProxy.classList.remove('is-visible');
+        tableScrollProxy.setAttribute('aria-hidden', 'true');
+        return;
+      }
+
+      tableScrollProxy.style.left = `${Math.round(left)}px`;
+      tableScrollProxy.style.width = `${Math.round(width)}px`;
+      tableScrollProxyInner.style.width = `${tableScroll.scrollWidth}px`;
+
+      if (
+        Math.abs(
+          tableScrollProxy.scrollLeft - tableScroll.scrollLeft
+        ) > 1
+      ) {
+        tableScrollProxy.scrollLeft = tableScroll.scrollLeft;
+      }
+
+      tableScrollProxy.classList.add('is-visible');
+      tableScrollProxy.setAttribute('aria-hidden', 'false');
+    }
+
+    function scheduleTableHorizontalProxySync() {
+      if (tableHorizontalProxyFrame !== null) {
+        return;
+      }
+
+      tableHorizontalProxyFrame = requestAnimationFrame(
+        () => {
+          tableHorizontalProxyFrame = null;
+          syncTableHorizontalProxy();
+        }
+      );
+    }
+
     function updateSearchPlaceholder() {
       const isOphthalmology =
         activeServiceType === 'ophthalmology';
@@ -14130,6 +14258,7 @@
       }
 
       stickyHeaderController.update();
+      syncTableHorizontalProxy();
     }
 
     function renderTable() {
@@ -15451,12 +15580,44 @@
         () => {
           syncLocationChipTooltip();
           syncFrozenColumnShadow();
+          scheduleTableHorizontalProxySync();
         }
+      );
+
+      window.addEventListener(
+        'scroll',
+        scheduleTableHorizontalProxySync,
+        { passive: true }
       );
 
       tableScroll.addEventListener(
         'scroll',
-        syncFrozenColumnShadow,
+        () => {
+          syncFrozenColumnShadow();
+
+          if (
+            tableScrollProxy &&
+            Math.abs(
+              tableScrollProxy.scrollLeft - tableScroll.scrollLeft
+            ) > 1
+          ) {
+            tableScrollProxy.scrollLeft = tableScroll.scrollLeft;
+          }
+        },
+        { passive: true }
+      );
+
+      tableScrollProxy?.addEventListener(
+        'scroll',
+        () => {
+          if (
+            Math.abs(
+              tableScroll.scrollLeft - tableScrollProxy.scrollLeft
+            ) > 1
+          ) {
+            tableScroll.scrollLeft = tableScrollProxy.scrollLeft;
+          }
+        },
         { passive: true }
       );
 
