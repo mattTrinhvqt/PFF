@@ -5686,6 +5686,7 @@
     let nearbyUnfilteredCount = 0;
     let sortKey = DEFAULT_SORT_KEY;
     let sortDirection = 'asc';
+    let distanceSortWasUserRequested = false;
     let renderFrame = null;
     let searchTimer = null;
     let locationSuggestionTimer = null;
@@ -7302,34 +7303,57 @@
               ].join(' ')
           );
 
-      row.searchText =
-        PFF.normaliseText(
-          [
-            ...OPTOMETRY_SOURCE_KEYS.map(
-              key => row[key]
-            ),
-            row.ownershipCode,
-            row.mmmCode,
-            ...specialtySearchTerms
-          ].join(' ')
-        );
+      /* Search uses a deliberately curated index rather than every raw source
+       * field. URLs, coordinates, raw Yes/x values and contact details add
+       * noise without helping users find a practice. */
+      row.practiceNameSearchText =
+        PFF.normaliseText(row.practiceName);
 
-      /*
-       * Once a locality is selected, free-text search should describe the
-       * practice rather than repeat geographic fields already represented by
-       * the selected location and filters. Keep useful organisation fields
-       * plus specialty synonyms, but exclude address/suburb/state/postcode,
-       * coordinates, PHN/MMM, evidence URLs and contact details.
-       */
-      row.focusedSearchText =
+      row.organisationSearchText =
         PFF.normaliseText(
           [
-            row.practiceName,
             row.brandParent,
             row.employer,
             row.employerType,
-            row.ownershipCode,
-            ...specialtySearchTerms
+            row.ownershipCode
+          ].join(' ')
+        );
+
+      row.locationSearchText =
+        PFF.normaliseText(
+          [
+            row.address,
+            row.suburb,
+            row.stateCode || row.state,
+            row.postcode,
+            row.phnCode,
+            row.mmmCode
+          ].join(' ')
+        );
+
+      row.specialtySearchText =
+        PFF.normaliseText(
+          specialtySearchTerms.join(' ')
+        );
+
+      row.searchText =
+        PFF.normaliseText(
+          [
+            row.practiceNameSearchText,
+            row.organisationSearchText,
+            row.locationSearchText,
+            row.specialtySearchText
+          ].join(' ')
+        );
+
+      /* Once a locality is selected, the remaining free text describes the
+       * practice/service rather than repeating location information. */
+      row.focusedSearchText =
+        PFF.normaliseText(
+          [
+            row.practiceNameSearchText,
+            row.organisationSearchText,
+            row.specialtySearchText
           ].join(' ')
         );
 
@@ -7342,6 +7366,12 @@
         normaliseSearchText(
           row.focusedSearchText
         );
+
+      row.searchWordSet =
+        new Set(searchTokens(row.searchText));
+
+      row.focusedSearchWordSet =
+        new Set(searchTokens(row.focusedSearchText));
 
       row.distanceKm =
         null;
@@ -7422,20 +7452,42 @@
         if (row.specialties.uveitis) specialtySearchTerms.push('uveitis inflammatory ocular inflammation intraocular inflammation ocular inflammatory disease eye inflammation inflammatory eye disease iritis anterior uveitis intermediate uveitis posterior uveitis panuveitis vitritis chorioretinitis retinal vasculitis ocular vasculitis sarcoid uveitis hla-b27 sympathetic ophthalmia scleritis episcleritis');
       }
 
+      row.practiceNameSearchText =
+        PFF.normaliseText(row.practiceName);
+
+      row.organisationSearchText = '';
+
+      row.locationSearchText =
+        PFF.normaliseText(
+          [
+            row.address,
+            row.suburb,
+            row.stateCode || row.state,
+            row.postcode,
+            row.phnCode,
+            row.mmmCode
+          ].join(' ')
+        );
+
+      row.specialtySearchText =
+        PFF.normaliseText(
+          specialtySearchTerms.join(' ')
+        );
+
       row.searchText =
         PFF.normaliseText(
           [
-            ...OPHTHALMOLOGY_SOURCE_KEYS.map(key => row[key]),
-            row.mmmCode,
-            ...specialtySearchTerms
+            row.practiceNameSearchText,
+            row.locationSearchText,
+            row.specialtySearchText
           ].join(' ')
         );
 
       row.focusedSearchText =
         PFF.normaliseText(
           [
-            row.practiceName,
-            ...specialtySearchTerms
+            row.practiceNameSearchText,
+            row.specialtySearchText
           ].join(' ')
         );
 
@@ -7443,6 +7495,10 @@
         normaliseSearchText(row.searchText);
       row.compactFocusedSearchText =
         normaliseSearchText(row.focusedSearchText);
+      row.searchWordSet =
+        new Set(searchTokens(row.searchText));
+      row.focusedSearchWordSet =
+        new Set(searchTokens(row.focusedSearchText));
       row.distanceKm = null;
 
       return row;
@@ -9798,6 +9854,30 @@
         );
     }
 
+    function shortClinicalSpecialtyKeys(value) {
+      const token = PFF.normaliseText(value);
+
+      if (!token || token.length > 3 || /\s/.test(token)) {
+        return [];
+      }
+
+      return activeSpecialtyDefinitions()
+        .filter(definition =>
+          [
+            definition.label,
+            ...(definition.aliases || [])
+          ].some(alias => {
+            const candidate = PFF.normaliseText(alias);
+            return (
+              candidate === token &&
+              candidate.length <= 3 &&
+              !/\s/.test(candidate)
+            );
+          })
+        )
+        .map(definition => definition.key);
+    }
+
     function buildReferSearchContext() {
       const query =
         cleanText(searchInput.value);
@@ -9806,19 +9886,71 @@
         return null;
       }
 
-      const tokens =
+      const tokenValues =
         searchTokens(query);
 
+      const tokens = tokenValues.map(
+        token => ({
+          normal: token,
+          compact: normaliseSearchText(token),
+          shortClinicalKeys: shortClinicalSpecialtyKeys(token)
+        })
+      );
+
       return {
-        tokens: tokens.map(
-          token => ({
-            normal: token,
-            compact: normaliseSearchText(token)
-          })
-        ),
-        compactQuery: normaliseSearchText(tokens.join(' ')),
+        tokens,
+        normalQuery: PFF.normaliseText(tokenValues.join(' ')),
+        compactQuery: normaliseSearchText(tokenValues.join(' ')),
+        /* Keep compact phrase matching for multi-word names such as "Eye Q"
+         * while still preventing a single short token such as DR from matching
+         * inside an unrelated longer word. */
+        allowCompactPhrase:
+          tokens.length > 1 ||
+          tokens.every(token => token.normal.length > 3),
         focused: Boolean(activeLocation)
       };
+    }
+
+    function rowMatchesReferSearchToken(
+      row,
+      token,
+      normalText,
+      compactText
+    ) {
+      if (
+        activeServiceType === 'ophthalmology' &&
+        row?.isPublicService &&
+        token.normal === 'public'
+      ) {
+        return true;
+      }
+
+      /* Known short clinical abbreviations (DR, GA, RD, CL, BV, etc.) are
+       * matched to the verified specialty flag rather than anywhere those
+       * letters happen to occur in a practice name or other text. */
+      if (token.shortClinicalKeys.length) {
+        if (
+          activeServiceType === 'ophthalmology' &&
+          row?.isPublicService
+        ) {
+          return true;
+        }
+
+        return token.shortClinicalKeys.some(
+          key => Boolean(row.specialties?.[key])
+        );
+      }
+
+      /* Ordinary terms keep flexible substring matching, including short
+       * words such as "eye" matching "eyecare". Only the known clinical
+       * abbreviations above receive strict specialty-aware handling. */
+      return (
+        normalText.includes(token.normal) ||
+        (
+          token.compact &&
+          compactText.includes(token.compact)
+        )
+      );
     }
 
     function rowMatchesReferSearch(row, context) {
@@ -9837,10 +9969,9 @@
           : row.compactSearchText;
 
       if (
+        context.allowCompactPhrase &&
         context.compactQuery &&
-        compactText.includes(
-          context.compactQuery
-        )
+        compactText.includes(context.compactQuery)
       ) {
         return true;
       }
@@ -9848,21 +9979,182 @@
       /* Every meaningful term must match. This allows queries such as
        * "neuro and retina" or "dry contact" while keeping AND semantics. */
       return context.tokens.every(
-        token => (
-          (
-            activeServiceType === 'ophthalmology' &&
-            row?.isPublicService &&
-            token.normal === 'public'
-          ) ||
+        token => rowMatchesReferSearchToken(
+          row,
+          token,
+          normalText,
+          compactText
+        )
+      );
+    }
+
+    function allSearchTokensMatchText(
+      tokens,
+      value,
+      { allowClinicalAbbreviations = false } = {}
+    ) {
+      const normalText = PFF.normaliseText(value);
+      const compactText = normaliseSearchText(normalText);
+      const wordSet = new Set(searchTokens(normalText));
+
+      return tokens.every(token => {
+        if (token.shortClinicalKeys.length) {
+          return (
+            allowClinicalAbbreviations &&
+            wordSet.has(token.normal)
+          );
+        }
+
+        return (
           normalText.includes(token.normal) ||
           (
             token.compact &&
-            compactText.includes(
-              token.compact
-            )
+            compactText.includes(token.compact)
           )
+        );
+      });
+    }
+
+    function referSearchScore(row, context) {
+      if (!context) {
+        return 0;
+      }
+
+      const query = context.normalQuery;
+      const compactQuery = context.compactQuery;
+      const name = row.practiceNameSearchText || PFF.normaliseText(row.practiceName);
+      const organisation = row.organisationSearchText || '';
+      const location = context.focused ? '' : (row.locationSearchText || '');
+      const specialty = row.specialtySearchText || '';
+      let score = 100;
+
+      const considerPhrase = (
+        text,
+        exactScore,
+        prefixScore,
+        containsScore,
+        compactContainsScore = containsScore
+      ) => {
+        if (!text || !query) {
+          return;
+        }
+
+        const compactText = normaliseSearchText(text);
+
+        if (text === query) {
+          score = Math.min(score, exactScore);
+        } else if (text.startsWith(query)) {
+          score = Math.min(score, prefixScore);
+        } else if (text.includes(query)) {
+          score = Math.min(score, containsScore);
+        } else if (
+          context.allowCompactPhrase &&
+          compactQuery &&
+          compactText.includes(compactQuery)
+        ) {
+          score = Math.min(score, compactContainsScore);
+        }
+      };
+
+      const singleClinicalAbbreviationQuery =
+        context.tokens.length === 1 &&
+        context.tokens[0].shortClinicalKeys.length > 0;
+
+      if (!singleClinicalAbbreviationQuery) {
+        considerPhrase(name, 0, 8, 14, 16);
+        considerPhrase(organisation, 20, 26, 34, 36);
+        considerPhrase(location, 50, 54, 58, 60);
+      }
+      considerPhrase(specialty, 40, 42, 46, 48);
+
+      if (allSearchTokensMatchText(context.tokens, name)) {
+        score = Math.min(score, 18);
+      }
+
+      if (
+        organisation &&
+        allSearchTokensMatchText(context.tokens, organisation)
+      ) {
+        score = Math.min(score, 38);
+      }
+
+      if (
+        specialty &&
+        allSearchTokensMatchText(
+          context.tokens,
+          specialty,
+          { allowClinicalAbbreviations: true }
         )
+      ) {
+        score = Math.min(score, 49);
+      }
+
+      if (
+        location &&
+        allSearchTokensMatchText(context.tokens, location)
+      ) {
+        score = Math.min(score, 62);
+      }
+
+      /* Mixed queries often span more than one field (for example
+       * "Specsavers dry" or "Newcastle scleral"). Give each token the
+       * strongest field score it earns so those searches are still ranked by
+       * relevance rather than falling back to an alphabetical tie. */
+      const tokenFieldScore = context.tokens.reduce(
+        (total, token) => {
+          if (
+            token.shortClinicalKeys.length &&
+            token.shortClinicalKeys.some(
+              key => Boolean(row.specialties?.[key])
+            )
+          ) {
+            return total + 40;
+          }
+
+          const matchesField = value => {
+            const normalText = PFF.normaliseText(value);
+
+            if (!normalText) {
+              return false;
+            }
+
+            if (token.shortClinicalKeys.length) {
+              return false;
+            }
+
+            return (
+              normalText.includes(token.normal) ||
+              (
+                token.compact &&
+                normaliseSearchText(normalText).includes(token.compact)
+              )
+            );
+          };
+
+          if (matchesField(name)) {
+            return total;
+          }
+
+          if (matchesField(organisation)) {
+            return total + 20;
+          }
+
+          if (matchesField(specialty)) {
+            return total + 40;
+          }
+
+          if (matchesField(location)) {
+            return total + 50;
+          }
+
+          return total + 80;
+        },
+        0
       );
+
+      score = Math.min(score, tokenFieldScore);
+
+      return score;
     }
 
     function locationDisplayLabel(row) {
@@ -9904,12 +10196,23 @@
       const postcode =
         cleanText(row.postcode);
 
-      if (postcode === cleanText(query)) {
-        return 0;
-      }
+      const state =
+        PFF.normaliseText(row.stateCode || row.state);
 
-      if (suburb === normal) {
-        return 1;
+      const exactLocationForms = new Set(
+        [
+          postcode,
+          suburb,
+          [suburb, state].filter(Boolean).join(' '),
+          [suburb, postcode].filter(Boolean).join(' '),
+          [suburb, state, postcode].filter(Boolean).join(' ')
+        ]
+          .map(value => PFF.normaliseText(value))
+          .filter(Boolean)
+      );
+
+      if (normal && exactLocationForms.has(normal)) {
+        return normal === PFF.normaliseText(postcode) ? 0 : 1;
       }
 
       if (
@@ -9987,36 +10290,100 @@
       }
 
       const tokens = text.split(/\s+/).filter(Boolean);
-      const maximumPrefixTokens = Math.min(tokens.length, 5);
+      const maximumSpanTokens = Math.min(tokens.length, 5);
+      const candidates = [];
 
+      /* Check location phrases at the start and end of the query. This keeps
+       * both "Sydney neuro" and "neuro Sydney" natural without scanning
+       * every possible middle substring on each keystroke. */
       for (
-        let tokenCount = maximumPrefixTokens;
+        let tokenCount = maximumSpanTokens;
         tokenCount >= 1;
         tokenCount -= 1
       ) {
-        const locationQuery =
-          tokens.slice(0, tokenCount).join(' ');
+        const spans = [
+          { startIndex: 0, endIndex: tokenCount },
+          {
+            startIndex: tokens.length - tokenCount,
+            endIndex: tokens.length
+          }
+        ];
 
-        const rows = matchingLocations(locationQuery);
+        const seenSpans = new Set();
 
-        if (!rows.length) {
-          continue;
-        }
+        spans.forEach(span => {
+          const spanKey = `${span.startIndex}|${span.endIndex}`;
 
-        const remainingQuery =
-          tokens.slice(tokenCount).join(' ');
+          if (seenSpans.has(spanKey)) {
+            return;
+          }
 
-        return rows.map(
-          row => ({
-            type: 'location',
-            row,
-            locationQuery,
-            remainingQuery
-          })
-        );
+          seenSpans.add(spanKey);
+
+          const locationQuery =
+            tokens
+              .slice(span.startIndex, span.endIndex)
+              .join(' ');
+
+          const rows = matchingLocations(locationQuery);
+
+          rows.forEach(row => {
+            const remainingQuery = [
+              ...tokens.slice(0, span.startIndex),
+              ...tokens.slice(span.endIndex)
+            ].join(' ');
+
+            candidates.push({
+              type: 'location',
+              row,
+              locationQuery,
+              remainingQuery,
+              matchScore: suggestionScore(row, locationQuery),
+              spanLength: tokenCount
+            });
+          });
+        });
       }
 
-      return [];
+      const seen = new Set();
+
+      return candidates
+        .sort(
+          (first, second) =>
+            first.matchScore - second.matchScore ||
+            second.spanLength - first.spanLength ||
+            STATES.indexOf(first.row.stateCode) -
+              STATES.indexOf(second.row.stateCode) ||
+            first.row.suburb.localeCompare(
+              second.row.suburb,
+              'en-AU',
+              {
+                numeric: true,
+                sensitivity: 'base'
+              }
+            )
+        )
+        .filter(item => {
+          const key = [
+            item.row.stateCode,
+            item.row.postcode,
+            PFF.normaliseText(item.row.suburb)
+          ].join('|');
+
+          if (seen.has(key)) {
+            return false;
+          }
+
+          seen.add(key);
+          return true;
+        })
+        .slice(0, 8)
+        .map(item => ({
+          type: item.type,
+          row: item.row,
+          locationQuery: item.locationQuery,
+          remainingQuery: item.remainingQuery
+        }));
     }
 
     function specialtySuggestionsForQuery(query) {
@@ -10562,6 +10929,7 @@
       if (sortKey === 'distanceKm') {
         sortKey = DEFAULT_SORT_KEY;
         sortDirection = 'asc';
+        distanceSortWasUserRequested = false;
       }
 
       if (!keepSearch) {
@@ -11109,6 +11477,7 @@
 
       sortKey = 'distanceKm';
       sortDirection = 'asc';
+      distanceSortWasUserRequested = false;
 
       prepareActiveLocationDistances();
       nearbyUnfilteredCount =
@@ -11570,9 +11939,11 @@
       if (activeLocation) {
         sortKey = 'distanceKm';
         sortDirection = 'asc';
+        distanceSortWasUserRequested = false;
       } else if (sortKey === 'distanceKm') {
         sortKey = DEFAULT_SORT_KEY;
         sortDirection = 'asc';
+        distanceSortWasUserRequested = false;
       }
 
       searchClear.classList.toggle(
@@ -11667,6 +12038,7 @@
                   ? 'distanceKm'
                   : DEFAULT_SORT_KEY;
                 sortDirection = 'asc';
+                distanceSortWasUserRequested = false;
               }
 
               if (activeLocation) {
@@ -12440,6 +12812,34 @@
       return firstPriority - secondPriority;
     }
 
+    function shouldUseReferSearchRelevance() {
+      return (
+        Boolean(normaliseSearchText(searchInput.value)) &&
+        (
+          sortKey === DEFAULT_SORT_KEY ||
+          (
+            sortKey === 'distanceKm' &&
+            !distanceSortWasUserRequested
+          )
+        )
+      );
+    }
+
+    function compareReferSearchRelevance(first, second) {
+      if (!shouldUseReferSearchRelevance()) {
+        return 0;
+      }
+
+      const firstScore = Number.isFinite(first?.referSearchScore)
+        ? first.referSearchScore
+        : 100;
+      const secondScore = Number.isFinite(second?.referSearchScore)
+        ? second.referSearchScore
+        : 100;
+
+      return firstScore - secondScore;
+    }
+
     function sortFilteredRowsInPlace() {
       filteredRows.sort(
         (first, second) => {
@@ -12450,7 +12850,32 @@
             return publicServiceComparison;
           }
 
-          if (shouldUseStableDefaultOrder()) {
+          if (shouldUseReferSearchRelevance()) {
+            const relevanceComparison =
+              compareReferSearchRelevance(first, second);
+
+            if (relevanceComparison !== 0) {
+              return relevanceComparison;
+            }
+
+            /* With a selected locality the automatically chosen distance sort
+             * remains the tiebreaker between equally relevant matches. */
+            if (sortKey === 'distanceKm') {
+              const distanceComparison =
+                compareValues(first, second, 'distanceKm');
+
+              if (distanceComparison !== 0) {
+                return distanceComparison;
+              }
+            } else {
+              const nameComparison =
+                compareValues(first, second, 'practiceName');
+
+              if (nameComparison !== 0) {
+                return nameComparison;
+              }
+            }
+          } else if (shouldUseStableDefaultOrder()) {
             const rankDifference =
               stableDefaultSortRank(first) -
               stableDefaultSortRank(second);
@@ -12580,9 +13005,16 @@
           }
         );
 
+        filteredRows.forEach(row => {
+          row.referSearchScore = referSearchContext
+            ? referSearchScore(row, referSearchContext)
+            : null;
+        });
+
         if (
           !defaultPracticeSort ||
-          shouldPrioritizePublicServices()
+          shouldPrioritizePublicServices() ||
+          shouldUseReferSearchRelevance()
         ) {
           sortFilteredRowsInPlace();
         }
@@ -14150,7 +14582,8 @@
           specialties: checkedValues('.specialty-filter')
         },
         sortKey,
-        sortDirection
+        sortDirection,
+        distanceSortWasUserRequested
       };
     }
 
@@ -14358,6 +14791,10 @@
         sortDirection = saved.sortDirection === 'desc' ? 'desc' : 'asc';
       }
 
+      distanceSortWasUserRequested =
+        sortKey === 'distanceKm' &&
+        Boolean(saved.distanceSortWasUserRequested);
+
       return true;
     }
 
@@ -14374,6 +14811,7 @@
       syncSelectedLocationChip();
       sortKey = DEFAULT_SORT_KEY;
       sortDirection = 'asc';
+      distanceSortWasUserRequested = false;
 
       searchClear.classList.remove('is-visible');
 
@@ -14422,6 +14860,7 @@
       practiceCountScope = 'radius';
       sortKey = DEFAULT_SORT_KEY;
       sortDirection = 'asc';
+      distanceSortWasUserRequested = false;
       lastRenderedSearchKey = null;
       radiusPercentileBusy = false;
       lastFilterSignature = '';
@@ -14493,6 +14932,9 @@
 
       const key =
         button.dataset.sortKey;
+
+      distanceSortWasUserRequested =
+        key === 'distanceKm';
 
       if (sortKey === key) {
         sortDirection =
@@ -14587,6 +15029,7 @@
           if (activeLocation) {
             sortKey = 'distanceKm';
             sortDirection = 'asc';
+            distanceSortWasUserRequested = false;
           }
 
           syncPracticeScopeUi();
