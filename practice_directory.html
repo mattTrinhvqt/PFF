@@ -702,25 +702,17 @@
       -webkit-overflow-scrolling: touch;
     }
 
-    .table-scroll-proxy {
-      display: none;
-      width: min(100%, var(--directory-current-table-width));
-      height: 17px;
-      box-sizing: border-box;
-      overflow-x: auto;
-      overflow-y: hidden;
-      background: var(--pff-white);
-      overscroll-behavior-x: contain;
-      -webkit-overflow-scrolling: touch;
+    .table-header-scroll-button {
+      top: 4px;
+      z-index: 30;
     }
 
-    .table-scroll-proxy.is-visible {
-      display: block;
+    .table-header-scroll-left {
+      left: calc(var(--directory-frozen-width) + 3px);
     }
 
-    .table-scroll-proxy-inner {
-      height: 1px;
-      pointer-events: none;
+    .table-header-scroll-right {
+      right: 3px;
     }
 
     .data-table {
@@ -777,6 +769,10 @@
 
     .sticky-table-header .data-table th {
       background: var(--pff-white);
+    }
+
+    .sticky-table-header .table-header-scroll-button {
+      pointer-events: auto;
     }
 
     .data-table th,
@@ -4900,17 +4896,21 @@
         >›</button>
       </div>
 
-      <div
-        id="tableScrollProxy"
-        class="table-scroll-proxy"
-        tabindex="0"
-        aria-label="Horizontal table scrollbar"
-        aria-hidden="true"
-      >
-        <div id="tableScrollProxyInner" class="table-scroll-proxy-inner"></div>
-      </div>
-
       <div id="tableShell" class="table-shell">
+        <button
+          id="tableScrollLeft"
+          class="heading-scroll-button heading-scroll-left table-header-scroll-button table-header-scroll-left is-hidden"
+          type="button"
+          aria-label="Scroll table left"
+        >‹</button>
+
+        <button
+          id="tableScrollRight"
+          class="heading-scroll-button heading-scroll-right table-header-scroll-button table-header-scroll-right is-hidden"
+          type="button"
+          aria-label="Scroll table right"
+        >›</button>
+
         <div id="viewBusy" class="view-busy" role="status" aria-label="Loading results" hidden>
           <div class="cone-loader" aria-hidden="true">
             <div class="cone blue"></div>
@@ -5693,11 +5693,11 @@
     const tableScroll =
       document.getElementById('tableScroll');
 
-    const tableScrollProxy =
-      document.getElementById('tableScrollProxy');
+    const tableScrollLeft =
+      document.getElementById('tableScrollLeft');
 
-    const tableScrollProxyInner =
-      document.getElementById('tableScrollProxyInner');
+    const tableScrollRight =
+      document.getElementById('tableScrollRight');
 
     const dataTable =
       document.getElementById('dataTable');
@@ -5776,7 +5776,6 @@
     const MOBILE_SEARCH_TYPING_IDLE_MS = 1000;
     const MOBILE_SEARCH_POST_SCROLL_GRACE_MS = 450;
     let suggestionPointerState = null;
-    let tableHorizontalProxyFrame = null;
     let tableAnimationToken = 0;
     let automaticViewSaveTimer = null;
     let automaticViewPersistenceReady = false;
@@ -5874,16 +5873,18 @@
     stickyTableHeader.className =
       'sticky-table-header';
 
-    stickyTableHeader.setAttribute(
-      'aria-hidden',
-      'true'
-    );
-
     const stickyTableHeaderScroll =
       document.createElement('div');
 
     stickyTableHeaderScroll.className =
       'sticky-table-header-scroll';
+
+    stickyTableHeaderScroll.setAttribute(
+      'aria-hidden',
+      'true'
+    );
+
+    stickyTableHeaderScroll.inert = true;
 
     const stickyHeaderTable =
       document.createElement('table');
@@ -5897,6 +5898,38 @@
 
     stickyTableHeader.appendChild(
       stickyTableHeaderScroll
+    );
+
+    const stickyTableScrollLeft =
+      document.createElement('button');
+
+    stickyTableScrollLeft.type = 'button';
+    stickyTableScrollLeft.className =
+      'heading-scroll-button heading-scroll-left table-header-scroll-button table-header-scroll-left is-hidden';
+    stickyTableScrollLeft.setAttribute(
+      'aria-label',
+      'Scroll table left'
+    );
+    stickyTableScrollLeft.textContent = '‹';
+
+    const stickyTableScrollRight =
+      document.createElement('button');
+
+    stickyTableScrollRight.type = 'button';
+    stickyTableScrollRight.className =
+      'heading-scroll-button heading-scroll-right table-header-scroll-button table-header-scroll-right is-hidden';
+    stickyTableScrollRight.setAttribute(
+      'aria-label',
+      'Scroll table right'
+    );
+    stickyTableScrollRight.textContent = '›';
+
+    stickyTableHeader.appendChild(
+      stickyTableScrollLeft
+    );
+
+    stickyTableHeader.appendChild(
+      stickyTableScrollRight
     );
 
     document.body.appendChild(
@@ -5917,6 +5950,48 @@
           document.querySelector(
             '.controls-scroll-arrow-right'
           ),
+
+        tolerance:
+          2
+      });
+
+    const tableScrollController =
+      PFF.setupScrollableRegion({
+        scroller:
+          tableScroll,
+
+        leftButton:
+          tableScrollLeft,
+
+        rightButton:
+          tableScrollRight,
+
+        fraction:
+          0.72,
+
+        minimum:
+          110,
+
+        tolerance:
+          2
+      });
+
+    const stickyTableScrollController =
+      PFF.setupScrollableRegion({
+        scroller:
+          tableScroll,
+
+        leftButton:
+          stickyTableScrollLeft,
+
+        rightButton:
+          stickyTableScrollRight,
+
+        fraction:
+          0.72,
+
+        minimum:
+          110,
 
         tolerance:
           2
@@ -11935,54 +12010,6 @@
       );
     }
 
-    function syncTableHorizontalProxy() {
-      if (
-        !tableScroll ||
-        !tableScrollProxy ||
-        !tableScrollProxyInner
-      ) {
-        return;
-      }
-
-      const overflowsHorizontally =
-        tableScroll.scrollWidth > tableScroll.clientWidth + 1;
-
-      const shouldShow =
-        overflowsHorizontally &&
-        tableScroll.offsetParent !== null;
-
-      if (!shouldShow) {
-        tableScrollProxy.classList.remove('is-visible');
-        tableScrollProxy.setAttribute('aria-hidden', 'true');
-        return;
-      }
-
-      tableScrollProxyInner.style.width = `${tableScroll.scrollWidth}px`;
-      tableScrollProxy.classList.add('is-visible');
-      tableScrollProxy.setAttribute('aria-hidden', 'false');
-
-      if (
-        Math.abs(
-          tableScrollProxy.scrollLeft - tableScroll.scrollLeft
-        ) > 1
-      ) {
-        tableScrollProxy.scrollLeft = tableScroll.scrollLeft;
-      }
-    }
-
-    function scheduleTableHorizontalProxySync() {
-      if (tableHorizontalProxyFrame !== null) {
-        return;
-      }
-
-      tableHorizontalProxyFrame = requestAnimationFrame(
-        () => {
-          tableHorizontalProxyFrame = null;
-          syncTableHorizontalProxy();
-        }
-      );
-    }
-
     function updateSearchPlaceholder() {
       const isOphthalmology =
         activeServiceType === 'ophthalmology';
@@ -14216,7 +14243,6 @@
       }
 
       stickyHeaderController.update();
-      syncTableHorizontalProxy();
     }
 
     function renderTable() {
@@ -14236,6 +14262,8 @@
       );
 
       controlsScrollController.update();
+      tableScrollController.update();
+      stickyTableScrollController.update();
     }
 
     function renderTableAnimated(animate = true) {
@@ -15538,38 +15566,12 @@
         () => {
           syncLocationChipTooltip();
           syncFrozenColumnShadow();
-          scheduleTableHorizontalProxySync();
         }
       );
 
       tableScroll.addEventListener(
         'scroll',
-        () => {
-          syncFrozenColumnShadow();
-
-          if (
-            tableScrollProxy &&
-            Math.abs(
-              tableScrollProxy.scrollLeft - tableScroll.scrollLeft
-            ) > 1
-          ) {
-            tableScrollProxy.scrollLeft = tableScroll.scrollLeft;
-          }
-        },
-        { passive: true }
-      );
-
-      tableScrollProxy?.addEventListener(
-        'scroll',
-        () => {
-          if (
-            Math.abs(
-              tableScroll.scrollLeft - tableScrollProxy.scrollLeft
-            ) > 1
-          ) {
-            tableScroll.scrollLeft = tableScrollProxy.scrollLeft;
-          }
-        },
+        syncFrozenColumnShadow,
         { passive: true }
       );
 
