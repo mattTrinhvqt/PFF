@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Rural redistribution</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
+
+  <style>
+    :root {
+      --population-match: #b54a0a;
+      --sufficient-access: #20c9d7;
+      --dense-access: #ff00ff;
+      --excess-purple: #6600ff;
+    }
+
+    .single-tab-shell .tab-list { min-width: 0; }
+    .single-tab-shell .chart-tab { cursor: default; }
+    .single-tab-shell .tab-list::after { display: none; }
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-heading-row { align-items: flex-start; }
+    .chart-heading {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .chart-legend .legend-item {
+      color: var(--pff-muted);
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .chart-legend .legend-item:hover { color: var(--pff-muted); }
+
+    .legend-line.is-reference {
+      height: 0;
+      border: 0;
+      border-top: 2px dotted var(--excess-purple);
+      background: transparent !important;
+    }
+
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: left;
+    }
+
+    .method-note-line { display: block; }
+    .method-note-line + .method-note-line { margin-top: 2px; }
+
+    @media (max-width: 430px) {
+      .method-note { font-size: 10.5px; }
+    }
+  </style>
+  <style>
+    .chart-shell { margin-top: -2px; }
+  </style>
+</head>
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div id="loadingState" class="app-loading" role="status" aria-live="polite" aria-label="Loading rural redistribution scenarios">
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p id="loaderText" class="loader-text">Loading redistribution scenarios…</p>
+      </div>
+
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div class="tab-list" role="tablist" aria-label="Rural redistribution chart">
+            <button class="chart-tab is-active" type="button" role="tab" aria-selected="true" tabindex="0">Rural redistribution</button>
+          </div>
+        </div>
+
+        <div id="liveData" class="live-data" aria-label="Live data" aria-live="polite">
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="liveDataText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">Clinicians potentially redistributed rurally</h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <div class="legend-viewport">
+            <div class="chart-legend" aria-label="Chart legend">
+              <span class="legend-item">
+                <span class="legend-line is-reference" style="--legend-colour: var(--excess-purple)"></span>
+                <span>Current excess clinicians</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas id="chartCanvas" aria-label="Three rural clinician redistribution scenarios compared with current excess clinician numbers" role="img"></canvas>
+      </div>
+
+      <p class="method-note">
+        <span id="scenariosNote" class="method-note-line"><strong>Scenarios:</strong> loading…</span>
+        <span id="referenceNote" class="method-note-line"><strong>Reference:</strong> purple line = current excess clinicians</span>
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    // ============================================================
+    // DATA SOURCE
+    // ============================================================
+
+    const CONFIG = Object.freeze({
+      sheetId: '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+      clinicianMmmSheet: 'OptomsbystatebyMMM',
+      clinicianMmmRange: 'A29:AO',
+      populationMmmSheet: 'AuspopnbystatebyMMM',
+      populationMmmRange: 'A29:AO',
+      medicareSheet: 'Medicareitems',
+      medicareDataRange: 'C30:KE',
+      medicareItemRange: 'D29:KE29',
+      medicareHoursRange: 'D28:KE28',
+      activeClinicianSheet: 'Optomsbystate',
+      activeClinicianRange: 'L30:V',
+      clinicalHoursSheet: 'Optomhoursbystate',
+      clinicalHoursRange: 'A30:J',
+      localCacheKey: 'pff-workforce-rural-redistribution-v1'
+    });
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const MMM_CACHE_APP_KEY = 'pff-state-mmm-workforce-v1';
+    const EXCESS_CACHE_APP_KEY = 'pff-medicare-service-demand-v13';
+
+    const COUNT_FIRST_INDEX = 1;
+    const POPULATION_FIRST_INDEX = 1;
+    const ACTIVE_CLINICIAN_TOTAL_INDEX = 10;
+    const CLINICAL_HOURS_TOTAL_INDEX = 9;
+    const EXPECTED_ITEM_COUNT = 32;
+
+    const WORKING_WEEKS_PER_YEAR = 46;
+    const ADMIN_HOURS_PER_WEEK = 2.5;
+    const ADMIN_WEEKS_PER_YEAR = 52;
+
+    const SUFFICIENT_POPULATION = 10000;
+    const DENSE_POPULATION = 5000;
+    const CHART_TRANSITION_MS = 500;
+    const X_AXIS_MAJOR_INTERVALS = 6;
+    const X_AXIS_MAJOR_TICK_COUNT = X_AXIS_MAJOR_INTERVALS + 1;
+
+    const POPULATION_MATCH_COLOUR = '#b54a0a';
+    const SUFFICIENT_COLOUR = '#20c9d7';
+    const DENSE_COLOUR = '#ff00ff';
+    const EXCESS_COLOUR = '#6600ff';
+
+    const SERIES_SCHEMA = [
+      { state: 'NSW', mmm: 1 }, { state: 'NSW', mmm: 2 },
+      { state: 'NSW', mmm: 3 }, { state: 'NSW', mmm: 4 },
+      { state: 'NSW', mmm: 5 }, { state: 'NSW', mmm: 6 },
+      { state: 'NSW', mmm: 7 },
+      { state: 'VIC', mmm: 1 }, { state: 'VIC', mmm: 2 },
+      { state: 'VIC', mmm: 3 }, { state: 'VIC', mmm: 4 },
+      { state: 'VIC', mmm: 5 },
+      { state: 'QLD', mmm: 1 }, { state: 'QLD', mmm: 2 },
+      { state: 'QLD', mmm: 3 }, { state: 'QLD', mmm: 4 },
+      { state: 'QLD', mmm: 5 }, { state: 'QLD', mmm: 6 },
+      { state: 'QLD', mmm: 7 },
+      { state: 'SA', mmm: 1 }, { state: 'SA', mmm: 2 },
+      { state: 'SA', mmm: 3 }, { state: 'SA', mmm: 4 },
+      { state: 'SA', mmm: 5 }, { state: 'SA', mmm: 6 },
+      { state: 'SA', mmm: 7 },
+      { state: 'WA', mmm: 1 }, { state: 'WA', mmm: 2 },
+      { state: 'WA', mmm: 3 }, { state: 'WA', mmm: 4 },
+      { state: 'WA', mmm: 5 }, { state: 'WA', mmm: 6 },
+      { state: 'WA', mmm: 7 },
+      { state: 'TAS', mmm: 2 }, { state: 'TAS', mmm: 3 },
+      { state: 'TAS', mmm: 5 },
+      { state: 'NT', mmm: 2 }, { state: 'NT', mmm: 6 },
+      { state: 'NT', mmm: 7 },
+      { state: 'ACT', mmm: 1 }
+    ];
+
+    // ============================================================
+    // DOM + STATE
+    // ============================================================
+
+    const app = document.getElementById('app');
+    const loaderText = document.getElementById('loaderText');
+    const statusEl = document.getElementById('status');
+    const liveData = document.getElementById('liveData');
+    const liveDataText = document.getElementById('liveDataText');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('chartCanvas');
+    const scenariosNote = document.getElementById('scenariosNote');
+    const referenceNote = document.getElementById('referenceNote');
+
+    let chart = null;
+    let chartSummary = null;
+    let interactionsController = null;
+    let responsiveController = null;
+    let displayRow = null;
+    let currentScale = null;
+
+    const axisTickAnimation = {
+      values: [],
+      token: 0,
+      raf: null
+    };
+
+    // ============================================================
+    // GENERIC DATA HELPERS
+    // ============================================================
+
+    function dataNumber(value) {
+      if (
+        value && typeof value === 'object' &&
+        (Object.prototype.hasOwnProperty.call(value, 'v') ||
+         Object.prototype.hasOwnProperty.call(value, 'f'))
+      ) {
+        const direct = PFFCharts.numericCell(value);
+        return Number.isFinite(direct) ? direct : null;
+      }
+
+      if (value === null || value === undefined || value === '') return null;
+      const cleaned = PFF.cleanText(value)
+        .replace(/,/g, '')
+        .replace(/[^0-9.+-]/g, '');
+      if (!cleaned || !/\d/.test(cleaned)) return null;
+      const number = Number(cleaned);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function yearValue(value) {
+      const numeric = dataNumber(value);
+      if (!Number.isFinite(numeric)) return null;
+      const year = Math.round(numeric);
+      return year >= 1900 && year <= 2200 ? year : null;
+    }
+
+    function rowsToGVizTable(sourceRows) {
+      return {
+        rows: (Array.isArray(sourceRows) ? sourceRows : []).map(row => ({
+          c: (Array.isArray(row) ? row : []).map(value => ({ v: value }))
+        }))
+      };
+    }
+
+    // ============================================================
+    // STATE × MMM DATA
+    // ============================================================
+
+    function clinicianValues(getValue) {
+      return SERIES_SCHEMA.map((_, index) => {
+        const count = dataNumber(getValue(COUNT_FIRST_INDEX + index));
+        if (count === 0) return 0;
+        return Number.isFinite(count) && count >= 0 ? count : null;
+      });
+    }
+
+    function populationValues(getValue) {
+      return SERIES_SCHEMA.map((_, index) => {
+        const population = dataNumber(getValue(POPULATION_FIRST_INDEX + index));
+        return Number.isFinite(population) && population >= 0 ? population : null;
+      });
+    }
+
+    function parseClinicianMmmTable(table) {
+      const result = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = clinicianValues(index => cells[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parsePopulationMmmTable(table) {
+      const result = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = populationValues(index => cells[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parseRemoteClinicianMmmRows(sourceRows) {
+      const result = {};
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = clinicianValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parseRemotePopulationMmmRows(sourceRows) {
+      const result = {};
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = populationValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function completeMmmYear(clinician, population) {
+      if (!Array.isArray(clinician) || !Array.isArray(population)) return false;
+      if (clinician.length < SERIES_SCHEMA.length || population.length < SERIES_SCHEMA.length) return false;
+
+      return SERIES_SCHEMA.every((_, index) =>
+        Number.isFinite(Number(clinician[index])) &&
+        Number.isFinite(Number(population[index]))
+      );
+    }
+
+    function aggregateMmmRows(clinician, population) {
+      const rows = [];
+
+      for (let mmm = 1; mmm <= 7; mmm += 1) {
+        const indices = SERIES_SCHEMA
+          .map((item, index) => ({ ...item, index }))
+          .filter(item => item.mmm === mmm)
+          .map(item => item.index);
+
+        if (!indices.length) continue;
+
+        const activeClinicians = indices.reduce(
+          (sum, index) => sum + Number(clinician[index]),
+          0
+        );
+        const people = indices.reduce(
+          (sum, index) => sum + Number(population[index]),
+          0
+        );
+
+        rows.push({ mmm, activeClinicians, population: people });
+      }
+
+      return rows;
+    }
+
+    function redistributionScenarios(clinician, population) {
+      if (!completeMmmYear(clinician, population)) return null;
+
+      const rows = aggregateMmmRows(clinician, population);
+      const totalClinicians = rows.reduce((sum, row) => sum + row.activeClinicians, 0);
+      const totalPopulation = rows.reduce((sum, row) => sum + row.population, 0);
+      const ruralRows = rows.filter(row => row.mmm >= 2);
+      const ruralClinicians = ruralRows.reduce((sum, row) => sum + row.activeClinicians, 0);
+      const ruralPopulation = ruralRows.reduce((sum, row) => sum + row.population, 0);
+
+      if (totalClinicians <= 0 || totalPopulation <= 0 || ruralPopulation <= 0) return null;
+
+      const targetRuralClinicians = totalClinicians * (ruralPopulation / totalPopulation);
+      const matchPopulation = Math.max(0, targetRuralClinicians - ruralClinicians);
+
+      const sufficient = ruralRows.reduce((sum, row) =>
+        sum + Math.max(0, row.population / SUFFICIENT_POPULATION - row.activeClinicians),
+        0
+      );
+
+      const dense = ruralRows.reduce((sum, row) =>
+        sum + Math.max(0, row.population / DENSE_POPULATION - row.activeClinicians),
+        0
+      );
+
+      return {
+        totalClinicians,
+        totalPopulation,
+        ruralClinicians,
+        ruralPopulation,
+        ruralPopulationShare: ruralPopulation / totalPopulation,
+        ruralClinicianShare: ruralClinicians / totalClinicians,
+        matchPopulation,
+        sufficient,
+        dense
+      };
+    }
+
+    // ============================================================
+    // EXCESS-CLINICIAN DATA
+    // ============================================================
+
+    function numericCell(cell) {
+      const raw = cell?.v ?? cell?.f ?? null;
+      if (raw === null || raw === undefined || raw === '') return null;
+      const number = Number(typeof raw === 'string' ? raw.replace(/,/g, '') : raw);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function itemNumberCell(cell) {
+      const value = numericCell(cell);
+      if (Number.isFinite(value)) return String(Math.round(value));
+      const text = String(cell?.v ?? cell?.f ?? '').trim();
+      return /^\d{5}$/.test(text) ? text : '';
+    }
+
+    function parseMetadataRows(itemTable, hoursTable) {
+      const itemCells = itemTable?.rows?.[0]?.c || [];
+      const hourCells = hoursTable?.rows?.[0]?.c || [];
+      const parsed = [];
+
+      for (let start = 0; start + 8 < itemCells.length; start += 9) {
+        const item = itemNumberCell(itemCells[start]);
+        if (!/^\d{5}$/.test(item)) break;
+
+        const repeated = Array.from(
+          { length: 9 },
+          (_, offset) => itemNumberCell(itemCells[start + offset])
+        );
+        if (!repeated.every(value => value === item)) break;
+
+        const hours = numericCell(hourCells[start]);
+        if (!Number.isFinite(hours) || hours <= 0) {
+          throw new Error(`Medicare consultation time was missing for item ${item}.`);
+        }
+        parsed.push({ item, hours });
+      }
+
+      if (
+        parsed.length !== EXPECTED_ITEM_COUNT ||
+        new Set(parsed.map(item => item.item)).size !== EXPECTED_ITEM_COUNT
+      ) {
+        throw new Error('Medicare item metadata were incomplete.');
+      }
+
+      return parsed;
+    }
+
+    function parseNationalMedicareData(table, itemSchema) {
+      const rows = [];
+
+      for (const sourceRow of table?.rows || []) {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) continue;
+
+        const totals = itemSchema.map(
+          (_, itemIndex) => numericCell(cells[9 + itemIndex * 9])
+        );
+        if (totals.some(Number.isFinite)) rows.push({ year, totals });
+      }
+
+      return rows.sort((a, b) => a.year - b.year);
+    }
+
+    function parseNationalActiveClinicians(table) {
+      const result = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const value = numericCell(cells[ACTIVE_CLINICIAN_TOTAL_INDEX]);
+        if (Number.isFinite(value) && value > 0) result[year] = value;
+      });
+      return result;
+    }
+
+    function parseNationalClinicalHours(table) {
+      const result = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const value = numericCell(cells[CLINICAL_HOURS_TOTAL_INDEX]);
+        if (Number.isFinite(value) && value > 0) result[year] = value;
+      });
+      return result;
+    }
+
+    function totalMedicareHours(totals, items) {
+      let total = 0;
+      let found = false;
+
+      items.forEach((item, itemIndex) => {
+        const count = Number(totals?.[itemIndex]);
+        const hours = Number(item?.hours);
+        if (Number.isFinite(count) && Number.isFinite(hours)) {
+          total += count * hours;
+          found = true;
+        }
+      });
+
+      return found ? total : null;
+    }
+
+    function excessForYear(activeClinicians, weeklyClinicalHours, medicareHours) {
+      const active = Number(activeClinicians);
+      const weekly = Number(weeklyClinicalHours);
+
+      if (
+        !Number.isFinite(active) || active <= 0 ||
+        !Number.isFinite(weekly) || weekly <= 0 ||
+        !Number.isFinite(medicareHours)
+      ) return null;
+
+      const annualPerClinician = Math.max(
+        0,
+        weekly * WORKING_WEEKS_PER_YEAR -
+          ADMIN_HOURS_PER_WEEK * ADMIN_WEEKS_PER_YEAR
+      );
+      if (annualPerClinician <= 0) return null;
+
+      const annualCapacity = active * annualPerClinician;
+      return {
+        activeClinicians: active,
+        weeklyClinicalHours: weekly,
+        annualPerClinician,
+        annualCapacity,
+        medicareHours,
+        excessClinicians: (annualCapacity - medicareHours) / annualPerClinician
+      };
+    }
+
+    function excessRows(dataTable, itemTable, hoursTable, activeTable, clinicalHoursTable) {
+      const items = parseMetadataRows(itemTable, hoursTable);
+      const medicareRows = parseNationalMedicareData(dataTable, items);
+      const activeByYear = parseNationalActiveClinicians(activeTable);
+      const clinicalHoursByYear = parseNationalClinicalHours(clinicalHoursTable);
+
+      return medicareRows.map(row => {
+        const medicareHours = totalMedicareHours(row.totals, items);
+        const detail = excessForYear(
+          activeByYear[row.year],
+          clinicalHoursByYear[row.year],
+          medicareHours
+        );
+        return detail && Number.isFinite(detail.excessClinicians)
+          ? { year: row.year, ...detail }
+          : null;
+      }).filter(Boolean);
+    }
+
+    // ============================================================
+    // COMBINE SOURCES
+    // ============================================================
+
+    function buildRedistributionRow(clinicianByYear, populationByYear, excessSourceRows) {
+      const excessByYear = new Map(
+        (Array.isArray(excessSourceRows) ? excessSourceRows : [])
+          .map(row => [Number(row?.year), row])
+          .filter(([year]) => Number.isFinite(year))
+      );
+
+      const commonYears = Object.keys(clinicianByYear || {})
+        .map(Number)
+        .filter(year =>
+          Number.isFinite(year) &&
+          Object.prototype.hasOwnProperty.call(populationByYear || {}, year) &&
+          excessByYear.has(year)
+        )
+        .sort((a, b) => b - a);
+
+      for (const year of commonYears) {
+        const scenarios = redistributionScenarios(
+          clinicianByYear[year],
+          populationByYear[year]
+        );
+        const excess = excessByYear.get(year);
+
+        if (
+          scenarios &&
+          excess &&
+          Number.isFinite(excess.excessClinicians) &&
+          excess.excessClinicians >= 0
+        ) {
+          return {
+            year,
+            ...scenarios,
+            excessClinicians: excess.excessClinicians,
+            excessActiveClinicians: excess.activeClinicians,
+            medicareHours: excess.medicareHours,
+            annualCapacity: excess.annualCapacity
+          };
+        }
+      }
+
+      throw new Error('No common year contained complete redistribution and excess-clinician data.');
+    }
+
+    function validateRedistributionRows(sourceRows) {
+      const row = Array.isArray(sourceRows) ? sourceRows[0] : null;
+      if (!row) throw new Error('Redistribution data were unavailable.');
+
+      const numericFields = [
+        'year', 'matchPopulation', 'sufficient', 'dense', 'excessClinicians',
+        'ruralPopulationShare', 'ruralClinicianShare'
+      ];
+      if (!numericFields.every(key => Number.isFinite(Number(row[key])))) {
+        throw new Error('Redistribution data were incomplete.');
+      }
+
+      return [{
+        ...row,
+        year: Math.round(Number(row.year)),
+        matchPopulation: Math.max(0, Number(row.matchPopulation)),
+        sufficient: Math.max(0, Number(row.sufficient)),
+        dense: Math.max(0, Number(row.dense)),
+        excessClinicians: Math.max(0, Number(row.excessClinicians)),
+        ruralPopulationShare: Number(row.ruralPopulationShare),
+        ruralClinicianShare: Number(row.ruralClinicianShare)
+      }];
+    }
+
+    function parseLiveData(raw) {
+      const clinicianByYear = parseClinicianMmmTable(raw?.clinicianMmmTable);
+      const populationByYear = parsePopulationMmmTable(raw?.populationMmmTable);
+      const excessSourceRows = excessRows(
+        raw?.medicareDataTable,
+        raw?.medicareItemTable,
+        raw?.medicareHoursTable,
+        raw?.activeClinicianTable,
+        raw?.clinicalHoursTable
+      );
+
+      return validateRedistributionRows([
+        buildRedistributionRow(clinicianByYear, populationByYear, excessSourceRows)
+      ]);
+    }
+
+    function parseRemoteCache(raw) {
+      const mmmSnapshot = raw?.mmmSnapshot;
+      const excessSnapshot = raw?.excessSnapshot;
+
+      const clinicianByYear = parseRemoteClinicianMmmRows(
+        mmmSnapshot?.data?.clinicianRows
+      );
+      const populationByYear = parseRemotePopulationMmmRows(
+        mmmSnapshot?.data?.populationRows
+      );
+
+      const excessSourceRows = excessRows(
+        rowsToGVizTable(excessSnapshot?.data?.dataRows),
+        rowsToGVizTable([excessSnapshot?.data?.itemRow]),
+        rowsToGVizTable([excessSnapshot?.data?.hoursRow]),
+        rowsToGVizTable(excessSnapshot?.data?.activeClinicianRows),
+        rowsToGVizTable(excessSnapshot?.data?.clinicalHoursRows)
+      );
+
+      return validateRedistributionRows([
+        buildRedistributionRow(clinicianByYear, populationByYear, excessSourceRows)
+      ]);
+    }
+
+    // ============================================================
+    // CHART HELPERS
+    // ============================================================
+
+    const scenarioRows = () => displayRow ? [
+      {
+        key: 'matchPopulation',
+        label: 'Match population',
+        colour: POPULATION_MATCH_COLOUR,
+        value: displayRow.matchPopulation,
+        method: 'Clinician rurality distribution matched to population rurality distribution'
+      },
+      {
+        key: 'sufficient',
+        label: 'Sufficient · 1 / 10k',
+        colour: SUFFICIENT_COLOUR,
+        value: displayRow.sufficient,
+        method: 'Remaining MM2–MM7 shortfalls filled to 1 active clinician per 10,000 people'
+      },
+      {
+        key: 'dense',
+        label: 'Dense · 1 / 5k',
+        colour: DENSE_COLOUR,
+        value: displayRow.dense,
+        method: 'Remaining MM2–MM7 shortfalls filled to 1 active clinician per 5,000 people'
+      }
+    ] : [];
+
+    function niceStep(rawStep) {
+      if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+      const exponent = Math.floor(Math.log10(rawStep));
+      const magnitude = 10 ** exponent;
+      const fraction = rawStep / magnitude;
+      const niceFraction = fraction <= 1 ? 1
+        : fraction <= 2 ? 2
+          : fraction <= 2.5 ? 2.5
+            : fraction <= 5 ? 5 : 10;
+      return niceFraction * magnitude;
+    }
+
+    function scaleForRow(row) {
+      const values = [
+        row?.matchPopulation,
+        row?.sufficient,
+        row?.dense,
+        row?.excessClinicians
+      ].map(Number).filter(Number.isFinite);
+
+      const highest = Math.max(1, ...values);
+      const step = niceStep((highest * 1.08) / X_AXIS_MAJOR_INTERVALS);
+      let max = Math.ceil(highest / step) * step;
+      if (max - highest < step * 0.22) max += step;
+
+      return {
+        min: 0,
+        max,
+        step: max / X_AXIS_MAJOR_INTERVALS,
+        intervals: X_AXIS_MAJOR_INTERVALS
+      };
+    }
+
+    function axisTickTargets(scale = currentScale) {
+      if (!scale) return Array.from({ length: X_AXIS_MAJOR_TICK_COUNT }, (_, index) => index);
+      return Array.from(
+        { length: X_AXIS_MAJOR_TICK_COUNT },
+        (_, index) => scale.min + scale.step * index
+      );
+    }
+
+    function setAxisTickValuesImmediately(scale = currentScale) {
+      axisTickAnimation.values = axisTickTargets(scale);
+    }
+
+    function formatAxisTick(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '';
+      return PFFCharts.formatInteger(Math.round(number));
+    }
+
+    function clinicianLabel(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '—';
+      return PFFCharts.formatInteger(Math.round(number));
+    }
+
+    function percentOfExcess(value) {
+      const excess = Number(displayRow?.excessClinicians);
+      const amount = Number(value);
+      if (!Number.isFinite(excess) || excess <= 0 || !Number.isFinite(amount)) return null;
+      return amount / excess * 100;
+    }
+
+    // ============================================================
+    // CUSTOM AXIS + REFERENCE LINE
+    // ============================================================
+
+    const xAxisPresentationPlugin = {
+      id: 'pffRuralRedistributionAxis',
+
+      beforeDatasetsDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const intervals = X_AXIS_MAJOR_INTERVALS;
+
+        ctx.save();
+
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.035)';
+        ctx.lineWidth = 0.7;
+        for (let index = 0; index < intervals; index += 1) {
+          const ratio = (index + 0.5) / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.075)';
+        ctx.lineWidth = 1;
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      },
+
+      afterDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const intervals = X_AXIS_MAJOR_INTERVALS;
+        const mobile = PFF.mobileLayout();
+
+        ctx.save();
+        ctx.strokeStyle = '#151515';
+        ctx.lineWidth = 1;
+
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left, Math.round(chartArea.bottom) + 0.5);
+        ctx.lineTo(chartArea.right, Math.round(chartArea.bottom) + 0.5);
+        ctx.stroke();
+
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 4);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = '#69718a';
+        ctx.globalAlpha = 0.60;
+        ctx.lineWidth = 0.7;
+        for (let index = 0; index < intervals; index += 1) {
+          const ratio = (index + 0.5) / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 2);
+          ctx.stroke();
+        }
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#151515';
+        ctx.textBaseline = 'top';
+        ctx.font = `${mobile ? 9 : 10}px Lato, sans-serif`;
+        const values = axisTickAnimation.values.length === X_AXIS_MAJOR_TICK_COUNT
+          ? axisTickAnimation.values
+          : axisTickTargets();
+
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          if (index === 0) ctx.textAlign = 'left';
+          else if (index === intervals) ctx.textAlign = 'right';
+          else ctx.textAlign = 'center';
+          ctx.fillText(formatAxisTick(values[index]), x, chartArea.bottom + 8);
+        }
+
+        ctx.fillStyle = '#151515';
+        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          'Clinicians redistributed',
+          chartArea.left + chartArea.width / 2,
+          chartArea.bottom + (mobile ? 28 : 29)
+        );
+
+        ctx.restore();
+      }
+    };
+
+    const excessReferencePlugin = {
+      id: 'pffRuralRedistributionExcessReference',
+      beforeDatasetsDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        const xScale = chartInstance.scales?.x;
+        const value = Number(displayRow?.excessClinicians);
+        if (!chartArea || !xScale || !Number.isFinite(value)) return;
+
+        const x = xScale.getPixelForValue(value);
+        if (!Number.isFinite(x)) return;
+
+        ctx.save();
+        ctx.strokeStyle = EXCESS_COLOUR;
+        ctx.lineWidth = 2.2;
+        ctx.lineCap = 'round';
+        ctx.setLineDash([1, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+        ctx.restore();
+      }
+    };
+
+    const valueLabelsPlugin = {
+      id: 'pffRuralRedistributionValueLabels',
+      afterDatasetsDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const meta = chartInstance.getDatasetMeta(0);
+        if (!meta?.data?.length) return;
+
+        const mobile = PFF.mobileLayout();
+        ctx.save();
+        ctx.font = `${mobile ? 8.8 : 9.8}px Lato, sans-serif`;
+        ctx.fillStyle = '#151515';
+        ctx.textBaseline = 'middle';
+
+        meta.data.forEach((bar, index) => {
+          const props = bar?.getProps?.(['x', 'y'], false);
+          const row = scenarioRows()[index];
+          if (!row || !props || !Number.isFinite(props.x) || !Number.isFinite(props.y)) return;
+
+          const text = clinicianLabel(row.value);
+          const gap = mobile ? 4 : 5;
+          let x = props.x + gap;
+          ctx.textAlign = 'left';
+          const width = ctx.measureText(text).width;
+
+          if (x + width > chartArea.right - 1) {
+            x = chartArea.right - 1;
+            ctx.textAlign = 'right';
+          }
+
+          ctx.fillText(text, x, props.y);
+        });
+
+        ctx.restore();
+      }
+    };
+
+    // ============================================================
+    // CHART
+    // ============================================================
+
+    function tooltipOptions() {
+      return PFFCharts.tooltipOptions({
+        mode: 'nearest',
+        intersect: true,
+        callbacks: {
+          title(items) {
+            const index = items?.[0]?.dataIndex;
+            return scenarioRows()[index]?.label || '';
+          },
+          label(context) {
+            const row = scenarioRows()[context.dataIndex];
+            if (!row) return '';
+            const percentage = percentOfExcess(row.value);
+            return [
+              `Clinicians redistributed: ${clinicianLabel(row.value)}`,
+              Number.isFinite(percentage)
+                ? `Share of current excess: ${percentage.toFixed(1)}%`
+                : '',
+              row.method
+            ].filter(Boolean);
+          }
+        }
+      });
+    }
+
+    function chartOptions(animate = false) {
+      const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
+
+      return PFFCharts.baseChartOptions({
+        animation: {
+          duration,
+          easing: 'easeInOutCubic'
+        },
+        animations: {
+          x: { duration, easing: 'easeInOutCubic' },
+          y: { duration, easing: 'easeInOutCubic' },
+          base: { duration: 0 },
+          colors: { duration: 0 }
+        },
+        indexAxis: 'y',
+        normalized: true,
+        interaction: {
+          mode: 'nearest',
+          axis: 'xy',
+          intersect: true,
+          includeInvisible: false
+        },
+        layout: {
+          autoPadding: false,
+          padding: {
+            top: 1,
+            right: 1,
+            bottom: 0,
+            left: 0
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: tooltipOptions()
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min: currentScale.min,
+            max: currentScale.max,
+            afterFit(axis) {
+              axis.height = PFF.mobileLayout() ? 48 : 50;
+            },
+            afterBuildTicks(axis) {
+              axis.ticks = axisTickTargets(currentScale).map(value => ({ value }));
+            },
+            border: { display: false },
+            grid: {
+              drawOnChartArea: false,
+              drawTicks: false
+            },
+            ticks: {
+              display: false,
+              autoSkip: false,
+              maxRotation: 0,
+              minRotation: 0
+            },
+            title: { display: false }
+          },
+          y: {
+            position: 'left',
+            afterFit(axis) {
+              axis.width = PFF.mobileLayout() ? 112 : 126;
+            },
+            grid: {
+              display: false,
+              drawTicks: true,
+              tickLength: 3,
+              tickWidth: 1,
+              tickColor: '#151515'
+            },
+            border: {
+              display: true,
+              color: '#151515',
+              width: 1
+            },
+            ticks: {
+              autoSkip: false,
+              color: '#151515',
+              padding: 3,
+              font: {
+                family: 'Lato',
+                size: PFF.mobileLayout() ? 9.5 : 10.5,
+                weight: '400'
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function buildDataset() {
+      const rows = scenarioRows();
+      return {
+        label: 'Clinicians redistributed',
+        data: rows.map(row => row.value),
+        backgroundColor: rows.map(row => row.colour),
+        borderColor: rows.map(row => row.colour),
+        borderWidth: 0,
+        borderRadius: 2,
+        borderSkipped: false,
+        categoryPercentage: 0.78,
+        barPercentage: 0.80
+      };
+    }
+
+    function updateFootnotes() {
+      if (!displayRow) return;
+      scenariosNote.innerHTML =
+        `<strong>Scenarios (${displayRow.year}):</strong> population = clinician distribution matched to population distribution; 1 / 10k and 1 / 5k = remaining MM2–MM7 shortfalls filled to those benchmarks`;
+      referenceNote.innerHTML =
+        `<strong>Reference:</strong> purple line = ${clinicianLabel(displayRow.excessClinicians)} current excess clinicians from clinical capacity above Medicare-billed service demand`;
+    }
+
+    function updateAccessibleSummary() {
+      if (!chartSummary || !displayRow) return;
+      const largest = Math.max(
+        displayRow.matchPopulation,
+        displayRow.sufficient,
+        displayRow.dense
+      );
+      const share = displayRow.excessClinicians > 0
+        ? largest / displayRow.excessClinicians * 100
+        : null;
+
+      const message = [
+        `Australian rural redistribution scenarios for ${displayRow.year}.`,
+        `Matching clinician distribution to population distribution would redistribute ${clinicianLabel(displayRow.matchPopulation)} active clinicians.`,
+        `Filling remaining MM2 to MM7 shortfalls to one active clinician per 10,000 people would redistribute ${clinicianLabel(displayRow.sufficient)} clinicians.`,
+        `Filling shortfalls to one per 5,000 people would redistribute ${clinicianLabel(displayRow.dense)} clinicians.`,
+        `Current excess workforce capacity is equivalent to ${clinicianLabel(displayRow.excessClinicians)} clinicians.`,
+        Number.isFinite(share)
+          ? `The largest redistribution scenario is ${share.toFixed(1)} percent of current excess clinician capacity.`
+          : ''
+      ].filter(Boolean).join(' ');
+
+      PFFCharts.updateChartSummary(message, chartSummary);
+    }
+
+    function createChart() {
+      currentScale = scaleForRow(displayRow);
+      setAxisTickValuesImmediately(currentScale);
+
+      chart = new Chart(chartCanvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: scenarioRows().map(row => row.label),
+          datasets: [buildDataset()]
+        },
+        options: chartOptions(false),
+        plugins: [
+          xAxisPresentationPlugin,
+          excessReferencePlugin,
+          valueLabelsPlugin
+        ]
+      });
+
+      updateFootnotes();
+      updateAccessibleSummary();
+    }
+
+    // ============================================================
+    // APP STARTUP
+    // ============================================================
+
+    function startApp() {
+      PFF.initialiseApp({
+        app,
+        status: statusEl,
+
+        async loadLive() {
+          loaderText.textContent = 'Loading live workforce, population and Medicare data…';
+          const [
+            clinicianMmmTable,
+            populationMmmTable,
+            medicareDataTable,
+            medicareItemTable,
+            medicareHoursTable,
+            activeClinicianTable,
+            clinicalHoursTable
+          ] = await Promise.all([
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.clinicianMmmSheet,
+              range: CONFIG.clinicianMmmRange,
+              headers: '2'
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.populationMmmSheet,
+              range: CONFIG.populationMmmRange,
+              headers: '2'
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.medicareSheet,
+              range: CONFIG.medicareDataRange,
+              headers: '1',
+              query: 'select *'
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.medicareSheet,
+              range: CONFIG.medicareItemRange,
+              headers: '0',
+              query: 'select *'
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.medicareSheet,
+              range: CONFIG.medicareHoursRange,
+              headers: '0',
+              query: 'select *'
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.activeClinicianSheet,
+              range: CONFIG.activeClinicianRange,
+              headers: '1',
+              query: 'select *'
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.clinicalHoursSheet,
+              range: CONFIG.clinicalHoursRange,
+              headers: '1',
+              query: 'select *'
+            })
+          ]);
+
+          return {
+            clinicianMmmTable,
+            populationMmmTable,
+            medicareDataTable,
+            medicareItemTable,
+            medicareHoursTable,
+            activeClinicianTable,
+            clinicalHoursTable
+          };
+        },
+
+        parseLive: parseLiveData,
+
+        async loadRemoteCache() {
+          loaderText.textContent = 'Loading cached PFF data…';
+          const [mmmSnapshot, excessSnapshot] = await Promise.all([
+            PFFCharts.loadAppsScriptCache({
+              url: CACHE_WEB_APP_URL,
+              appKey: MMM_CACHE_APP_KEY
+            }),
+            PFFCharts.loadAppsScriptCache({
+              url: CACHE_WEB_APP_URL,
+              appKey: EXCESS_CACHE_APP_KEY
+            })
+          ]);
+
+          return {
+            mmmSnapshot,
+            excessSnapshot,
+            cachedAt: mmmSnapshot?.cachedAt || excessSnapshot?.cachedAt || null
+          };
+        },
+
+        parseRemoteCache,
+        cacheKey: CONFIG.localCacheKey,
+        minRows: 1,
+
+        onLiveError(error) {
+          console.warn(
+            'Live rural redistribution data unavailable; trying Apps Script caches.',
+            error
+          );
+        },
+
+        onRemoteCacheError(error) {
+          console.warn(
+            'Apps Script rural redistribution caches unavailable; trying browser cache.',
+            error
+          );
+        },
+
+        dataSourceOptions: { indicator: liveData, text: liveDataText },
+
+        render(loaded) {
+          const rows = validateRedistributionRows(loaded.rows);
+          displayRow = rows[0];
+          createChart();
+
+          chartSummary = PFFCharts.ensureChartSummary({ parent: app });
+          chartCanvas.setAttribute('aria-describedby', chartSummary.id);
+          updateAccessibleSummary();
+
+          interactionsController = PFFCharts.setupChartInteractions({
+            canvas: chartCanvas,
+            getChart() { return chart; }
+          });
+
+          responsiveController = PFFCharts.createResponsiveController({
+            getChart() { return chart; },
+            observe: [app, chartShell],
+            applyResponsiveChartOptions: false,
+            onRefresh() {
+              if (!chart) return;
+              chart.resize();
+              chart.update('none');
+            }
+          });
+
+          return chart;
+        },
+
+        onError() { liveData.style.visibility = 'hidden'; },
+        errorMessage: 'Rural redistribution data unavailable.'
+      });
+    }
+
+    startApp();
+  </script>
+</body>
+</html>
