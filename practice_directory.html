@@ -799,6 +799,16 @@
       border-bottom: 0;
     }
 
+    .data-table tbody .virtual-spacer-row td {
+      height: var(--virtual-spacer-height, 0px);
+      min-height: 0;
+      padding: 0 !important;
+      border: 0 !important;
+      background: transparent !important;
+      line-height: 0;
+      pointer-events: none;
+    }
+
     .data-table tbody tr:hover td {
       filter: brightness(0.988);
     }
@@ -5521,6 +5531,9 @@
     const statusElement =
       document.getElementById('status');
 
+    const loadingStateElement =
+      document.getElementById('loadingState');
+
     const viewBusy =
       document.getElementById('viewBusy');
 
@@ -5747,7 +5760,7 @@
     let searchTimer = null;
     let locationSuggestionTimer = null;
     let lastRenderedSearchKey = null;
-    const SEARCH_RENDER_DEBOUNCE_MS = 180;
+    const SEARCH_RENDER_DEBOUNCE_MS = 65;
     const LOCATION_SUGGESTION_DEBOUNCE_MS = 70;
     let suggestionItems = [];
     let activeSuggestionIndex = -1;
@@ -5781,18 +5794,30 @@
     let progressiveTableToken = 0;
     let progressiveTableHandle = null;
     let progressiveTableBusy = false;
+    let virtualTableFrame = null;
+    let virtualTableColumns = [];
+    let virtualTableStart = -1;
+    let virtualTableEnd = -1;
+    let virtualTableRowHeight = 29;
+    let filterCountWorkHandle = null;
+    let filterCountWorkToken = 0;
     let selectedTableRow = null;
+    let selectedTableRowIndex = -1;
     let lastFilterSignature = '';
     let lastSortSignature = '';
     let lastFilterCountSignature = '';
+    let lastTableHeaderSignature = '';
     let activeRadiusWorker = null;
     let warmRadiusWorker = null;
     let radiusWorkerLocationCoordinates = [];
 
-    const TABLE_INITIAL_ROW_COUNT = 60;
-    const TABLE_CHUNK_ROW_COUNT = 180;
+    const TABLE_VIRTUAL_WINDOW_ROW_COUNT = 96;
+    const TABLE_VIRTUAL_OVERSCAN_ROWS = 18;
+    const TABLE_VIRTUAL_STEP_ROWS = 12;
+    const TABLE_VIRTUAL_MIN_ROWS = 180;
     const SPATIAL_CELL_DEGREES = 1;
     const servicePreparedState = new Map();
+    const parsedCombinedRowsCache = new WeakMap();
     let practiceSpatialIndex = new Map();
     let nearbyPercentileCache = new Map();
     let phnPracticeCountMap = new Map();
@@ -7844,11 +7869,19 @@
         );
       }
 
-      return encodeCombinedRows(
+      const rows = encodeCombinedRows(
         practices,
         ophthalmology,
         locations
       );
+
+      parsedCombinedRowsCache.set(rows, {
+        practices,
+        ophthalmology,
+        locations
+      });
+
+      return rows;
     }
 
     async function loadJsonFallback() {
@@ -7970,11 +8003,19 @@
         );
       }
 
-      return encodeCombinedRows(
+      const rows = encodeCombinedRows(
         practices,
         ophthalmology,
         locations
       );
+
+      parsedCombinedRowsCache.set(rows, {
+        practices,
+        ophthalmology,
+        locations
+      });
+
+      return rows;
     }
 
     function restoreCombinedRows(rows) {
@@ -11879,7 +11920,7 @@
       renderPHNOptions();
       renderSpecialtyOptions();
       syncSelectedSetsFromControls();
-      updateFilterCounts();
+      scheduleFilterCountUpdate(true);
 
       if (arrangeControls) {
         arrangeServiceControls();
@@ -12539,6 +12580,45 @@
         PFF.formatInteger(phnAllCount);
       document.getElementById('specialty-all-count').textContent =
         PFF.formatInteger(specialtyAllCount);
+    }
+
+    function cancelScheduledFilterCountUpdate() {
+      filterCountWorkToken += 1;
+
+      if (filterCountWorkHandle === null) {
+        return;
+      }
+
+      if ('cancelIdleCallback' in window) {
+        window.cancelIdleCallback(filterCountWorkHandle);
+      } else {
+        clearTimeout(filterCountWorkHandle);
+      }
+
+      filterCountWorkHandle = null;
+    }
+
+    function scheduleFilterCountUpdate(force = false) {
+      cancelScheduledFilterCountUpdate();
+      const token = filterCountWorkToken;
+
+      const run = () => {
+        if (token !== filterCountWorkToken) {
+          return;
+        }
+
+        filterCountWorkHandle = null;
+        updateFilterCounts(force);
+      };
+
+      if ('requestIdleCallback' in window) {
+        filterCountWorkHandle = window.requestIdleCallback(
+          run,
+          { timeout: 140 }
+        );
+      } else {
+        filterCountWorkHandle = window.setTimeout(run, 55);
+      }
     }
 
 
@@ -13948,7 +14028,41 @@
       animatePracticeHeaderCount();
     }
 
-    function tableRowHtml(row, columns) {
+    function tableHeaderSignature(columns) {
+      return [
+        activeServiceType,
+        activeLocation ? 'nearby' : 'all',
+        columns.map(column => [
+          column.key,
+          column.widthClass || '',
+          column.fixedWidth || '',
+          column.widthGroup || ''
+        ].join(':')).join('|')
+      ].join('::');
+    }
+
+    function updateRenderedHeaderState() {
+      tableHead.querySelectorAll('th[data-key]').forEach(header => {
+        const key = header.dataset.key || '';
+        const active = sortKey === key;
+        const ariaSort = active
+          ? (sortDirection === 'asc' ? 'ascending' : 'descending')
+          : 'none';
+
+        header.setAttribute('aria-sort', ariaSort);
+
+        const indicator = header.querySelector('.sort-indicator');
+        if (indicator) {
+          indicator.textContent = active
+            ? (sortDirection === 'asc' ? '▲' : '▼')
+            : '';
+        }
+      });
+
+      animatePracticeHeaderCount();
+    }
+
+    function tableRowHtml(row, columns, rowIndex = -1) {
       const specialtyColumnCount = row.isPublicService
         ? columns.filter(column => SPECIALTY_TABLE_COLUMN_KEYS.has(column.key)).length
         : 0;
@@ -14015,8 +14129,12 @@
         }
       );
 
+      const rowClasses = ['virtual-data-row'];
+      if (row.isPublicService) rowClasses.push('is-public-service');
+      if (rowIndex === selectedTableRowIndex) rowClasses.push('is-selected');
+
       return `
-        <tr${row.isPublicService ? ' class="is-public-service"' : ''}>
+        <tr class="${rowClasses.join(' ')}" data-virtual-index="${rowIndex}">
           ${cells.join('')}
         </tr>
       `;
@@ -14034,28 +14152,205 @@
         }
         progressiveTableHandle = null;
       }
+
+      if (virtualTableFrame !== null) {
+        cancelAnimationFrame(virtualTableFrame);
+        virtualTableFrame = null;
+      }
     }
 
-    function queueProgressiveTableWork(callback) {
-      if ('requestIdleCallback' in window) {
-        progressiveTableHandle = window.requestIdleCallback(
-          callback,
-          { timeout: 90 }
-        );
-      } else {
-        progressiveTableHandle = window.setTimeout(
-          () => callback({ didTimeout: true, timeRemaining: () => 8 }),
-          0
-        );
+    function virtualSpacerRowHtml(height, columnCount) {
+      if (!(height > 0)) return '';
+
+      return `
+        <tr class="virtual-spacer-row" aria-hidden="true">
+          <td colspan="${Math.max(1, columnCount)}" style="--virtual-spacer-height:${Math.max(0, Math.round(height))}px"></td>
+        </tr>
+      `;
+    }
+
+    function virtualTableBodyTop() {
+      const rect = tableBody.getBoundingClientRect();
+      return window.scrollY + rect.top;
+    }
+
+    function desiredVirtualTableStart() {
+      const totalRows = filteredRows.length;
+      if (totalRows <= TABLE_VIRTUAL_MIN_ROWS) return 0;
+
+      const bodyTop = virtualTableBodyTop();
+      if (window.scrollY <= bodyTop) return 0;
+
+      const maximumStart = Math.max(
+        0,
+        totalRows - TABLE_VIRTUAL_WINDOW_ROW_COUNT
+      );
+
+      const viewportBottom = window.scrollY + window.innerHeight;
+      const documentBottom = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+      );
+
+      if (
+        documentBottom - viewportBottom <=
+        Math.max(80, virtualTableRowHeight * 4)
+      ) {
+        return maximumStart;
       }
+
+      const offset = Math.max(
+        0,
+        window.scrollY - bodyTop
+      );
+
+      const estimatedIndex = Math.max(
+        0,
+        Math.floor(offset / Math.max(1, virtualTableRowHeight)) -
+          TABLE_VIRTUAL_OVERSCAN_ROWS
+      );
+
+      const stepped = Math.floor(
+        estimatedIndex / TABLE_VIRTUAL_STEP_ROWS
+      ) * TABLE_VIRTUAL_STEP_ROWS;
+
+      return Math.min(
+        Math.max(0, stepped),
+        maximumStart
+      );
+    }
+
+    function measureVirtualRowHeight() {
+      const heights = [
+        ...tableBody.querySelectorAll('tr.virtual-data-row')
+      ]
+        .slice(0, 30)
+        .map(row => row.getBoundingClientRect().height)
+        .filter(height => Number.isFinite(height) && height > 8)
+        .sort((a, b) => a - b);
+
+      if (!heights.length) return;
+
+      const median = heights[Math.floor(heights.length / 2)];
+      if (!Number.isFinite(median) || median <= 0) return;
+
+      virtualTableRowHeight = Math.max(18, Math.min(80, median));
+    }
+
+    function restoreVirtualSelectedRow() {
+      selectedTableRow = selectedTableRowIndex >= 0
+        ? tableBody.querySelector(
+            `tr.virtual-data-row[data-virtual-index="${selectedTableRowIndex}"]`
+          )
+        : null;
+    }
+
+    function renderVirtualTableWindow(force = false) {
+      const columns = virtualTableColumns;
+      const totalRows = filteredRows.length;
+
+      if (!columns.length || !totalRows) {
+        return;
+      }
+
+      const shouldVirtualise = totalRows > TABLE_VIRTUAL_MIN_ROWS;
+      const start = shouldVirtualise ? desiredVirtualTableStart() : 0;
+      const end = shouldVirtualise
+        ? Math.min(totalRows, start + TABLE_VIRTUAL_WINDOW_ROW_COUNT)
+        : totalRows;
+
+      if (
+        !force &&
+        start === virtualTableStart &&
+        end === virtualTableEnd
+      ) {
+        return;
+      }
+
+      virtualTableStart = start;
+      virtualTableEnd = end;
+
+      const topHeight = shouldVirtualise
+        ? start * virtualTableRowHeight
+        : 0;
+      const bottomHeight = shouldVirtualise
+        ? (totalRows - end) * virtualTableRowHeight
+        : 0;
+      const rows = filteredRows.slice(start, end);
+
+      tableBody.innerHTML = [
+        virtualSpacerRowHtml(topHeight, columns.length),
+        ...rows.map((row, offset) =>
+          tableRowHtml(row, columns, start + offset)
+        ),
+        virtualSpacerRowHtml(bottomHeight, columns.length)
+      ].join('');
+
+      restoreVirtualSelectedRow();
+      queueFavouriteCommunityCounts(rows);
+
+      requestAnimationFrame(() => {
+        const previousHeight = virtualTableRowHeight;
+        measureVirtualRowHeight();
+
+        if (
+          shouldVirtualise &&
+          Math.abs(previousHeight - virtualTableRowHeight) > 0.5
+        ) {
+          const topSpacer = tableBody.querySelector(
+            '.virtual-spacer-row:first-child td'
+          );
+          const bottomSpacer = tableBody.querySelector(
+            '.virtual-spacer-row:last-child td'
+          );
+
+          if (topSpacer && start > 0) {
+            topSpacer.style.setProperty(
+              '--virtual-spacer-height',
+              `${Math.round(start * virtualTableRowHeight)}px`
+            );
+          }
+
+          if (bottomSpacer && end < totalRows) {
+            bottomSpacer.style.setProperty(
+              '--virtual-spacer-height',
+              `${Math.round((totalRows - end) * virtualTableRowHeight)}px`
+            );
+          }
+        }
+      });
+    }
+
+    function scheduleVirtualTableWindowUpdate(force = false) {
+      if (
+        !filteredRows.length ||
+        filteredRows.length <= TABLE_VIRTUAL_MIN_ROWS ||
+        !virtualTableColumns.length
+      ) {
+        return;
+      }
+
+      if (virtualTableFrame !== null) {
+        if (!force) return;
+        cancelAnimationFrame(virtualTableFrame);
+      }
+
+      virtualTableFrame = requestAnimationFrame(() => {
+        virtualTableFrame = null;
+        renderVirtualTableWindow(force);
+      });
     }
 
     function renderRows(columns) {
       cancelProgressiveTableRender();
       selectedTableRow = null;
-      const token = ++progressiveTableToken;
+      selectedTableRowIndex = -1;
       const totalRows = filteredRows.length;
       const hasRows = totalRows > 0;
+
+      virtualTableColumns = columns;
+      virtualTableStart = -1;
+      virtualTableEnd = -1;
 
       tableScroll.style.display = hasRows ? '' : 'none';
 
@@ -14078,85 +14373,15 @@
 
       if (!hasRows) {
         tableBody.innerHTML = '';
+        selectedTableRow = null;
         setViewBusy(false);
         return;
       }
 
-      const firstEnd = Math.min(TABLE_INITIAL_ROW_COUNT, totalRows);
-      const firstRows = filteredRows.slice(0, firstEnd);
-      tableBody.innerHTML = firstRows
-        .map(row => tableRowHtml(row, columns))
-        .join('');
-      queueFavouriteCommunityCounts(firstRows);
-
-      /* The first screenful is the user-facing ready state. Everything below
-       * it is low-priority background work and must never block interaction. */
+      renderVirtualTableWindow(true);
+      progressiveTableBusy = false;
       setViewBusy(false);
-
-      if (firstEnd >= totalRows) {
-        progressiveTableBusy = false;
-        prepareInactiveServiceWhenIdle();
-        return;
-      }
-
-      progressiveTableBusy = true;
-      let index = firstEnd;
-
-      const appendChunk = deadline => {
-        if (token !== progressiveTableToken) {
-          return;
-        }
-
-        const startedAt = performance.now();
-        const chunks = [];
-        const chunkStart = index;
-
-        while (
-          index < totalRows &&
-          chunks.length < TABLE_CHUNK_ROW_COUNT &&
-          (
-            deadline?.didTimeout ||
-            deadline?.timeRemaining?.() > 2 ||
-            performance.now() - startedAt < 6
-          )
-        ) {
-          chunks.push(tableRowHtml(filteredRows[index], columns));
-          index += 1;
-        }
-
-        if (token !== progressiveTableToken) {
-          return;
-        }
-
-        if (chunks.length) {
-          tableBody.insertAdjacentHTML('beforeend', chunks.join(''));
-          queueFavouriteCommunityCounts(
-            filteredRows.slice(chunkStart, index)
-          );
-        }
-
-        if (index < totalRows) {
-          queueProgressiveTableWork(appendChunk);
-          return;
-        }
-
-        progressiveTableHandle = null;
-        progressiveTableBusy = false;
-        requestAnimationFrame(syncStickyHeaderGeometry);
-      };
-
-      const startBackgroundRowFill = () => {
-        if (token !== progressiveTableToken) {
-          return;
-        }
-        queueProgressiveTableWork(appendChunk);
-      };
-
-      /* Prepare the other service before spending idle time drawing rows that
-       * are currently off-screen. Then quietly continue completing this table. */
-      prepareInactiveServiceWhenIdle(
-        startBackgroundRowFill
-      );
+      prepareInactiveServiceWhenIdle();
     }
 
     function syncStickyHeaderGeometry() {
@@ -14237,9 +14462,15 @@
       const columns =
         activeColumns();
 
-      renderHeader(
-        columns
-      );
+      const headerSignature =
+        tableHeaderSignature(columns);
+
+      if (headerSignature !== lastTableHeaderSignature) {
+        renderHeader(columns);
+        lastTableHeaderSignature = headerSignature;
+      } else {
+        updateRenderedHeaderState();
+      }
 
       renderRows(
         columns
@@ -14353,6 +14584,7 @@
         applyFilters();
         setNearbyMetricsBusy(false);
         renderTableAnimated(false);
+        scheduleFilterCountUpdate();
         scheduleAutomaticViewSave();
 
         if (!progressiveTableBusy) {
@@ -14443,8 +14675,8 @@
           () => {
             renderFrame = null;
             applyFilters();
-            updateFilterCounts();
             renderTableAnimated(animate);
+            scheduleFilterCountUpdate();
             scheduleAutomaticViewSave();
           }
         );
@@ -15100,6 +15332,9 @@
 
       selectedTableRow?.classList.remove('is-selected');
       selectedTableRow = row || null;
+      selectedTableRowIndex = row
+        ? Number(row.dataset.virtualIndex)
+        : -1;
       selectedTableRow?.classList.add('is-selected');
     }
 
@@ -15791,7 +16026,7 @@
           }
 
           const row =
-            event.target.closest('tbody tr');
+            event.target.closest('tbody tr.virtual-data-row');
 
           if (row) {
             selectTableRow(row);
@@ -15846,11 +16081,13 @@
           playFavouriteHeartAnimation(button);
 
           const service = cleanText(button.dataset.favouriteService || '');
-          const rowElement = button.closest('tbody tr');
+          const rowElement = button.closest('tbody tr.virtual-data-row');
           const rowIndex = rowElement
-            ? Array.prototype.indexOf.call(tableBody.children, rowElement)
+            ? Number(rowElement.dataset.virtualIndex)
             : -1;
-          const sourceRow = rowIndex >= 0 ? filteredRows[rowIndex] : null;
+          const sourceRow = Number.isInteger(rowIndex) && rowIndex >= 0
+            ? filteredRows[rowIndex]
+            : null;
 
           if (sourceRow) {
             submitFavouriteState(sourceRow, saved, service);
@@ -16115,11 +16352,296 @@
         }
       );
 
-      window.addEventListener('scroll', () => hideActionTooltip(), true);
-      window.addEventListener('resize', () => hideActionTooltip());
+      window.addEventListener('scroll', () => {
+        hideActionTooltip();
+        scheduleVirtualTableWindowUpdate();
+      }, true);
+
+      window.addEventListener('resize', () => {
+        hideActionTooltip();
+        scheduleVirtualTableWindowUpdate(true);
+      });
+    }
+
+    let hasRenderedDataset = false;
+
+    function decodedLoadedRows(loaded) {
+      if (!Array.isArray(loaded?.rows)) {
+        throw new Error('Eyecare access data are not in the expected format.');
+      }
+
+      return parsedCombinedRowsCache.get(loaded.rows) ||
+        restoreCombinedRows(loaded.rows);
+    }
+
+    function assignLoadedDataset(restored) {
+      cancelRadiusWorker('active');
+      cancelRadiusWorker('warm');
+      servicePreparedState.clear();
+      nearbyPercentileCache = new Map();
+      lastTableHeaderSignature = '';
+
+      optometryRows = restored.practices;
+      ophthalmologyRows = restored.ophthalmology;
+      locationRows = restored.locations;
+
+      if (
+        optometryRows.length < CONFIG.minimumRows ||
+        ophthalmologyRows.length < CONFIG.ophthalmologyMinimumRows
+      ) {
+        throw new Error(
+          'Practice directory did not contain enough usable rows.'
+        );
+      }
+
+      if (!locationRows.length) {
+        throw new Error(
+          'Suburb/postcode access data were unavailable.'
+        );
+      }
+
+      const migratedOptometryFavourites =
+        refreshOptometryFavouriteIdAliases(optometryRows);
+
+      rebuildContactRowIndex();
+
+      if (migratedOptometryFavourites) {
+        invalidateFavouritePreparedState();
+      }
+
+      optometryRowsPracticeAsc =
+        optometryRows.slice().sort(
+          (first, second) => {
+            const comparison = compareValues(
+              first,
+              second,
+              'practiceName'
+            );
+            return comparison || first.sourceIndex - second.sourceIndex;
+          }
+        );
+
+      ophthalmologyRowsPracticeAsc =
+        ophthalmologyRows.slice().sort(
+          (first, second) => {
+            const comparison = compareValues(
+              first,
+              second,
+              'practiceName'
+            );
+            return comparison || first.sourceIndex - second.sourceIndex;
+          }
+        );
+
+      radiusWorkerLocationCoordinates = locationRows
+        .filter(
+          row =>
+            Number.isFinite(row.latitudeNumber) &&
+            Number.isFinite(row.longitudeNumber)
+        )
+        .map(row => [row.latitudeNumber, row.longitudeNumber]);
+
+      void syncStoredFavouritesIfDue();
+    }
+
+    function applyPreparedServiceState(prepared) {
+      sourceRows = prepared.rows;
+      sourceRowsPracticeAsc = prepared.rowsPracticeAsc;
+      phnValues = [...prepared.phnValues];
+      practiceSpatialIndex = prepared.spatialIndex;
+      nearbyPercentileCache = prepared.nearbyPercentileCache;
+      phnPracticeCountMap = prepared.phnCountMap;
+      phnPracticePercentileReference = prepared.phnPercentileReference;
+
+      activeDistanceLocationKey = '';
+      activeRadiusCounts = new Uint32Array(201);
+      nearbyUnfilteredCount = 0;
+      nearbyPercentileToken += 1;
+      nearbyWarmupToken += 1;
+      nearbyWarmupInProgress = false;
+      lastFilterSignature = '';
+      lastSortSignature = '';
+      lastFilterCountSignature = '';
+    }
+
+    function revealWarmStartUi() {
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      if (loadingStateElement) {
+        loadingStateElement.hidden = true;
+      }
+      window.EATStartupGuard?.clear();
+    }
+
+    function finishDatasetRender() {
+      automaticViewPersistenceReady = true;
+      window.EATStartupGuard?.clear();
+      scheduleRender(false);
+      scheduleFilterCountUpdate(true);
+      prepareInactiveServiceWhenIdle();
+
+      requestAnimationFrame(
+        () => {
+          controlsScrollController.update();
+          syncStickyHeaderGeometry();
+          syncFrozenColumnShadow();
+          syncLocationChipTooltip();
+          focusSearchInput();
+        }
+      );
+
+      return dataTable;
+    }
+
+    function initialiseLoadedDataset(loaded, { warm = false } = {}) {
+      const restored = decodedLoadedRows(loaded);
+      assignLoadedDataset(restored);
+
+      activeServiceType = savedServiceTypeHint();
+      activateServiceDataset(activeServiceType);
+      setLoadedSourceIndicator(loaded);
+      buildPercentileReferences();
+      lastPracticeHeaderCount = sourceRows.length;
+
+      document.querySelectorAll(
+        '.rurality-filter, .phn-filter'
+      ).forEach(
+        input => {
+          input.checked = true;
+        }
+      );
+
+      const restoredSavedView = restoreSavedView();
+
+      if (!restoredSavedView) {
+        syncSelectedSetsFromControls();
+        syncFilterAllStates();
+        updateFilterButtonLabels();
+        updateRadiusUi();
+        applyViewUi();
+      }
+
+      hasRenderedDataset = true;
+      if (warm) {
+        revealWarmStartUi();
+      }
+
+      return finishDatasetRender();
+    }
+
+    function refreshLoadedDataset(loaded) {
+      const previousPhnValues = [...phnValues];
+      const previousSelectedPhns = new Set(selectedPHNs);
+      const allPhnsWereSelected =
+        previousPhnValues.length > 0 &&
+        previousSelectedPhns.size === previousPhnValues.length &&
+        previousPhnValues.every(value => previousSelectedPhns.has(value));
+
+      const restored = decodedLoadedRows(loaded);
+      assignLoadedDataset(restored);
+
+      const prepared = ensureServicePrepared(activeServiceType);
+      applyPreparedServiceState(prepared);
+
+      const phnListChanged =
+        previousPhnValues.length !== phnValues.length ||
+        previousPhnValues.some((value, index) => value !== phnValues[index]);
+
+      if (phnListChanged) {
+        renderPHNOptions();
+
+        selectedPHNs.clear();
+        phnValues.forEach(value => {
+          if (allPhnsWereSelected || previousSelectedPhns.has(value)) {
+            selectedPHNs.add(value);
+          }
+        });
+
+        phnOptions.querySelectorAll('.phn-filter').forEach(input => {
+          input.checked = selectedPHNs.has(input.value);
+        });
+
+        updateAllCheckbox('phn-all', '.phn-filter');
+      }
+
+      setLoadedSourceIndicator(loaded);
+      buildPercentileReferences();
+      lastPracticeHeaderCount = sourceRows.length;
+      lastTableHeaderSignature = '';
+      syncFilterAllStates();
+      updateFilterButtonLabels();
+      updateRadiusUi();
+      applyViewUi();
+
+      return finishDatasetRender();
+    }
+
+    function renderLoadedDataset(loaded, options = {}) {
+      if (hasRenderedDataset) {
+        return refreshLoadedDataset(loaded);
+      }
+
+      return initialiseLoadedDataset(loaded, options);
+    }
+
+    function tryBrowserCacheWarmStart() {
+      try {
+        const raw = localStorage.getItem(CONFIG.localCacheKey);
+        if (!raw) return false;
+
+        const cached = JSON.parse(raw);
+        if (!Array.isArray(cached?.rows)) return false;
+
+        renderLoadedDataset(
+          {
+            rows: cached.rows,
+            source: 'cached',
+            remote: false,
+            savedAt: cached.savedAt || ''
+          },
+          { warm: true }
+        );
+
+        return true;
+      } catch (error) {
+        console.warn(
+          'Browser cache warm start was unavailable; continuing with live/static data.',
+          error
+        );
+        return false;
+      }
+    }
+
+    function startStaticWarmSnapshot() {
+      void (async () => {
+        try {
+          const payload = await loadJsonFallback();
+          if (hasRenderedDataset) return;
+
+          const rows = parseRemoteCache(payload);
+          if (hasRenderedDataset) return;
+
+          renderLoadedDataset(
+            {
+              rows,
+              source: 'cached',
+              remote: true,
+              savedAt: payload?.cachedAt || ''
+            },
+            { warm: true }
+          );
+        } catch (_) {
+          // The normal loader below remains authoritative and handles errors.
+        }
+      })();
     }
 
     setupInteractions();
+
+    const browserWarmStarted = tryBrowserCacheWarmStart();
+    if (!browserWarmStarted) {
+      startStaticWarmSnapshot();
+    }
 
     PFF.initialiseApp({
       app,
@@ -16203,132 +16725,25 @@
       },
 
       render(loaded) {
-        const restored =
-          restoreCombinedRows(
-            loaded.rows
-          );
-
-        optometryRows =
-          restored.practices;
-        ophthalmologyRows =
-          restored.ophthalmology;
-
-        const migratedOptometryFavourites =
-          refreshOptometryFavouriteIdAliases(optometryRows);
-
-        rebuildContactRowIndex();
-
-        if (migratedOptometryFavourites) {
-          invalidateFavouritePreparedState();
-        }
-        void syncStoredFavouritesIfDue();
-
-        optometryRowsPracticeAsc =
-          optometryRows.slice().sort(
-            (first, second) => {
-              const comparison = compareValues(
-                first,
-                second,
-                'practiceName'
-              );
-              return comparison || first.sourceIndex - second.sourceIndex;
-            }
-          );
-
-        ophthalmologyRowsPracticeAsc =
-          ophthalmologyRows.slice().sort(
-            (first, second) => {
-              const comparison = compareValues(
-                first,
-                second,
-                'practiceName'
-              );
-              return comparison || first.sourceIndex - second.sourceIndex;
-            }
-          );
-
-        locationRows = restored.locations;
-        radiusWorkerLocationCoordinates = locationRows
-          .filter(
-            row =>
-              Number.isFinite(row.latitudeNumber) &&
-              Number.isFinite(row.longitudeNumber)
-          )
-          .map(row => [row.latitudeNumber, row.longitudeNumber]);
-
-        if (
-          optometryRows.length < CONFIG.minimumRows ||
-          ophthalmologyRows.length < CONFIG.ophthalmologyMinimumRows
-        ) {
-          throw new Error(
-            'Practice directory did not contain enough usable rows.'
-          );
-        }
-
-        activeServiceType = savedServiceTypeHint();
-        activateServiceDataset(activeServiceType);
-
-        if (!locationRows.length) {
-          throw new Error(
-            'Suburb/postcode access data were unavailable.'
-          );
-        }
-
-        setLoadedSourceIndicator(
-          loaded
-        );
-
-        buildPercentileReferences();
-        lastPracticeHeaderCount = sourceRows.length;
-
-        document.querySelectorAll(
-          '.rurality-filter, .phn-filter'
-        ).forEach(
-          input => {
-            input.checked = true;
-          }
-        );
-
-        const restoredSavedView =
-          restoreSavedView();
-
-        if (!restoredSavedView) {
-          syncSelectedSetsFromControls();
-          syncFilterAllStates();
-          updateFilterButtonLabels();
-          updateRadiusUi();
-          applyViewUi();
-        }
-
-        automaticViewPersistenceReady = true;
-        updateFilterCounts();
-        scheduleRender(false);
-        prepareInactiveServiceWhenIdle();
-        window.EATStartupGuard?.clear();
-
-        requestAnimationFrame(
-          () => {
-            controlsScrollController.update();
-            syncStickyHeaderGeometry();
-            syncFrozenColumnShadow();
-            syncLocationChipTooltip();
-            focusSearchInput();
-          }
-        );
-
-        return dataTable;
+        return renderLoadedDataset(loaded);
       },
 
       onError() {
-        setLoadedSourceIndicator({
-          source:
-            'unavailable'
-        });
+        if (!hasRenderedDataset) {
+          setLoadedSourceIndicator({
+            source:
+              'unavailable'
+          });
+        }
       },
 
       errorMessage:
         'Eyecare access data are unavailable from the live sheet, JSON fallback and browser cache.'
     });
+
+    if (browserWarmStarted) {
+      queueMicrotask(revealWarmStartUi);
+    }
   </script>
 </body>
 </html>
