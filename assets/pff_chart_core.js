@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.14
+ * PFF Core v1.2.18
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,19 +14,43 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.14';
+  const VERSION = '1.2.18';
 
-  // LOADING ANIMATION SELECTOR — change this one number for all shared-core apps:
-  // 1 = original three fading cone triangles
-  // 2 = new single continuous spectral curve (default)
-  const DEFAULT_LOADER_STYLE = 2;
-  // Optional per-app override, set BEFORE loading this core script:
-  // window.PFF_LOADER_STYLE = 1;
-  let activeLoaderStyle = [1, 2].includes(Number(global.PFF_LOADER_STYLE))
-    ? Number(global.PFF_LOADER_STYLE)
-    : DEFAULT_LOADER_STYLE;
-  let spectralLoaderSequence = 0;
-  const spectralTextStates = new WeakMap();
+  // Visual animation selection now lives in assets/pff_loader.js.
+  // The core keeps app loading-state management, not either loader animation.
+  const pendingLoaderReveals = new WeakMap();
+
+  // Locate the loader relative to THIS script, even if apps live in other folders
+  // or the core URL has an old ?v= cache identifier. No HTML edits required.
+  function loadPffLoader() {
+    if (global.PFFLoader) return;
+    const coreScript = document.currentScript;
+    const base = coreScript?.src || document.baseURI;
+    let url;
+    try { url = new URL('./pff_loader.js', base); }
+    catch (_) {
+      console.warn('[PFF] Unable to resolve pff_loader.js; loading text remains visible.');
+      return;
+    }
+    // In a later direct-HTML setup, simply place an explicit pff_loader.js
+    // script tag BEFORE the core tag. Do not load a duplicate script.
+    const alreadyIncluded = Array.from(document.scripts).some(script => {
+      if (!script.src) return false;
+      try { return new URL(script.src, document.baseURI).pathname === url.pathname &&
+        new URL(script.src, document.baseURI).origin === url.origin; }
+      catch (_) { return false; }
+    });
+    if (alreadyIncluded) return;
+    const script = document.createElement('script');
+    script.src = url.href;  // stable URL; change loader.js independently of core.js
+    script.async = true;
+    script.dataset.pffLoader = 'auto';
+    script.addEventListener('error', () => {
+      console.warn('[PFF] pff_loader.js unavailable; loading text remains visible.');
+    });
+    (document.head || document.documentElement).appendChild(script);
+  }
+  loadPffLoader();
 
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
@@ -414,6 +438,20 @@ body.pff-chart-app .pff-app {
 .pff-app.is-loading > :not(.app-loading) {
   visibility: hidden;
 }
+/* During the final paint, expose the normal app layout while retaining an
+   opaque overlay. Some apps hide content using display:none while loading,
+   so merely overriding visibility is not sufficient. */
+#app.pff-reveal-pending > .app-loading,
+.pff-app.pff-reveal-pending > .app-loading {
+  display: flex !important;
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 100 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  background: var(--pff-white) !important;
+}
 
 #app:not(.is-loading) .app-loading,
 .pff-app:not(.is-loading) .app-loading {
@@ -434,149 +472,8 @@ body.pff-chart-app .pff-app {
   background: var(--pff-white);
 }
 
-.cone-loader {
-  position: relative;
-  width: 176px;
-  height: 78px;
-  margin: 0 auto;
-  overflow: visible;
-  isolation: isolate;
-}
-
-.cone {
-  position: absolute;
-  bottom: 8px;
-  width: 58px;
-  height: 68px;
-  opacity: 0;
-  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-  -webkit-clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-  mix-blend-mode: normal;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  transform: translateZ(0);
-  will-change: opacity;
-}
-
-.cone.blue {
-  left: 33px;
-  background: var(--pff-blue-cone);
-  animation: pffBlueConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
-}
-
-.cone.green {
-  left: 69px;
-  background: var(--pff-green-cone);
-  animation: pffGreenConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
-}
-
-.cone.red {
-  left: 85px;
-  background: var(--pff-red-cone);
-  animation: pffRedConeCycle 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
-}
-
-.loader-text {
-  margin: 2px 0 0;
-  color: var(--pff-muted);
-  font-size: 11px;
-  line-height: 1.35;
-  text-align: center;
-  animation: pffLoadingTextPulse 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
-}
-
-/*
- * Loader style 2: single UNBROKEN SVG envelope, revealed by clipping.
- * Original .cone / pff*ConeCycle animations above stay untouched for style 1.
- * Only full-page .app-loading cones are upgraded: miniature metric loaders remain intact.
- */
-.app-loading > .cone-loader.pff-spectral-loader {
-  width: 176px;
-  height: 83px;
-  margin: 0 auto;
-}
-.app-loading > .cone-loader.pff-spectral-loader > .cone {
-  display: none;
-}
-.app-loading > .cone-loader.pff-spectral-loader > .pff-spectral-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-.cone-loader > .pff-spectral-svg {
-  display: none;
-}
-.pff-spectral-svg .pff-spectral-trace,
-.pff-spectral-svg .pff-spectral-glow {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.pff-spectral-svg .pff-spectral-trace { stroke-width: 4; }
-.pff-spectral-svg .pff-spectral-glow { stroke-width: 10; opacity: .15; filter: blur(2px); }
-/* NEVER use stroke-dasharray for this path: clip reveal keeps it one line. */
-.pff-spectral-svg .pff-spectral-reveal {
-  transform-box: fill-box;
-  transform-origin: left center;
-  animation: pffSpectralReveal 3.35s cubic-bezier(.42, 0, .22, 1) infinite;
-}
-.pff-spectral-svg .pff-spectral-group {
-  animation: pffSpectralVisibility 3.35s linear infinite;
-}
-.app-loading.pff-spectral-active > .loader-text {
-  margin: 13px 0 0;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.35;
-  animation: pffSpectralTextEnter .25s ease-out both;
-}
-/* Preserve the existing non-animated error message styling when startup fails. */
-.app-loading.is-startup-error.pff-spectral-active > .loader-text {
-  font-weight: 700;
-  animation: none;
-}
-.pff-spectral-active .pff-loader-dots {
-  display: inline-flex;
-  justify-content: flex-start;
-  width: 1.15em;
-  white-space: nowrap;
-}
-.pff-spectral-active .pff-loader-dots > span {
-  opacity: 0;
-  animation: pffSpectralDots1 1.2s linear infinite;
-}
-.pff-spectral-active .pff-loader-dots > span:nth-child(2) { animation-name: pffSpectralDots2; }
-.pff-spectral-active .pff-loader-dots > span:nth-child(3) { animation-name: pffSpectralDots3; }
-
-.pff-value-loader {
-  position: relative;
-  display: block;
-  width: 64px;
-  height: 28px;
-  margin: 0 auto;
-  overflow: visible;
-  isolation: isolate;
-  flex: 0 0 64px;
-}
-
-.pff-value-loader .cone {
-  bottom: 3px;
-  width: 21px;
-  height: 24px;
-}
-
-.pff-value-loader .cone.blue {
-  left: 12px;
-}
-
-.pff-value-loader .cone.green {
-  left: 25px;
-}
-
-.pff-value-loader .cone.red {
-  left: 31px;
-}
+/* Loader appearance is supplied exclusively by assets/pff_loader.js.
+   App-level loading state and reveal timing stay in this core. */
 
 .pff-gradient-line {
   width: 100%;
@@ -682,66 +579,6 @@ body.pff-chart-app .pff-app {
   line-height: 0;
   background: transparent;
   border-top: 1px solid var(--pff-track);
-}
-
-@keyframes pffBlueConeCycle {
-  0% { opacity: 0; }
-  12% { opacity: 1; }
-  76% { opacity: 1; }
-  87% { opacity: 0; }
-  100% { opacity: 0; }
-}
-
-@keyframes pffGreenConeCycle {
-  0% { opacity: 0; }
-  20% { opacity: 0; }
-  32% { opacity: 1; }
-  76% { opacity: 1; }
-  87% { opacity: 0; }
-  100% { opacity: 0; }
-}
-
-@keyframes pffRedConeCycle {
-  0% { opacity: 0; }
-  40% { opacity: 0; }
-  52% { opacity: 1; }
-  76% { opacity: 1; }
-  87% { opacity: 0; }
-  100% { opacity: 0; }
-}
-
-@keyframes pffLoadingTextPulse {
-  0% { opacity: 0.45; }
-  52% { opacity: 0.78; }
-  76% { opacity: 0.78; }
-  87% { opacity: 0.45; }
-  100% { opacity: 0.45; }
-}
-
-@keyframes pffSpectralReveal {
-  0%, 7% { transform: scaleX(0); }
-  71%, 81%, 100% { transform: scaleX(1); }
-}
-@keyframes pffSpectralVisibility {
-  0%, 7% { opacity: 0; }
-  12%, 81% { opacity: 1; }
-  94%, 100% { opacity: 0; }
-}
-@keyframes pffSpectralTextEnter {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes pffSpectralDots1 {
-  0%, 4.9%, 75%, 100% { opacity: 0; }
-  5%, 74.9% { opacity: 1; }
-}
-@keyframes pffSpectralDots2 {
-  0%, 29.9%, 75%, 100% { opacity: 0; }
-  30%, 74.9% { opacity: 1; }
-}
-@keyframes pffSpectralDots3 {
-  0%, 54.9%, 75%, 100% { opacity: 0; }
-  55%, 74.9% { opacity: 1; }
 }
 
 .module-top {
@@ -1970,14 +1807,6 @@ body.pff-chart-app .pff-app {
     padding: 0 3px;
   }
 
-  .cone-loader { width: 160px; height: 70px; }
-  .app-loading > .cone-loader.pff-spectral-loader { width: 160px; height: 76px; }
-  .app-loading.pff-spectral-active > .loader-text { font-size: 12px; }
-  .cone { width: 52px; height: 61px; }
-  .cone.blue { left: 30px; }
-  .cone.green { left: 64px; }
-  .cone.red { left: 78px; }
-  .loader-text { font-size: 10px; }
   .chart-tab { padding-right: 7px; padding-left: 7px; font-size: 12px; }
   .live-data { margin-right: 3px; font-size: 8px; }
 
@@ -2069,29 +1898,6 @@ body.pff-chart-app .pff-app {
     animation-iteration-count: 1 !important;
   }
 
-  .cone.blue,
-  .cone.green,
-  .cone.red {
-    animation: none;
-    opacity: 1;
-  }
-
-  .loader-text {
-    animation: none;
-    opacity: 0.72;
-  }
-  .pff-spectral-svg .pff-spectral-reveal,
-  .pff-spectral-svg .pff-spectral-group,
-  .pff-spectral-active .pff-loader-dots > span {
-    animation: none !important;
-    transform: none !important;
-    opacity: 1 !important;
-  }
-  .app-loading.pff-spectral-active > .loader-text {
-    animation: none !important;
-    transform: none !important;
-    opacity: 1 !important;
-  }
 }
 `;
 
@@ -2122,121 +1928,16 @@ body.pff-chart-app .pff-app {
   }
 
 
-  // Full-page cone loader upgrader. Leaves the original triangles in the DOM
-  // so style 1 always restores the original effect with no HTML edits.
-  const SPECTRAL_PATH = 'M 24 136 C 46 136 60 99 76 89 C 84 83 90 83 96 89 C 107 103 117 109 130 108 C 152 105 173 65 192 55 C 198 51 202 54 205 59 C 209 65 211 65 214 60 C 217 55 218 34 226 27 C 236 19 244 28 252 39 C 278 77 297 116 314 136';
-
-  function makeSpectralSvg() {
-    // Each SVG gets distinct gradient and clipping IDs for multi-loader pages.
-    const id = ++spectralLoaderSequence;
-    const grad = `pff-spectrum-${id}`;
-    const clip = `pff-spectrum-clip-${id}`;
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('class', 'pff-spectral-svg');
-    svg.setAttribute('viewBox', '0 0 340 160');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('focusable', 'false');
-    // Single continuous path, NOT three separately drawn curves and NOT dashes.
-    svg.innerHTML = `
-      <defs>
-        <linearGradient id="${grad}" x1="24" y1="0" x2="314" y2="0" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#4a56ff" />
-          <stop offset="19%" stop-color="#4a56ff" />
-          <stop offset="25%" stop-color="#4a56ff" />
-          <stop offset="41%" stop-color="#4b9de4" />
-          <stop offset="56%" stop-color="#24d274" />
-          <stop offset="62%" stop-color="#24d274" />
-          <stop offset="66%" stop-color="#93cb57" />
-          <stop offset="69%" stop-color="#ecaa45" />
-          <stop offset="72%" stop-color="#ff5c30" />
-          <stop offset="100%" stop-color="#ff5c30" />
-        </linearGradient>
-        <clipPath id="${clip}" clipPathUnits="userSpaceOnUse">
-          <rect class="pff-spectral-reveal" x="0" y="0" width="340" height="160" />
-        </clipPath>
-      </defs>
-      <g class="pff-spectral-group" clip-path="url(#${clip})">
-        <path class="pff-spectral-glow" d="${SPECTRAL_PATH}" stroke="url(#${grad})" />
-        <path class="pff-spectral-trace" d="${SPECTRAL_PATH}" stroke="url(#${grad})" />
-      </g>`;
-    return svg;
-  }
-
-  function syncSpectralText(loader, useSpectral) {
-    const text = Array.from(loader.children).find(child => child.classList.contains('loader-text'));
-    if (!text) return;
-    let state = spectralTextStates.get(text);
-
-    if (!useSpectral) {
-      if (!state) return;
-      state.observer.disconnect();
-      // Preserve the latest message, including its original trailing ellipsis.
-      if (text.querySelector('.pff-loader-dots')) text.textContent = state.original;
-      spectralTextStates.delete(text);
-      return;
-    }
-
-    if (!state) {
-      state = { original: text.textContent, observer: null };
-      const observer = new MutationObserver(() => {
-        // Preserve original startup error messages; they must not acquire
-        // animated dots suggesting that an errored request is still loading.
-        if (loader.classList.contains('is-startup-error')) {
-          if (text.querySelector('.pff-loader-dots')) {
-            text.textContent = state.original;
-          } else {
-            state.original = text.textContent;
-          }
-          return;
-        }
-        // Apps may update loaderText.textContent while loading. Reapply the dots
-        // without discarding their new message or disconnecting live updates.
-        if (!text.querySelector('.pff-loader-dots')) {
-          state.original = text.textContent;
-          formatSpectralText(text, state.original);
-        }
-      });
-      state.observer = observer;
-      spectralTextStates.set(text, state);
-      if (!loader.classList.contains('is-startup-error')) {
-        formatSpectralText(text, state.original);
-      }
-      observer.observe(text, { childList: true, characterData: true, subtree: true });
-      observer.observe(loader, { attributes: true, attributeFilter: ['class'] });
-    }
-  }
-
-  function formatSpectralText(text, original) {
-    const content = String(original || '').trim().replace(/(?:\.{2,3}|…)\s*$/, '');
-    const label = document.createElement('span');
-    label.className = 'pff-loading-label';
-    label.textContent = content;
-    const dots = document.createElement('span');
-    dots.className = 'pff-loader-dots';
-    dots.setAttribute('aria-hidden', 'true');
-    for (let i = 0; i < 3; i++) {
-      const dot = document.createElement('span');
-      dot.textContent = '.';
-      dots.appendChild(dot);
-    }
-    text.replaceChildren(label, dots);
-  }
-
+  // Loader visuals are owned by assets/pff_loader.js. These thin wrappers
+  // preserve the original PFF API, including calls made before it finishes loading.
   function syncLoaderStyles() {
-    // Only full-page loaders; preserve the small in-value cone spinners.
-    document.querySelectorAll('.app-loading > .cone-loader').forEach(loader => {
-      const spectral = activeLoaderStyle === 2;
-      if (spectral && !loader.querySelector('.pff-spectral-svg')) {
-        loader.appendChild(makeSpectralSvg());
-      }
-      loader.classList.toggle('pff-spectral-loader', spectral);
-      loader.parentElement.classList.toggle('pff-spectral-active', spectral);
-      syncSpectralText(loader.parentElement, spectral);
-    });
+    global.PFFLoader?.sync();
   }
 
   function getLoaderStyle() {
-    return activeLoaderStyle;
+    if (global.PFFLoader) return global.PFFLoader.getLoaderStyle();
+    const requested = Number(global.PFF_LOADER_STYLE);
+    return requested === 1 || requested === 2 ? requested : 2;
   }
 
   function setLoaderStyle(style) {
@@ -2244,9 +1945,9 @@ body.pff-chart-app .pff-app {
     if (value !== 1 && value !== 2) {
       throw new RangeError('Loader style must be 1 (original cones) or 2 (continuous spectral curve)');
     }
-    activeLoaderStyle = value;
-    syncLoaderStyles();
-    return activeLoaderStyle;
+    global.PFF_LOADER_STYLE = value;
+    global.PFFLoader?.setLoaderStyle(value);
+    return value;
   }
 
   function cssVar(name, fallback) {
@@ -2563,17 +2264,43 @@ body.pff-chart-app .pff-app {
   }
 
   function hideLoadingState(app = document.getElementById('app')) {
-    if (!app) {
+    if (!app) return;
+    // Repeated hide calls must not cancel or prematurely finish an in-flight reveal.
+    if (pendingLoaderReveals.has(app)) return;
+    const finish = () => {
+      app.classList.remove('is-loading', 'pff-reveal-pending');
+      app.setAttribute('aria-busy', 'false');
+    };
+    if (!app.classList.contains('is-loading') ||
+        document.visibilityState === 'hidden' ||
+        typeof global.requestAnimationFrame !== 'function' ||
+        !app.querySelector(':scope > .app-loading')) {
+      finish();
       return;
     }
+
+    // Make the completed app use its normal layout immediately, including
+    // per-app CSS such as #app.is-loading .content { display: none; }.
+    // Keep its loader as a white opaque overlay for a paint opportunity.
+    const token = {};
+    pendingLoaderReveals.set(app, token);
+    app.classList.add('pff-reveal-pending');
     app.classList.remove('is-loading');
-    app.setAttribute('aria-busy', 'false');
+    global.requestAnimationFrame(() => {
+      global.requestAnimationFrame(() => {
+        if (pendingLoaderReveals.get(app) !== token) return;
+        pendingLoaderReveals.delete(app);
+        app.classList.remove('pff-reveal-pending');
+        app.setAttribute('aria-busy', 'false');
+      });
+    });
   }
 
   function showLoadingState(app = document.getElementById('app')) {
-    if (!app) {
-      return;
-    }
+    if (!app) return;
+    // If another load begins during reveal, cancel removal of its overlay.
+    pendingLoaderReveals.delete(app);
+    app.classList.remove('pff-reveal-pending');
     app.classList.add('is-loading');
     app.setAttribute('aria-busy', 'true');
     syncLoaderStyles();
@@ -9966,11 +9693,9 @@ function getEmployerAppearance(
   ensureFont();
   injectStyles();
   applyChartDefaults();
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', syncLoaderStyles, { once: true });
-  } else {
-    syncLoaderStyles();
-  }
+  // pff_loader.js bootstraps itself, including markup parsed after this core.
+  // Calling sync here is harmless when it was explicitly included first.
+  syncLoaderStyles();
 
   const universalAPI =
     Object.freeze({
