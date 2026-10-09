@@ -1,5 +1,5 @@
 /*
- * PFF Loader v1.0.0 — independent loading animations for PFF web apps.
+ * PFF Loader v1.0.1 — independent loading animations for PFF web apps.
  *
  * Change DEFAULT_LOADER_STYLE below, then update ONLY this file to experiment.
  *   1 = original S/M/L cone triangles
@@ -44,6 +44,10 @@
   background: var(--pff-white, #fff);
 }
 
+`;
+
+  const CONE_CSS = String.raw`
+/* All visual rules for the original full-page and miniature S/M/L cone loaders. */
 .cone-loader {
   position: relative;
   width: 176px;
@@ -93,6 +97,36 @@
   line-height: 1.35;
   text-align: center;
   animation: pffLoadingTextPulse 2.7s infinite cubic-bezier(0.45, 0, 0.25, 1);
+}
+
+
+.pff-value-loader {
+  position: relative;
+  display: block;
+  width: 64px;
+  height: 28px;
+  margin: 0 auto;
+  overflow: visible;
+  isolation: isolate;
+  flex: 0 0 64px;
+}
+
+.pff-value-loader .cone {
+  bottom: 3px;
+  width: 21px;
+  height: 24px;
+}
+
+.pff-value-loader .cone.blue {
+  left: 12px;
+}
+
+.pff-value-loader .cone.green {
+  left: 25px;
+}
+
+.pff-value-loader .cone.red {
+  left: 31px;
 }
 
 
@@ -250,9 +284,9 @@
     if (document.getElementById('pff-loader-styles')) return;
     const style = document.createElement('style');
     style.id = 'pff-loader-styles';
-    // When core is present it already owns the original cone fallback.
-    // Avoid duplicating those base rules after app-specific CSS.
-    style.textContent = (global.PFF ? '' : BASE_CSS) + SPECTRAL_CSS;
+    // The core owns the app's loading-state lifecycle, but not loader visuals.
+    // Always load BOTH visual styles, regardless of whether core.js is present.
+    style.textContent = (global.PFF ? '' : BASE_CSS) + CONE_CSS + SPECTRAL_CSS;
     (document.head || document.documentElement).appendChild(style);
   }
 
@@ -389,7 +423,7 @@
   }
 
   const publicAPI = Object.freeze({
-    version: '1.0.0',
+    version: '1.0.1',
     init,
     sync: syncLoaderStyles,
     getLoaderStyle,
