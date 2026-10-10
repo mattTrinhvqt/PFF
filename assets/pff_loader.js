@@ -517,8 +517,21 @@
     const animation = reveal.getAnimations?.()
       .find(a => a.playState === 'running' && a.animationName === 'pffSpectralReveal');
     if (!animation) {
-      app.classList.remove('pff-loader-cycle-hold');
-      return; // No animation available: never block the application.
+      // A fast cached-data reveal can precede the browser exposing the CSS
+      // animation through getAnimations(). Keep the overlay for one full cycle
+      // instead of revealing the app midway through the spectral drawing.
+      cancelPending(entry);
+      const pending = {
+        generation: entry.generation,
+        reveal: null,
+        listener: null,
+        timer: null
+      };
+      entry.pending = pending;
+      pending.timer = global.setTimeout(
+        () => completeHeldLoader(entry, pending), SPECTRAL_CYCLE_MS
+      );
+      return;
     }
 
     cancelPending(entry);
