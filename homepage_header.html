@@ -8,6 +8,7 @@
     content="width=device-width, initial-scale=1"
   >
 
+  <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
 
   <style>
@@ -76,6 +77,13 @@
     .response-value.is-loading {
       width: 64px;
       min-width: 64px;
+    }
+
+    /* Spectral loader: use the existing 64 × 28px number placeholder. */
+    .response-value .pff-value-loader > .pff-spectral-svg {
+      display: block;
+      width: 64px;
+      height: 28px;
     }
 
     .gradient-line {
@@ -207,9 +215,37 @@
               role="status"
               aria-label="Counting contributions"
             >
-              <span class="cone blue"></span>
-              <span class="cone green"></span>
-              <span class="cone red"></span>
+              <svg
+                class="pff-spectral-svg"
+                viewBox="0 0 340 160"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <defs>
+                  <linearGradient id="homepage-spectrum-gradient" x1="24" y1="0" x2="314" y2="0" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="#4a56ff" />
+                    <stop offset="19%" stop-color="#4a56ff" />
+                    <stop offset="25%" stop-color="#4a56ff" />
+                    <stop offset="41%" stop-color="#4b9de4" />
+                    <stop offset="56%" stop-color="#24d274" />
+                    <stop offset="62%" stop-color="#24d274" />
+                    <stop offset="66%" stop-color="#93cb57" />
+                    <stop offset="69%" stop-color="#ecaa45" />
+                    <stop offset="72%" stop-color="#ff5c30" />
+                    <stop offset="100%" stop-color="#ff5c30" />
+                  </linearGradient>
+                  <clipPath id="homepage-spectrum-clip" clipPathUnits="userSpaceOnUse">
+                    <rect class="pff-spectral-reveal" x="0" y="0" width="340" height="160" />
+                  </clipPath>
+                </defs>
+                <g class="pff-spectral-group" clip-path="url(#homepage-spectrum-clip)">
+                  <path
+                    class="pff-spectral-trace"
+                    d="M 24 136 C 46 136 60 99 76 89 C 84 83 90 83 96 89 C 107 103 117 109 130 108 C 152 105 173 65 192 55 C 198 51 202 54 205 59 C 209 65 211 65 214 60 C 217 55 218 34 226 27 C 236 19 244 28 252 39 C 278 77 297 116 314 136"
+                    stroke="url(#homepage-spectrum-gradient)"
+                  />
+                </g>
+              </svg>
             </span>
           </div>
 
@@ -450,6 +486,48 @@
     }
 
 
+    /* Finish the current spectral cycle before replacing the 64px loader.
+       The count-up itself and all page dimensions remain unchanged. */
+    function revealCountAfterLoader(showResult) {
+      const reveal = contributionCount.querySelector('.pff-spectral-reveal');
+      const animation = reveal?.getAnimations?.().find(
+        item => item.playState === 'running'
+      );
+
+      if (
+        !animation ||
+        document.hidden ||
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ) {
+        showResult();
+        return;
+      }
+
+      const duration = Number(animation.effect?.getComputedTiming?.().duration) || 3350;
+      const elapsed = Number(animation.currentTime);
+      const position = Number.isFinite(elapsed)
+        ? ((elapsed % duration) + duration) % duration
+        : 0;
+      const remaining = position < 1 ? duration : duration - position;
+      let completed = false;
+      let fallbackTimer = null;
+
+      function complete() {
+        if (completed) return;
+        completed = true;
+        reveal.removeEventListener('animationiteration', onIteration);
+        window.clearTimeout(fallbackTimer);
+        showResult();
+      }
+
+      function onIteration(event) {
+        if (event.animationName === 'pffSpectralReveal') complete();
+      }
+
+      reveal.addEventListener('animationiteration', onIteration);
+      fallbackTimer = window.setTimeout(complete, remaining + 350);
+    }
+
     async function loadContributionCount() {
       try {
         const loaded =
@@ -515,9 +593,11 @@
                 )
           });
 
-        countAnimator.set(
-          loaded.rows?.[0]?.[0]
-        );
+        revealCountAfterLoader(() => {
+          countAnimator.set(
+            loaded.rows?.[0]?.[0]
+          );
+        });
       } catch (
         error
       ) {
@@ -525,13 +605,15 @@
           error
         );
 
-        countAnimator.show(
-          '—',
-          {
-            error:
-              true
-          }
-        );
+        revealCountAfterLoader(() => {
+          countAnimator.show(
+            '—',
+            {
+              error:
+                true
+            }
+          );
+        });
 
         setDataSource(
           'unavailable'
