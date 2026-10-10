@@ -484,16 +484,21 @@
     if (loader && activeLoaderStyle === 2) {
       loader.classList.add('pff-spectral-complete');
     }
-    // Allow the finished chart layout a paint opportunity underneath.
+    // Paint the completed spectral curve before revealing the app. A single
+    // animation frame can run before the browser actually paints that frame.
+    // Keep the completed curve visible briefly after two paint opportunities.
     const release = () => {
       if (entry.generation !== pending.generation) return;
       if (app.classList.contains('is-loading')) return;
       app.classList.remove('pff-loader-cycle-hold');
     };
+    const holdFinalFrame = () => global.setTimeout(release, 180);
     if (typeof global.requestAnimationFrame === 'function') {
-      global.requestAnimationFrame(release);
+      global.requestAnimationFrame(() => {
+        global.requestAnimationFrame(holdFinalFrame);
+      });
     } else {
-      release();
+      holdFinalFrame();
     }
   }
 
