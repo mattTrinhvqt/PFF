@@ -240,7 +240,7 @@
 .app-loading.pff-spectral-active > .loader-text {
   margin: 13px 0 0;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.35;
   animation: pffSpectralTextEnter .25s ease-out both;
 }
