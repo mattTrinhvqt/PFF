@@ -4968,16 +4968,16 @@
         32,
 
       ophthalmologySheetName:
-        '2026 Ophthal practice directory',
+        '2026 Ophthalmologist practice directory',
 
       ophthalmologySheetGid:
-        '1598477979',
+        '2016317104',
 
       ophthalmologySourceRange:
-        'A32:X',
+        'A32:AG',
 
       ophthalmologySourceColumnCount:
-        24,
+        33,
 
       locationSheetName:
         'Localities',
@@ -4995,7 +4995,7 @@
         './assets/practice_directory_fallback.json',
 
       jsonFallbackVersion:
-        6,
+        7,
 
       jsonFetchTimeoutMs:
         15000,
@@ -5004,13 +5004,13 @@
         'pff-optom-practice-directory',
 
       localCacheKey:
-        'pff-eyecare-access-tool-v6',
+        'pff-eyecare-access-tool-v7-ophthalmology-test',
 
       minimumRows:
         100,
 
       ophthalmologyMinimumRows:
-        100
+        1
     });
 
     /* Testing switch only. Leave false in production.
@@ -5124,10 +5124,9 @@
       'phn'
     ]);
 
-    /* Ophthalmology A:X. Column A is the assigned practice/service ID.
-     * Legacy B:X cache rows are still accepted below. U:W are retained to
-     * preserve the source row shape. */
-    const OPHTHALMOLOGY_LEGACY_SOURCE_KEYS = Object.freeze([
+    /* Ophthalmology v6 A:X. Retained only so an explicitly supplied legacy
+     * row can still be interpreted safely during the schema migration. */
+    const OPHTHALMOLOGY_V6_LEGACY_SOURCE_KEYS = Object.freeze([
       'practiceName',
       'address',
       'suburb',
@@ -5153,9 +5152,48 @@
       'phn'
     ]);
 
+    const OPHTHALMOLOGY_V6_SOURCE_KEYS = Object.freeze([
+      'practiceId',
+      ...OPHTHALMOLOGY_V6_LEGACY_SOURCE_KEYS
+    ]);
+
+    /* Ophthalmology v7 A:AG. Column A is the assigned practice/service ID.
+     * Additional source fields are retained in the row model for future use,
+     * but are not added to the visible directory table yet. */
     const OPHTHALMOLOGY_SOURCE_KEYS = Object.freeze([
       'practiceId',
-      ...OPHTHALMOLOGY_LEGACY_SOURCE_KEYS
+      'practiceName',
+      'address',
+      'suburb',
+      'state',
+      'postcode',
+      'latitude',
+      'longitude',
+      'mapsUrl',
+      'brandParent',
+      'employer',
+      'employerType',
+      'mmm',
+      'phn',
+      'retina',
+      'retinaUrl',
+      'glaucoma',
+      'glaucomaUrl',
+      'cornea',
+      'corneaUrl',
+      'oculoplastics',
+      'oculoplasticsUrl',
+      'paedStrab',
+      'paedStrabUrl',
+      'neuro',
+      'neuroUrl',
+      'uveitis',
+      'uveitisUrl',
+      'website',
+      'phone',
+      'email',
+      'practitionersUrl',
+      'publicFacingPracticeName'
     ]);
 
     function isPublicServicePracticeId(value) {
@@ -5273,6 +5311,7 @@
     const OPHTHALMOLOGY_SPECIALTIES = Object.freeze([
       Object.freeze({
         key: 'retina',
+        urlKey: 'retinaUrl',
         label: 'Retina',
         aliases: Object.freeze([
           'retina', 'retinal', 'vitreoretinal', 'vr', 'vitreous',
@@ -5292,6 +5331,7 @@
       }),
       Object.freeze({
         key: 'glaucoma',
+        urlKey: 'glaucomaUrl',
         label: 'Glaucoma',
         aliases: Object.freeze([
           'glaucoma', 'glaucoma specialist', 'glaucoma suspect',
@@ -5305,6 +5345,7 @@
       }),
       Object.freeze({
         key: 'cornea',
+        urlKey: 'corneaUrl',
         label: 'Cornea',
         aliases: Object.freeze([
           'cornea', 'corneal', 'anterior segment', 'anterior eye',
@@ -5321,6 +5362,7 @@
       }),
       Object.freeze({
         key: 'oculoplastics',
+        urlKey: 'oculoplasticsUrl',
         label: 'Oculoplastics',
         aliases: Object.freeze([
           'oculoplastics', 'oculoplastic', 'eyelid', 'eyelids', 'lid', 'lids',
@@ -5334,6 +5376,7 @@
       }),
       Object.freeze({
         key: 'paedStrab',
+        urlKey: 'paedStrabUrl',
         label: 'Paed / Strab',
         aliases: Object.freeze([
           'paediatric', 'pediatric', 'paed', 'peds', 'child', 'children',
@@ -5347,6 +5390,7 @@
       }),
       Object.freeze({
         key: 'neuro',
+        urlKey: 'neuroUrl',
         label: 'Neuro-',
         aliases: Object.freeze([
           'neuro', 'neuro-ophthalmology', 'neuro ophthalmology',
@@ -5363,6 +5407,7 @@
       }),
       Object.freeze({
         key: 'uveitis',
+        urlKey: 'uveitisUrl',
         label: 'Uveitis / Inflammatory',
         aliases: Object.freeze([
           'uveitis', 'inflammatory', 'ocular inflammation',
@@ -7032,7 +7077,7 @@
       if (kind === 'practitioners') {
         const unavailable = target?.dataset?.actionUnavailable === 'true';
         return unavailable
-          ? '<strong>Practitioners</strong><span class="action-tooltip-line"><em>Staff profiles unavailable</em></span>'
+          ? '<strong>Practitioners</strong><span class="action-tooltip-line"><em>Practitioner profiles unavailable</em></span>'
           : `<strong>Practitioners</strong><span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to view' : 'Tap to view'}</em></span>`;
       }
 
@@ -7547,28 +7592,51 @@
       values,
       sourceIndex
     ) {
-      if (
-        !Array.isArray(values) ||
-        values.length < OPHTHALMOLOGY_LEGACY_SOURCE_KEYS.length
-      ) {
+      if (!Array.isArray(values)) {
         return null;
       }
 
       const row = {};
-      const hasPracticeIdColumn =
-        values.length >= OPHTHALMOLOGY_SOURCE_KEYS.length;
-      const sourceKeys = hasPracticeIdColumn
-        ? OPHTHALMOLOGY_SOURCE_KEYS
-        : OPHTHALMOLOGY_LEGACY_SOURCE_KEYS;
+      let sourceKeys = null;
 
-      if (!hasPracticeIdColumn) {
+      if (values.length >= OPHTHALMOLOGY_SOURCE_KEYS.length) {
+        sourceKeys = OPHTHALMOLOGY_SOURCE_KEYS;
+      } else if (values.length >= OPHTHALMOLOGY_V6_SOURCE_KEYS.length) {
+        sourceKeys = OPHTHALMOLOGY_V6_SOURCE_KEYS;
+      } else if (values.length >= OPHTHALMOLOGY_V6_LEGACY_SOURCE_KEYS.length) {
+        sourceKeys = OPHTHALMOLOGY_V6_LEGACY_SOURCE_KEYS;
         row.practiceId = '';
+      } else {
+        return null;
       }
 
       sourceKeys.forEach(
         (key, index) => {
           row[key] =
             cleanText(values[index]);
+        }
+      );
+
+      /* These v7 fields are deliberately retained in the background row
+       * model without adding visible table columns. */
+      [
+        'brandParent',
+        'employer',
+        'employerType',
+        'retinaUrl',
+        'glaucomaUrl',
+        'corneaUrl',
+        'oculoplasticsUrl',
+        'paedStrabUrl',
+        'neuroUrl',
+        'uveitisUrl',
+        'practitionersUrl',
+        'publicFacingPracticeName'
+      ].forEach(
+        key => {
+          if (!(key in row)) {
+            row[key] = '';
+          }
         }
       );
 
@@ -7587,6 +7655,7 @@
       row.emailAddress = emailAddressForRow(row);
       row.websiteUrl = safeExternalUrl(row.website);
       row.phoneNumber = normalisePhoneNumber(row.phone);
+      row.practitionersUrl = safeExternalUrl(row.practitionersUrl);
 
       row.specialties = {
         retina: isYes(row.retina),
@@ -8117,7 +8186,7 @@
 
       const snapshot = {
         ok: true,
-        version: 6,
+        version: CONFIG.jsonFallbackVersion,
         appKey: CONFIG.appKey,
         cachedAt:
           cached.savedAt ||
@@ -13297,7 +13366,11 @@
         const favouritePracticeId = favouriteIdentity.practiceId;
         const favouriteAction = `<button class="practice-action favourite-action${favouriteSaved ? ' is-favourite' : ''}" type="button" data-favourite-key="${escapeHtml(favouriteKey)}" data-favourite-service="${escapeHtml(rowServiceType)}" data-favourite-practice-id="${escapeHtml(favouritePracticeId)}" data-favourite-practice-name="${escapeHtml(row.practiceName)}" aria-pressed="${String(favouriteSaved)}" aria-label="${favouriteSaved ? 'Remove' : 'Add'} ${escapeHtml(row.practiceName)} ${favouriteSaved ? 'from' : 'to'} favourites" data-action-tooltip="favourite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>${favouriteCount > 0 ? `<sup class="favourite-community-count">${escapeHtml(PFF.formatInteger(favouriteCount))}</sup>` : ''}</button>`;
 
-        const practitionersAction = `<span class="practice-action practitioners-action is-disabled has-action-tooltip" role="button" aria-disabled="true" tabindex="0" data-action-tooltip="practitioners" data-action-unavailable="true" aria-label="Practitioner profiles unavailable">${ACTION_ICON_SVGS.practitioners}</span>`;
+        const practitionersUrl = safeExternalUrl(row.practitionersUrl);
+
+        const practitionersAction = practitionersUrl
+          ? `<a class="practice-action practitioners-action" href="${escapeHtml(practitionersUrl)}" target="_blank" rel="noopener" data-action-tooltip="practitioners" aria-label="Open practitioner profiles for ${escapeHtml(row.practiceName)}">${ACTION_ICON_SVGS.practitioners}</a>`
+          : `<span class="practice-action practitioners-action is-disabled has-action-tooltip" role="button" aria-disabled="true" tabindex="0" data-action-tooltip="practitioners" data-action-unavailable="true" aria-label="Practitioner profiles unavailable">${ACTION_ICON_SVGS.practitioners}</span>`;
 
         const websiteUrl = safeExternalUrl(row.websiteUrl || row.website);
 
