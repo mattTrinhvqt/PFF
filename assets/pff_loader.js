@@ -19,7 +19,7 @@
   'use strict';
   if (global.PFFLoader) return; // idempotent if included both ways
 
-  const DEFAULT_LOADER_STYLE = 3; // <-- CHANGE THIS NUMBER to select animation
+  const DEFAULT_LOADER_STYLE = 2; // <-- CHANGE THIS NUMBER to select animation
   let activeLoaderStyle = [1, 2, 3].includes(Number(global.PFF_LOADER_STYLE))
     ? Number(global.PFF_LOADER_STYLE)
     : DEFAULT_LOADER_STYLE;
