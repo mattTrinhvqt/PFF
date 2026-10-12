@@ -1,6 +1,6 @@
 
 /*
- * PFF Loader v1.2.3 — independent loading animations for PFF web apps.
+ * PFF Loader v1.2.5 — independent loading animations for PFF web apps.
  *
  * Change DEFAULT_LOADER_STYLE below, then update ONLY this file to experiment.
  *   1 = original S/M/L cone triangles
@@ -535,21 +535,20 @@
     if (loader && activeLoaderStyle === 2) {
       loader.classList.add('pff-spectral-complete');
     }
-    // Paint the completed spectral curve before revealing the app. A single
-    // animation frame can run before the browser actually paints that frame.
-    // Keep the completed curve visible briefly after two paint opportunities.
+    // Paint the completed spectral curve before revealing the app. Two
+    // animation frames provide a paint opportunity without adding a fixed
+    // post-animation delay that can look like a blank white pause.
     const release = () => {
       if (entry.generation !== pending.generation) return;
       if (app.classList.contains('is-loading')) return;
       app.classList.remove('pff-loader-cycle-hold');
     };
-    const holdFinalFrame = () => global.setTimeout(release, 180);
     if (typeof global.requestAnimationFrame === 'function') {
       global.requestAnimationFrame(() => {
-        global.requestAnimationFrame(holdFinalFrame);
+        global.requestAnimationFrame(release);
       });
     } else {
-      holdFinalFrame();
+      global.setTimeout(release, 0);
     }
   }
 
@@ -710,6 +709,35 @@
     pending.timer = global.setTimeout(done, Math.min(duration + 350, remaining + 350));
   }
 
+  function handleAppLoadingState(entry, nowLoading, force = false) {
+    if (!force && nowLoading === entry.wasLoading) return;
+
+    // The document-level observer can recover a loading-to-ready transition
+    // that happened before this app's own observer was attached. If another
+    // observer already started the handoff, keep that single pending hold.
+    if (
+      force &&
+      !nowLoading &&
+      (
+        entry.pending ||
+        entry.app.classList.contains('pff-loader-cycle-hold')
+      )
+    ) {
+      entry.wasLoading = false;
+      return;
+    }
+
+    entry.wasLoading = nowLoading;
+    entry.generation++;
+
+    if (nowLoading) {
+      releaseHeldLoader(entry);
+      restartSpectralCycle(entry.app);
+    } else {
+      holdUntilSpectralCycleEnds(entry);
+    }
+  }
+
   function observeApp(app) {
     if (!app || rootStates.has(app)) return;
     const entry = {
@@ -721,15 +749,7 @@
     rootStates.set(app, entry);
     const observer = new MutationObserver(() => {
       const nowLoading = app.classList.contains('is-loading');
-      if (nowLoading === entry.wasLoading) return;
-      entry.wasLoading = nowLoading;
-      entry.generation++;
-      if (nowLoading) {
-        releaseHeldLoader(entry);
-        restartSpectralCycle(app);
-      } else {
-        holdUntilSpectralCycleEnds(entry);
-      }
+      handleAppLoadingState(entry, nowLoading);
     });
     observer.observe(app, { attributes: true, attributeFilter: ['class'] });
   }
@@ -781,7 +801,7 @@
   }
 
   const publicAPI = Object.freeze({
-    version: '1.2.3',
+    version: '1.2.5',
     init,
     sync: syncLoaderStyles,
     getLoaderStyle,
@@ -789,11 +809,71 @@
   });
   global.PFFLoader = publicAPI;
 
-  // Early rendering: handles loaders added later as the parser progresses.
+  // Early rendering: handles loaders added later as the parser progresses and
+  // preserves very fast cached loading-to-ready transitions that happen before
+  // an app-specific class observer can be attached.
   init();
   if (document.readyState === 'loading') {
-    const earlyObserver = new MutationObserver(() => syncLoaderStyles());
-    earlyObserver.observe(document.documentElement, { childList: true, subtree: true });
+    const earlyObserver = new MutationObserver(records => {
+      const completedApps = new Set();
+      let loaderMarkupWasAdded = false;
+
+      records.forEach(record => {
+        if (record.type === 'childList') {
+          if (record.addedNodes.length) {
+            loaderMarkupWasAdded = true;
+          }
+          return;
+        }
+
+        if (
+          record.type !== 'attributes' ||
+          record.attributeName !== 'class' ||
+          !(record.target instanceof Element) ||
+          !record.target.matches('#app, .pff-app')
+        ) {
+          return;
+        }
+
+        const previousClasses = new Set(
+          String(record.oldValue || '')
+            .split(/\s+/)
+            .filter(Boolean)
+        );
+
+        if (
+          previousClasses.has('is-loading') &&
+          !record.target.classList.contains('is-loading')
+        ) {
+          completedApps.add(record.target);
+        }
+      });
+
+      const needsAppRegistration = Array.from(completedApps)
+        .some(app => !rootStates.has(app));
+
+      // Do not resynchronise in response to the loader's own class changes.
+      // Doing so can recursively queue more class mutations and prevent the
+      // browser from painting the animation. New markup and an unregistered
+      // app are the only reasons this early observer needs to resynchronise.
+      if (loaderMarkupWasAdded || needsAppRegistration) {
+        syncLoaderStyles();
+      }
+
+      completedApps.forEach(app => {
+        const entry = rootStates.get(app);
+        if (entry) {
+          handleAppLoadingState(entry, false, true);
+        }
+      });
+    });
+    earlyObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class'],
+      attributeOldValue: true
+    });
     document.addEventListener('DOMContentLoaded', () => {
       earlyObserver.disconnect();
       syncLoaderStyles();
