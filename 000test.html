@@ -4171,6 +4171,15 @@
       line-height: 1.15;
     }
 
+    .service-scope-notice strong {
+      font-weight: 700;
+    }
+
+    .service-scope-notice-separator {
+      display: inline-block;
+      margin: 0 0.35em;
+    }
+
     @media (max-width: 700px) {
       .service-scope-notice {
         margin-top: 3px;
@@ -4575,7 +4584,7 @@
           </button>
         </div>
 
-        <div class="service-scope-notice" role="note">Practice details are from Google Services · Individual practitioners are not listed</div>
+        <div class="service-scope-notice" role="note">This is primarily a <strong>practice (not practitioner) directory</strong> <span class="service-scope-notice-separator" aria-hidden="true">·</span> Data from public-facing Google Services</div>
 
         <div id="searchWrap" class="eat-search-wrap">
           <div class="search-control eat-search-control">
@@ -4593,8 +4602,8 @@
                 autocomplete="off"
                 enterkeyhint="search"
                 spellcheck="false"
-                placeholder="Search locations or specialties, e.g., Sydney neuro"
-                aria-label="Search locations, specialties or practices"
+                placeholder="Search locations, specialties, or practitioners – e.g., Sydney neuro"
+                aria-label="Search practices by location, specialty or practitioner"
               >
             </div>
             <div class="eat-search-actions" aria-label="Search actions">
@@ -7569,6 +7578,26 @@
           ].join(' ')
         );
 
+      row.nonPractitionerSearchText =
+        row.searchText;
+
+      row.focusedNonPractitionerSearchText =
+        row.focusedSearchText;
+
+      row.compactNonPractitionerSearchText =
+        normaliseSearchText(
+          row.nonPractitionerSearchText
+        );
+
+      row.compactFocusedNonPractitionerSearchText =
+        normaliseSearchText(
+          row.focusedNonPractitionerSearchText
+        );
+
+      row.practitionerSearchNames = [];
+
+      row.practitionerSearchText = '';
+
       row.compactSearchText =
         normaliseSearchText(
           row.searchText
@@ -7693,7 +7722,13 @@
       row.practiceNameSearchText =
         PFF.normaliseText(row.practiceName);
 
-      row.organisationSearchText = '';
+      row.organisationSearchText =
+        PFF.normaliseText(
+          [
+            row.brandParent,
+            row.employer
+          ].join(' ')
+        );
 
       row.locationSearchText =
         PFF.normaliseText(
@@ -7712,17 +7747,40 @@
           specialtySearchTerms.join(' ')
         );
 
+      row.practitionerSearchNames =
+        cleanText(row.practitioners)
+          .split(/\s*;\s*/)
+          .map(normalisePractitionerName)
+          .filter(Boolean);
+
       row.practitionerSearchText =
         PFF.normaliseText(
-          row.practitioners
+          row.practitionerSearchNames.join(' ')
+        );
+
+      row.nonPractitionerSearchText =
+        PFF.normaliseText(
+          [
+            row.practiceNameSearchText,
+            row.organisationSearchText,
+            row.locationSearchText,
+            row.specialtySearchText
+          ].join(' ')
+        );
+
+      row.focusedNonPractitionerSearchText =
+        PFF.normaliseText(
+          [
+            row.practiceNameSearchText,
+            row.organisationSearchText,
+            row.specialtySearchText
+          ].join(' ')
         );
 
       row.searchText =
         PFF.normaliseText(
           [
-            row.practiceNameSearchText,
-            row.locationSearchText,
-            row.specialtySearchText,
+            row.nonPractitionerSearchText,
             row.practitionerSearchText
           ].join(' ')
         );
@@ -7730,12 +7788,15 @@
       row.focusedSearchText =
         PFF.normaliseText(
           [
-            row.practiceNameSearchText,
-            row.specialtySearchText,
+            row.focusedNonPractitionerSearchText,
             row.practitionerSearchText
           ].join(' ')
         );
 
+      row.compactNonPractitionerSearchText =
+        normaliseSearchText(row.nonPractitionerSearchText);
+      row.compactFocusedNonPractitionerSearchText =
+        normaliseSearchText(row.focusedNonPractitionerSearchText);
       row.compactSearchText =
         normaliseSearchText(row.searchText);
       row.compactFocusedSearchText =
@@ -10115,6 +10176,44 @@
         );
     }
 
+    /* Practitioner titles are optional search aids, not searchable people
+     * in their own right. Requiring trailing whitespace preserves the
+     * standalone clinical abbreviation "DR" for diabetic retinopathy. */
+    const PRACTITIONER_TITLE_PREFIX_PATTERN =
+      /^(?:(?:associate\s+professor|associate\s+prof|assoc(?:iate)?\.?\s+prof(?:essor)?|a\s*\/\s*prof(?:essor)?|professor|prof|doctor|dr)\.?\s+)+/i;
+
+    function normalisePractitionerName(value) {
+      return PFF.normaliseText(
+        cleanText(value)
+          .replace(PRACTITIONER_TITLE_PREFIX_PATTERN, '')
+          .trim()
+      );
+    }
+
+    function practitionerQueryWithoutTitle(value) {
+      const original =
+        cleanText(value);
+
+      const stripped =
+        original
+          .replace(PRACTITIONER_TITLE_PREFIX_PATTERN, '')
+          .trim();
+
+      return stripped && stripped !== original
+        ? PFF.normaliseText(stripped)
+        : '';
+    }
+
+    function searchTokenDescriptors(values) {
+      return values.map(
+        token => ({
+          normal: token,
+          compact: normaliseSearchText(token),
+          shortClinicalKeys: shortClinicalSpecialtyKeys(token)
+        })
+      );
+    }
+
     function shortClinicalSpecialtyKeys(value) {
       const token = PFF.normaliseText(value);
 
@@ -10150,18 +10249,30 @@
       const tokenValues =
         searchTokens(query);
 
-      const tokens = tokenValues.map(
-        token => ({
-          normal: token,
-          compact: normaliseSearchText(token),
-          shortClinicalKeys: shortClinicalSpecialtyKeys(token)
-        })
-      );
+      const tokens =
+        searchTokenDescriptors(tokenValues);
+
+      const practitionerQuery =
+        practitionerQueryWithoutTitle(query);
+
+      const practitionerTokenValues =
+        practitionerQuery
+          ? searchTokens(practitionerQuery)
+          : tokenValues;
+
+      const practitionerTokens =
+        searchTokenDescriptors(practitionerTokenValues);
 
       return {
         tokens,
         normalQuery: PFF.normaliseText(tokenValues.join(' ')),
         compactQuery: normaliseSearchText(tokenValues.join(' ')),
+        practitionerTitleRemoved: Boolean(practitionerQuery),
+        practitionerTokens,
+        practitionerNormalQuery:
+          PFF.normaliseText(practitionerTokenValues.join(' ')),
+        practitionerCompactQuery:
+          normaliseSearchText(practitionerTokenValues.join(' ')),
         /* Keep compact phrase matching for multi-word names such as "Eye Q"
          * while still preventing a single short token such as DR from matching
          * inside an unrelated longer word. */
@@ -10214,37 +10325,153 @@
       );
     }
 
+    function tokenMatchesPractitionerName(token, practitionerName) {
+      if (
+        !practitionerName ||
+        token.shortClinicalKeys.length
+      ) {
+        return false;
+      }
+
+      const compactName =
+        normaliseSearchText(practitionerName);
+
+      return (
+        practitionerName.includes(token.normal) ||
+        (
+          token.compact &&
+          compactName.includes(token.compact)
+        )
+      );
+    }
+
+    function tokensMatchReferSearch(
+      row,
+      tokens,
+      normalText,
+      compactText
+    ) {
+      const practitionerOnlyTokens = [];
+
+      for (const token of tokens) {
+        if (
+          rowMatchesReferSearchToken(
+            row,
+            token,
+            normalText,
+            compactText
+          )
+        ) {
+          continue;
+        }
+
+        const matchesPractitioner =
+          (row.practitionerSearchNames || [])
+            .some(
+              practitionerName =>
+                tokenMatchesPractitionerName(
+                  token,
+                  practitionerName
+                )
+            );
+
+        if (!matchesPractitioner) {
+          return false;
+        }
+
+        practitionerOnlyTokens.push(token);
+      }
+
+      /* If several terms rely on practitioner data, they must all belong to
+       * the same semicolon-delimited person. This avoids combining the first
+       * name of one practitioner with the surname of another. */
+      return (
+        !practitionerOnlyTokens.length ||
+        (row.practitionerSearchNames || [])
+          .some(
+            practitionerName =>
+              practitionerOnlyTokens.every(
+                token =>
+                  tokenMatchesPractitionerName(
+                    token,
+                    practitionerName
+                  )
+              )
+          )
+      );
+    }
+
     function rowMatchesReferSearch(row, context) {
       if (!context) {
         return true;
       }
 
-      const normalText =
+      const nonPractitionerText =
         context.focused
-          ? (row.focusedSearchText || '')
-          : row.searchText;
+          ? (row.focusedNonPractitionerSearchText || '')
+          : (row.nonPractitionerSearchText || '');
 
-      const compactText =
+      const compactNonPractitionerText =
         context.focused
-          ? (row.compactFocusedSearchText || '')
-          : row.compactSearchText;
+          ? (row.compactFocusedNonPractitionerSearchText || '')
+          : (row.compactNonPractitionerSearchText || '');
 
       if (
         context.allowCompactPhrase &&
         context.compactQuery &&
-        compactText.includes(context.compactQuery)
+        (
+          compactNonPractitionerText.includes(context.compactQuery) ||
+          (row.practitionerSearchNames || [])
+            .some(
+              practitionerName =>
+                normaliseSearchText(practitionerName)
+                  .includes(context.compactQuery)
+            )
+        )
       ) {
         return true;
       }
 
-      /* Every meaningful term must match. This allows queries such as
-       * "neuro and retina" or "dry contact" while keeping AND semantics. */
-      return context.tokens.every(
-        token => rowMatchesReferSearchToken(
+      /* Every meaningful term must match. Practitioner-only terms are kept
+       * separate so names remain hidden and cannot be assembled across two
+       * different practitioners. */
+      if (
+        tokensMatchReferSearch(
           row,
-          token,
-          normalText,
-          compactText
+          context.tokens,
+          nonPractitionerText,
+          compactNonPractitionerText
+        )
+      ) {
+        return true;
+      }
+
+      if (!context.practitionerTitleRemoved) {
+        return false;
+      }
+
+      const practitionerNames =
+        row.practitionerSearchNames || [];
+
+      const hasPractitionerMatch =
+        context.practitionerTokens.some(
+          token =>
+            practitionerNames.some(
+              practitionerName =>
+                tokenMatchesPractitionerName(
+                  token,
+                  practitionerName
+                )
+            )
+        );
+
+      return (
+        hasPractitionerMatch &&
+        tokensMatchReferSearch(
+          row,
+          context.practitionerTokens,
+          nonPractitionerText,
+          compactNonPractitionerText
         )
       );
     }
@@ -10281,12 +10508,31 @@
         return 0;
       }
 
-      const query = context.normalQuery;
-      const compactQuery = context.compactQuery;
+      const scoringTokens =
+        context.practitionerTitleRemoved
+          ? context.practitionerTokens
+          : context.tokens;
+
+      const query =
+        context.practitionerTitleRemoved
+          ? context.practitionerNormalQuery
+          : context.normalQuery;
+
+      const compactQuery =
+        context.practitionerTitleRemoved
+          ? context.practitionerCompactQuery
+          : context.compactQuery;
+
       const name = row.practiceNameSearchText || PFF.normaliseText(row.practiceName);
       const organisation = row.organisationSearchText || '';
       const location = context.focused ? '' : (row.locationSearchText || '');
       const specialty = row.specialtySearchText || '';
+      const practitionerNames = row.practitionerSearchNames || [];
+      const nonClinicalPractitionerTokens =
+        scoringTokens.filter(token => !token.shortClinicalKeys.length);
+      const strongPractitionerIntent =
+        context.practitionerTitleRemoved ||
+        nonClinicalPractitionerTokens.length >= 2;
       let score = 100;
 
       const considerPhrase = (
@@ -10318,23 +10564,51 @@
       };
 
       const singleClinicalAbbreviationQuery =
-        context.tokens.length === 1 &&
-        context.tokens[0].shortClinicalKeys.length > 0;
+        scoringTokens.length === 1 &&
+        scoringTokens[0].shortClinicalKeys.length > 0;
 
       if (!singleClinicalAbbreviationQuery) {
         considerPhrase(name, 0, 8, 14, 16);
+
+        if (strongPractitionerIntent) {
+          practitionerNames.forEach(
+            practitionerName => {
+              considerPhrase(
+                practitionerName,
+                4,
+                10,
+                16,
+                18
+              );
+            }
+          );
+        }
+
         considerPhrase(organisation, 20, 26, 34, 36);
         considerPhrase(location, 50, 54, 58, 60);
       }
       considerPhrase(specialty, 40, 42, 46, 48);
 
-      if (allSearchTokensMatchText(context.tokens, name)) {
+      if (allSearchTokensMatchText(scoringTokens, name)) {
         score = Math.min(score, 18);
       }
 
       if (
+        strongPractitionerIntent &&
+        practitionerNames.some(
+          practitionerName =>
+            allSearchTokensMatchText(
+              scoringTokens,
+              practitionerName
+            )
+        )
+      ) {
+        score = Math.min(score, 19);
+      }
+
+      if (
         organisation &&
-        allSearchTokensMatchText(context.tokens, organisation)
+        allSearchTokensMatchText(scoringTokens, organisation)
       ) {
         score = Math.min(score, 38);
       }
@@ -10342,7 +10616,7 @@
       if (
         specialty &&
         allSearchTokensMatchText(
-          context.tokens,
+          scoringTokens,
           specialty,
           { allowClinicalAbbreviations: true }
         )
@@ -10352,7 +10626,7 @@
 
       if (
         location &&
-        allSearchTokensMatchText(context.tokens, location)
+        allSearchTokensMatchText(scoringTokens, location)
       ) {
         score = Math.min(score, 62);
       }
@@ -10361,7 +10635,7 @@
        * "Specsavers dry" or "Newcastle scleral"). Give each token the
        * strongest field score it earns so those searches are still ranked by
        * relevance rather than falling back to an alphabetical tie. */
-      const tokenFieldScore = context.tokens.reduce(
+      const tokenFieldScore = scoringTokens.reduce(
         (total, token) => {
           if (
             token.shortClinicalKeys.length &&
@@ -10396,6 +10670,19 @@
             return total;
           }
 
+          const matchesPractitioner =
+            practitionerNames.some(
+              practitionerName =>
+                matchesField(practitionerName)
+            );
+
+          if (
+            matchesPractitioner &&
+            strongPractitionerIntent
+          ) {
+            return total + 10;
+          }
+
           if (matchesField(organisation)) {
             return total + 20;
           }
@@ -10406,6 +10693,10 @@
 
           if (matchesField(location)) {
             return total + 50;
+          }
+
+          if (matchesPractitioner) {
+            return total + 55;
           }
 
           return total + 80;
@@ -10643,7 +10934,8 @@
           type: item.type,
           row: item.row,
           locationQuery: item.locationQuery,
-          remainingQuery: item.remainingQuery
+          remainingQuery: item.remainingQuery,
+          matchScore: item.matchScore
         }));
     }
 
@@ -10996,10 +11288,25 @@
         ? []
         : locationSuggestionsForQuery(query);
 
-      suggestionItems = [
-        ...specialties,
-        ...locations
-      ];
+      /* Exact suburb/postcode matches lead because they establish the search
+       * area. Otherwise specialties lead, which better reflects the referral
+       * workflow while keeping suggestions limited to these two chip types. */
+      const prioritiseLocations =
+        locations.some(item => item.matchScore <= 1);
+
+      const suggestionGroups =
+        prioritiseLocations
+          ? [
+              { label: 'Locations', items: locations },
+              { label: 'Specialties', items: specialties }
+            ]
+          : [
+              { label: 'Specialties', items: specialties },
+              { label: 'Locations', items: locations }
+            ];
+
+      suggestionItems =
+        suggestionGroups.flatMap(group => group.items);
 
       activeSuggestionIndex = -1;
 
@@ -11008,22 +11315,29 @@
         return;
       }
 
-      const specialtyCount = specialties.length;
       const sections = [];
+      let suggestionIndex = 0;
 
-      if (specialtyCount) {
-        sections.push(
-          `<div class="search-suggestion-group" role="presentation">Specialties</div>` +
-          specialties.map((item, index) => suggestionButtonHtml(item, index)).join('')
-        );
-      }
+      suggestionGroups.forEach(group => {
+        if (!group.items.length) {
+          return;
+        }
 
-      if (locations.length) {
+        const buttons =
+          group.items
+            .map(
+              item =>
+                suggestionButtonHtml(
+                  item,
+                  suggestionIndex++
+                )
+            )
+            .join('');
+
         sections.push(
-          `<div class="search-suggestion-group" role="presentation">Locations</div>` +
-          locations.map((item, index) => suggestionButtonHtml(item, specialtyCount + index)).join('')
+          `<div class="search-suggestion-group" role="presentation">${group.label}</div>${buttons}`
         );
-      }
+      });
 
       locationSuggestions.innerHTML = sections.join('');
       locationSuggestions.classList.add('is-visible');
@@ -12128,14 +12442,9 @@
 
       if (isFavourites) {
         searchInput.placeholder =
-          'Search favourites: practices, locations, and specialties';
+          'Search favourites: practices, locations, specialties, or practitioners';
         return;
       }
-
-      const remainingSpecialties =
-        activeSpecialtyDefinitions().filter(
-          definition => !requiredSpecialties.has(definition.key)
-        );
 
       // Once both a location and at least one specialty are selected, keep
       // the field available for extra typing without showing grey example text.
@@ -12146,22 +12455,22 @@
 
       if (requiredSpecialties.size) {
         searchInput.placeholder =
-          'Add a location, e.g., Sydney';
+          'Add locations or practitioners – e.g., Sydney';
         return;
       }
 
       if (activeLocation) {
         searchInput.placeholder =
           isOphthalmology
-            ? 'Search specialties, e.g., neuro'
-            : 'Search specialties, e.g., dry eye';
+            ? 'Add specialties or practitioners – e.g., neuro'
+            : 'Add specialties or practitioners – e.g., dry eye';
         return;
       }
 
       searchInput.placeholder =
         isOphthalmology
-          ? 'Search practices, locations, and specialties, e.g., Sydney neuro'
-          : 'Search practices, locations, and specialties, e.g., Sydney dry eye';
+          ? 'Search locations, specialties, or practitioners – e.g., Sydney neuro'
+          : 'Search locations, specialties, or practitioners – e.g., Sydney dry eye';
     }
 
 
@@ -12189,12 +12498,12 @@
         isFavourites
           ? (
               activeLocation
-                ? `Search saved practices and services near ${locationDisplayLabel(activeLocation)}`
-                : 'Search saved practices, services, locations, and specialties'
+                ? `Search saved practices, services or practitioners near ${locationDisplayLabel(activeLocation)}`
+                : 'Search saved practices by location, specialty or practitioner'
             )
           : activeLocation
-            ? `Search specialties near ${locationDisplayLabel(activeLocation)}`
-            : 'Search practices, locations, and specialties'
+            ? `Add specialties or practitioners near ${locationDisplayLabel(activeLocation)}`
+            : 'Search practices by location, specialty or practitioner'
       );
 
       if (activeLocation) {
