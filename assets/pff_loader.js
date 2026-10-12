@@ -1,10 +1,11 @@
 
 /*
- * PFF Loader v1.1.0 — independent loading animations for PFF web apps.
+ * PFF Loader v1.2.3 — independent loading animations for PFF web apps.
  *
  * Change DEFAULT_LOADER_STYLE below, then update ONLY this file to experiment.
  *   1 = original S/M/L cone triangles
  *   2 = continuous spectral sensitivity curve
+ *   3 = spectral resolve: curve flattens and washes to white on completion
  *
  * Usage now (no HTML changes): core.js automatically loads this file.
  * Usage later (explicit): include <script src="./assets/pff_loader.js"></script>
@@ -18,14 +19,15 @@
   'use strict';
   if (global.PFFLoader) return; // idempotent if included both ways
 
-  const DEFAULT_LOADER_STYLE = 2; // <-- CHANGE THIS NUMBER to select animation
-  let activeLoaderStyle = [1, 2].includes(Number(global.PFF_LOADER_STYLE))
+  const DEFAULT_LOADER_STYLE = 3; // <-- CHANGE THIS NUMBER to select animation
+  let activeLoaderStyle = [1, 2, 3].includes(Number(global.PFF_LOADER_STYLE))
     ? Number(global.PFF_LOADER_STYLE)
     : DEFAULT_LOADER_STYLE;
   let spectralLoaderSequence = 0;
   const spectralTextStates = new WeakMap();
   const rootStates = new Map();
   const SPECTRAL_CYCLE_MS = 3350;
+  const SPECTRAL_RESOLVE_MS = 360;
 
   const BASE_CSS = String.raw`
 /* Standalone base styles; only injected when core.js is absent. */
@@ -223,6 +225,34 @@
   stroke-width: 2px !important;
 }
 
+/* Loader style 3 completion: resolve the existing spectral curve into a
+   horizontal line while its gradient washes to the loader background. */
+.cone-loader.pff-spectral-resolving .pff-spectral-reveal {
+  animation: none !important;
+  transform: scaleX(1) !important;
+}
+.cone-loader.pff-spectral-catching-up .pff-spectral-reveal {
+  animation: none !important;
+}
+.cone-loader.pff-spectral-resolving .pff-spectral-group {
+  transform-box: fill-box;
+  transform-origin: center center;
+  animation: pffSpectralResolveShape .30s cubic-bezier(.22, 1, .36, 1) both !important;
+}
+.cone-loader.pff-spectral-resolving .pff-spectral-trace {
+  animation: none !important;
+  stroke-width: 2px !important;
+}
+.cone-loader.pff-spectral-resolving .pff-spectral-stop {
+  animation: pffSpectralResolveColour .30s ease-out both !important;
+}
+.app-loading.pff-spectral-resolving {
+  animation: pffSpectralResolveOverlay .32s ease-out both !important;
+}
+.app-loading.pff-spectral-resolving > .loader-text {
+  animation: pffSpectralResolveText .28s ease-out both !important;
+}
+
 /* IMPORTANT: independent completion handoff. The unmodified core already
    removes .is-loading before it removes .pff-reveal-pending. This class
    keeps the opaque loader visible until the current spectral cycle ends. */
@@ -272,6 +302,21 @@
   0%, 76% { stroke-width: 2px; }
   78.2% { stroke-width: 2.4px; }
   80.5%, 100% { stroke-width: 2px; }
+}
+@keyframes pffSpectralResolveShape {
+  0% { transform: scale(1, 1); }
+  100% { transform: scale(1, .025); }
+}
+@keyframes pffSpectralResolveColour {
+  to { stop-color: var(--pff-white, #fff); }
+}
+@keyframes pffSpectralResolveText {
+  0%, 38% { opacity: 1; transform: translateY(0); }
+  88%, 100% { opacity: 0; transform: translateY(3px); }
+}
+@keyframes pffSpectralResolveOverlay {
+  0%, 68% { opacity: 1; }
+  100% { opacity: 0; }
 }
 @keyframes pffSpectralTextEnter {
   from { opacity: 0; transform: translateY(3px); }
@@ -343,16 +388,16 @@
     svg.innerHTML = `
       <defs>
         <linearGradient id="${grad}" x1="24" y1="0" x2="314" y2="0" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#4a56ff" />
-          <stop offset="19%" stop-color="#4a56ff" />
-          <stop offset="25%" stop-color="#4a56ff" />
-          <stop offset="41%" stop-color="#4b9de4" />
-          <stop offset="56%" stop-color="#24d274" />
-          <stop offset="62%" stop-color="#24d274" />
-          <stop offset="66%" stop-color="#93cb57" />
-          <stop offset="69%" stop-color="#ecaa45" />
-          <stop offset="72%" stop-color="#ff5c30" />
-          <stop offset="100%" stop-color="#ff5c30" />
+          <stop class="pff-spectral-stop" offset="0%" stop-color="#4a56ff" />
+          <stop class="pff-spectral-stop" offset="19%" stop-color="#4a56ff" />
+          <stop class="pff-spectral-stop" offset="25%" stop-color="#4a56ff" />
+          <stop class="pff-spectral-stop" offset="41%" stop-color="#4b9de4" />
+          <stop class="pff-spectral-stop" offset="56%" stop-color="#24d274" />
+          <stop class="pff-spectral-stop" offset="62%" stop-color="#24d274" />
+          <stop class="pff-spectral-stop" offset="66%" stop-color="#93cb57" />
+          <stop class="pff-spectral-stop" offset="69%" stop-color="#ecaa45" />
+          <stop class="pff-spectral-stop" offset="72%" stop-color="#ff5c30" />
+          <stop class="pff-spectral-stop" offset="100%" stop-color="#ff5c30" />
         </linearGradient>
         <clipPath id="${clip}" clipPathUnits="userSpaceOnUse">
           <rect class="pff-spectral-reveal" x="0" y="0" width="340" height="160" />
@@ -450,6 +495,7 @@
     if (pending.reveal && pending.listener) {
       pending.reveal.removeEventListener('animationiteration', pending.listener);
     }
+    if (typeof pending.cleanup === 'function') pending.cleanup();
   }
 
   function releaseHeldLoader(entry) {
@@ -460,7 +506,12 @@
   function restartSpectralCycle(app) {
     const loader = getSpectralLoader(app);
     if (!loader) return;
-    loader.classList.remove('pff-spectral-complete');
+    loader.classList.remove(
+      'pff-spectral-complete',
+      'pff-spectral-catching-up',
+      'pff-spectral-resolving'
+    );
+    loader.parentElement.classList.remove('pff-spectral-resolving');
     const svg = loader.querySelector('.pff-spectral-svg');
     if (!svg) return;
     const animations = svg.getAnimations?.({ subtree: true }) || [];
@@ -502,11 +553,106 @@
     }
   }
 
+  function beginSpectralResolve(entry) {
+    const { app } = entry;
+    const loader = getSpectralLoader(app);
+    if (!loader || loader.parentElement.classList.contains('is-startup-error')) {
+      return;
+    }
+    const reveal = loader.querySelector('.pff-spectral-reveal');
+    if (!reveal) return;
+
+    app.classList.add('pff-loader-cycle-hold');
+    cancelPending(entry);
+
+    const transform = global.getComputedStyle(reveal).transform;
+    const matrixMatch = transform && transform !== 'none'
+      ? transform.match(/^matrix\(([^)]+)\)$/)
+      : null;
+    const matrix3dMatch = transform && transform !== 'none'
+      ? transform.match(/^matrix3d\(([^)]+)\)$/)
+      : null;
+    let currentScale = 1;
+    if (matrixMatch) {
+      currentScale = Math.abs(Number(matrixMatch[1].split(',')[0]));
+    } else if (matrix3dMatch) {
+      currentScale = Math.abs(Number(matrix3dMatch[1].split(',')[0]));
+    }
+    if (!Number.isFinite(currentScale)) currentScale = 1;
+    currentScale = Math.max(.09, Math.min(1, currentScale));
+
+    const catchUpDuration = Math.round(
+      90 + (1 - currentScale) * 145
+    );
+
+    const pending = {
+      generation: entry.generation,
+      reveal,
+      listener: null,
+      timer: null,
+      cleanup: null
+    };
+    entry.pending = pending;
+
+    loader.classList.remove('pff-spectral-complete');
+    loader.classList.add('pff-spectral-catching-up');
+    reveal.style.transition = 'none';
+    reveal.style.transform = `scaleX(${currentScale})`;
+    void reveal.getBoundingClientRect();
+
+    pending.cleanup = () => {
+      loader.classList.remove('pff-spectral-catching-up');
+      reveal.style.removeProperty('transition');
+      reveal.style.removeProperty('transform');
+    };
+
+    const startResolve = () => {
+      if (entry.pending !== pending) return;
+      if (entry.generation !== pending.generation) return;
+      if (app.classList.contains('is-loading')) return;
+
+      if (pending.timer !== null) {
+        global.clearTimeout(pending.timer);
+        pending.timer = null;
+      }
+      pending.cleanup();
+      pending.cleanup = null;
+      loader.classList.add('pff-spectral-resolving');
+      loader.parentElement.classList.add('pff-spectral-resolving');
+
+      pending.timer = global.setTimeout(() => {
+        if (entry.pending !== pending) return;
+        cancelPending(entry);
+        if (entry.generation !== pending.generation) return;
+        if (app.classList.contains('is-loading')) return;
+        app.classList.remove('pff-loader-cycle-hold');
+      }, SPECTRAL_RESOLVE_MS);
+    };
+
+    const accelerateReveal = () => {
+      if (entry.pending !== pending) return;
+      reveal.style.transition =
+        `transform ${catchUpDuration}ms cubic-bezier(.22, 1, .36, 1)`;
+      reveal.style.transform = 'scaleX(1)';
+      pending.timer = global.setTimeout(startResolve, catchUpDuration + 18);
+    };
+
+    if (typeof global.requestAnimationFrame === 'function') {
+      global.requestAnimationFrame(accelerateReveal);
+    } else {
+      accelerateReveal();
+    }
+  }
+
   function holdUntilSpectralCycleEnds(entry) {
     const { app } = entry;
-    if (activeLoaderStyle !== 2 ||
+    if ((activeLoaderStyle !== 2 && activeLoaderStyle !== 3) ||
         document.visibilityState === 'hidden' ||
         global.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      return;
+    }
+    if (activeLoaderStyle === 3) {
+      beginSpectralResolve(entry);
       return;
     }
     const loader = getSpectralLoader(app);
@@ -591,12 +737,20 @@
   function syncLoaderStyles() {
     // Only full-page loaders; preserve the small in-value cone spinners.
     document.querySelectorAll('.app-loading > .cone-loader').forEach(loader => {
-      const spectral = activeLoaderStyle === 2;
+      const spectral = activeLoaderStyle === 2 || activeLoaderStyle === 3;
       observeApp(loader.parentElement.parentElement);
       if (spectral && !loader.querySelector('.pff-spectral-svg')) {
         loader.appendChild(makeSpectralSvg());
       }
+      if (activeLoaderStyle !== 3) {
+        loader.classList.remove('pff-spectral-catching-up', 'pff-spectral-resolving');
+        loader.parentElement.classList.remove('pff-spectral-resolving');
+      }
+      if (activeLoaderStyle !== 2) {
+        loader.classList.remove('pff-spectral-complete');
+      }
       loader.classList.toggle('pff-spectral-loader', spectral);
+      loader.classList.toggle('pff-spectral-resolve-style', activeLoaderStyle === 3);
       loader.parentElement.classList.toggle('pff-spectral-active', spectral);
       syncSpectralText(loader.parentElement, spectral);
     });
@@ -608,15 +762,13 @@
 
   function setLoaderStyle(style) {
     const value = Number(style);
-    if (value !== 1 && value !== 2) {
-      throw new RangeError('Loader style must be 1 (original cones) or 2 (continuous spectral curve)');
+    if (value !== 1 && value !== 2 && value !== 3) {
+      throw new RangeError('Loader style must be 1 (original cones), 2 (continuous spectral curve), or 3 (spectral resolve)');
     }
     activeLoaderStyle = value;
-    if (value === 1) {
-      for (const entry of rootStates.values()) {
-        entry.generation++;
-        releaseHeldLoader(entry);
-      }
+    for (const entry of rootStates.values()) {
+      entry.generation++;
+      releaseHeldLoader(entry);
     }
     syncLoaderStyles();
     return activeLoaderStyle;
@@ -629,7 +781,7 @@
   }
 
   const publicAPI = Object.freeze({
-    version: '1.1.0',
+    version: '1.2.3',
     init,
     sync: syncLoaderStyles,
     getLoaderStyle,
