@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>PFF SA analogue</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_loader.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
+
+  <style>
+    :root {
+      --sa-colour: #f03a47;
+      --model-colour: #6600ff;
+      --pff-sufficient: #20c9d7;
+      --pff-saturated: #ff00ff;
+      --break-colour: #69718a;
+    }
+
+    .single-tab-shell .tab-list { min-width: 0; }
+    .single-tab-shell .chart-tab { cursor: default; }
+    .single-tab-shell .tab-list::after { display: none; }
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-heading-row { align-items: flex-start; }
+    .chart-heading {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .chart-legend .legend-item {
+      color: var(--pff-muted);
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .chart-legend .legend-item:hover { color: var(--pff-muted); }
+
+    .legend-line.is-pre {
+      border-top-style: solid;
+    }
+
+    .legend-line.is-post {
+      border-top-style: dashed;
+    }
+
+    .benchmark-legend {
+      position: absolute;
+      top: 8px;
+      right: 5px;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 3px;
+      padding: 4px 6px;
+      color: var(--pff-muted);
+      background: rgba(255, 255, 255, 0.90);
+      border: 1px solid rgba(105, 113, 138, 0.14);
+      border-radius: 4px;
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      pointer-events: none;
+    }
+
+    .benchmark-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .benchmark-legend-line {
+      width: 17px;
+      height: 0;
+      flex: 0 0 17px;
+      border-top: 2px dotted var(--pff-saturated);
+    }
+
+    .benchmark-legend-line.is-sufficient {
+      border-top-color: var(--pff-sufficient);
+    }
+
+    .benchmark-legend-line.is-saturated {
+      border-top-color: var(--pff-saturated);
+    }
+
+    .model-summary {
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: baseline;
+      justify-content: center;
+      gap: 5px;
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.3;
+      white-space: nowrap;
+    }
+
+    .model-summary-value {
+      color: var(--pff-purple);
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: left;
+    }
+
+    .method-note-line { display: block; }
+    .method-note-line + .method-note-line { margin-top: 2px; }
+
+    .chart-shell { margin-top: -2px; }
+
+    @media (max-width: 430px) {
+      .benchmark-legend {
+        top: 7px;
+        right: 3px;
+        font-size: 8px;
+      }
+
+      .model-summary {
+        gap: 4px;
+        font-size: 10.5px;
+      }
+
+      .model-summary-value { font-size: 14.5px; }
+      .method-note { font-size: 10.5px; }
+    }
+  </style>
+</head>
+
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div
+        id="loadingState"
+        class="app-loading"
+        role="status"
+        aria-live="polite"
+        aria-label="Loading South Australian non-metropolitan clinician supply density"
+      >
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p id="loaderText" class="loader-text">Loading SA workforce data…</p>
+      </div>
+
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div class="tab-list" role="tablist" aria-label="SA analogue chart">
+            <button
+              class="chart-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              tabindex="0"
+            >SA analogue</button>
+          </div>
+        </div>
+
+        <div id="liveData" class="live-data" aria-label="Live data" aria-live="polite">
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="liveDataText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">SA non-metro clinician supply density</h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <div class="legend-viewport">
+            <div class="chart-legend" aria-label="Chart legend">
+              <span class="legend-item">
+                <span class="legend-line" style="--legend-colour: var(--sa-colour)"></span>
+                <span>Observed</span>
+              </span>
+              <span class="legend-item">
+                <span class="legend-line is-pre" style="--legend-colour: var(--model-colour)"></span>
+                <span>Pre-2015 fit</span>
+              </span>
+              <span class="legend-item">
+                <span class="legend-line is-post" style="--legend-colour: var(--model-colour)"></span>
+                <span>Post-2015 fit</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <div class="benchmark-legend" aria-label="Supply density benchmarks">
+          <span class="benchmark-legend-item">
+            <span class="benchmark-legend-line is-sufficient" aria-hidden="true"></span>
+            <span>Sufficient · 1 / 10k</span>
+          </span>
+          <span class="benchmark-legend-item">
+            <span class="benchmark-legend-line is-saturated" aria-hidden="true"></span>
+            <span>Saturated · 2 / 10k</span>
+          </span>
+        </div>
+
+        <canvas
+          id="chartCanvas"
+          aria-label="South Australian non-metropolitan FTE clinician supply density with continuous segmented linear trends before and after 2015"
+          role="img"
+        ></canvas>
+      </div>
+
+      <div id="modelSummary" class="model-summary" aria-live="polite">
+        <span>Estimated slope change</span>
+        <span id="modelSummaryValue" class="model-summary-value">—</span>
+        <span>after 2015</span>
+      </div>
+
+      <p class="method-note">
+        <span class="method-note-line"><strong>Density:</strong> FTE clinicians per 10,000 people; FTE = active clinicians × weekly clinical hours ÷ 38</span>
+        <span class="method-note-line"><strong>Model:</strong> continuous segmented linear regression with a slope change at 2015; the pre/post association does not establish causation</span>
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    const CONFIG = Object.freeze({
+      sheetId: '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+      clinicianSheet: 'OptomsbystatebyMMM',
+      clinicianRange: 'A29:CC',
+      populationSheet: 'AuspopnbystatebyMMM',
+      populationRange: 'A29:AO',
+      localCacheKey: 'pff-workforce-no-more-schools-sa-analogue-v1'
+    });
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY = 'pff-state-mmm-workforce-v1';
+    const COUNT_FIRST_INDEX = 1;
+    const HOURS_FIRST_INDEX = 41;
+    const POPULATION_FIRST_INDEX = 1;
+    const RAW_SERIES_COUNT = 40;
+    const FULL_TIME_HOURS = 38;
+    const BREAK_YEAR = 2015;
+    const CHART_TRANSITION_MS = 500;
+
+    const SUFFICIENT_DENSITY = 1;
+    const SATURATED_DENSITY = 2;
+    const SA_COLOUR = '#f03a47';
+    const MODEL_COLOUR = '#6600ff';
+    const SUFFICIENT_COLOUR = '#20c9d7';
+    const SATURATED_COLOUR = '#ff00ff';
+    const BREAK_COLOUR = '#69718a';
+
+    const SERIES_SCHEMA = [
+      { state: 'NSW', mmm: 1 }, { state: 'NSW', mmm: 2 },
+      { state: 'NSW', mmm: 3 }, { state: 'NSW', mmm: 4 },
+      { state: 'NSW', mmm: 5 }, { state: 'NSW', mmm: 6 },
+      { state: 'NSW', mmm: 7 },
+      { state: 'VIC', mmm: 1 }, { state: 'VIC', mmm: 2 },
+      { state: 'VIC', mmm: 3 }, { state: 'VIC', mmm: 4 },
+      { state: 'VIC', mmm: 5 },
+      { state: 'QLD', mmm: 1 }, { state: 'QLD', mmm: 2 },
+      { state: 'QLD', mmm: 3 }, { state: 'QLD', mmm: 4 },
+      { state: 'QLD', mmm: 5 }, { state: 'QLD', mmm: 6 },
+      { state: 'QLD', mmm: 7 },
+      { state: 'SA', mmm: 1 }, { state: 'SA', mmm: 2 },
+      { state: 'SA', mmm: 3 }, { state: 'SA', mmm: 4 },
+      { state: 'SA', mmm: 5 }, { state: 'SA', mmm: 6 },
+      { state: 'SA', mmm: 7 },
+      { state: 'WA', mmm: 1 }, { state: 'WA', mmm: 2 },
+      { state: 'WA', mmm: 3 }, { state: 'WA', mmm: 4 },
+      { state: 'WA', mmm: 5 }, { state: 'WA', mmm: 6 },
+      { state: 'WA', mmm: 7 },
+      { state: 'TAS', mmm: 2 }, { state: 'TAS', mmm: 3 },
+      { state: 'TAS', mmm: 5 },
+      { state: 'NT', mmm: 2 }, { state: 'NT', mmm: 6 },
+      { state: 'NT', mmm: 7 },
+      { state: 'ACT', mmm: 1 }
+    ];
+
+    const SA_NONMETRO_INDICES = SERIES_SCHEMA
+      .map((item, index) => ({ ...item, index }))
+      .filter(item => item.state === 'SA' && item.mmm >= 2)
+      .map(item => item.index);
+
+    const app = document.getElementById('app');
+    const loaderText = document.getElementById('loaderText');
+    const statusEl = document.getElementById('status');
+    const liveData = document.getElementById('liveData');
+    const liveDataText = document.getElementById('liveDataText');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('chartCanvas');
+    const modelSummaryValue = document.getElementById('modelSummaryValue');
+
+    const state = {
+      clinicianCountByYear: {},
+      weeklyHoursByYear: {},
+      populationByYear: {}
+    };
+
+    let chart = null;
+    let chartSummary = null;
+    let interactionsController = null;
+    let responsiveController = null;
+    let yAxisController = null;
+    let displayRows = [];
+    let model = null;
+    let yScale = null;
+
+    function dataNumber(value) {
+      if (
+        value && typeof value === 'object' &&
+        (Object.prototype.hasOwnProperty.call(value, 'v') ||
+         Object.prototype.hasOwnProperty.call(value, 'f'))
+      ) {
+        const direct = PFFCharts.numericCell(value);
+        return Number.isFinite(direct) ? direct : null;
+      }
+
+      if (value === null || value === undefined || value === '') return null;
+      const cleaned = PFF.cleanText(value)
+        .replace(/,/g, '')
+        .replace(/[^0-9.+-]/g, '');
+      if (!cleaned || !/\d/.test(cleaned)) return null;
+      const number = Number(cleaned);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function yearValue(value) {
+      const numeric = dataNumber(value);
+      if (!Number.isFinite(numeric)) return null;
+      const year = Math.round(numeric);
+      return year >= 1900 && year <= 2200 ? year : null;
+    }
+
+    function parseClinicianValues(getValue) {
+      return {
+        counts: Array.from(
+          { length: RAW_SERIES_COUNT },
+          (_, index) => dataNumber(getValue(COUNT_FIRST_INDEX + index))
+        ),
+        hours: Array.from(
+          { length: RAW_SERIES_COUNT },
+          (_, index) => dataNumber(getValue(HOURS_FIRST_INDEX + index))
+        )
+      };
+    }
+
+    function parsePopulationValues(getValue) {
+      return Array.from(
+        { length: RAW_SERIES_COUNT },
+        (_, index) => dataNumber(getValue(POPULATION_FIRST_INDEX + index))
+      );
+    }
+
+    function parseClinicianTable(table) {
+      const counts = {};
+      const hours = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const parsed = parseClinicianValues(index => cells[index]);
+        if (parsed.counts.some(Number.isFinite)) counts[year] = parsed.counts;
+        if (parsed.hours.some(Number.isFinite)) hours[year] = parsed.hours;
+      });
+      return { counts, hours };
+    }
+
+    function parsePopulationTable(table) {
+      const population = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = parsePopulationValues(index => cells[index]);
+        if (values.some(Number.isFinite)) population[year] = values;
+      });
+      return population;
+    }
+
+    function parseRemoteClinicianRows(sourceRows) {
+      const counts = {};
+      const hours = {};
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const parsed = parseClinicianValues(index => row?.[index]);
+        if (parsed.counts.some(Number.isFinite)) counts[year] = parsed.counts;
+        if (parsed.hours.some(Number.isFinite)) hours[year] = parsed.hours;
+      });
+      return { counts, hours };
+    }
+
+    function parseRemotePopulationRows(sourceRows) {
+      const population = {};
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = parsePopulationValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) population[year] = values;
+      });
+      return population;
+    }
+
+    function normaliseSeries(values) {
+      if (!Array.isArray(values) || values.length < RAW_SERIES_COUNT) return null;
+      const normalised = values.slice(0, RAW_SERIES_COUNT).map(value => {
+        if (value === null || value === undefined || value === '') return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      });
+      return normalised.some(Number.isFinite) ? normalised : null;
+    }
+
+    function combineYearMaps(countsByYear, hoursByYear, populationByYear) {
+      const years = Array.from(new Set([
+        ...Object.keys(countsByYear || {}).map(Number),
+        ...Object.keys(hoursByYear || {}).map(Number),
+        ...Object.keys(populationByYear || {}).map(Number)
+      ])).filter(Number.isFinite).sort((a, b) => a - b);
+
+      return years.map(year => ({
+        year,
+        counts: normaliseSeries(countsByYear?.[year]),
+        hours: normaliseSeries(hoursByYear?.[year]),
+        population: normaliseSeries(populationByYear?.[year])
+      }));
+    }
+
+    function validateCombinedRows(sourceRows) {
+      const rows = (Array.isArray(sourceRows) ? sourceRows : [])
+        .map(row => {
+          const year = Number(row?.year);
+          if (!Number.isFinite(year) || year < 1900 || year > 2200) return null;
+          const counts = normaliseSeries(row?.counts);
+          const hours = normaliseSeries(row?.hours);
+          const population = normaliseSeries(row?.population);
+          if (!counts && !hours && !population) return null;
+          return { year: Math.round(year), counts, hours, population };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.year - b.year);
+
+      if (
+        !rows.some(row => row.counts) ||
+        !rows.some(row => row.hours) ||
+        !rows.some(row => row.population) ||
+        !rows.some(row => row.counts && row.hours && row.population)
+      ) {
+        throw new Error('State × MMM workforce data were incomplete.');
+      }
+      return rows;
+    }
+
+    function parseLiveData(raw) {
+      const clinician = parseClinicianTable(raw?.clinicianTable);
+      return validateCombinedRows(combineYearMaps(
+        clinician.counts,
+        clinician.hours,
+        parsePopulationTable(raw?.populationTable)
+      ));
+    }
+
+    function parseRemoteCache(snapshot) {
+      const clinician = parseRemoteClinicianRows(snapshot?.data?.clinicianRows);
+      return validateCombinedRows(combineYearMaps(
+        clinician.counts,
+        clinician.hours,
+        parseRemotePopulationRows(snapshot?.data?.populationRows)
+      ));
+    }
+
+    function applyLoadedRows(sourceRows) {
+      const rows = validateCombinedRows(sourceRows);
+      state.clinicianCountByYear = {};
+      state.weeklyHoursByYear = {};
+      state.populationByYear = {};
+      rows.forEach(row => {
+        if (row.counts) state.clinicianCountByYear[row.year] = [...row.counts];
+        if (row.hours) state.weeklyHoursByYear[row.year] = [...row.hours];
+        if (row.population) state.populationByYear[row.year] = [...row.population];
+      });
+    }
+
+    function commonYears() {
+      const countYears = new Set(Object.keys(state.clinicianCountByYear).map(Number));
+      const hoursYears = new Set(Object.keys(state.weeklyHoursByYear).map(Number));
+      return Object.keys(state.populationByYear)
+        .map(Number)
+        .filter(year => Number.isFinite(year) && countYears.has(year) && hoursYears.has(year))
+        .sort((a, b) => a - b);
+    }
+
+    function saNonmetroDensity(year) {
+      const counts = state.clinicianCountByYear[year] || [];
+      const hours = state.weeklyHoursByYear[year] || [];
+      const population = state.populationByYear[year] || [];
+
+      let totalFte = 0;
+      let totalPopulation = 0;
+      let usable = 0;
+
+      SA_NONMETRO_INDICES.forEach(index => {
+        const count = Number(counts[index]);
+        const weeklyHours = Number(hours[index]);
+        const people = Number(population[index]);
+
+        if (
+          !Number.isFinite(count) || count < 0 ||
+          !Number.isFinite(people) || people <= 0
+        ) {
+          return;
+        }
+
+        if (count > 0) {
+          if (!Number.isFinite(weeklyHours) || weeklyHours <= 0) return;
+          totalFte += count * weeklyHours / FULL_TIME_HOURS;
+        }
+
+        totalPopulation += people;
+        usable += 1;
+      });
+
+      if (
+        usable !== SA_NONMETRO_INDICES.length ||
+        totalFte <= 0 ||
+        totalPopulation <= 0
+      ) return null;
+      const density = totalFte / totalPopulation * 10000;
+      return Number.isFinite(density) && density > 0 ? density : null;
+    }
+
+    function buildDisplayRows() {
+      return commonYears()
+        .map(year => ({ year, density: saNonmetroDensity(year) }))
+        .filter(row => Number.isFinite(row.density));
+    }
+
+    function solve3x3(matrix, vector) {
+      const a = matrix.map((row, index) => [...row, vector[index]]);
+
+      for (let column = 0; column < 3; column += 1) {
+        let pivot = column;
+        for (let row = column + 1; row < 3; row += 1) {
+          if (Math.abs(a[row][column]) > Math.abs(a[pivot][column])) pivot = row;
+        }
+        if (Math.abs(a[pivot][column]) < 1e-12) return null;
+        [a[column], a[pivot]] = [a[pivot], a[column]];
+
+        const divisor = a[column][column];
+        for (let j = column; j < 4; j += 1) a[column][j] /= divisor;
+
+        for (let row = 0; row < 3; row += 1) {
+          if (row === column) continue;
+          const factor = a[row][column];
+          for (let j = column; j < 4; j += 1) {
+            a[row][j] -= factor * a[column][j];
+          }
+        }
+      }
+
+      return [a[0][3], a[1][3], a[2][3]];
+    }
+
+    function fitSegmentedRegression(rows) {
+      const usable = rows.filter(row => Number.isFinite(row.year) && Number.isFinite(row.density));
+      const preCount = usable.filter(row => row.year < BREAK_YEAR).length;
+      const postCount = usable.filter(row => row.year >= BREAK_YEAR).length;
+      if (usable.length < 5 || preCount < 2 || postCount < 2) return null;
+
+      const xtx = [
+        [0, 0, 0],
+        [0, 0, 0],
+        [0, 0, 0]
+      ];
+      const xty = [0, 0, 0];
+
+      usable.forEach(row => {
+        const x = row.year - BREAK_YEAR;
+        const hinge = Math.max(0, x);
+        const predictors = [1, x, hinge];
+
+        for (let i = 0; i < 3; i += 1) {
+          xty[i] += predictors[i] * row.density;
+          for (let j = 0; j < 3; j += 1) {
+            xtx[i][j] += predictors[i] * predictors[j];
+          }
+        }
+      });
+
+      const beta = solve3x3(xtx, xty);
+      if (!beta || !beta.every(Number.isFinite)) return null;
+
+      const [interceptAtBreak, preSlope, slopeChange] = beta;
+      const postSlope = preSlope + slopeChange;
+
+      return {
+        interceptAtBreak,
+        preSlope,
+        postSlope,
+        slopeChange,
+        fitted(year) {
+          const x = Number(year) - BREAK_YEAR;
+          if (!Number.isFinite(x)) return null;
+          return interceptAtBreak + preSlope * x + slopeChange * Math.max(0, x);
+        }
+      };
+    }
+
+    function niceYScale(rows, fittedModel) {
+      const values = rows.map(row => row.density).filter(Number.isFinite);
+      rows.forEach(row => {
+        const fitted = fittedModel?.fitted(row.year);
+        if (Number.isFinite(fitted)) values.push(fitted);
+      });
+      values.push(SUFFICIENT_DENSITY, SATURATED_DENSITY);
+
+      const maxValue = Math.max(...values, 2);
+      let step = 0.5;
+      if (maxValue > 3) step = 1;
+      if (maxValue > 6) step = 2;
+      const max = Math.ceil((maxValue * 1.08) / step) * step;
+      return { min: 0, max: Math.max(max, 2.5), step };
+    }
+
+    function signedSlope(value) {
+      if (!Number.isFinite(value)) return '—';
+      const abs = Math.abs(value);
+      const decimals = abs < 0.1 ? 3 : 2;
+      return `${value >= 0 ? '+' : '−'}${abs.toFixed(decimals)} FTE/10k/yr`;
+    }
+
+    const benchmarksPlugin = {
+      id: 'pffSaAnalogueBenchmarks',
+      beforeDatasetsDraw(chartInstance) {
+        const y = chartInstance.scales?.y;
+        const { ctx, chartArea } = chartInstance;
+        if (!y || !chartArea) return;
+
+        [
+          { value: SUFFICIENT_DENSITY, colour: SUFFICIENT_COLOUR },
+          { value: SATURATED_DENSITY, colour: SATURATED_COLOUR }
+        ].forEach(item => {
+          const py = y.getPixelForValue(item.value);
+          if (!Number.isFinite(py) || py < chartArea.top || py > chartArea.bottom) return;
+          ctx.save();
+          ctx.strokeStyle = item.colour;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([2, 3]);
+          ctx.beginPath();
+          ctx.moveTo(chartArea.left, Math.round(py) + 0.5);
+          ctx.lineTo(chartArea.right, Math.round(py) + 0.5);
+          ctx.stroke();
+          ctx.restore();
+        });
+      }
+    };
+
+    const breakpointPlugin = {
+      id: 'pffSaAnalogueBreakpoint',
+      afterDatasetsDraw(chartInstance) {
+        const index = displayRows.findIndex(row => row.year === BREAK_YEAR);
+        if (index < 0) return;
+        const point = chartInstance.getDatasetMeta(0)?.data?.[index];
+        const { ctx, chartArea } = chartInstance;
+        if (!point || !chartArea || !Number.isFinite(point.x)) return;
+
+        const x = Math.round(point.x) + 0.5;
+        const mobile = PFF.mobileLayout();
+        const label = '2015 · first Flinders graduates';
+        const fontSize = mobile ? 8.2 : 9;
+        const padX = mobile ? 4 : 5;
+        const boxHeight = mobile ? 15 : 16;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.68)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+
+        ctx.font = `700 ${fontSize}px Lato, sans-serif`;
+        ctx.textBaseline = 'middle';
+        const width = ctx.measureText(label).width + padX * 2;
+        const left = PFFCharts.clamp(
+          x + 4,
+          chartArea.left + 2,
+          chartArea.right - width - 2
+        );
+        const top = chartArea.top + 3;
+        const radius = 3;
+
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(left + radius, top);
+        ctx.lineTo(left + width - radius, top);
+        ctx.quadraticCurveTo(left + width, top, left + width, top + radius);
+        ctx.lineTo(left + width, top + boxHeight - radius);
+        ctx.quadraticCurveTo(left + width, top + boxHeight, left + width - radius, top + boxHeight);
+        ctx.lineTo(left + radius, top + boxHeight);
+        ctx.quadraticCurveTo(left, top + boxHeight, left, top + boxHeight - radius);
+        ctx.lineTo(left, top + radius);
+        ctx.quadraticCurveTo(left, top, left + radius, top);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.28)';
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+        ctx.fillStyle = BREAK_COLOUR;
+        ctx.textAlign = 'left';
+        ctx.fillText(label, left + padX, top + boxHeight / 2 + 0.2);
+        ctx.restore();
+      }
+    };
+
+    const yearTicksPlugin = PFFCharts.createYearTickMarksPlugin({
+      id: 'pffSaAnalogueYearTicks',
+      getValue({ index }) {
+        return displayRows[index]?.year;
+      }
+    });
+
+    const tooltipTopLayerPlugin = {
+      id: 'pffSaAnalogueTooltipTopLayer',
+      afterDraw(chartInstance) {
+        const tooltip = chartInstance?.tooltip;
+        if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
+        tooltip.draw(chartInstance.ctx);
+      }
+    };
+
+    function tooltipOptions() {
+      return PFFCharts.tooltipOptions({
+        mode: 'index',
+        intersect: true,
+        filter(item) {
+          return item.datasetIndex === 0;
+        },
+        callbacks: {
+          title(items) {
+            const index = items?.[0]?.dataIndex;
+            return Number.isInteger(index) ? String(displayRows[index]?.year ?? '') : '';
+          },
+          label(context) {
+            const row = displayRows[context.dataIndex];
+            if (!row || !model) return '';
+            const fitted = model.fitted(row.year);
+            const slope = row.year < BREAK_YEAR ? model.preSlope : model.postSlope;
+            const phase = row.year < BREAK_YEAR ? 'Pre-2015 slope' : 'Post-2015 slope';
+            return [
+              `Observed: ${row.density.toFixed(2)} FTE / 10k`,
+              `Segmented fit: ${Number(fitted).toFixed(2)} FTE / 10k`,
+              `${phase}: ${signedSlope(slope)}`
+            ];
+          }
+        }
+      });
+    }
+
+    function leftScaleOptions() {
+      return PFFCharts.yScaleOptions(yScale, {
+        afterFit(axis) {
+          axis.width = PFF.mobileLayout() ? 63 : 72;
+        }
+      });
+    }
+
+    function chartOptions() {
+      return PFFCharts.baseChartOptions({
+        devicePixelRatio: Math.max(2, Math.min(window.devicePixelRatio || 1, 3)),
+        animation: {
+          duration: PFF.reducedMotion() ? 0 : CHART_TRANSITION_MS,
+          easing: 'easeInOutCubic'
+        },
+        interaction: {
+          mode: 'index',
+          intersect: true,
+          axis: 'xy'
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: tooltipOptions()
+        },
+        scales: {
+          x: PFFCharts.xYearScaleOptions({
+            ticks: {
+              callback(value, index) {
+                const year = Number(displayRows[index]?.year);
+                return Number.isFinite(year) && year % 2 === 0 ? String(year) : '';
+              }
+            }
+          }),
+          y: leftScaleOptions()
+        }
+      });
+    }
+
+    function buildDatasets(rows) {
+      const preData = rows.map(row => row.year <= BREAK_YEAR ? model.fitted(row.year) : null);
+      const postData = rows.map(row => row.year >= BREAK_YEAR ? model.fitted(row.year) : null);
+
+      return [
+        PFFCharts.lineDataset({
+          label: 'Observed',
+          data: rows.map(row => row.density),
+          borderColor: SA_COLOUR,
+          backgroundColor: SA_COLOUR,
+          pointBackgroundColor: SA_COLOUR,
+          pointBorderColor: '#ffffff',
+          pointBorderWidth: 1,
+          borderWidth: 2.5,
+          pointRadius: 2.2,
+          pointHoverRadius: 4.2,
+          pointHitRadius: PFF.mobileLayout() ? 10 : 6,
+          spanGaps: false,
+          tension: 0
+        }),
+        PFFCharts.lineDataset({
+          label: 'Pre-2015 fit',
+          data: preData,
+          borderColor: MODEL_COLOUR,
+          backgroundColor: MODEL_COLOUR,
+          borderWidth: 2.1,
+          borderDash: [],
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 0,
+          spanGaps: false,
+          tension: 0
+        }),
+        PFFCharts.lineDataset({
+          label: 'Post-2015 fit',
+          data: postData,
+          borderColor: MODEL_COLOUR,
+          backgroundColor: MODEL_COLOUR,
+          borderWidth: 2.1,
+          borderDash: [7, 5],
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          pointHitRadius: 0,
+          spanGaps: false,
+          tension: 0
+        })
+      ];
+    }
+
+    function updateSummary() {
+      modelSummaryValue.textContent = model ? signedSlope(model.slopeChange) : '—';
+      if (!chartSummary || !displayRows.length || !model) return;
+
+      const latest = displayRows[displayRows.length - 1];
+      const first = displayRows[0];
+      PFFCharts.updateChartSummary(
+        `South Australian non-metropolitan clinician supply density from ${first.year} to ${latest.year}. ` +
+        `A continuous segmented linear regression is fitted with a slope change at 2015, when the first Flinders optometry graduates entered the workforce. ` +
+        `The estimated pre-2015 slope is ${signedSlope(model.preSlope)}, the post-2015 slope is ${signedSlope(model.postSlope)}, and the estimated slope change is ${signedSlope(model.slopeChange)}. ` +
+        `Reference lines mark sufficient supply density at 1 FTE clinician per 10,000 people and saturated supply density at 2 FTE clinicians per 10,000 people.`,
+        chartSummary
+      );
+    }
+
+    function createChart() {
+      displayRows = buildDisplayRows();
+      if (displayRows.length < 5) {
+        throw new Error('There were not enough overlapping SA non-metropolitan years to model.');
+      }
+
+      model = fitSegmentedRegression(displayRows);
+      if (!model) {
+        throw new Error('The SA segmented regression could not be estimated.');
+      }
+
+      yScale = niceYScale(displayRows, model);
+
+      yAxisController = PFFCharts.createUnifiedYAxis({
+        id: 'pffSaAnalogueYAxis',
+        getChart() { return chart; },
+        getScale() { return yScale; },
+        getDecimals() { return yScale.step < 1 ? 1 : 0; },
+        getTitle() { return 'FTE clinicians per 10k'; },
+        formatValue(value) {
+          return yScale.step < 1
+            ? Number(value).toFixed(1).replace(/\.0$/, '')
+            : PFFCharts.formatInteger(Math.round(value));
+        }
+      });
+      yAxisController.setImmediately(yScale, 0);
+      yAxisController.setTitleImmediately('FTE clinicians per 10k');
+
+      chart = new Chart(chartCanvas.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: displayRows.map(row => String(row.year)),
+          datasets: buildDatasets(displayRows)
+        },
+        options: chartOptions(),
+        plugins: [
+          benchmarksPlugin,
+          breakpointPlugin,
+          yAxisController.plugin,
+          yearTicksPlugin,
+          tooltipTopLayerPlugin
+        ]
+      });
+
+      updateSummary();
+    }
+
+    PFF.initialiseApp({
+      app,
+      status: statusEl,
+
+      async loadLive() {
+        loaderText.textContent = 'Loading live State × MMM data…';
+        const [clinicianTable, populationTable] = await Promise.all([
+          PFFCharts.loadGVizSheet({
+            sheetId: CONFIG.sheetId,
+            sheetName: CONFIG.clinicianSheet,
+            range: CONFIG.clinicianRange,
+            headers: '2'
+          }),
+          PFFCharts.loadGVizSheet({
+            sheetId: CONFIG.sheetId,
+            sheetName: CONFIG.populationSheet,
+            range: CONFIG.populationRange,
+            headers: '2'
+          })
+        ]);
+        return { clinicianTable, populationTable };
+      },
+
+      parseLive: parseLiveData,
+
+      loadRemoteCache() {
+        loaderText.textContent = 'Loading cached PFF data…';
+        return PFFCharts.loadAppsScriptCache({
+          url: CACHE_WEB_APP_URL,
+          appKey: CACHE_APP_KEY
+        });
+      },
+
+      parseRemoteCache,
+      cacheKey: CONFIG.localCacheKey,
+      minRows: 1,
+
+      onLiveError(error) {
+        console.warn('Live State × MMM data unavailable; trying Apps Script cache.', error);
+      },
+
+      onRemoteCacheError(error) {
+        console.warn('Apps Script State × MMM cache unavailable; trying browser cache.', error);
+      },
+
+      dataSourceOptions: {
+        indicator: liveData,
+        text: liveDataText
+      },
+
+      render(loaded) {
+        applyLoadedRows(loaded.rows);
+        createChart();
+
+        chartSummary = PFFCharts.ensureChartSummary({
+          id: 'saAnalogueSummary',
+          parent: app
+        });
+        chartCanvas.setAttribute('aria-describedby', chartSummary.id);
+        updateSummary();
+
+        interactionsController = PFFCharts.setupChartInteractions({
+          canvas: chartCanvas,
+          getChart() { return chart; }
+        });
+
+        responsiveController = PFFCharts.createResponsiveController({
+          getChart() { return chart; },
+          observe: [app, chartShell],
+          beforeResize(chartInstance) {
+            const observed = chartInstance.data.datasets?.[0];
+            if (observed) observed.pointHitRadius = PFF.mobileLayout() ? 10 : 6;
+          },
+          afterResize() {
+            yAxisController?.setImmediately(yScale, 0);
+            chart?.draw();
+          },
+          onRefresh() {
+            chart?.resize();
+            chart?.draw();
+          }
+        });
+
+        return chart;
+      },
+
+      onError() {
+        liveData.style.visibility = 'hidden';
+      },
+
+      errorMessage: 'SA analogue data unavailable.'
+    });
+  </script>
+</body>
+</html>
