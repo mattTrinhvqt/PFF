@@ -140,6 +140,11 @@
 
     .method-note-line { display: block; }
     .method-note-line + .method-note-line { margin-top: 2px; }
+    .method-note-emphasis {
+      color: var(--nt-colour);
+      font-size: 15px;
+      font-weight: 700;
+    }
 
     .chart-shell { margin-top: -2px; }
 
@@ -157,6 +162,7 @@
 
       .model-summary-value { font-size: 14.5px; }
       .method-note { font-size: 10.5px; }
+      .method-note-emphasis { font-size: 13.5px; }
     }
   </style>
 </head>
@@ -251,8 +257,9 @@
       </div>
 
       <p class="method-note">
-        <span class="method-note-line"><strong>Density:</strong> clinicians per 10k population, FTE-adjusted using active clinicians × weekly clinical hours ÷ 38</span>
-        <span class="method-note-line"><strong>Projection:</strong> current NT linear trend + observed SA post-2015 slope change from 2035</span>
+        <span class="method-note-line"><strong>Density:</strong> clinicians per 10k people, FTE-adjusted using active clinicians × weekly clinical hours ÷ 38</span>
+        <span class="method-note-line"><strong>Projection:</strong> observed SA post-2015 slope change applied to the current NT linear trend from 2035</span>
+        <span class="method-note-line"><strong>Timing:</strong> metropolitan-like saturation is not reached until <span id="saturationYearValue" class="method-note-emphasis">—</span></span>
       </p>
     </main>
   </div>
@@ -280,7 +287,7 @@
     const FULL_TIME_HOURS = 38;
     const SA_BREAK_YEAR = 2015;
     const NT_EFFECT_YEAR = 2035;
-    const PROJECTION_END_YEAR = 2100;
+    const PROJECTION_END_YEAR_CAP = 2100;
     const CHART_TRANSITION_MS = 500;
 
     const SUFFICIENT_DENSITY = 1;
@@ -335,6 +342,7 @@
     const chartShell = document.getElementById('chartShell');
     const chartCanvas = document.getElementById('chartCanvas');
     const modelSummaryValue = document.getElementById('modelSummaryValue');
+    const saturationYearValue = document.getElementById('saturationYearValue');
 
     const state = {
       clinicianCountByYear: {},
@@ -720,8 +728,16 @@
         }
       };
 
+      const saturatedCrossing = Number.isFinite(projectedSlope) && projectedSlope > 0
+        ? NT_EFFECT_YEAR + (SATURATED_DENSITY - startDensity) / projectedSlope
+        : null;
+      const roundedEndYear = Number.isFinite(saturatedCrossing)
+        ? Math.ceil(saturatedCrossing / 5) * 5
+        : PROJECTION_END_YEAR_CAP;
+      projectionEndYear = Math.max(NT_EFFECT_YEAR, Math.min(PROJECTION_END_YEAR_CAP, roundedEndYear));
+
       return Array.from(
-        { length: PROJECTION_END_YEAR - firstYear + 1 },
+        { length: projectionEndYear - firstYear + 1 },
         (_, index) => {
           const year = firstYear + index;
           return {
@@ -741,21 +757,17 @@
       values.push(SUFFICIENT_DENSITY, SATURATED_DENSITY);
 
       const minValue = Math.min(...values);
-      const maxValue = Math.max(...values);
-      const visibleRange = Math.max(0.5, maxValue - minValue);
+      const visibleRange = Math.max(0.4, SATURATED_DENSITY - minValue);
 
-      let step = 0.25;
-      if (visibleRange > 1.75) step = 0.5;
-      if (visibleRange > 3.5) step = 1;
+      let step = 0.1;
+      if (visibleRange > 0.8) step = 0.2;
+      if (visibleRange > 1.6) step = 0.25;
 
       const min = Math.max(
         0,
         Math.floor((minValue - step * 0.15) / step) * step
       );
-      const max = Math.max(
-        SATURATED_DENSITY,
-        Math.ceil(maxValue / step) * step
-      );
+      const max = SATURATED_DENSITY;
       const intervals = Math.max(4, Math.round((max - min) / step));
 
       return { min, max, intervals, step: (max - min) / intervals };
@@ -764,7 +776,7 @@
     function signedSlope(value) {
       if (!Number.isFinite(value)) return '—';
       const abs = Math.abs(value);
-      return `${value >= 0 ? '+' : '−'}${abs.toFixed(2)} clinicians/10k/yr`;
+      return `${value >= 0 ? '+' : '−'}${abs.toFixed(2)} clinicians/10k people/yr`;
     }
 
     const benchmarksPlugin = {
@@ -838,12 +850,9 @@
       getValue({ index }) {
         const year = Number(displayRows[index]?.year);
         if (!Number.isFinite(year)) return NaN;
-        const firstYear = Number(displayRows[0]?.year);
         return (
-          year === firstYear ||
-          year === latestObservedYear ||
           year === NT_EFFECT_YEAR ||
-          year === PROJECTION_END_YEAR ||
+          year === projectionEndYear ||
           year % 10 === 0
         ) ? year : NaN;
       },
@@ -883,12 +892,12 @@
             const year = Number(row.year);
             if (year <= NT_EFFECT_YEAR) {
               return [
-                `Current NT trend: ${Number(projectionModel.current(year)).toFixed(2)} clinicians / 10k population`,
+                `Current NT trend: ${Number(projectionModel.current(year)).toFixed(2)} clinicians / 10k people`,
                 `Current NT slope: ${signedSlope(projectionModel.baselineSlope)}`
               ];
             }
             return [
-              `Projected density: ${Number(projectionModel.projected(year)).toFixed(2)} clinicians / 10k population`,
+              `Projected density: ${Number(projectionModel.projected(year)).toFixed(2)} clinicians / 10k people`,
               `Projected slope: ${signedSlope(projectionModel.projectedSlope)}`,
               `Applied SA slope change: ${signedSlope(projectionModel.saEffect)}`
             ];
@@ -927,12 +936,9 @@
               callback(value, index) {
                 const year = Number(displayRows[index]?.year);
                 if (!Number.isFinite(year)) return '';
-                const firstYear = Number(displayRows[0]?.year);
                 return (
-                  year === firstYear ||
-                  year === latestObservedYear ||
                   year === NT_EFFECT_YEAR ||
-                  year === PROJECTION_END_YEAR ||
+                  year === projectionEndYear ||
                   year % 10 === 0
                 ) ? String(year) : '';
               }
@@ -986,7 +992,7 @@
       const slope = projectionModel.projectedSlope;
       if (!Number.isFinite(slope) || slope <= 0) return null;
       const year = NT_EFFECT_YEAR + (target - projectionModel.startDensity) / slope;
-      if (!Number.isFinite(year) || year < NT_EFFECT_YEAR || year > PROJECTION_END_YEAR) return null;
+      if (!Number.isFinite(year) || year < NT_EFFECT_YEAR || year > PROJECTION_END_YEAR_CAP) return null;
       return Math.ceil(year);
     }
 
@@ -999,15 +1005,18 @@
       const first = displayRows[0];
       const sufficientYear = benchmarkCrossingYear(SUFFICIENT_DENSITY);
       const saturatedYear = benchmarkCrossingYear(SATURATED_DENSITY);
+      if (saturationYearValue) {
+        saturationYearValue.textContent = Number.isFinite(saturatedYear) ? String(saturatedYear) : 'after 2100';
+      }
       const crossingText = [
         Number.isFinite(sufficientYear) ? `Sufficient density is reached around ${sufficientYear}.` : 'Sufficient density is not reached by 2100.',
-        Number.isFinite(saturatedYear) ? `Saturated density is reached around ${saturatedYear}.` : 'Saturated density is not reached by 2100.'
+        Number.isFinite(saturatedYear) ? `Metropolitan-like saturation is reached around ${saturatedYear}.` : 'Metropolitan-like saturation is not reached by 2100.'
       ].join(' ');
 
       PFFCharts.updateChartSummary(
-        `Northern Territory clinician supply density projection from ${first.year} to ${PROJECTION_END_YEAR}. ` +
+        `Northern Territory clinician supply density projection from ${first.year} to ${projectionEndYear}. ` +
         `The current NT linear trend is ${signedSlope(projectionModel.baselineSlope)}. ` +
-        `From 2035, the observed South Australian post-2015 slope change of ${signedSlope(projectionModel.saEffect)} is added to the NT trend, giving a projected slope of ${signedSlope(projectionModel.projectedSlope)}. ` +
+        `From 2035, the observed South Australian post-2015 slope change of ${signedSlope(projectionModel.saEffect)} is applied to the NT trend, giving a projected slope of ${signedSlope(projectionModel.projectedSlope)}. ` +
         `${crossingText} ` +
         `Reference lines mark sufficient supply density at 1 FTE clinician per 10,000 people and saturated supply density at 2 FTE clinicians per 10,000 people.`,
         chartSummary
@@ -1039,13 +1048,13 @@
         getChart() { return chart; },
         getScale() { return yScale; },
         getDecimals() { return 2; },
-        getTitle() { return 'FTE clinicians per 10k population'; },
+        getTitle() { return 'FTE clinicians per 10k people'; },
         formatValue(value) {
           return Number(Number(value).toFixed(2)).toString();
         }
       });
       yAxisController.setImmediately(yScale, 2);
-      yAxisController.setTitleImmediately('FTE clinicians per 10k population');
+      yAxisController.setTitleImmediately('FTE clinicians per 10k people');
 
       chart = new Chart(chartCanvas.getContext('2d'), {
         type: 'line',
