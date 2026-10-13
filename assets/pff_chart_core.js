@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.18
+ * PFF Core v1.2.19
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.18';
+  const VERSION = '1.2.19';
 
   // Visual animation selection now lives in assets/pff_loader.js.
   // The core keeps app loading-state management, not either loader animation.
@@ -8899,25 +8899,105 @@ function getEmployerAppearance(
       event =>
         event.preventDefault();
 
-    const clearOutside =
+    const eventPoint =
       event => {
-        if (
-          event.target.closest?.(
-            `#${canvas.id}`
-          ) ||
-          canvas.contains(
-            event.target
-          )
-        ) {
-          return;
-        }
+        const source =
+          event?.touches?.[0] ||
+          event?.changedTouches?.[0] ||
+          event;
+
+        const clientX =
+          Number(source?.clientX);
+
+        const clientY =
+          Number(source?.clientY);
 
         const chart =
           getChart();
 
-        if (!chart?.tooltip) {
-          return;
+        const rect =
+          canvas.getBoundingClientRect();
+
+        if (
+          !chart ||
+          !rect.width ||
+          !rect.height ||
+          !Number.isFinite(clientX) ||
+          !Number.isFinite(clientY)
+        ) {
+          return null;
         }
+
+        return {
+          x:
+            (clientX - rect.left) *
+            (chart.width / rect.width),
+          y:
+            (clientY - rect.top) *
+            (chart.height / rect.height)
+        };
+      };
+
+    const insideTooltip =
+      (chart, event) => {
+        const tooltip =
+          chart?.tooltip;
+
+        const point =
+          eventPoint(event);
+
+        if (
+          !tooltip ||
+          !point ||
+          !(Number(tooltip.opacity) > 0) ||
+          ![
+            point.x,
+            point.y,
+            tooltip.x,
+            tooltip.y,
+            tooltip.width,
+            tooltip.height
+          ].every(Number.isFinite)
+        ) {
+          return false;
+        }
+
+        return (
+          point.x >= tooltip.x &&
+          point.x <= tooltip.x + tooltip.width &&
+          point.y >= tooltip.y &&
+          point.y <= tooltip.y + tooltip.height
+        );
+      };
+
+    const hasDataHit =
+      (chart, event) => {
+        if (
+          !chart ||
+          typeof chart.getElementsAtEventForMode !== 'function'
+        ) {
+          return false;
+        }
+
+        try {
+          return chart.getElementsAtEventForMode(
+            event,
+            'nearest',
+            {
+              intersect: true
+            },
+            true
+          ).length > 0;
+        } catch (_) {
+          return false;
+        }
+      };
+
+    const clearTooltip =
+      chart => {
+        if (!chart?.tooltip) return;
+
+        chart.setActiveElements?.([]);
 
         chart.tooltip.setActiveElements(
           [],
@@ -8930,6 +9010,76 @@ function getEmployerAppearance(
         chart.draw();
       };
 
+    const handleDocumentPress =
+      event => {
+        const chart =
+          getChart();
+
+        if (!chart?.tooltip) return;
+
+        const onCanvas =
+          event.target === canvas ||
+          canvas.contains(
+            event.target
+          );
+
+        if (!onCanvas) {
+          requestAnimationFrame(
+            () =>
+              clearTooltip(
+                getChart()
+              )
+          );
+          return;
+        }
+
+        if (
+          insideTooltip(
+            chart,
+            event
+          )
+        ) {
+          return;
+        }
+
+        if (
+          hasDataHit(
+            chart,
+            event
+          )
+        ) {
+          return;
+        }
+
+        requestAnimationFrame(
+          () =>
+            clearTooltip(
+              getChart()
+            )
+        );
+      };
+
+    const preserveTooltipPress =
+      event => {
+        const chart =
+          getChart();
+
+        if (
+          !insideTooltip(
+            chart,
+            event
+          )
+        ) {
+          return;
+        }
+
+        if (event.cancelable) {
+          event.preventDefault();
+        }
+
+        event.stopImmediatePropagation?.();
+      };
+
     canvas.addEventListener(
       'contextmenu',
       prevent
@@ -8940,9 +9090,24 @@ function getEmployerAppearance(
       prevent
     );
 
+    canvas.addEventListener(
+      'click',
+      preserveTooltipPress,
+      true
+    );
+
+    canvas.addEventListener(
+      'touchstart',
+      preserveTooltipPress,
+      {
+        capture: true,
+        passive: false
+      }
+    );
+
     document.addEventListener(
       'pointerdown',
-      clearOutside
+      handleDocumentPress
     );
 
     return {
@@ -8957,9 +9122,21 @@ function getEmployerAppearance(
           prevent
         );
 
+        canvas.removeEventListener(
+          'click',
+          preserveTooltipPress,
+          true
+        );
+
+        canvas.removeEventListener(
+          'touchstart',
+          preserveTooltipPress,
+          true
+        );
+
         document.removeEventListener(
           'pointerdown',
-          clearOutside
+          handleDocumentPress
         );
       }
     };
