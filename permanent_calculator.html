@@ -25438,6 +25438,126 @@ function sortKeysByCountDesc(counts) {
       ctx.restore();
     }
   };
+  function setupTrendChartTooltipInteractions_(canvas) {
+    const eventPoint = event => {
+      if (!trendChart || !canvas) return null;
+
+      const source =
+        event?.touches?.[0] ||
+        event?.changedTouches?.[0] ||
+        event;
+
+      const clientX = Number(source?.clientX);
+      const clientY = Number(source?.clientY);
+      const rect = canvas.getBoundingClientRect();
+
+      if (
+        !rect.width ||
+        !rect.height ||
+        !Number.isFinite(clientX) ||
+        !Number.isFinite(clientY)
+      ) {
+        return null;
+      }
+
+      return {
+        x: (clientX - rect.left) * (trendChart.width / rect.width),
+        y: (clientY - rect.top) * (trendChart.height / rect.height)
+      };
+    };
+
+    const insideTooltip = event => {
+      const tooltip = trendChart?.tooltip;
+      const point = eventPoint(event);
+
+      if (
+        !tooltip ||
+        !point ||
+        !(Number(tooltip.opacity) > 0) ||
+        ![
+          point.x,
+          point.y,
+          tooltip.x,
+          tooltip.y,
+          tooltip.width,
+          tooltip.height
+        ].every(Number.isFinite)
+      ) {
+        return false;
+      }
+
+      return (
+        point.x >= tooltip.x &&
+        point.x <= tooltip.x + tooltip.width &&
+        point.y >= tooltip.y &&
+        point.y <= tooltip.y + tooltip.height
+      );
+    };
+
+    const clearTooltip = () => {
+      if (!trendChart?.tooltip) return;
+
+      trendChart.setActiveElements?.([]);
+      trendChart.tooltip.setActiveElements([], { x: 0, y: 0 });
+      trendChart.draw();
+    };
+
+    const handleDocumentPress = event => {
+      if (!trendChart?.tooltip) return;
+
+      const onCanvas =
+        event.target === canvas ||
+        canvas.contains(event.target);
+
+      if (!onCanvas) {
+        requestAnimationFrame(clearTooltip);
+        return;
+      }
+
+      if (insideTooltip(event)) return;
+
+      const hits = trendChart.getElementsAtEventForMode(
+        event,
+        'nearest',
+        { intersect: true },
+        true
+      );
+
+      if (hits.length) return;
+
+      requestAnimationFrame(clearTooltip);
+    };
+
+    const preserveTooltipPress = event => {
+      if (!insideTooltip(event)) return;
+
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+
+      event.stopImmediatePropagation?.();
+    };
+
+    canvas.addEventListener(
+      'click',
+      preserveTooltipPress,
+      true
+    );
+
+    canvas.addEventListener(
+      'touchstart',
+      preserveTooltipPress,
+      {
+        capture: true,
+        passive: false
+      }
+    );
+
+    document.addEventListener(
+      'pointerdown',
+      handleDocumentPress
+    );
+  }
 
   function createTrendChart() {
     const canvas = document.getElementById('payTrendChart');
@@ -25624,6 +25744,9 @@ function sortKeysByCountDesc(counts) {
         }
       }
     });
+
+    setupTrendChartTooltipInteractions_(canvas);
+
     chartReady = true;
     renderTrendLegend(model.legend);
   }
