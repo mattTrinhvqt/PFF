@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PFF Appointment time</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
+
+  <style>
+    :root {
+      --current-oversupply: #6600ff;
+      --scenario-oversupply: #f1b916;
+    }
+
+    .single-tab-shell .tab-list { min-width: 0; }
+    .single-tab-shell .chart-tab { cursor: default; }
+    .single-tab-shell .tab-list::after { display: none; }
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-heading-row { align-items: flex-start; }
+    .chart-heading {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .chart-legend .legend-item {
+      color: var(--pff-muted);
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .chart-legend .legend-item:hover { color: var(--pff-muted); }
+
+    .legend-line.is-scenario {
+      background: repeating-linear-gradient(
+        to right,
+        var(--legend-colour) 0,
+        var(--legend-colour) 6px,
+        transparent 6px,
+        transparent 10px
+      ) !important;
+    }
+
+    .legend-line.is-gap {
+      height: 7px;
+      border: 1px solid rgba(241, 185, 22, 0.35);
+      background: rgba(241, 185, 22, 0.10) !important;
+    }
+
+    .chart-shell { margin-top: -2px; }
+
+    .impact-summary {
+      display: flex;
+      min-height: 48px;
+      margin: 2px 3px 0;
+      padding: 5px 8px 3px;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      row-gap: 2px;
+      text-align: center;
+    }
+
+    .impact-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: center;
+      column-gap: 6px;
+      row-gap: 1px;
+    }
+
+    .impact-label,
+    .impact-context {
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.3;
+    }
+
+    .impact-value {
+      color: var(--pff-purple);
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.15;
+      white-space: nowrap;
+    }
+
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: left;
+    }
+
+    .method-note-line { display: block; }
+    .method-note-line + .method-note-line { margin-top: 2px; }
+
+    @media (max-width: 430px) {
+      .method-note,
+      .impact-label,
+      .impact-context { font-size: 10.5px; }
+
+      .impact-value { font-size: 14.5px; }
+      .impact-line { column-gap: 5px; }
+    }
+  </style>
+</head>
+
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div
+        id="loadingState"
+        class="app-loading"
+        role="status"
+        aria-live="polite"
+        aria-label="Loading appointment-time scenario data"
+      >
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p id="loaderText" class="loader-text">Loading supply and Medicare data…</p>
+      </div>
+
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div class="tab-list" role="tablist" aria-label="Appointment-time scenario chart">
+            <button
+              class="chart-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              tabindex="0"
+            >Appointment time</button>
+          </div>
+        </div>
+
+        <div id="liveData" class="live-data" aria-label="Live data" aria-live="polite">
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="liveDataText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">What happens if 30 min appointments become 20 min?</h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <div class="legend-viewport">
+            <div class="chart-legend" aria-label="Chart legend">
+              <span class="legend-item">
+                <span class="legend-line" style="--legend-colour: var(--current-oversupply)"></span>
+                <span>Current oversupply</span>
+              </span>
+              <span class="legend-item">
+                <span class="legend-line is-scenario" style="--legend-colour: var(--scenario-oversupply)"></span>
+                <span>20 min scenario</span>
+              </span>
+              <span class="legend-item">
+                <span class="legend-line is-gap" style="--legend-colour: var(--scenario-oversupply)"></span>
+                <span>Added oversupply</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas
+          id="chartCanvas"
+          aria-label="Current Australian optometry oversupply compared with a scenario where Medicare services assigned more than 20 minutes are modelled at 20 minutes"
+          role="img"
+        ></canvas>
+      </div>
+
+      <div id="impactSummary" class="impact-summary" aria-live="polite">
+        <div class="impact-line">
+          <span class="impact-label">Latest effect</span>
+          <span id="addedOversupplyValue" class="impact-value">—</span>
+          <span class="impact-context">added to oversupply</span>
+        </div>
+        <div class="impact-line">
+          <span class="impact-label">Equivalent to</span>
+          <span id="peerEffectValue" class="impact-value">—</span>
+          <span class="impact-context">clinicians switching</span>
+        </div>
+      </div>
+
+      <p class="method-note">
+        <span id="scenarioNote" class="method-note-line"><strong>Scenario:</strong> loading…</span>
+        <span id="oversupplyNote" class="method-note-line"><strong>Added oversupply:</strong> loading…</span>
+        <span id="peerNote" class="method-note-line"><strong>Peer effect:</strong> loading…</span>
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    // ============================================================
+    // DATA SOURCE
+    // ============================================================
+
+    const CONFIG = Object.freeze({
+      sheetId: '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+      medicareSheet: 'Medicareitems',
+      medicareDataRange: 'C30:KE',
+      medicareItemRange: 'D29:KE29',
+      medicareHoursRange: 'D28:KE28',
+      activeClinicianSheet: 'Optomsbystate',
+      activeClinicianRange: 'L30:V',
+      clinicalHoursSheet: 'Optomhoursbystate',
+      clinicalHoursRange: 'A30:J',
+      localCacheKey: 'pff-workforce-appointment-time-v1',
+      fetchTimeoutMs: 15000,
+      cacheFetchTimeoutMs: 10000
+    });
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+    const CACHE_APP_KEY = 'pff-medicare-service-demand-v13';
+
+    const ACTIVE_CLINICIAN_TOTAL_INDEX = 10;
+    const CLINICAL_HOURS_TOTAL_INDEX = 9;
+    const EXPECTED_ITEM_COUNT = 32;
+
+    const WORKING_WEEKS_PER_YEAR = 46;
+    const ADMIN_HOURS_PER_WEEK = 2.5;
+    const ADMIN_WEEKS_PER_YEAR = 52;
+
+    const TARGET_APPOINTMENT_HOURS = 20 / 60;
+    const CHART_TRANSITION_MS = 500;
+    const CURRENT_COLOUR = '#6600ff';
+    const SCENARIO_COLOUR = '#f1b916';
+
+    // ============================================================
+    // DOM + STATE
+    // ============================================================
+
+    const app = document.getElementById('app');
+    const loaderText = document.getElementById('loaderText');
+    const statusEl = document.getElementById('status');
+    const liveData = document.getElementById('liveData');
+    const liveDataText = document.getElementById('liveDataText');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('chartCanvas');
+    const addedOversupplyValue = document.getElementById('addedOversupplyValue');
+    const peerEffectValue = document.getElementById('peerEffectValue');
+    const scenarioNote = document.getElementById('scenarioNote');
+    const oversupplyNote = document.getElementById('oversupplyNote');
+    const peerNote = document.getElementById('peerNote');
+
+    let chart = null;
+    let chartSummary = null;
+    let interactionsController = null;
+    let responsiveController = null;
+    let displayRows = [];
+    let yScale = null;
+
+    // ============================================================
+    // DATA HELPERS
+    // ============================================================
+
+    function finiteNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function numericCell(cell) {
+      const raw = cell?.v ?? cell?.f ?? null;
+      if (raw === null || raw === undefined || raw === '') return null;
+      const number = Number(typeof raw === 'string' ? raw.replace(/,/g, '') : raw);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function itemNumberCell(cell) {
+      const value = numericCell(cell);
+      if (Number.isFinite(value)) return String(Math.round(value));
+      const text = String(cell?.v ?? cell?.f ?? '').trim();
+      return /^\d{5}$/.test(text) ? text : '';
+    }
+
+    function rowsToGVizTable(sourceRows) {
+      return {
+        rows: (Array.isArray(sourceRows) ? sourceRows : []).map(row => ({
+          c: (Array.isArray(row) ? row : []).map(value => ({ v: value }))
+        }))
+      };
+    }
+
+    function parseMetadataRows(itemTable, hoursTable) {
+      const itemCells = itemTable?.rows?.[0]?.c || [];
+      const hourCells = hoursTable?.rows?.[0]?.c || [];
+      const parsed = [];
+
+      for (let start = 0; start + 8 < itemCells.length; start += 9) {
+        const item = itemNumberCell(itemCells[start]);
+        if (!/^\d{5}$/.test(item)) break;
+
+        const repeated = Array.from(
+          { length: 9 },
+          (_, offset) => itemNumberCell(itemCells[start + offset])
+        );
+        if (!repeated.every(value => value === item)) break;
+
+        const hours = numericCell(hourCells[start]);
+        if (!Number.isFinite(hours) || hours <= 0) {
+          throw new Error(`Medicare consultation time was missing for item ${item}`);
+        }
+
+        parsed.push({ item, hours });
+      }
+
+      if (
+        parsed.length !== EXPECTED_ITEM_COUNT ||
+        new Set(parsed.map(item => item.item)).size !== EXPECTED_ITEM_COUNT
+      ) {
+        throw new Error('Medicare item metadata were incomplete');
+      }
+
+      return parsed;
+    }
+
+    function parseMedicareDataTable(table, itemSchema) {
+      const rows = [];
+
+      for (const sourceRow of table?.rows || []) {
+        const cells = sourceRow?.c || [];
+        const yearValue = numericCell(cells[0]);
+        if (!Number.isFinite(yearValue)) continue;
+
+        const year = Math.round(yearValue);
+        if (year < 1900 || year > 2200) continue;
+
+        const totals = itemSchema.map(
+          (_, itemIndex) => numericCell(cells[9 + itemIndex * 9])
+        );
+
+        if (totals.some(Number.isFinite)) rows.push({ year, totals });
+      }
+
+      return rows.sort((a, b) => a.year - b.year);
+    }
+
+    function parseNationalActiveClinicians(table) {
+      const result = {};
+
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const yearValue = numericCell(cells[0]);
+        if (!Number.isFinite(yearValue)) return;
+
+        const year = Math.round(yearValue);
+        if (year < 1900 || year > 2200) return;
+
+        const value = numericCell(cells[ACTIVE_CLINICIAN_TOTAL_INDEX]);
+        if (Number.isFinite(value) && value > 0) result[year] = value;
+      });
+
+      return result;
+    }
+
+    function parseNationalClinicalHours(table) {
+      const result = {};
+
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const yearValue = numericCell(cells[0]);
+        if (!Number.isFinite(yearValue)) return;
+
+        const year = Math.round(yearValue);
+        if (year < 1900 || year > 2200) return;
+
+        const value = numericCell(cells[CLINICAL_HOURS_TOTAL_INDEX]);
+        if (Number.isFinite(value) && value > 0) result[year] = value;
+      });
+
+      return result;
+    }
+
+    function assignedScenarioHours(item) {
+      const hours = Number(item?.hours);
+      if (!Number.isFinite(hours)) return null;
+      return hours > TARGET_APPOINTMENT_HOURS + 1e-9
+        ? TARGET_APPOINTMENT_HOURS
+        : hours;
+    }
+
+    function serviceHours(totals, items, useScenario = false) {
+      let total = 0;
+      let found = false;
+
+      items.forEach((item, itemIndex) => {
+        const count = Number(totals?.[itemIndex]);
+        const hours = useScenario
+          ? assignedScenarioHours(item)
+          : Number(item?.hours);
+
+        if (Number.isFinite(count) && Number.isFinite(hours)) {
+          total += count * hours;
+          found = true;
+        }
+      });
+
+      return found ? total : null;
+    }
+
+    function deriveRows(items, medicareRows, activeByYear, clinicalHoursByYear) {
+      return medicareRows.map(row => {
+        const activeClinicians = Number(activeByYear?.[row.year]);
+        const weeklyClinicalHours = Number(clinicalHoursByYear?.[row.year]);
+        const currentDemandHours = serviceHours(row.totals, items, false);
+        const scenarioDemandHours = serviceHours(row.totals, items, true);
+
+        if (
+          !Number.isFinite(activeClinicians) || activeClinicians <= 0 ||
+          !Number.isFinite(weeklyClinicalHours) || weeklyClinicalHours <= 0 ||
+          !Number.isFinite(currentDemandHours) ||
+          !Number.isFinite(scenarioDemandHours)
+        ) return null;
+
+        const annualHoursPerClinician = Math.max(
+          0,
+          weeklyClinicalHours * WORKING_WEEKS_PER_YEAR -
+            ADMIN_HOURS_PER_WEEK * ADMIN_WEEKS_PER_YEAR
+        );
+        if (annualHoursPerClinician <= 0) return null;
+
+        const clinicalCapacityHours = activeClinicians * annualHoursPerClinician;
+        const hoursSaved = Math.max(0, currentDemandHours - scenarioDemandHours);
+        const currentOversupply =
+          (clinicalCapacityHours - currentDemandHours) / annualHoursPerClinician;
+        const scenarioOversupply =
+          (clinicalCapacityHours - scenarioDemandHours) / annualHoursPerClinician;
+        const addedOversupply = hoursSaved / annualHoursPerClinician;
+        const workforceReductionPerSwitchingClinician =
+          addedOversupply / activeClinicians;
+        const cliniciansPerRole = addedOversupply > 0
+          ? activeClinicians / addedOversupply
+          : null;
+
+        return {
+          year: row.year,
+          activeClinicians,
+          weeklyClinicalHours,
+          annualHoursPerClinician,
+          clinicalCapacityHours,
+          currentDemandHours,
+          scenarioDemandHours,
+          hoursSaved,
+          currentOversupply,
+          scenarioOversupply,
+          addedOversupply,
+          workforceReductionPerSwitchingClinician,
+          cliniciansPerRole
+        };
+      }).filter(Boolean).sort((a, b) => a.year - b.year);
+    }
+
+    function validateRows(rows) {
+      if (!Array.isArray(rows) || rows.length < 3) {
+        throw new Error('Appointment-time scenario data were unavailable');
+      }
+
+      const valid = rows.filter(row => [
+        row.year,
+        row.activeClinicians,
+        row.currentOversupply,
+        row.scenarioOversupply,
+        row.addedOversupply,
+        row.cliniciansPerRole
+      ].every(value => Number.isFinite(Number(value))));
+
+      if (valid.length < 3) {
+        throw new Error('Appointment-time scenario data were incomplete');
+      }
+
+      return valid;
+    }
+
+    function parseLiveData(raw) {
+      const items = parseMetadataRows(raw?.itemTable, raw?.hoursTable);
+      const medicareRows = parseMedicareDataTable(raw?.dataTable, items);
+      const activeByYear = parseNationalActiveClinicians(raw?.activeClinicianTable);
+      const clinicalHoursByYear = parseNationalClinicalHours(raw?.clinicalHoursTable);
+
+      return validateRows(
+        deriveRows(items, medicareRows, activeByYear, clinicalHoursByYear)
+      );
+    }
+
+    function parseRemoteCache(snapshot) {
+      const data = snapshot?.data || snapshot;
+      const items = parseMetadataRows(
+        rowsToGVizTable([data?.itemRow]),
+        rowsToGVizTable([data?.hoursRow])
+      );
+      const medicareRows = parseMedicareDataTable(
+        rowsToGVizTable(data?.dataRows),
+        items
+      );
+      const activeByYear = parseNationalActiveClinicians(
+        rowsToGVizTable(data?.activeClinicianRows)
+      );
+      const clinicalHoursByYear = parseNationalClinicalHours(
+        rowsToGVizTable(data?.clinicalHoursRows)
+      );
+
+      return validateRows(
+        deriveRows(items, medicareRows, activeByYear, clinicalHoursByYear)
+      );
+    }
+
+    // ============================================================
+    // CHART HELPERS
+    // ============================================================
+
+    function niceStep(rawStep) {
+      if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+      const exponent = Math.floor(Math.log10(rawStep));
+      const magnitude = 10 ** exponent;
+      const fraction = rawStep / magnitude;
+      const niceFraction = fraction <= 1 ? 1
+        : fraction <= 2 ? 2
+          : fraction <= 2.5 ? 2.5
+            : fraction <= 5 ? 5 : 10;
+      return niceFraction * magnitude;
+    }
+
+    function computeScale() {
+      const values = displayRows.flatMap(row => [
+        Number(row.currentOversupply),
+        Number(row.scenarioOversupply)
+      ]).filter(Number.isFinite);
+
+      const rawMin = Math.min(0, ...values);
+      const rawMax = Math.max(1, ...values);
+      const step = niceStep((rawMax - rawMin) / 5);
+      let min = Math.floor(rawMin / step) * step;
+      let max = Math.ceil(rawMax / step) * step;
+      if (max <= min) max = min + step * 5;
+
+      yScale = {
+        min,
+        max,
+        step
+      };
+    }
+
+    function formatClinicians(value) {
+      const number = Number(value);
+      return Number.isFinite(number)
+        ? PFFCharts.formatInteger(Math.round(number))
+        : '—';
+    }
+
+    function tooltipOptions() {
+      return PFFCharts.tooltipOptions({
+        mode: 'index',
+        intersect: true,
+        callbacks: {
+          title(items) {
+            const index = items?.[0]?.dataIndex;
+            return Number.isInteger(index)
+              ? String(displayRows[index]?.year ?? '')
+              : '';
+          },
+          label(context) {
+            const row = displayRows[context.dataIndex];
+            if (!row) return '';
+
+            if (context.dataset?._seriesKey === 'current') {
+              return `Current oversupply: ${formatClinicians(row.currentOversupply)} clinicians`;
+            }
+
+            return [
+              `20 min scenario: ${formatClinicians(row.scenarioOversupply)} clinicians`,
+              `Added oversupply: +${formatClinicians(row.addedOversupply)} clinicians`,
+              Number.isFinite(row.cliniciansPerRole)
+                ? `Peer effect: ≈1 clinician role per ${Math.round(row.cliniciansPerRole)} clinicians switching`
+                : ''
+            ].filter(Boolean);
+          }
+        }
+      });
+    }
+
+    function yScaleOptions() {
+      return PFFCharts.yScaleOptions(yScale, {
+        ticks: { stepSize: yScale.step },
+        afterFit(axis) {
+          axis.width = PFFCharts.mobileLayout() ? 61 : 69;
+        },
+        title: {
+          display: true,
+          text: 'Oversupply (clinicians)',
+          color: '#151515',
+          font: {
+            family: 'Lato',
+            size: PFFCharts.mobileLayout() ? 10 : 11,
+            weight: '700'
+          }
+        }
+      });
+    }
+
+    function chartOptions() {
+      return PFFCharts.baseChartOptions({
+        devicePixelRatio: Math.max(2, Math.min(window.devicePixelRatio || 1, 3)),
+        animation: {
+          duration: PFF.reducedMotion() ? 0 : CHART_TRANSITION_MS,
+          easing: 'easeInOutCubic'
+        },
+        interaction: {
+          mode: 'index',
+          intersect: true,
+          axis: 'xy'
+        },
+        plugins: {
+          tooltip: tooltipOptions()
+        },
+        scales: {
+          x: PFFCharts.xYearScaleOptions({
+            ticks: {
+              callback(value, index) {
+                const year = Number(displayRows[index]?.year);
+                return Number.isFinite(year) && year % 2 === 0
+                  ? String(year)
+                  : '';
+              }
+            }
+          }),
+          y: yScaleOptions()
+        }
+      });
+    }
+
+    function buildDatasets() {
+      return [
+        {
+          _seriesKey: 'current',
+          label: 'Current oversupply',
+          data: displayRows.map(row => row.currentOversupply),
+          borderColor: CURRENT_COLOUR,
+          backgroundColor: CURRENT_COLOUR,
+          borderWidth: 2.7,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          pointHitRadius: PFFCharts.mobileLayout() ? 9 : 5,
+          tension: 0.28,
+          cubicInterpolationMode: 'monotone',
+          fill: false
+        },
+        {
+          _seriesKey: 'scenario',
+          label: '20 min scenario',
+          data: displayRows.map(row => row.scenarioOversupply),
+          borderColor: SCENARIO_COLOUR,
+          backgroundColor: 'rgba(241, 185, 22, 0.10)',
+          borderWidth: 2.7,
+          borderDash: [6, 4],
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          pointHitRadius: PFFCharts.mobileLayout() ? 9 : 5,
+          tension: 0.28,
+          cubicInterpolationMode: 'monotone',
+          fill: '-1'
+        }
+      ];
+    }
+
+    function updateImpactSummary() {
+      const latest = displayRows[displayRows.length - 1];
+      if (!latest) return;
+
+      PFF.animateHeading({
+        fixed: addedOversupplyValue,
+        fixedText: `+${formatClinicians(latest.addedOversupply)} clinicians`,
+        duration: CHART_TRANSITION_MS
+      });
+
+      const peerText = Number.isFinite(latest.cliniciansPerRole)
+        ? `≈1 clinician role per ${Math.max(1, Math.round(latest.cliniciansPerRole))}`
+        : '—';
+
+      PFF.animateHeading({
+        fixed: peerEffectValue,
+        fixedText: peerText,
+        duration: CHART_TRANSITION_MS
+      });
+    }
+
+    function updateFootnotes() {
+      scenarioNote.innerHTML =
+        '<strong>Scenario:</strong> Medicare items assigned &gt;20 min (28.5- and 60-min services) are modelled at 20 min; shorter services unchanged';
+
+      oversupplyNote.innerHTML =
+        '<strong>Added oversupply:</strong> Medicare hours saved ÷ adjusted annual clinical hours per active clinician';
+
+      peerNote.innerHTML =
+        '<strong>Peer effect:</strong> added oversupply ÷ active clinicians = workforce reduction per switching clinician; reciprocal = clinicians switching per one clinician role';
+    }
+
+    function updateAccessibleSummary() {
+      if (!chartSummary || !displayRows.length) return;
+      const latest = displayRows[displayRows.length - 1];
+
+      PFFCharts.updateChartSummary(
+        `Appointment-time scenario from ${displayRows[0].year} to ${latest.year}. In ${latest.year}, current oversupply was ${formatClinicians(latest.currentOversupply)} clinicians. Modelling Medicare services assigned more than 20 minutes at 20 minutes increased estimated oversupply to ${formatClinicians(latest.scenarioOversupply)} clinicians, adding ${formatClinicians(latest.addedOversupply)} clinician-equivalents. This is equivalent to about one clinician role for every ${Math.max(1, Math.round(latest.cliniciansPerRole))} active clinicians switching, assuming the national Medicare service mix.`,
+        chartSummary
+      );
+    }
+
+    function createChart() {
+      computeScale();
+
+      chart = new Chart(chartCanvas.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: displayRows.map(row => String(row.year)),
+          datasets: buildDatasets()
+        },
+        options: chartOptions()
+      });
+
+      updateImpactSummary();
+      updateFootnotes();
+      updateAccessibleSummary();
+    }
+
+    // ============================================================
+    // STARTUP
+    // ============================================================
+
+    function startApp() {
+      PFF.initialiseApp({
+        app,
+        status: statusEl,
+
+        async loadLive() {
+          loaderText.textContent = 'Loading live supply and Medicare data…';
+          const [
+            dataTable,
+            itemTable,
+            hoursTable,
+            activeClinicianTable,
+            clinicalHoursTable
+          ] = await Promise.all([
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.medicareSheet,
+              range: CONFIG.medicareDataRange,
+              headers: '1',
+              query: 'select *',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.medicareSheet,
+              range: CONFIG.medicareItemRange,
+              headers: '0',
+              query: 'select *',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.medicareSheet,
+              range: CONFIG.medicareHoursRange,
+              headers: '0',
+              query: 'select *',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.activeClinicianSheet,
+              range: CONFIG.activeClinicianRange,
+              headers: '1',
+              query: 'select *',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.clinicalHoursSheet,
+              range: CONFIG.clinicalHoursRange,
+              headers: '1',
+              query: 'select *',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            })
+          ]);
+
+          return {
+            dataTable,
+            itemTable,
+            hoursTable,
+            activeClinicianTable,
+            clinicalHoursTable
+          };
+        },
+
+        parseLive: parseLiveData,
+
+        loadRemoteCache() {
+          loaderText.textContent = 'Loading cached PFF data…';
+          return PFFCharts.loadAppsScriptCache({
+            url: CACHE_WEB_APP_URL,
+            appKey: CACHE_APP_KEY,
+            timeoutMs: CONFIG.cacheFetchTimeoutMs
+          });
+        },
+
+        parseRemoteCache,
+        cacheKey: CONFIG.localCacheKey,
+        minRows: 3,
+
+        onLiveError(error) {
+          console.warn(
+            'Live appointment-time scenario data unavailable; trying Apps Script cache',
+            error
+          );
+        },
+
+        onRemoteCacheError(error) {
+          console.warn(
+            'Apps Script appointment-time cache unavailable; trying browser cache',
+            error
+          );
+        },
+
+        dataSourceOptions: { indicator: liveData, text: liveDataText },
+
+        render(loaded) {
+          displayRows = validateRows(loaded.rows);
+          createChart();
+
+          chartSummary = PFFCharts.ensureChartSummary({ parent: app });
+          chartCanvas.setAttribute('aria-describedby', chartSummary.id);
+          updateAccessibleSummary();
+
+          interactionsController = PFFCharts.setupChartInteractions({
+            canvas: chartCanvas,
+            getChart() { return chart; }
+          });
+
+          responsiveController = PFFCharts.createResponsiveController({
+            getChart() { return chart; },
+            observe: [app, chartShell],
+            applyResponsiveChartOptions: false,
+            beforeResize(chartInstance) {
+              chartInstance.data.datasets.forEach(dataset => {
+                dataset.pointHitRadius = PFFCharts.mobileLayout() ? 9 : 5;
+              });
+            },
+            onRefresh() {
+              if (!chart) return;
+              chart.resize();
+              chart.update('none');
+            }
+          });
+
+          return chart;
+        },
+
+        onError() { liveData.style.visibility = 'hidden'; },
+        errorMessage: 'Appointment-time scenario data unavailable'
+      });
+    }
+
+    startApp();
+  </script>
+</body>
+</html>
