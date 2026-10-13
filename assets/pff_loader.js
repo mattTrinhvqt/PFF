@@ -1,6 +1,6 @@
 
 /*
- * PFF Loader v1.2.3 — independent loading animations for PFF web apps.
+ * PFF Loader v1.2.4 — independent loading animations for PFF web apps.
  *
  * Change DEFAULT_LOADER_STYLE below, then update ONLY this file to experiment.
  *   1 = original S/M/L cone triangles
@@ -781,7 +781,7 @@
   }
 
   const publicAPI = Object.freeze({
-    version: '1.2.3',
+    version: '1.2.4',
     init,
     sync: syncLoaderStyles,
     getLoaderStyle,
@@ -791,12 +791,49 @@
 
   // Early rendering: handles loaders added later as the parser progresses.
   init();
+
   if (document.readyState === 'loading') {
-    const earlyObserver = new MutationObserver(() => syncLoaderStyles());
-    earlyObserver.observe(document.documentElement, { childList: true, subtree: true });
-    document.addEventListener('DOMContentLoaded', () => {
-      earlyObserver.disconnect();
-      syncLoaderStyles();
-    }, { once: true });
+    const earlyObserver =
+      new MutationObserver(
+        () => syncLoaderStyles()
+      );
+
+    earlyObserver.observe(
+      document.documentElement,
+      {
+        childList: true,
+        subtree: true
+      }
+    );
+
+    document.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        earlyObserver.disconnect();
+        syncLoaderStyles();
+
+        const restartInitialVisibleCycle = () => {
+          for (const entry of rootStates.values()) {
+            if (
+              entry.app.classList.contains('is-loading')
+            ) {
+              restartSpectralCycle(entry.app);
+            }
+          }
+        };
+
+        if (
+          typeof global.requestAnimationFrame === 'function'
+        ) {
+          global.requestAnimationFrame(
+            restartInitialVisibleCycle
+          );
+        } else {
+          restartInitialVisibleCycle();
+        }
+      },
+      { once: true }
+    );
   }
+
 })(window);
