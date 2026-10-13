@@ -13,7 +13,7 @@
   <style>
     :root {
       --sa-colour: #f03a47;
-      --model-colour: #6600ff;
+      --model-colour: #f03a47;
       --pff-sufficient: #20c9d7;
       --pff-saturated: #ff00ff;
       --break-colour: #69718a;
@@ -117,7 +117,7 @@
     }
 
     .model-summary-value {
-      color: var(--pff-purple);
+      color: var(--sa-colour);
       font-size: 16px;
       font-weight: 700;
     }
@@ -205,16 +205,12 @@
           <div class="legend-viewport">
             <div class="chart-legend" aria-label="Chart legend">
               <span class="legend-item">
-                <span class="legend-line" style="--legend-colour: var(--sa-colour)"></span>
-                <span>Observed</span>
-              </span>
-              <span class="legend-item">
                 <span class="legend-line is-pre" style="--legend-colour: var(--model-colour)"></span>
-                <span>Pre-2015 fit</span>
+                <span>Pre-2015 trend</span>
               </span>
               <span class="legend-item">
                 <span class="legend-line is-post" style="--legend-colour: var(--model-colour)"></span>
-                <span>Post-2015 fit</span>
+                <span>Post-2015 trend</span>
               </span>
             </div>
           </div>
@@ -247,7 +243,7 @@
       </div>
 
       <p class="method-note">
-        <span class="method-note-line"><strong>Density:</strong> FTE clinicians per 10,000 people; FTE = active clinicians × weekly clinical hours ÷ 38</span>
+        <span class="method-note-line"><strong>Density:</strong> FTE clinicians per 10k population; FTE = active clinicians × weekly clinical hours ÷ 38</span>
         <span class="method-note-line"><strong>Model:</strong> continuous segmented linear regression with a slope change at 2015; the pre/post association does not establish causation</span>
       </p>
     </main>
@@ -280,7 +276,7 @@
     const SUFFICIENT_DENSITY = 1;
     const SATURATED_DENSITY = 2;
     const SA_COLOUR = '#f03a47';
-    const MODEL_COLOUR = '#6600ff';
+    const MODEL_COLOUR = SA_COLOUR;
     const SUFFICIENT_COLOUR = '#20c9d7';
     const SATURATED_COLOUR = '#ff00ff';
     const BREAK_COLOUR = '#69718a';
@@ -643,26 +639,33 @@
     }
 
     function niceYScale(rows, fittedModel) {
-      const values = rows.map(row => row.density).filter(Number.isFinite);
-      rows.forEach(row => {
-        const fitted = fittedModel?.fitted(row.year);
-        if (Number.isFinite(fitted)) values.push(fitted);
-      });
+      const values = rows
+        .map(row => fittedModel?.fitted(row.year))
+        .filter(Number.isFinite);
       values.push(SUFFICIENT_DENSITY, SATURATED_DENSITY);
 
-      const maxValue = Math.max(...values, 2);
-      let step = 0.5;
-      if (maxValue > 3) step = 1;
-      if (maxValue > 6) step = 2;
-      const max = Math.ceil((maxValue * 1.08) / step) * step;
-      return { min: 0, max: Math.max(max, 2.5), step };
+      const minValue = Math.min(...values);
+      const maxValue = Math.max(...values);
+      const visibleRange = Math.max(0.5, maxValue - minValue);
+
+      let step = 0.25;
+      if (visibleRange > 2) step = 0.5;
+      if (visibleRange > 4) step = 1;
+
+      const min = Math.max(
+        0,
+        Math.floor((minValue - step * 0.45) / step) * step
+      );
+      const max = Math.ceil((maxValue + step * 0.45) / step) * step;
+      const intervals = Math.max(4, Math.round((max - min) / step));
+
+      return { min, max, intervals, step: (max - min) / intervals };
     }
 
     function signedSlope(value) {
       if (!Number.isFinite(value)) return '—';
       const abs = Math.abs(value);
-      const decimals = abs < 0.1 ? 3 : 2;
-      return `${value >= 0 ? '+' : '−'}${abs.toFixed(decimals)} FTE/10k/yr`;
+      return `${value >= 0 ? '+' : '−'}${abs.toFixed(2)} FTE/10k/yr`;
     }
 
     const benchmarksPlugin = {
@@ -696,57 +699,35 @@
       afterDatasetsDraw(chartInstance) {
         const index = displayRows.findIndex(row => row.year === BREAK_YEAR);
         if (index < 0) return;
+
         const point = chartInstance.getDatasetMeta(0)?.data?.[index];
         const { ctx, chartArea } = chartInstance;
         if (!point || !chartArea || !Number.isFinite(point.x)) return;
 
         const x = Math.round(point.x) + 0.5;
         const mobile = PFF.mobileLayout();
-        const label = '2015 · first Flinders graduates';
-        const fontSize = mobile ? 8.2 : 9;
-        const padX = mobile ? 4 : 5;
-        const boxHeight = mobile ? 15 : 16;
+        const label = 'First Flinders graduates · 2015';
 
         ctx.save();
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.68)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
         ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.30)';
+        ctx.lineWidth = 1;
         ctx.moveTo(x, chartArea.top);
         ctx.lineTo(x, chartArea.bottom);
         ctx.stroke();
-
-        ctx.font = `700 ${fontSize}px Lato, sans-serif`;
-        ctx.textBaseline = 'middle';
-        const width = ctx.measureText(label).width + padX * 2;
-        const left = PFFCharts.clamp(
-          x + 4,
-          chartArea.left + 2,
-          chartArea.right - width - 2
-        );
-        const top = chartArea.top + 3;
-        const radius = 3;
-
         ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.moveTo(left + radius, top);
-        ctx.lineTo(left + width - radius, top);
-        ctx.quadraticCurveTo(left + width, top, left + width, top + radius);
-        ctx.lineTo(left + width, top + boxHeight - radius);
-        ctx.quadraticCurveTo(left + width, top + boxHeight, left + width - radius, top + boxHeight);
-        ctx.lineTo(left + radius, top + boxHeight);
-        ctx.quadraticCurveTo(left, top + boxHeight, left, top + boxHeight - radius);
-        ctx.lineTo(left, top + radius);
-        ctx.quadraticCurveTo(left, top, left + radius, top);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.28)';
-        ctx.lineWidth = 0.7;
-        ctx.stroke();
-        ctx.fillStyle = BREAK_COLOUR;
+
+        ctx.translate(
+          x + (mobile ? 6 : 7),
+          chartArea.top + Math.min(chartArea.height * 0.60, mobile ? 112 : 126)
+        );
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillStyle = 'rgba(105, 113, 138, 0.78)';
+        ctx.font = `600 ${mobile ? 10 : 11.5}px Lato, sans-serif`;
         ctx.textAlign = 'left';
-        ctx.fillText(label, left + padX, top + boxHeight / 2 + 0.2);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, 0, 0);
         ctx.restore();
       }
     };
@@ -772,7 +753,11 @@
         mode: 'index',
         intersect: true,
         filter(item) {
-          return item.datasetIndex === 0;
+          const year = Number(displayRows[item.dataIndex]?.year);
+          if (!Number.isFinite(year)) return false;
+          return year <= BREAK_YEAR
+            ? item.datasetIndex === 0
+            : item.datasetIndex === 1;
         },
         callbacks: {
           title(items) {
@@ -786,8 +771,7 @@
             const slope = row.year < BREAK_YEAR ? model.preSlope : model.postSlope;
             const phase = row.year < BREAK_YEAR ? 'Pre-2015 slope' : 'Post-2015 slope';
             return [
-              `Observed: ${row.density.toFixed(2)} FTE / 10k`,
-              `Segmented fit: ${Number(fitted).toFixed(2)} FTE / 10k`,
+              `Modelled density: ${Number(fitted).toFixed(2)} FTE / 10k population`,
               `${phase}: ${signedSlope(slope)}`
             ];
           }
@@ -839,43 +823,28 @@
 
       return [
         PFFCharts.lineDataset({
-          label: 'Observed',
-          data: rows.map(row => row.density),
-          borderColor: SA_COLOUR,
-          backgroundColor: SA_COLOUR,
-          pointBackgroundColor: SA_COLOUR,
-          pointBorderColor: '#ffffff',
-          pointBorderWidth: 1,
-          borderWidth: 2.5,
-          pointRadius: 2.2,
-          pointHoverRadius: 4.2,
-          pointHitRadius: PFF.mobileLayout() ? 10 : 6,
-          spanGaps: false,
-          tension: 0
-        }),
-        PFFCharts.lineDataset({
-          label: 'Pre-2015 fit',
+          label: 'Pre-2015 trend',
           data: preData,
           borderColor: MODEL_COLOUR,
           backgroundColor: MODEL_COLOUR,
-          borderWidth: 2.1,
+          borderWidth: 2.7,
           borderDash: [],
           pointRadius: 0,
           pointHoverRadius: 0,
-          pointHitRadius: 0,
+          pointHitRadius: PFF.mobileLayout() ? 10 : 7,
           spanGaps: false,
           tension: 0
         }),
         PFFCharts.lineDataset({
-          label: 'Post-2015 fit',
+          label: 'Post-2015 trend',
           data: postData,
           borderColor: MODEL_COLOUR,
           backgroundColor: MODEL_COLOUR,
-          borderWidth: 2.1,
+          borderWidth: 2.7,
           borderDash: [7, 5],
           pointRadius: 0,
           pointHoverRadius: 0,
-          pointHitRadius: 0,
+          pointHitRadius: PFF.mobileLayout() ? 10 : 7,
           spanGaps: false,
           tension: 0
         })
@@ -914,16 +883,14 @@
         id: 'pffSaAnalogueYAxis',
         getChart() { return chart; },
         getScale() { return yScale; },
-        getDecimals() { return yScale.step < 1 ? 1 : 0; },
-        getTitle() { return 'FTE clinicians per 10k'; },
+        getDecimals() { return 2; },
+        getTitle() { return 'FTE clinicians per 10k population'; },
         formatValue(value) {
-          return yScale.step < 1
-            ? Number(value).toFixed(1).replace(/\.0$/, '')
-            : PFFCharts.formatInteger(Math.round(value));
+          return Number(value).toFixed(2);
         }
       });
-      yAxisController.setImmediately(yScale, 0);
-      yAxisController.setTitleImmediately('FTE clinicians per 10k');
+      yAxisController.setImmediately(yScale, 2);
+      yAxisController.setTitleImmediately('FTE clinicians per 10k population');
 
       chart = new Chart(chartCanvas.getContext('2d'), {
         type: 'line',
@@ -1014,11 +981,12 @@
           getChart() { return chart; },
           observe: [app, chartShell],
           beforeResize(chartInstance) {
-            const observed = chartInstance.data.datasets?.[0];
-            if (observed) observed.pointHitRadius = PFF.mobileLayout() ? 10 : 6;
+            (chartInstance.data.datasets || []).forEach(dataset => {
+              dataset.pointHitRadius = PFF.mobileLayout() ? 10 : 7;
+            });
           },
           afterResize() {
-            yAxisController?.setImmediately(yScale, 0);
+            yAxisController?.setImmediately(yScale, 2);
             chart?.draw();
           },
           onRefresh() {
