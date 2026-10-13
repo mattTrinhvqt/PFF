@@ -4971,10 +4971,10 @@
         '1701358020',
 
       sourceRange:
-        'A32:AF',
+        'A32:AI',
 
       sourceColumnCount:
-        32,
+        35,
 
       ophthalmologySheetName:
         '2026 Ophthalmologist practice directory',
@@ -5064,9 +5064,9 @@
       'favourites'
     ]);
 
-    /* Optometry A:AF. Column A is the assigned practice ID.
-     * The v5 A:X and legacy B:X fallback row shapes are still accepted
-     * during migration, but all new live/cache rows use the A:AF schema. */
+    /* Optometry A:AI. Column A is the assigned practice ID.
+     * The v5 A:X, v8 A:AF and legacy B:X row shapes remain accepted
+     * during migration, while the current live sheet uses A:AI. */
     const OPTOMETRY_V5_LEGACY_SOURCE_KEYS = Object.freeze([
       'practiceName',
       'address',
@@ -5098,7 +5098,9 @@
       ...OPTOMETRY_V5_LEGACY_SOURCE_KEYS
     ]);
 
-    const OPTOMETRY_SOURCE_KEYS = Object.freeze([
+    /* Optometry v8 A:AF. Retained so existing JSON/browser-cache rows
+     * remain compatible after the live sheet expands to A:AI. */
+    const OPTOMETRY_V8_SOURCE_KEYS = Object.freeze([
       'practiceId',
       'practiceName',
       'address',
@@ -5133,6 +5135,14 @@
       'phn'
     ]);
 
+    /* Optometry A:AI. Columns AG:AI contain the future-facing
+     * practice-name and practitioner fields. */
+    const OPTOMETRY_SOURCE_KEYS = Object.freeze([
+      ...OPTOMETRY_V8_SOURCE_KEYS,
+      'publicFacingPracticeName',
+      'practitioners',
+      'practitionersUrl'
+    ]);
     /* Ophthalmology v6 A:X. Retained only so an explicitly supplied legacy
      * row can still be interpreted safely during the schema migration. */
     const OPHTHALMOLOGY_V6_LEGACY_SOURCE_KEYS = Object.freeze([
@@ -7424,6 +7434,8 @@
 
       if (values.length >= OPTOMETRY_SOURCE_KEYS.length) {
         sourceKeys = OPTOMETRY_SOURCE_KEYS;
+      } else if (values.length >= OPTOMETRY_V8_SOURCE_KEYS.length) {
+        sourceKeys = OPTOMETRY_V8_SOURCE_KEYS;
       } else if (values.length >= OPTOMETRY_V5_SOURCE_KEYS.length) {
         sourceKeys = OPTOMETRY_V5_SOURCE_KEYS;
       } else if (values.length >= OPTOMETRY_V5_LEGACY_SOURCE_KEYS.length) {
@@ -7455,7 +7467,10 @@
         'lowVision',
         'lowVisionUrl',
         'website',
-        'phone'
+        'phone',
+        'publicFacingPracticeName',
+        'practitioners',
+        'practitionersUrl'
       ].forEach(
         key => {
           if (!(key in row)) {
@@ -7499,7 +7514,8 @@
 
       row.phoneNumber =
         normalisePhoneNumber(row.phone);
-
+      row.practitionersUrl =
+        safeExternalUrl(row.practitionersUrl);
       row.specialties = {
         dryEye: isYes(row.dryEye),
         contactLenses: isYes(row.contactLenses),
@@ -7557,7 +7573,18 @@
           specialtySearchTerms.join(' ')
         );
 
-      row.searchText =
+      row.practitionerSearchNames =
+        cleanText(row.practitioners)
+          .split(/\s*;\s*/)
+          .map(normalisePractitionerName)
+          .filter(Boolean);
+
+      row.practitionerSearchText =
+        PFF.normaliseText(
+          row.practitionerSearchNames.join(' ')
+        );
+
+      row.nonPractitionerSearchText =
         PFF.normaliseText(
           [
             row.practiceNameSearchText,
@@ -7567,9 +7594,7 @@
           ].join(' ')
         );
 
-      /* Once a locality is selected, the remaining free text describes the
-       * practice/service rather than repeating location information. */
-      row.focusedSearchText =
+      row.focusedNonPractitionerSearchText =
         PFF.normaliseText(
           [
             row.practiceNameSearchText,
@@ -7578,11 +7603,21 @@
           ].join(' ')
         );
 
-      row.nonPractitionerSearchText =
-        row.searchText;
+      row.searchText =
+        PFF.normaliseText(
+          [
+            row.nonPractitionerSearchText,
+            row.practitionerSearchText
+          ].join(' ')
+        );
 
-      row.focusedNonPractitionerSearchText =
-        row.focusedSearchText;
+      row.focusedSearchText =
+        PFF.normaliseText(
+          [
+            row.focusedNonPractitionerSearchText,
+            row.practitionerSearchText
+          ].join(' ')
+        );
 
       row.compactNonPractitionerSearchText =
         normaliseSearchText(
@@ -7593,10 +7628,6 @@
         normaliseSearchText(
           row.focusedNonPractitionerSearchText
         );
-
-      row.practitionerSearchNames = [];
-
-      row.practitionerSearchText = '';
 
       row.compactSearchText =
         normaliseSearchText(
