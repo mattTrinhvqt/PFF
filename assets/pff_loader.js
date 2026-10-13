@@ -1,6 +1,5 @@
-
 /*
- * PFF Loader v1.2.4 — independent loading animations for PFF web apps.
+ * PFF Loader v1.2.5 — independent loading animations for PFF web apps.
  *
  * Change DEFAULT_LOADER_STYLE below, then update ONLY this file to experiment.
  *   1 = original S/M/L cone triangles
@@ -472,10 +471,11 @@
   /*
    * FINISH HANDOFF (independent of pff_chart_core.js)
    *
-   * Core v1.2.18 removes .is-loading when data is ready and retains its
-   * own overlay for two paint frames. Observe that change in a microtask,
-   * BEFORE a frame is painted, and extend the same opaque overlay until
-   * the spectral SVG's current 3.35 s cycle reaches its end.
+   * Core removes .is-loading when data is ready and retains its own overlay
+   * for two paint frames. Observe that change in a microtask, BEFORE a frame
+   * is painted, and extend the same opaque overlay until the spectral SVG's
+   * CURRENT cycle reaches its end. The first cycle is deliberately restarted
+   * at its first paint opportunity so it cannot begin invisibly during parsing.
    *
    * The generation/token checks prevent a previous wait from freezing
    * or dismissing a newer loading operation.
@@ -514,12 +514,83 @@
     loader.parentElement.classList.remove('pff-spectral-resolving');
     const svg = loader.querySelector('.pff-spectral-svg');
     if (!svg) return;
+
     const animations = svg.getAnimations?.({ subtree: true }) || [];
-    for (const animation of animations) {
-      try {
-        animation.cancel();
-        animation.play();
-      } catch (_) { /* Animation API not supported; ordinary CSS still runs. */ }
+    let restartedAnimation = false;
+    if (animations.length) {
+      for (const animation of animations) {
+        try {
+          animation.cancel();
+          animation.play();
+          restartedAnimation = true;
+        } catch (_) { /* Try the ordinary CSS fallback below if needed. */ }
+      }
+      if (restartedAnimation) return;
+    }
+
+    // On a very early first paint some browsers have not exposed the CSS
+    // animations through getAnimations() yet. Force the two SVG animations
+    // back to their CSS 0% state without changing their normal definitions.
+    const animatedElements = [
+      svg.querySelector('.pff-spectral-reveal'),
+      svg.querySelector('.pff-spectral-trace')
+    ].filter(Boolean);
+
+    animatedElements.forEach(element => {
+      element.style.animation = 'none';
+    });
+    void svg.getBoundingClientRect();
+    animatedElements.forEach(element => {
+      element.style.removeProperty('animation');
+    });
+  }
+
+  function startInitialVisibleCycle(entry) {
+    if (!entry || entry.initialCycleStarted || entry.initialCycleFrame !== null) {
+      return;
+    }
+
+    if (
+      activeLoaderStyle !== 2 ||
+      document.visibilityState === 'hidden' ||
+      global.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ) {
+      entry.initialCycleStarted = true;
+      return;
+    }
+
+    const scheduleStart = () => {
+      entry.initialCycleFrame = null;
+
+      if (entry.initialCycleStarted) return;
+      if (
+        !entry.app.classList.contains('is-loading') &&
+        !entry.app.classList.contains('pff-loader-cycle-hold')
+      ) {
+        return;
+      }
+
+      const loader = getSpectralLoader(entry.app);
+      if (!loader || loader.parentElement.classList.contains('is-startup-error')) {
+        return;
+      }
+
+      restartSpectralCycle(entry.app);
+      entry.initialCycleStarted = true;
+      entry.cycleEpoch = global.performance?.now?.() ?? Date.now();
+
+      // If data became ready before this first paint opportunity, the app is
+      // already being held. Now that the visible cycle is anchored at 0%,
+      // attach the ordinary current-cycle completion wait to this cycle.
+      if (!entry.app.classList.contains('is-loading')) {
+        holdUntilSpectralCycleEnds(entry);
+      }
+    };
+
+    if (typeof global.requestAnimationFrame === 'function') {
+      entry.initialCycleFrame = global.requestAnimationFrame(scheduleStart);
+    } else {
+      scheduleStart();
     }
   }
 
@@ -661,6 +732,16 @@
     }
     const reveal = loader.querySelector('.pff-spectral-reveal');
     if (!reveal || loader.classList.contains('pff-spectral-complete')) return;
+
+    // A very fast cache can become ready before the first scheduled paint.
+    // Hold the overlay now, but do not measure the pre-paint CSS animation.
+    // startInitialVisibleCycle() will restart it at 0% and then re-enter here.
+    if (!entry.initialCycleStarted) {
+      app.classList.add('pff-loader-cycle-hold');
+      startInitialVisibleCycle(entry);
+      return;
+    }
+
     // Apply the hold BEFORE reading computed animation state. This works even
     // when an app removes .is-loading directly without using the core's
     // intermediate .pff-reveal-pending class.
@@ -668,9 +749,18 @@
     const animation = reveal.getAnimations?.()
       .find(a => a.playState === 'running' && a.animationName === 'pffSpectralReveal');
     if (!animation) {
-      // A fast cached-data reveal can precede the browser exposing the CSS
-      // animation through getAnimations(). Keep the overlay for one full cycle
-      // instead of revealing the app midway through the spectral drawing.
+      // If the browser has not exposed the CSS animation object, use the
+      // first visible-cycle timestamp to finish the CURRENT 3.35 s cycle
+      // rather than starting a fresh wait from the moment data became ready.
+      const now = global.performance?.now?.() ?? Date.now();
+      const elapsed = Number.isFinite(entry.cycleEpoch)
+        ? Math.max(0, now - entry.cycleEpoch)
+        : 0;
+      const position = elapsed % SPECTRAL_CYCLE_MS;
+      const remaining = position < 1
+        ? SPECTRAL_CYCLE_MS
+        : SPECTRAL_CYCLE_MS - position;
+
       cancelPending(entry);
       const pending = {
         generation: entry.generation,
@@ -680,7 +770,8 @@
       };
       entry.pending = pending;
       pending.timer = global.setTimeout(
-        () => completeHeldLoader(entry, pending), SPECTRAL_CYCLE_MS
+        () => completeHeldLoader(entry, pending),
+        remaining + 80
       );
       return;
     }
@@ -716,7 +807,10 @@
       app,
       wasLoading: app.classList.contains('is-loading'),
       generation: 0,
-      pending: null
+      pending: null,
+      initialCycleStarted: false,
+      initialCycleFrame: null,
+      cycleEpoch: NaN
     };
     rootStates.set(app, entry);
     const observer = new MutationObserver(() => {
@@ -726,7 +820,16 @@
       entry.generation++;
       if (nowLoading) {
         releaseHeldLoader(entry);
-        restartSpectralCycle(app);
+        entry.initialCycleStarted = false;
+        if (
+          entry.initialCycleFrame !== null &&
+          typeof global.cancelAnimationFrame === 'function'
+        ) {
+          global.cancelAnimationFrame(entry.initialCycleFrame);
+        }
+        entry.initialCycleFrame = null;
+        entry.cycleEpoch = NaN;
+        startInitialVisibleCycle(entry);
       } else {
         holdUntilSpectralCycleEnds(entry);
       }
@@ -753,6 +856,16 @@
       loader.classList.toggle('pff-spectral-resolve-style', activeLoaderStyle === 3);
       loader.parentElement.classList.toggle('pff-spectral-active', spectral);
       syncSpectralText(loader.parentElement, spectral);
+
+      const app = loader.parentElement.parentElement;
+      const entry = rootStates.get(app);
+      if (
+        activeLoaderStyle === 2 &&
+        entry &&
+        app.classList.contains('is-loading')
+      ) {
+        startInitialVisibleCycle(entry);
+      }
     });
   }
 
@@ -769,6 +882,15 @@
     for (const entry of rootStates.values()) {
       entry.generation++;
       releaseHeldLoader(entry);
+      entry.initialCycleStarted = false;
+      if (
+        entry.initialCycleFrame !== null &&
+        typeof global.cancelAnimationFrame === 'function'
+      ) {
+        global.cancelAnimationFrame(entry.initialCycleFrame);
+      }
+      entry.initialCycleFrame = null;
+      entry.cycleEpoch = NaN;
     }
     syncLoaderStyles();
     return activeLoaderStyle;
@@ -781,7 +903,7 @@
   }
 
   const publicAPI = Object.freeze({
-    version: '1.2.4',
+    version: '1.2.5',
     init,
     sync: syncLoaderStyles,
     getLoaderStyle,
@@ -811,26 +933,6 @@
       () => {
         earlyObserver.disconnect();
         syncLoaderStyles();
-
-        const restartInitialVisibleCycle = () => {
-          for (const entry of rootStates.values()) {
-            if (
-              entry.app.classList.contains('is-loading')
-            ) {
-              restartSpectralCycle(entry.app);
-            }
-          }
-        };
-
-        if (
-          typeof global.requestAnimationFrame === 'function'
-        ) {
-          global.requestAnimationFrame(
-            restartInitialVisibleCycle
-          );
-        } else {
-          restartInitialVisibleCycle();
-        }
       },
       { once: true }
     );
