@@ -1,5 +1,5 @@
 /*
- * PFF Core v1.2.19
+ * PFF Core v1.2.20
  * Shared design + behaviour for Phoropter Free Fridays web apps.
  *
  * For Chart.js apps, load AFTER Chart.js and BEFORE any app-specific
@@ -14,7 +14,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.2.19';
+  const VERSION = '1.2.20';
 
   // Visual animation selection now lives in assets/pff_loader.js.
   // The core keeps app loading-state management, not either loader animation.
@@ -9038,6 +9038,20 @@ function getEmployerAppearance(
             chart,
             event
           )
+        ) {
+          return;
+        }
+
+        /*
+         * Charts with their own onClick handler already know about any
+         * custom hit targets (for example trend lines or aggregate bubbles).
+         * Let that handler own all on-canvas selection/dismissal while this
+         * shared controller still handles tooltip presses and outside-chart
+         * dismissal.
+         */
+        if (
+          typeof chart.options?.onClick ===
+            'function'
         ) {
           return;
         }
