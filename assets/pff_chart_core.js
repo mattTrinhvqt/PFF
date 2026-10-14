@@ -9121,7 +9121,8 @@ function getEmployerAppearance(
 
     document.addEventListener(
       'pointerdown',
-      handleDocumentPress
+      handleDocumentPress,
+      true
     );
 
     return {
@@ -9150,7 +9151,8 @@ function getEmployerAppearance(
 
         document.removeEventListener(
           'pointerdown',
-          handleDocumentPress
+          handleDocumentPress,
+          true
         );
       }
     };
