@@ -6090,13 +6090,25 @@
     function pointerIsInsideTooltip(chartInstance, event) {
       const tooltip = chartInstance?.tooltip;
       const canvas = chartInstance?.canvas;
+      const source =
+        event?.touches?.[0] ||
+        event?.changedTouches?.[0] ||
+        event;
+      const clientX = Number(source?.clientX);
+      const clientY = Number(source?.clientY);
 
       if (
         !tooltip ||
         !canvas ||
-        tooltip.opacity <= 0 ||
-        !Number.isFinite(event?.clientX) ||
-        !Number.isFinite(event?.clientY)
+        !(Number(tooltip.opacity) > 0) ||
+        ![
+          clientX,
+          clientY,
+          tooltip.x,
+          tooltip.y,
+          tooltip.width,
+          tooltip.height
+        ].every(Number.isFinite)
       ) {
         return false;
       }
@@ -6108,12 +6120,12 @@
       }
 
       const x =
-        (event.clientX - rect.left) *
+        (clientX - rect.left) *
         chartInstance.width /
         rect.width;
 
       const y =
-        (event.clientY - rect.top) *
+        (clientY - rect.top) *
         chartInstance.height /
         rect.height;
 
@@ -6135,22 +6147,81 @@
       chartInstance.draw();
     }
 
-    document.addEventListener('pointerdown', event => {
-      const tappedTooltip =
-        pointerIsInsideTooltip(chart, event) ||
-        pointerIsInsideTooltip(employerChart, event);
-
-      if (tappedTooltip) {
+    function preserveVisibleTooltipPress(chartInstance, event) {
+      if (!pointerIsInsideTooltip(chartInstance, event)) {
         return;
       }
 
-      tooltipPinned = false;
-      activeTooltipKey = '';
+      if (event.cancelable) {
+        event.preventDefault();
+      }
 
-      clearVisibleTooltip(chart);
-      clearVisibleTooltip(employerChart);
-    });
+      event.stopImmediatePropagation?.();
+    }
 
+    const preserveMainTooltipPress = event => {
+      preserveVisibleTooltipPress(
+        chart,
+        event
+      );
+    };
+
+    const preserveEmployerTooltipPress = event => {
+      preserveVisibleTooltipPress(
+        employerChart,
+        event
+      );
+    };
+
+    chartCanvas.addEventListener(
+      'click',
+      preserveMainTooltipPress,
+      true
+    );
+
+    chartCanvas.addEventListener(
+      'touchstart',
+      preserveMainTooltipPress,
+      {
+        capture: true,
+        passive: false
+      }
+    );
+
+    employerCanvas.addEventListener(
+      'click',
+      preserveEmployerTooltipPress,
+      true
+    );
+
+    employerCanvas.addEventListener(
+      'touchstart',
+      preserveEmployerTooltipPress,
+      {
+        capture: true,
+        passive: false
+      }
+    );
+
+    document.addEventListener(
+      'pointerdown',
+      event => {
+        const tappedTooltip =
+          pointerIsInsideTooltip(chart, event) ||
+          pointerIsInsideTooltip(employerChart, event);
+
+        if (tappedTooltip) {
+          return;
+        }
+
+        tooltipPinned = false;
+        activeTooltipKey = '';
+
+        clearVisibleTooltip(chart);
+        clearVisibleTooltip(employerChart);
+      },
+      true
+    );
     function refreshResponsiveLayout() {
       if (responsiveLayoutFrame !== null) {
         cancelAnimationFrame(responsiveLayoutFrame);
