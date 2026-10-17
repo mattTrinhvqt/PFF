@@ -25,17 +25,39 @@
 
     .loader-ellipsis > span {
       opacity: 0;
-      animation: landscapeLoaderDot 1.05s steps(1, end) infinite;
+      animation-duration: 1.2s;
+      animation-timing-function: steps(1, end);
+      animation-iteration-count: infinite;
     }
 
-    .loader-ellipsis > span:nth-child(1) { animation-delay: 0ms; }
-    .loader-ellipsis > span:nth-child(2) { animation-delay: 180ms; }
-    .loader-ellipsis > span:nth-child(3) { animation-delay: 360ms; }
+    .loader-ellipsis > span:nth-child(1) {
+      animation-name: landscapeLoaderDotOne;
+    }
 
-    @keyframes landscapeLoaderDot {
+    .loader-ellipsis > span:nth-child(2) {
+      animation-name: landscapeLoaderDotTwo;
+    }
+
+    .loader-ellipsis > span:nth-child(3) {
+      animation-name: landscapeLoaderDotThree;
+    }
+
+    @keyframes landscapeLoaderDotOne {
       0%, 19.9% { opacity: 0; }
-      20%, 39.9% { opacity: 1; }
-      40%, 100% { opacity: 0; }
+      20%, 99.9% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes landscapeLoaderDotTwo {
+      0%, 44.9% { opacity: 0; }
+      45%, 99.9% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes landscapeLoaderDotThree {
+      0%, 69.9% { opacity: 0; }
+      70%, 99.9% { opacity: 1; }
+      100% { opacity: 0; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -90,35 +112,10 @@
       flex: 0 0 auto;
     }
 
-    .basis-button {
-      min-width: 78px;
-      grid-template-columns: max-content minmax(28px, 1fr) 8px;
-      gap: 3px;
-      padding-right: 4px;
-      padding-left: 4px;
-    }
 
-    .basis-menu {
-      min-width: 150px;
-      max-height: min(260px, calc(100vh - 92px));
-      overflow-y: auto;
-      overscroll-behavior: contain;
-    }
 
-    .radius-button {
-      min-width: 84px;
-    }
 
-    .radius-menu {
-      min-width: 150px;
-      max-height: min(260px, calc(100vh - 92px));
-      overflow-y: auto;
-      overscroll-behavior: contain;
-    }
 
-    .state-control[hidden] {
-      display: none !important;
-    }
 
     .area-button {
       min-width: 84px;
@@ -137,13 +134,7 @@
       scrollbar-color: rgba(105, 113, 138, 0.34) transparent;
     }
 
-    .location-menu-section {
-      border-bottom: 1px solid var(--pff-track);
-    }
 
-    .location-menu-section[hidden] {
-      display: none !important;
-    }
 
     .area-option-name {
       min-width: 0;
@@ -233,8 +224,8 @@
         </div>
         <p
           class="loader-text"
-          aria-label="Excellent… let’s see the eyecare landscape."
-        >Excellent<span class="loader-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span> let’s see the eyecare landscape.</p>
+          aria-label="Excellent… let’s see the eyecare landscape"
+        >Excellent<span class="loader-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span> let’s see the eyecare landscape</p>
       </div>
 
       <div class="module-top">
@@ -272,9 +263,9 @@
               class="chart-tab"
               type="button"
               role="tab"
-              data-view="sparse"
+              data-view="remote"
               aria-selected="false"
-            >Sparsest locations</button>
+            >Remoteness</button>
           </div>
 
           <button
@@ -339,10 +330,6 @@
             <div id="areaMenu" class="state-menu area-menu" role="menu">
               <div class="state-menu-title">Show location</div>
               <div id="areaOptions"></div>
-              <div id="locationRadiusSection" class="location-menu-section" hidden>
-                <div class="state-menu-title">Radius</div>
-                <div id="locationRadiusOptions"></div>
-              </div>
             </div>
           </div>
         </div>
@@ -370,16 +357,16 @@
         '1v6nHeJDkbYF-Pan7OEDLLBhYLghuGxFVBoRX4ibuWSE',
 
       sheetName:
-        '2026 Optometrist practice directory',
+        '2026 Optom EAT',
 
       sheetGid:
-        '1701358020',
+        '884596310',
 
       sourceRange:
-        'B32:AF',
+        'B32:AJ',
 
       sourceColumnCount:
-        31,
+        35,
 
       locationSheetName:
         'Localities',
@@ -396,6 +383,9 @@
       jsonFallbackUrl:
         './assets/practice_directory_fallback.json',
 
+      jsonFallbackVersion:
+        8,
+
       jsonFetchTimeoutMs:
         15000,
 
@@ -403,7 +393,7 @@
         'pff-optom-practice-directory',
 
       localCacheKey:
-        'pff-practice-landscape-rows-v2',
+        'pff-practice-landscape-rows-v3',
 
       minimumRows:
         100,
@@ -527,12 +517,6 @@
     const areaOptions =
       document.getElementById('areaOptions');
 
-    const locationRadiusSection =
-      document.getElementById('locationRadiusSection');
-
-    const locationRadiusOptions =
-      document.getElementById('locationRadiusOptions');
-
     const chartShell =
       document.getElementById('chartShell');
 
@@ -551,8 +535,8 @@
     let activeModel = null;
     let activeView = 'brands';
     let activeArea = 'AUS';
-    let activeRadius = 3;
-    let radiusCountCache = new Map();
+    let practiceSpatialIndex = null;
+    const nearestDistanceCache = new Map();
     let activeAxisSpec = null;
     let tabsController = null;
     let headingScroller = null;
@@ -776,6 +760,15 @@
           );
         }
 
+        if (
+          Number(payload.version) !==
+          CONFIG.jsonFallbackVersion
+        ) {
+          throw new Error(
+            'Static JSON fallback has the wrong version.'
+          );
+        }
+
         return payload;
       } catch (error) {
         if (error?.name === 'AbortError') {
@@ -942,72 +935,262 @@
       };
     }
 
-    function haversineKm(latitude1, longitude1, latitude2, longitude2) {
+    function haversineKm(
+      latitude1,
+      longitude1,
+      latitude2,
+      longitude2
+    ) {
       const lat1 = Number(latitude1);
       const lon1 = Number(longitude1);
       const lat2 = Number(latitude2);
       const lon2 = Number(longitude2);
-      if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return NaN;
-      const toRadians = degrees => degrees * Math.PI / 180;
-      const dLat = toRadians(lat2 - lat1);
-      const dLon = toRadians(lon2 - lon1);
-      const firstLat = toRadians(lat1);
-      const secondLat = toRadians(lat2);
-      const a = Math.sin(dLat / 2) ** 2 + Math.cos(firstLat) * Math.cos(secondLat) * Math.sin(dLon / 2) ** 2;
-      return 6371 * 2 * Math.asin(Math.sqrt(Math.min(1, a)));
+
+      if (
+        ![lat1, lon1, lat2, lon2]
+          .every(Number.isFinite)
+      ) {
+        return NaN;
+      }
+
+      const toRadians =
+        degrees =>
+          degrees * Math.PI / 180;
+
+      const dLat =
+        toRadians(lat2 - lat1);
+
+      const dLon =
+        toRadians(lon2 - lon1);
+
+      const firstLat =
+        toRadians(lat1);
+
+      const secondLat =
+        toRadians(lat2);
+
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(firstLat) *
+          Math.cos(secondLat) *
+          Math.sin(dLon / 2) ** 2;
+
+      return 6371 * 2 *
+        Math.asin(
+          Math.sqrt(
+            Math.min(1, a)
+          )
+        );
     }
 
     function buildPracticeSpatialIndex(rows) {
+      const cellDegrees = 1;
       const spatial = new Map();
+
       rows.forEach(row => {
-        if (!Number.isFinite(row.latitudeNumber) || !Number.isFinite(row.longitudeNumber)) return;
-        const latCell = Math.floor(row.latitudeNumber);
-        const lonCell = Math.floor(row.longitudeNumber);
-        const key = `${latCell}:${lonCell}`;
-        if (!spatial.has(key)) spatial.set(key, []);
-        spatial.get(key).push([row.latitudeNumber, row.longitudeNumber]);
-      });
-      return { spatial, cellDegrees: 1 };
-    }
-
-    function countPracticesWithinRadius(latitude, longitude, radius, spatialIndex) {
-      const span = Math.max(1, Math.ceil(Number(radius) / 75));
-      const latCell = Math.floor(latitude);
-      const lonCell = Math.floor(longitude);
-      let count = 0;
-      for (let a = latCell - span; a <= latCell + span; a += 1) {
-        for (let b = lonCell - span; b <= lonCell + span; b += 1) {
-          const bucket = spatialIndex.spatial.get(`${a}:${b}`);
-          if (!bucket) continue;
-          bucket.forEach(point => {
-            const distance = haversineKm(latitude, longitude, point[0], point[1]);
-            if (Number.isFinite(distance) && distance <= radius) count += 1;
-          });
+        if (
+          !Number.isFinite(row.latitudeNumber) ||
+          !Number.isFinite(row.longitudeNumber)
+        ) {
+          return;
         }
-      }
-      return count;
-    }
 
-    function radiusLocationGroups(rows, radius) {
-      const candidates = locationRows.filter(location => activeArea === 'AUS' || location.stateCode === activeArea);
-      const practices = rows.filter(row => Number.isFinite(row.latitudeNumber) && Number.isFinite(row.longitudeNumber));
-      const spatialIndex = buildPracticeSpatialIndex(practices);
+        const latCell =
+          Math.floor(row.latitudeNumber / cellDegrees);
+        const lonCell =
+          Math.floor(row.longitudeNumber / cellDegrees);
+        const key =
+          `${latCell}:${lonCell}`;
+
+        if (!spatial.has(key)) {
+          spatial.set(key, []);
+        }
+
+        spatial.get(key).push([
+          row.latitudeNumber,
+          row.longitudeNumber
+        ]);
+      });
+
       return {
-        groups: candidates.map((location, index) => ({
-          key: `radius:${activeArea}:${radius}:${location.stateCode}:${location.postcode}:${location.suburb}:${index}`,
-          label: location.suburb,
-          state: location.stateCode,
-          postcode: location.postcode,
-          count: countPracticesWithinRadius(location.latitudeNumber, location.longitudeNumber, radius, spatialIndex)
-        })),
-        usableRows: candidates.length
+        spatial,
+        cellDegrees
       };
     }
 
-    function radiusGroupsFor(rows, radius) {
-      const key = `${activeArea}:${radius}`;
-      if (!radiusCountCache.has(key)) radiusCountCache.set(key, radiusLocationGroups(rows, radius));
-      return radiusCountCache.get(key);
+    function nearestPracticeDistanceKm(location) {
+      if (
+        !location ||
+        !practiceSpatialIndex ||
+        !Number.isFinite(location.latitudeNumber) ||
+        !Number.isFinite(location.longitudeNumber)
+      ) {
+        return NaN;
+      }
+
+      const cacheKey = [
+        location.sourceIndex,
+        location.latitudeNumber,
+        location.longitudeNumber
+      ].join(':');
+
+      if (nearestDistanceCache.has(cacheKey)) {
+        return nearestDistanceCache.get(cacheKey);
+      }
+
+      const latitude =
+        location.latitudeNumber;
+      const longitude =
+        location.longitudeNumber;
+      const cellDegrees =
+        practiceSpatialIndex.cellDegrees;
+      const centerLatCell =
+        Math.floor(latitude / cellDegrees);
+      const centerLonCell =
+        Math.floor(longitude / cellDegrees);
+
+      let best = Infinity;
+      const maximumRing = 60;
+
+      const inspectCell = (
+        latCell,
+        lonCell
+      ) => {
+        const bucket =
+          practiceSpatialIndex.spatial.get(
+            `${latCell}:${lonCell}`
+          );
+
+        if (!bucket) {
+          return;
+        }
+
+        bucket.forEach(point => {
+          const distance =
+            haversineKm(
+              latitude,
+              longitude,
+              point[0],
+              point[1]
+            );
+
+          if (
+            Number.isFinite(distance) &&
+            distance < best
+          ) {
+            best = distance;
+          }
+        });
+      };
+
+      for (
+        let ring = 0;
+        ring <= maximumRing;
+        ring += 1
+      ) {
+        if (ring === 0) {
+          inspectCell(
+            centerLatCell,
+            centerLonCell
+          );
+        } else {
+          const minLat =
+            centerLatCell - ring;
+          const maxLat =
+            centerLatCell + ring;
+          const minLon =
+            centerLonCell - ring;
+          const maxLon =
+            centerLonCell + ring;
+
+          for (
+            let lonCell = minLon;
+            lonCell <= maxLon;
+            lonCell += 1
+          ) {
+            inspectCell(minLat, lonCell);
+            inspectCell(maxLat, lonCell);
+          }
+
+          for (
+            let latCell = minLat + 1;
+            latCell < maxLat;
+            latCell += 1
+          ) {
+            inspectCell(latCell, minLon);
+            inspectCell(latCell, maxLon);
+          }
+        }
+
+        /*
+         * At Australian latitudes, one degree of longitude is at least
+         * roughly 79 km. Using 70 km gives a conservative lower bound for
+         * cells beyond the searched square, including cell-edge effects.
+         */
+        const outsideLowerBoundKm =
+          Math.max(0, (ring - 1) * 70);
+
+        if (
+          Number.isFinite(best) &&
+          outsideLowerBoundKm > best
+        ) {
+          break;
+        }
+      }
+
+      const result =
+        Number.isFinite(best)
+          ? best
+          : NaN;
+
+      nearestDistanceCache.set(
+        cacheKey,
+        result
+      );
+
+      return result;
+    }
+
+    function buildRemotenessGroups() {
+      const candidates =
+        locationRows.filter(location =>
+          activeArea === 'AUS' ||
+          location.stateCode === activeArea
+        );
+
+      const groups =
+        candidates
+          .map(location => {
+            const distanceKm =
+              nearestPracticeDistanceKm(
+                location
+              );
+
+            if (!Number.isFinite(distanceKm)) {
+              return null;
+            }
+
+            return {
+              key: [
+                'remote',
+                location.stateCode,
+                location.postcode,
+                location.suburb,
+                location.sourceIndex
+              ].join(':'),
+              label: location.suburb,
+              state: location.stateCode,
+              postcode: location.postcode,
+              distanceKm,
+              count: distanceKm
+            };
+          })
+          .filter(Boolean);
+
+      return {
+        groups,
+        usableRows: groups.length
+      };
     }
 
     function excludedBrand(value) {
@@ -1062,27 +1245,62 @@
     }
 
     function buildModel() {
-      const areaRows = filteredRowsForArea();
+      const areaRows =
+        filteredRowsForArea();
+
       let grouped;
+
       if (activeView === 'brands') {
-        grouped = buildBrandGroups(areaRows);
+        grouped =
+          buildBrandGroups(areaRows);
       } else if (activeView === 'dense') {
-        grouped = buildSuburbGroups(areaRows);
+        grouped =
+          buildSuburbGroups(areaRows);
       } else {
-        grouped = radiusGroupsFor(areaRows, activeRadius);
+        grouped =
+          buildRemotenessGroups();
       }
 
-      const allGroups = grouped.groups.sort((a, b) => {
-        const countDifference = activeView === 'sparse' ? a.count - b.count : b.count - a.count;
-        if (countDifference !== 0) return countDifference;
-        const stateDifference = collator.compare(a.state || '', b.state || '');
-        if (stateDifference !== 0) return stateDifference;
-        const labelDifference = collator.compare(a.label || '', b.label || '');
-        if (labelDifference !== 0) return labelDifference;
-        return collator.compare(a.postcode || '', b.postcode || '');
-      });
+      const allGroups =
+        grouped.groups.sort((a, b) => {
+          const valueDifference =
+            activeView === 'remote'
+              ? b.distanceKm - a.distanceKm
+              : b.count - a.count;
 
-      const groups = allGroups.slice(0, rankLimit());
+          if (valueDifference !== 0) {
+            return valueDifference;
+          }
+
+          const stateDifference =
+            collator.compare(
+              a.state || '',
+              b.state || ''
+            );
+
+          if (stateDifference !== 0) {
+            return stateDifference;
+          }
+
+          const labelDifference =
+            collator.compare(
+              a.label || '',
+              b.label || ''
+            );
+
+          if (labelDifference !== 0) {
+            return labelDifference;
+          }
+
+          return collator.compare(
+            a.postcode || '',
+            b.postcode || ''
+          );
+        });
+
+      const groups =
+        allGroups.slice(0, rankLimit());
+
       return {
         view: activeView,
         area: activeArea,
@@ -1090,13 +1308,37 @@
         usableRows: grouped.usableRows,
         totalCategories: allGroups.length,
         groups,
-        values: groups.map(group => group.count)
+        values:
+          groups.map(group =>
+            activeView === 'remote'
+              ? group.distanceKm
+              : group.count
+          )
       };
     }
 
     function tickLabel(group) {
-      if (!group) return '';
-      if (activeView === 'brands') return group.label;
+      if (!group) {
+        return '';
+      }
+
+      if (activeView === 'brands') {
+        return group.label;
+      }
+
+      if (activeView === 'remote') {
+        const locationSuffix =
+          activeArea === 'AUS'
+            ? [group.state, group.postcode]
+                .filter(Boolean)
+                .join(' ')
+            : group.postcode;
+
+        return locationSuffix
+          ? `${group.label} · ${locationSuffix}`
+          : group.label;
+      }
+
       return activeArea === 'AUS'
         ? `${group.label} · ${group.state}`
         : group.label;
@@ -1104,13 +1346,19 @@
 
     function clippedTickLabel(value) {
       const text = String(value || '');
-      const limit = PFF.mobileLayout() ? 21 : 30;
+      const limit =
+        PFF.mobileLayout()
+          ? 21
+          : 30;
 
       if (text.length <= limit) {
         return text;
       }
 
-      return `${text.slice(0, Math.max(1, limit - 1))}…`;
+      return `${text.slice(
+        0,
+        Math.max(1, limit - 1)
+      )}…`;
     }
 
     function axisTickLabel(group) {
@@ -1212,12 +1460,28 @@
       };
     }
 
+    function metricValueText(value) {
+      const rounded =
+        Math.max(
+          0,
+          Math.round(Number(value) || 0)
+        );
+
+      return activeView === 'remote'
+        ? `${PFF.formatInteger(rounded)} km`
+        : PFF.formatInteger(rounded);
+    }
+
     function valueText(group) {
       if (!group) {
         return '';
       }
 
-      return PFF.formatInteger(group.count);
+      return metricValueText(
+        activeView === 'remote'
+          ? group.distanceKm
+          : group.count
+      );
     }
 
     function headingDetail() {
@@ -1229,7 +1493,7 @@
         return 'densest locations by suburb';
       }
 
-      return `sparsest locations within ${PFF.formatInteger(activeRadius)} km`;
+      return 'remoteness (nearest-practice distance)';
     }
 
     function updateHeading(animate = true) {
@@ -1256,62 +1520,7 @@
       );
     }
 
-    const SPARSE_RADIUS_OPTIONS_BY_AREA = Object.freeze({
-      AUS: [300, 500, 1000],
-      NSW: [100, 200, 300],
-      VIC: [50, 100, 200],
-      QLD: [200, 300, 500],
-      SA: [200, 300, 500],
-      WA: [300, 500, 1000],
-      TAS: [10, 30, 50],
-      NT: [300, 500, 750],
-      ACT: [10, 50, 100]
-    });
-
-    function sparseRadiusOptionsForArea() {
-      return SPARSE_RADIUS_OPTIONS_BY_AREA[activeArea] ||
-        SPARSE_RADIUS_OPTIONS_BY_AREA.AUS;
-    }
-
-    function radiusOptionsForView() {
-      return activeView === 'sparse'
-        ? sparseRadiusOptionsForArea()
-        : [];
-    }
-
-    function buildLocationRadiusOptions() {
-      locationRadiusOptions.textContent = '';
-
-      const visible =
-        activeView === 'sparse';
-
-      locationRadiusSection.hidden = !visible;
-
-      if (!visible) {
-        return;
-      }
-
-      radiusOptionsForView().forEach(radius => {
-        const label = document.createElement('label');
-        label.className = 'state-option';
-        const input = document.createElement('input');
-        input.type = 'radio';
-        input.name = 'practice-landscape-radius';
-        input.value = String(radius);
-        input.checked = radius === activeRadius;
-        const box = document.createElement('span');
-        box.className = 'state-option-box';
-        box.setAttribute('aria-hidden', 'true');
-        const name = document.createElement('span');
-        name.className = 'area-option-name';
-        name.textContent = `${PFF.formatInteger(radius)} km`;
-        label.append(input, box, name);
-        locationRadiusOptions.appendChild(label);
-      });
-    }
-
     function buildAreaMenu() {
-      buildLocationRadiusOptions();
       areaOptions.textContent = '';
 
       const options = [
@@ -1355,15 +1564,12 @@
 
     function syncLocationMenuSelection() {
       areaOptions
-        .querySelectorAll('input[name="practice-landscape-area"]')
+        .querySelectorAll(
+          'input[name="practice-landscape-area"]'
+        )
         .forEach(input => {
-          input.checked = input.value === activeArea;
-        });
-
-      locationRadiusOptions
-        .querySelectorAll('input[name="practice-landscape-radius"]')
-        .forEach(input => {
-          input.checked = Number(input.value) === activeRadius;
+          input.checked =
+            input.value === activeArea;
         });
     }
 
@@ -1433,7 +1639,7 @@
                 )
               : NaN;
           const text = Number.isFinite(animatedValue)
-            ? PFF.formatInteger(Math.round(animatedValue))
+            ? metricValueText(animatedValue)
             : valueText(group);
           const width = ctx.measureText(text).width;
           const proposedX = properties.x + 5;
@@ -1869,7 +2075,9 @@
         const labelBaseSize =
           mobile ? 9 : 10;
         const labelMinSize =
-          mobile ? 6 : 7;
+          activeView === 'brands'
+            ? (mobile ? 6 : 7)
+            : (mobile ? 5 : 5.5);
         const labelMaxWidth =
           Math.max(50, geometry.left - 8);
         const labelTexts =
@@ -1965,7 +2173,9 @@
         context.textAlign = 'center';
         context.textBaseline = 'alphabetic';
         context.fillText(
-          'Number of practices',
+          activeView === 'remote'
+            ? 'Distance to nearest practice (km)'
+            : 'Number of practices',
           geometry.left + (geometry.right - geometry.left) / 2,
           geometry.bottom + 42
         );
@@ -1977,14 +2187,27 @@
     function tooltipCallbacks() {
       return {
         title(items) {
-          const index = items?.[0]?.dataIndex;
-          const group = activeModel?.groups?.[index];
+          const index =
+            items?.[0]?.dataIndex;
+          const group =
+            activeModel?.groups?.[index];
 
           if (!group) {
             return '';
           }
 
-          if (activeView !== 'brands') {
+          if (activeView === 'remote') {
+            return [
+              group.label,
+              [group.state, group.postcode]
+                .filter(Boolean)
+                .join(' ')
+            ]
+              .filter(Boolean)
+              .join(', ');
+          }
+
+          if (activeView === 'dense') {
             return `${group.label}, ${group.state}`;
           }
 
@@ -1992,10 +2215,17 @@
         },
 
         label(context) {
-          const group = activeModel?.groups?.[context.dataIndex];
+          const group =
+            activeModel?.groups?.[
+              context.dataIndex
+            ];
 
           if (!group) {
             return '';
+          }
+
+          if (activeView === 'remote') {
+            return `Nearest practice: ${metricValueText(group.distanceKm)}`;
           }
 
           return `Practices: ${PFF.formatInteger(group.count)}`;
@@ -2318,19 +2548,42 @@
         return;
       }
 
-      const first = activeModel.groups[0];
-      const subject = activeView === 'brands'
-        ? 'non-independent brand or parent categories'
-        : activeView === 'dense'
-          ? 'suburbs'
-          : 'sparsest radius locations';
-      const topText = first
-        ? ` Highest shown: ${tickLabel(first)}, ${PFF.formatInteger(first.count)} practices.`
-        : '';
+      const first =
+        activeModel.groups[0];
+
+      let summaryText = '';
+
+      if (activeView === 'brands') {
+        summaryText =
+          `Practice landscape showing ${PFF.formatInteger(activeModel.groups.length)} non-independent brand or parent categories for ${areaLongLabel()}. ` +
+          `${PFF.formatInteger(activeModel.usableRows)} practice rows contribute to this view.`;
+
+        if (first) {
+          summaryText +=
+            ` Highest shown: ${tickLabel(first)}, ${PFF.formatInteger(first.count)} practices.`;
+        }
+      } else if (activeView === 'dense') {
+        summaryText =
+          `Practice landscape showing the ${PFF.formatInteger(activeModel.groups.length)} densest suburbs for ${areaLongLabel()}. ` +
+          `${PFF.formatInteger(activeModel.usableRows)} practice rows contribute to this view.`;
+
+        if (first) {
+          summaryText +=
+            ` Densest shown: ${tickLabel(first)}, ${PFF.formatInteger(first.count)} practices.`;
+        }
+      } else {
+        summaryText =
+          `Practice landscape showing the ${PFF.formatInteger(activeModel.groups.length)} most remote localities for ${areaLongLabel()}, ranked by distance to the nearest optometry practice anywhere in Australia. ` +
+          `${PFF.formatInteger(activeModel.usableRows)} locality rows contribute to this view.`;
+
+        if (first) {
+          summaryText +=
+            ` Most remote shown: ${tickLabel(first)}, ${metricValueText(first.distanceKm)} from the nearest practice.`;
+        }
+      }
 
       PFFCharts.updateChartSummary(
-        `Practice landscape showing ${PFF.formatInteger(activeModel.groups.length)} ${subject} for ${areaLongLabel()}. ` +
-        `${PFF.formatInteger(activeModel.usableRows)} practice rows contribute to this view.${topText}`,
+        summaryText,
         chartSummary
       );
     }
@@ -2339,7 +2592,6 @@
       const model = buildModel();
 
       updateHeading(animate);
-      buildLocationRadiusOptions();
       syncLocationMenuSelection();
       syncAreaControl(animate);
       updateChart(model, animate);
@@ -2365,12 +2617,8 @@
           activeView = value;
           areaMenuController?.closeMenu?.();
 
-          if (activeView === 'sparse') {
-            activeRadius = sparseRadiusOptionsForArea()[0];
-          }
 
           buildAreaMenu();
-          radiusCountCache.clear();
           renderView({ animate: true });
         }
       });
@@ -2384,17 +2632,6 @@
         });
 
 
-      locationRadiusOptions.addEventListener('change', event => {
-        const input = event.target.closest(
-          'input[name="practice-landscape-radius"]'
-        );
-        if (!input) return;
-
-        activeRadius = Number(input.value);
-        areaMenuController?.closeMenu?.();
-        renderView({ animate: true });
-      });
-
       areaOptions.addEventListener('change', event => {
         const input = event.target.closest(
           'input[name="practice-landscape-area"]'
@@ -2406,16 +2643,9 @@
 
         activeArea = input.value;
 
-        if (activeView === 'sparse') {
-          const options = sparseRadiusOptionsForArea();
-          if (!options.includes(activeRadius)) {
-            activeRadius = options[0];
-          }
-        }
 
         buildAreaMenu();
         areaMenuController?.closeMenu?.();
-        radiusCountCache.clear();
         renderView({ animate: true });
       });
 
@@ -2467,7 +2697,11 @@
 
       render(loaded) {
         sourceRows = normaliseRows(loaded.rows);
-        radiusCountCache.clear();
+        practiceSpatialIndex =
+          buildPracticeSpatialIndex(
+            sourceRows
+          );
+        nearestDistanceCache.clear();
 
         if (!sourceRows.length) {
           throw new Error(
@@ -2476,7 +2710,6 @@
         }
 
         setLoadedSourceIndicator(loaded);
-        radiusCountCache.clear();
         buildAreaMenu();
         configureControls();
 
