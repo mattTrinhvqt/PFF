@@ -106,6 +106,10 @@
       margin-left: 0.28em;
     }
 
+    .chart-heading-fixed:empty + .chart-heading-detail {
+      margin-left: 0;
+    }
+
     .heading-controls {
       margin-left: auto;
       padding-top: 2px;
@@ -300,7 +304,7 @@
 
           <div id="headingScrollViewport" class="heading-scroll-viewport">
             <h2 id="chartHeading" class="chart-heading">
-              <span class="chart-heading-fixed">Practice landscape by</span>
+              <span id="chartHeadingFixed" class="chart-heading-fixed">Practice landscape by</span>
               <span id="chartHeadingDetail" class="chart-heading-detail">brand (non-independent)</span>
             </h2>
           </div>
@@ -489,6 +493,9 @@
 
     const tabScrollRight =
       document.getElementById('tabScrollRight');
+
+    const chartHeadingFixed =
+      document.getElementById('chartHeadingFixed');
 
     const chartHeadingDetail =
       document.getElementById('chartHeadingDetail');
@@ -967,6 +974,29 @@
       return CONFIG.rankLimit;
     }
 
+    function titleCaseLocation(value) {
+      const text = PFF.cleanText(value);
+
+      if (!text) {
+        return '';
+      }
+
+      let titled = text
+        .toLocaleLowerCase('en-AU')
+        .replace(
+          /(^|[\s\-'/])([a-z])/g,
+          (_, prefix, letter) =>
+            `${prefix}${letter.toLocaleUpperCase('en-AU')}`
+        );
+
+      titled = titled.replace(
+        /\bMc([a-z])/g,
+        (_, letter) => `Mc${letter.toLocaleUpperCase('en-AU')}`
+      );
+
+      return titled;
+    }
+
     function buildSuburbGroups(rows) {
       const groups = new Map();
       let usableRows = 0;
@@ -984,7 +1014,7 @@
         if (!groups.has(key)) {
           groups.set(key, {
             key: `suburb:${key}`,
-            label: row.suburb,
+            label: titleCaseLocation(row.suburb),
             state: row.state,
             count: 0
           });
@@ -1242,7 +1272,7 @@
                 location.suburb,
                 location.sourceIndex
               ].join(':'),
-              label: location.suburb,
+              label: titleCaseLocation(location.suburb),
               state: location.stateCode,
               postcode: location.postcode,
               distanceKm,
@@ -1548,30 +1578,47 @@
       );
     }
 
+    function headingFixedText() {
+      return activeView === 'brands'
+        ? 'Practice landscape by'
+        : '';
+    }
+
     function headingDetail() {
       if (activeView === 'brands') {
         return 'brand (non-independent)';
       }
 
       if (activeView === 'dense') {
-        return 'densest locations by suburb';
+        return 'Densest locations by suburb';
       }
 
-      return 'remoteness (nearest-practice distance)';
+      return 'Remoteness (nearest-practice distance)';
     }
 
     function updateHeading(animate = true) {
-      const next = headingDetail();
+      const nextFixed = headingFixedText();
+      const nextDetail = headingDetail();
 
       if (!animate || PFF.reducedMotion()) {
-        chartHeadingDetail.textContent = next;
+        chartHeadingFixed.textContent = nextFixed;
+        chartHeadingDetail.textContent = nextDetail;
         requestAnimationFrame(() => headingScroller?.update?.());
         return;
       }
 
       PFF.animateTextChange(
+        chartHeadingFixed,
+        nextFixed,
+        {
+          fadeOutMs: 150,
+          fadeInMs: 220
+        }
+      );
+
+      PFF.animateTextChange(
         chartHeadingDetail,
-        next,
+        nextDetail,
         {
           fadeOutMs: 150,
           fadeInMs: 220
@@ -2055,6 +2102,31 @@
         (Number(value) / displayedAxisMaximum());
     }
 
+    function displayedAxisSpec() {
+      if (!activeAxisSpec) {
+        return null;
+      }
+
+      if (!axisTransitionState.active) {
+        return activeAxisSpec;
+      }
+
+      const currentMaximum =
+        displayedAxisMaximum();
+      const majorStep = Math.max(
+        1,
+        Math.round(
+          niceAxisStep(currentMaximum / 5)
+        )
+      );
+
+      return {
+        max: currentMaximum,
+        majorStep,
+        minorStep: majorStep / 2
+      };
+    }
+
     const constantSpinePlugin = {
       id: 'pffPracticeLandscapeConstantSpines',
 
@@ -2091,7 +2163,7 @@
 
       beforeDatasetsDraw(chartInstance) {
         const geometry = currentAxisGeometry(chartInstance);
-        const spec = activeAxisSpec;
+        const spec = displayedAxisSpec();
 
         if (!geometry || !spec) {
           return;
@@ -2137,7 +2209,7 @@
 
       afterDraw(chartInstance) {
         const geometry = currentAxisGeometry(chartInstance);
-        const spec = activeAxisSpec;
+        const spec = displayedAxisSpec();
 
         if (!geometry || !spec) {
           return;
@@ -2173,25 +2245,6 @@
             group => axisTickLabel(group)
           );
 
-        let labelFontSize =
-          labelBaseSize;
-
-        context.font =
-          `400 ${labelFontSize}px Lato, sans-serif`;
-
-        while (
-          labelFontSize > labelMinSize &&
-          labelTexts.some(
-            text =>
-              context.measureText(text).width >
-              labelMaxWidth
-          )
-        ) {
-          labelFontSize -= 0.5;
-          context.font =
-            `400 ${labelFontSize}px Lato, sans-serif`;
-        }
-
         (activeModel?.groups || []).forEach((group, index) => {
           const bar = meta?.data?.[index];
 
@@ -2199,8 +2252,25 @@
             return;
           }
 
+          const text =
+            labelTexts[index] || '';
+          let labelFontSize =
+            labelBaseSize;
+
+          context.font =
+            `400 ${labelFontSize}px Lato, sans-serif`;
+
+          while (
+            labelFontSize > labelMinSize &&
+            context.measureText(text).width > labelMaxWidth
+          ) {
+            labelFontSize -= 0.5;
+            context.font =
+              `400 ${labelFontSize}px Lato, sans-serif`;
+          }
+
           context.fillText(
-            labelTexts[index] || '',
+            text,
             geometry.left - 5,
             bar.y
           );
