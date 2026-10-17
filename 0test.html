@@ -2210,6 +2210,66 @@
       }
     }
 
+    function setTickStepHandoff(
+      fromMajorStep,
+      toMajorStep,
+      progress
+    ) {
+      if (tickStepTransitionFrame !== null) {
+        cancelAnimationFrame(tickStepTransitionFrame);
+        tickStepTransitionFrame = null;
+      }
+
+      const from = Math.max(
+        1,
+        Number(fromMajorStep) || 1
+      );
+      const to = Math.max(
+        1,
+        Number(toMajorStep) || 1
+      );
+      const amount = Math.max(
+        0,
+        Math.min(1, Number(progress) || 0)
+      );
+
+      if (Math.abs(from - to) < 1e-9 || amount >= 1) {
+        resetTickStepTransition(to);
+        return;
+      }
+
+      axisTransitionState.displayMajorStep = to;
+      tickStepTransitionState.active = true;
+      tickStepTransitionState.fromMajorStep = from;
+      tickStepTransitionState.toMajorStep = to;
+      tickStepTransitionState.progress = amount;
+    }
+
+    function tickStepHandoffProgress(
+      resizeProgress,
+      expanding
+    ) {
+      const progress = Math.max(
+        0,
+        Math.min(1, Number(resizeProgress) || 0)
+      );
+
+      /*
+       * On expansion, introduce the coarser scale early so labels never
+       * become crowded. On contraction, retain the coarser scale for most
+       * of the slide and introduce the finer scale before the movement ends.
+       * Both paths overlap continuously, so the X axis is never blank.
+       */
+      const localProgress = expanding
+        ? Math.min(progress / 0.34, 1)
+        : Math.max(
+            0,
+            Math.min((progress - 0.58) / 0.42, 1)
+          );
+
+      return PFFCharts.easeInOutCubic(localProgress);
+    }
+
     function axisTickLayers() {
       const currentStep = Number.isFinite(
         axisTransitionState.displayMajorStep
@@ -2264,6 +2324,55 @@
           alpha: 1
         }
       ];
+    }
+
+    function axisTickMarks(currentMaximum) {
+      const marks = new Map();
+
+      axisTickLayers().forEach(layer => {
+        const lastValue = Math.ceil(
+          currentMaximum / layer.minorStep
+        ) * layer.minorStep;
+
+        for (
+          let value = 0;
+          value <= lastValue + layer.minorStep * 0.25;
+          value += layer.minorStep
+        ) {
+          const roundedValue =
+            Math.round(value * 1e9) / 1e9;
+          const key = roundedValue.toFixed(9);
+          const major = Math.abs(
+            roundedValue / layer.majorStep -
+            Math.round(roundedValue / layer.majorStep)
+          ) < 1e-6;
+          const existing = marks.get(key) || {
+            value: roundedValue,
+            alpha: 0,
+            labelAlpha: 0,
+            major: false
+          };
+
+          existing.alpha = Math.min(
+            1,
+            existing.alpha + layer.alpha
+          );
+          existing.major = existing.major || major;
+
+          if (major) {
+            existing.labelAlpha = Math.min(
+              1,
+              existing.labelAlpha + layer.alpha
+            );
+          }
+
+          marks.set(key, existing);
+        }
+      });
+
+      return Array.from(marks.values()).sort(
+        (a, b) => a.value - b.value
+      );
     }
 
     function copyChartArea(area) {
@@ -2387,97 +2496,74 @@
         return;
       }
 
-      axisTransitionState.active = true;
-      axisTransitionState.max = from;
-      resetTickStepTransition(heldMajorStep);
-
       const targetMajorStep =
         majorStepWithHysteresis(
           to,
           heldMajorStep
         );
-
       const expanding =
         to > from + 1e-9;
-      const shouldPreCoarsen =
-        expanding &&
-        targetMajorStep > heldMajorStep + 1e-9;
+      const stepChanges =
+        Math.abs(
+          targetMajorStep - heldMajorStep
+        ) > 1e-9;
 
-      function runResize(slideMajorStep) {
-        const slideStep = Math.max(
-          1,
-          Number(slideMajorStep) || heldMajorStep
-        );
+      axisTransitionState.active = true;
+      axisTransitionState.max = from;
+      resetTickStepTransition(heldMajorStep);
 
-        resetTickStepTransition(slideStep);
-        axisTransitionState.active = true;
-        axisTransitionState.max = from;
-
-        if (
-          PFF.reducedMotion() ||
-          duration <= 0 ||
-          from === to
-        ) {
-          axisTransitionState.max = to;
-          axisTransitionState.active = false;
-          settleDisplayedMajorStep(
-            to,
-            slideStep
-          );
-          chart?.draw();
-          return;
-        }
-
-        const startedAt = performance.now();
-
-        function frame(now) {
-          const progress = Math.min(
-            (now - startedAt) / duration,
-            1
-          );
-          const eased =
-            PFFCharts.easeInOutCubic(progress);
-
-          axisTransitionState.max =
-            from + (to - from) * eased;
-          chart?.draw();
-
-          if (progress < 1) {
-            axisTransitionFrame =
-              requestAnimationFrame(frame);
-          } else {
-            axisTransitionFrame = null;
-            axisTransitionState.max = to;
-            axisTransitionState.active = false;
-            chart?.draw();
-            settleDisplayedMajorStep(
-              to,
-              slideStep
-            );
-          }
-        }
-
-        axisTransitionFrame =
-          requestAnimationFrame(frame);
-      }
-
-      /*
-       * Expansion can make a previously fine tick interval far too dense.
-       * Cross-fade to the required coarser interval before the sliding
-       * resize begins. Contraction does the opposite: retain the coarser
-       * interval during the slide, then refine it after the axis settles.
-       */
-      if (shouldPreCoarsen) {
-        animateTickStepChange(
-          heldMajorStep,
-          targetMajorStep,
-          180,
-          () => runResize(targetMajorStep)
-        );
+      if (
+        PFF.reducedMotion() ||
+        duration <= 0 ||
+        from === to
+      ) {
+        axisTransitionState.max = to;
+        axisTransitionState.active = false;
+        resetTickStepTransition(targetMajorStep);
+        chart?.draw();
         return;
       }
 
-      runResize(heldMajorStep);
+      const startedAt = performance.now();
+
+      function frame(now) {
+        const progress = Math.min(
+          (now - startedAt) / duration,
+          1
+        );
+        const eased =
+          PFFCharts.easeInOutCubic(progress);
+
+        axisTransitionState.max =
+          from + (to - from) * eased;
+
+        if (stepChanges) {
+          setTickStepHandoff(
+            heldMajorStep,
+            targetMajorStep,
+            tickStepHandoffProgress(
+              progress,
+              expanding
+            )
+          );
+        }
+
+        chart?.draw();
+
+        if (progress < 1) {
+          axisTransitionFrame =
+            requestAnimationFrame(frame);
+        } else {
+          axisTransitionFrame = null;
+          axisTransitionState.max = to;
+          axisTransitionState.active = false;
+          resetTickStepTransition(targetMajorStep);
+          chart?.draw();
+        }
+      }
+
+      axisTransitionFrame =
+        requestAnimationFrame(frame);
     }
 
     function currentAxisGeometry(chartInstance) {
@@ -2592,43 +2678,30 @@
 
         const currentMaximum = displayedAxisMaximum();
         const context = chartInstance.ctx;
-        const layers = axisTickLayers();
+        const marks = axisTickMarks(currentMaximum);
 
         context.save();
         context.lineCap = 'butt';
 
-        layers.forEach(layer => {
-          const lastValue = Math.ceil(
-            currentMaximum / layer.minorStep
-          ) * layer.minorStep;
+        marks.forEach(mark => {
+          const x = xAxisPixel(
+            geometry,
+            mark.value
+          );
 
-          context.globalAlpha = layer.alpha;
-
-          for (
-            let value = 0;
-            value <= lastValue + layer.minorStep * 0.25;
-            value += layer.minorStep
-          ) {
-            const x = xAxisPixel(geometry, value);
-
-            if (x < geometry.left - 1 || x > geometry.right + 1) {
-              continue;
-            }
-
-            const major = Math.abs(
-              value / layer.majorStep -
-              Math.round(value / layer.majorStep)
-            ) < 1e-6;
-
-            context.strokeStyle = major
-              ? 'rgba(105, 113, 138, 0.075)'
-              : 'rgba(105, 113, 138, 0.035)';
-            context.lineWidth = major ? 1 : 0.7;
-            context.beginPath();
-            context.moveTo(Math.round(x) + 0.5, geometry.top);
-            context.lineTo(Math.round(x) + 0.5, geometry.bottom);
-            context.stroke();
+          if (x < geometry.left - 1 || x > geometry.right + 1) {
+            return;
           }
+
+          context.globalAlpha = mark.alpha;
+          context.strokeStyle = mark.major
+            ? 'rgba(105, 113, 138, 0.075)'
+            : 'rgba(105, 113, 138, 0.035)';
+          context.lineWidth = mark.major ? 1 : 0.7;
+          context.beginPath();
+          context.moveTo(Math.round(x) + 0.5, geometry.top);
+          context.lineTo(Math.round(x) + 0.5, geometry.bottom);
+          context.stroke();
         });
 
         context.globalAlpha = 1;
@@ -2648,7 +2721,7 @@
         const tickFontSize = mobile ? 9 : 10;
         const titleFontSize = mobile ? 12 : 13;
         const currentMaximum = displayedAxisMaximum();
-        const layers = axisTickLayers();
+        const marks = axisTickMarks(currentMaximum);
         const meta = chartInstance.getDatasetMeta(0);
 
         context.save();
@@ -2702,64 +2775,54 @@
           );
         });
 
-        layers.forEach(layer => {
-          const lastValue = Math.ceil(
-            currentMaximum / layer.minorStep
-          ) * layer.minorStep;
+        marks.forEach(mark => {
+          const x = xAxisPixel(
+            geometry,
+            mark.value
+          );
 
-          context.globalAlpha = layer.alpha;
-
-          for (
-            let value = 0;
-            value <= lastValue + layer.minorStep * 0.25;
-            value += layer.minorStep
-          ) {
-            const x = xAxisPixel(geometry, value);
-
-            if (x < geometry.left - 1 || x > geometry.right + 1) {
-              continue;
-            }
-
-            const major = Math.abs(
-              value / layer.majorStep -
-              Math.round(value / layer.majorStep)
-            ) < 1e-6;
-            const tickLength = major ? 6 : 2;
-
-            context.beginPath();
-            context.lineWidth = major ? 1 : 0.7;
-            context.moveTo(Math.round(x) + 0.5, geometry.bottom);
-            context.lineTo(
-              Math.round(x) + 0.5,
-              geometry.bottom + tickLength
-            );
-            context.stroke();
+          if (x < geometry.left - 1 || x > geometry.right + 1) {
+            return;
           }
 
-          context.font = `400 ${tickFontSize}px Lato, sans-serif`;
-          context.textBaseline = 'top';
+          context.globalAlpha = mark.alpha;
+          const tickLength = mark.major ? 6 : 2;
 
-          for (
-            let value = 0;
-            value <= lastValue + layer.majorStep * 0.25;
-            value += layer.majorStep
-          ) {
-            const x = xAxisPixel(geometry, value);
+          context.beginPath();
+          context.lineWidth = mark.major ? 1 : 0.7;
+          context.moveTo(Math.round(x) + 0.5, geometry.bottom);
+          context.lineTo(
+            Math.round(x) + 0.5,
+            geometry.bottom + tickLength
+          );
+          context.stroke();
+        });
+
+        context.font = `400 ${tickFontSize}px Lato, sans-serif`;
+        context.textBaseline = 'top';
+
+        marks
+          .filter(mark => mark.labelAlpha > 0.001)
+          .forEach(mark => {
+            const x = xAxisPixel(
+              geometry,
+              mark.value
+            );
 
             if (x < geometry.left - 1 || x > geometry.right + 1) {
-              continue;
+              return;
             }
 
-            context.textAlign = value === 0
+            context.globalAlpha = mark.labelAlpha;
+            context.textAlign = mark.value === 0
               ? 'left'
               : 'center';
             context.fillText(
-              PFF.formatInteger(value),
+              PFF.formatInteger(mark.value),
               x,
               geometry.bottom + 9
             );
-          }
-        });
+          });
 
         context.globalAlpha = 1;
         context.font = `700 ${titleFontSize}px Lato, sans-serif`;
@@ -3077,74 +3140,68 @@
             targetMaximum,
             heldMajorStep
           );
-        const shouldPreCoarsen =
-          targetMaximum > startMaximum + 1e-9 &&
-          targetMajorStep > heldMajorStep + 1e-9;
+        const expanding =
+          targetMaximum > startMaximum + 1e-9;
+        const stepChanges =
+          Math.abs(
+            targetMajorStep - heldMajorStep
+          ) > 1e-9;
 
-        function runLocationResize(slideMajorStep) {
-          const slideStep = Math.max(
-            1,
-            Number(slideMajorStep) || heldMajorStep
-          );
+        resetTickStepTransition(heldMajorStep);
+        axisTransitionState.active = true;
+        axisTransitionState.max = startMaximum;
 
-          resetTickStepTransition(slideStep);
-          axisTransitionState.active = true;
-          axisTransitionState.max = startMaximum;
+        locationTransitionAnimator.run({
+          duration: CONFIG.locationTransitionMs,
+          easing: PFFCharts.easeInOutCubic,
 
-          locationTransitionAnimator.run({
-            duration: CONFIG.locationTransitionMs,
-            easing: PFFCharts.easeInOutCubic,
+          onFrame(progress) {
+            locationReorderState.progress = progress;
 
-            onFrame(progress) {
-              locationReorderState.progress = progress;
+            dataset.data = targetValues.map((targetValue, index) => {
+              const startValue = startValues[index] || 0;
 
-              dataset.data = targetValues.map((targetValue, index) => {
-                const startValue = startValues[index] || 0;
+              return startValue +
+                (targetValue - startValue) * progress;
+            });
 
-                return startValue +
-                  (targetValue - startValue) * progress;
-              });
+            const displayedMaximum =
+              startMaximum +
+              (targetMaximum - startMaximum) * progress;
 
-              const displayedMaximum =
-                startMaximum +
-                (targetMaximum - startMaximum) * progress;
+            chart.options.scales.x.max = displayedMaximum;
+            axisTransitionState.max = displayedMaximum;
 
-              chart.options.scales.x.max = displayedMaximum;
-              axisTransitionState.max = displayedMaximum;
-              chart.update('none');
-            },
-
-            onComplete() {
-              dataset.data = targetValues.slice();
-              chart.options.scales.x.max = targetMaximum;
-
-              locationReorderState.active = false;
-              locationReorderState.progress = 1;
-              locationReorderState.fromYByKey = new Map();
-
-              axisTransitionState.active = false;
-              axisTransitionState.max = targetMaximum;
-
-              chart.update('none');
-              setSpineGeometry(chart.chartArea);
-              settleDisplayedMajorStep(
-                targetMaximum,
-                slideStep
+            if (stepChanges) {
+              setTickStepHandoff(
+                heldMajorStep,
+                targetMajorStep,
+                tickStepHandoffProgress(
+                  progress,
+                  expanding
+                )
               );
             }
-          });
-        }
 
-        if (shouldPreCoarsen) {
-          animateTickStepChange(
-            heldMajorStep,
-            targetMajorStep,
-            180,
-            () => runLocationResize(targetMajorStep)
-          );
-        } else {
-          runLocationResize(heldMajorStep);
-        }
+            chart.update('none');
+          },
+
+          onComplete() {
+            dataset.data = targetValues.slice();
+            chart.options.scales.x.max = targetMaximum;
+
+            locationReorderState.active = false;
+            locationReorderState.progress = 1;
+            locationReorderState.fromYByKey = new Map();
+
+            axisTransitionState.active = false;
+            axisTransitionState.max = targetMaximum;
+            resetTickStepTransition(targetMajorStep);
+
+            chart.update('none');
+            setSpineGeometry(chart.chartArea);
+          }
+        });
 
         return;
       }
