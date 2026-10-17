@@ -1929,6 +1929,36 @@
       );
     }
 
+    function majorStepWithHysteresis(
+      maximum,
+      currentStep
+    ) {
+      const max = Math.max(
+        Number(maximum) || 1,
+        1
+      );
+      const current = Math.max(
+        1,
+        Number(currentStep) || 1
+      );
+      const intervalCount =
+        max / current;
+
+      /*
+       * Keep the current tick interval while it still gives a sensible
+       * number of major divisions. This prevents small range changes from
+       * causing distracting 5 -> 4 -> 5 style tick-step changes.
+       */
+      if (
+        intervalCount >= 3.5 &&
+        intervalCount <= 6.5
+      ) {
+        return current;
+      }
+
+      return adaptiveMajorStepForMaximum(max);
+    }
+
     function resetTickStepTransition(majorStep) {
       if (tickStepTransitionFrame !== null) {
         cancelAnimationFrame(tickStepTransitionFrame);
@@ -1950,7 +1980,7 @@
     function animateTickStepChange(
       fromMajorStep,
       toMajorStep,
-      duration = 240
+      duration = 180
     ) {
       const from = Math.max(
         1,
@@ -2013,19 +2043,31 @@
         requestAnimationFrame(frame);
     }
 
-    function updateDisplayedMajorStep(maximum) {
+    function settleDisplayedMajorStep(
+      maximum,
+      heldMajorStep
+    ) {
+      const held = Math.max(
+        1,
+        Number(heldMajorStep) ||
+          Number(axisTransitionState.displayMajorStep) ||
+          1
+      );
       const next =
-        adaptiveMajorStepForMaximum(maximum);
-      const current = Number.isFinite(
-        axisTransitionState.displayMajorStep
-      )
-        ? axisTransitionState.displayMajorStep
-        : next;
+        majorStepWithHysteresis(
+          maximum,
+          held
+        );
 
-      if (Math.abs(current - next) > 1e-9) {
-        animateTickStepChange(current, next);
+      if (Math.abs(held - next) > 1e-9) {
+        animateTickStepChange(
+          held,
+          next,
+          180
+        );
       } else {
-        axisTransitionState.displayMajorStep = next;
+        resetTickStepTransition(held);
+        chart?.draw();
       }
     }
 
@@ -2190,6 +2232,11 @@
 
       const from = Number(fromMaximum);
       const to = Number(toMaximum);
+      const heldMajorStep = Math.max(
+        1,
+        Number(axisTransitionState.displayMajorStep) ||
+          adaptiveMajorStepForMaximum(from)
+      );
 
       if (!Number.isFinite(from) || !Number.isFinite(to)) {
         axisTransitionState.active = false;
@@ -2203,15 +2250,20 @@
 
       axisTransitionState.active = true;
       axisTransitionState.max = from;
-      resetTickStepTransition(
-        adaptiveMajorStepForMaximum(from)
-      );
+
+      /*
+       * Hold the current tick interval for the whole sliding resize.
+       * If a new interval is genuinely needed, change it only after the
+       * axis has settled so tick re-labelling never competes with motion.
+       */
+      resetTickStepTransition(heldMajorStep);
 
       if (PFF.reducedMotion() || duration <= 0 || from === to) {
         axisTransitionState.max = to;
         axisTransitionState.active = false;
-        resetTickStepTransition(
-          adaptiveMajorStepForMaximum(to)
+        settleDisplayedMajorStep(
+          to,
+          heldMajorStep
         );
         chart?.draw();
         return;
@@ -2227,9 +2279,6 @@
         const eased = PFFCharts.easeInOutCubic(progress);
 
         axisTransitionState.max = from + (to - from) * eased;
-        updateDisplayedMajorStep(
-          axisTransitionState.max
-        );
         chart?.draw();
 
         if (progress < 1) {
@@ -2238,8 +2287,11 @@
           axisTransitionFrame = null;
           axisTransitionState.max = to;
           axisTransitionState.active = false;
-          updateDisplayedMajorStep(to);
           chart?.draw();
+          settleDisplayedMajorStep(
+            to,
+            heldMajorStep
+          );
         }
       }
 
@@ -2820,11 +2872,15 @@
         locationReorderState.progress = 0;
         locationReorderState.fromYByKey = previousYByKey;
 
+        const heldMajorStep = Math.max(
+          1,
+          Number(axisTransitionState.displayMajorStep) ||
+            adaptiveMajorStepForMaximum(startMaximum)
+        );
+
         axisTransitionState.active = true;
         axisTransitionState.max = startMaximum;
-        resetTickStepTransition(
-          adaptiveMajorStepForMaximum(startMaximum)
-        );
+        resetTickStepTransition(heldMajorStep);
 
         chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
         chart.update('none');
@@ -2852,9 +2908,6 @@
 
             chart.options.scales.x.max = displayedMaximum;
             axisTransitionState.max = displayedMaximum;
-            updateDisplayedMajorStep(
-              displayedMaximum
-            );
             chart.update('none');
           },
 
@@ -2868,12 +2921,13 @@
 
             axisTransitionState.active = false;
             axisTransitionState.max = targetMaximum;
-            updateDisplayedMajorStep(
-              targetMaximum
-            );
 
             chart.update('none');
             setSpineGeometry(chart.chartArea);
+            settleDisplayedMajorStep(
+              targetMaximum,
+              heldMajorStep
+            );
           }
         });
 
