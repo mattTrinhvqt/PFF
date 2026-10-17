@@ -637,8 +637,18 @@
 
     const axisTransitionState = {
       active: false,
-      max: NaN
+      max: NaN,
+      displayMajorStep: NaN
     };
+
+    const tickStepTransitionState = {
+      active: false,
+      fromMajorStep: NaN,
+      toMajorStep: NaN,
+      progress: 1
+    };
+
+    let tickStepTransitionFrame = null;
 
     const collator =
       new Intl.Collator('en-AU', {
@@ -1907,6 +1917,174 @@
       };
     }
 
+
+    function adaptiveMajorStepForMaximum(maximum) {
+      return Math.max(
+        1,
+        Math.round(
+          niceAxisStep(
+            Math.max(Number(maximum) || 1, 1) / 5
+          )
+        )
+      );
+    }
+
+    function resetTickStepTransition(majorStep) {
+      if (tickStepTransitionFrame !== null) {
+        cancelAnimationFrame(tickStepTransitionFrame);
+        tickStepTransitionFrame = null;
+      }
+
+      const step = Math.max(
+        1,
+        Number(majorStep) || 1
+      );
+
+      axisTransitionState.displayMajorStep = step;
+      tickStepTransitionState.active = false;
+      tickStepTransitionState.fromMajorStep = step;
+      tickStepTransitionState.toMajorStep = step;
+      tickStepTransitionState.progress = 1;
+    }
+
+    function animateTickStepChange(
+      fromMajorStep,
+      toMajorStep,
+      duration = 240
+    ) {
+      const from = Math.max(
+        1,
+        Number(fromMajorStep) || 1
+      );
+      const to = Math.max(
+        1,
+        Number(toMajorStep) || 1
+      );
+
+      if (tickStepTransitionFrame !== null) {
+        cancelAnimationFrame(tickStepTransitionFrame);
+        tickStepTransitionFrame = null;
+      }
+
+      axisTransitionState.displayMajorStep = to;
+
+      if (
+        PFF.reducedMotion() ||
+        duration <= 0 ||
+        Math.abs(from - to) < 1e-9
+      ) {
+        resetTickStepTransition(to);
+        chart?.draw();
+        return;
+      }
+
+      tickStepTransitionState.active = true;
+      tickStepTransitionState.fromMajorStep = from;
+      tickStepTransitionState.toMajorStep = to;
+      tickStepTransitionState.progress = 0;
+
+      const startedAt = performance.now();
+
+      function frame(now) {
+        const rawProgress = Math.min(
+          (now - startedAt) / duration,
+          1
+        );
+        const progress =
+          PFFCharts.easeInOutCubic(rawProgress);
+
+        tickStepTransitionState.progress = progress;
+        chart?.draw();
+
+        if (rawProgress < 1) {
+          tickStepTransitionFrame =
+            requestAnimationFrame(frame);
+        } else {
+          tickStepTransitionFrame = null;
+          tickStepTransitionState.active = false;
+          tickStepTransitionState.fromMajorStep = to;
+          tickStepTransitionState.toMajorStep = to;
+          tickStepTransitionState.progress = 1;
+          chart?.draw();
+        }
+      }
+
+      tickStepTransitionFrame =
+        requestAnimationFrame(frame);
+    }
+
+    function updateDisplayedMajorStep(maximum) {
+      const next =
+        adaptiveMajorStepForMaximum(maximum);
+      const current = Number.isFinite(
+        axisTransitionState.displayMajorStep
+      )
+        ? axisTransitionState.displayMajorStep
+        : next;
+
+      if (Math.abs(current - next) > 1e-9) {
+        animateTickStepChange(current, next);
+      } else {
+        axisTransitionState.displayMajorStep = next;
+      }
+    }
+
+    function axisTickLayers() {
+      const currentStep = Number.isFinite(
+        axisTransitionState.displayMajorStep
+      )
+        ? axisTransitionState.displayMajorStep
+        : activeAxisSpec?.majorStep;
+
+      if (
+        tickStepTransitionState.active &&
+        Number.isFinite(
+          tickStepTransitionState.fromMajorStep
+        ) &&
+        Number.isFinite(
+          tickStepTransitionState.toMajorStep
+        )
+      ) {
+        const progress = Math.max(
+          0,
+          Math.min(
+            1,
+            tickStepTransitionState.progress
+          )
+        );
+
+        return [
+          {
+            majorStep:
+              tickStepTransitionState.fromMajorStep,
+            minorStep:
+              tickStepTransitionState.fromMajorStep / 2,
+            alpha: 1 - progress
+          },
+          {
+            majorStep:
+              tickStepTransitionState.toMajorStep,
+            minorStep:
+              tickStepTransitionState.toMajorStep / 2,
+            alpha: progress
+          }
+        ].filter(layer => layer.alpha > 0.001);
+      }
+
+      const majorStep = Math.max(
+        1,
+        Number(currentStep) || 1
+      );
+
+      return [
+        {
+          majorStep,
+          minorStep: majorStep / 2,
+          alpha: 1
+        }
+      ];
+    }
+
     function copyChartArea(area) {
       if (!area) {
         return null;
@@ -2016,16 +2194,25 @@
       if (!Number.isFinite(from) || !Number.isFinite(to)) {
         axisTransitionState.active = false;
         axisTransitionState.max = to;
+        resetTickStepTransition(
+          activeAxisSpec?.majorStep || 1
+        );
         chart?.draw();
         return;
       }
 
       axisTransitionState.active = true;
       axisTransitionState.max = from;
+      resetTickStepTransition(
+        adaptiveMajorStepForMaximum(from)
+      );
 
       if (PFF.reducedMotion() || duration <= 0 || from === to) {
         axisTransitionState.max = to;
         axisTransitionState.active = false;
+        resetTickStepTransition(
+          adaptiveMajorStepForMaximum(to)
+        );
         chart?.draw();
         return;
       }
@@ -2040,6 +2227,9 @@
         const eased = PFFCharts.easeInOutCubic(progress);
 
         axisTransitionState.max = from + (to - from) * eased;
+        updateDisplayedMajorStep(
+          axisTransitionState.max
+        );
         chart?.draw();
 
         if (progress < 1) {
@@ -2048,6 +2238,7 @@
           axisTransitionFrame = null;
           axisTransitionState.max = to;
           axisTransitionState.active = false;
+          updateDisplayedMajorStep(to);
           chart?.draw();
         }
       }
@@ -2107,17 +2298,13 @@
         return null;
       }
 
-      if (!axisTransitionState.active) {
-        return activeAxisSpec;
-      }
-
       const currentMaximum =
         displayedAxisMaximum();
       const majorStep = Math.max(
         1,
-        Math.round(
-          niceAxisStep(currentMaximum / 5)
-        )
+        Number(
+          axisTransitionState.displayMajorStep
+        ) || activeAxisSpec.majorStep
       );
 
       return {
@@ -2170,40 +2357,47 @@
         }
 
         const currentMaximum = displayedAxisMaximum();
-        const lastValue = Math.ceil(
-          currentMaximum / spec.minorStep
-        ) * spec.minorStep;
         const context = chartInstance.ctx;
+        const layers = axisTickLayers();
 
         context.save();
         context.lineCap = 'butt';
 
-        for (
-          let value = 0;
-          value <= lastValue + spec.minorStep * 0.25;
-          value += spec.minorStep
-        ) {
-          const x = xAxisPixel(geometry, value);
+        layers.forEach(layer => {
+          const lastValue = Math.ceil(
+            currentMaximum / layer.minorStep
+          ) * layer.minorStep;
 
-          if (x < geometry.left - 1 || x > geometry.right + 1) {
-            continue;
+          context.globalAlpha = layer.alpha;
+
+          for (
+            let value = 0;
+            value <= lastValue + layer.minorStep * 0.25;
+            value += layer.minorStep
+          ) {
+            const x = xAxisPixel(geometry, value);
+
+            if (x < geometry.left - 1 || x > geometry.right + 1) {
+              continue;
+            }
+
+            const major = Math.abs(
+              value / layer.majorStep -
+              Math.round(value / layer.majorStep)
+            ) < 1e-6;
+
+            context.strokeStyle = major
+              ? 'rgba(105, 113, 138, 0.075)'
+              : 'rgba(105, 113, 138, 0.035)';
+            context.lineWidth = major ? 1 : 0.7;
+            context.beginPath();
+            context.moveTo(Math.round(x) + 0.5, geometry.top);
+            context.lineTo(Math.round(x) + 0.5, geometry.bottom);
+            context.stroke();
           }
+        });
 
-          const major = Math.abs(
-            value / spec.majorStep -
-            Math.round(value / spec.majorStep)
-          ) < 1e-6;
-
-          context.strokeStyle = major
-            ? 'rgba(105, 113, 138, 0.075)'
-            : 'rgba(105, 113, 138, 0.035)';
-          context.lineWidth = major ? 1 : 0.7;
-          context.beginPath();
-          context.moveTo(Math.round(x) + 0.5, geometry.top);
-          context.lineTo(Math.round(x) + 0.5, geometry.bottom);
-          context.stroke();
-        }
-
+        context.globalAlpha = 1;
         context.restore();
       },
 
@@ -2220,9 +2414,7 @@
         const tickFontSize = mobile ? 9 : 10;
         const titleFontSize = mobile ? 12 : 13;
         const currentMaximum = displayedAxisMaximum();
-        const lastValue = Math.ceil(
-          currentMaximum / spec.minorStep
-        ) * spec.minorStep;
+        const layers = axisTickLayers();
         const meta = chartInstance.getDatasetMeta(0);
 
         context.save();
@@ -2276,57 +2468,66 @@
           );
         });
 
-        for (
-          let value = 0;
-          value <= lastValue + spec.minorStep * 0.25;
-          value += spec.minorStep
-        ) {
-          const x = xAxisPixel(geometry, value);
+        layers.forEach(layer => {
+          const lastValue = Math.ceil(
+            currentMaximum / layer.minorStep
+          ) * layer.minorStep;
 
-          if (x < geometry.left - 1 || x > geometry.right + 1) {
-            continue;
+          context.globalAlpha = layer.alpha;
+
+          for (
+            let value = 0;
+            value <= lastValue + layer.minorStep * 0.25;
+            value += layer.minorStep
+          ) {
+            const x = xAxisPixel(geometry, value);
+
+            if (x < geometry.left - 1 || x > geometry.right + 1) {
+              continue;
+            }
+
+            const major = Math.abs(
+              value / layer.majorStep -
+              Math.round(value / layer.majorStep)
+            ) < 1e-6;
+            const tickLength = major ? 6 : 2;
+
+            context.beginPath();
+            context.lineWidth = major ? 1 : 0.7;
+            context.moveTo(Math.round(x) + 0.5, geometry.bottom);
+            context.lineTo(
+              Math.round(x) + 0.5,
+              geometry.bottom + tickLength
+            );
+            context.stroke();
           }
 
-          const major = Math.abs(
-            value / spec.majorStep -
-            Math.round(value / spec.majorStep)
-          ) < 1e-6;
-          const tickLength = major ? 6 : 2;
+          context.font = `400 ${tickFontSize}px Lato, sans-serif`;
+          context.textBaseline = 'top';
 
-          context.beginPath();
-          context.lineWidth = major ? 1 : 0.7;
-          context.moveTo(Math.round(x) + 0.5, geometry.bottom);
-          context.lineTo(
-            Math.round(x) + 0.5,
-            geometry.bottom + tickLength
-          );
-          context.stroke();
-        }
+          for (
+            let value = 0;
+            value <= lastValue + layer.majorStep * 0.25;
+            value += layer.majorStep
+          ) {
+            const x = xAxisPixel(geometry, value);
 
-        context.font = `400 ${tickFontSize}px Lato, sans-serif`;
-        context.textBaseline = 'top';
+            if (x < geometry.left - 1 || x > geometry.right + 1) {
+              continue;
+            }
 
-        for (
-          let value = 0;
-          value <= lastValue + spec.majorStep * 0.25;
-          value += spec.majorStep
-        ) {
-          const x = xAxisPixel(geometry, value);
-
-          if (x < geometry.left - 1 || x > geometry.right + 1) {
-            continue;
+            context.textAlign = value === 0
+              ? 'left'
+              : 'center';
+            context.fillText(
+              PFF.formatInteger(value),
+              x,
+              geometry.bottom + 9
+            );
           }
+        });
 
-          context.textAlign = value === 0
-            ? 'left'
-            : 'center';
-          context.fillText(
-            PFF.formatInteger(value),
-            x,
-            geometry.bottom + 9
-          );
-        }
-
+        context.globalAlpha = 1;
         context.font = `700 ${titleFontSize}px Lato, sans-serif`;
         context.textAlign = 'center';
         context.textBaseline = 'alphabetic';
@@ -2499,6 +2700,9 @@
       activeAxisSpec = axisSpecFor(model);
       axisTransitionState.max = activeAxisSpec.max;
       axisTransitionState.active = false;
+      resetTickStepTransition(
+        activeAxisSpec.majorStep
+      );
       updateStageGeometry(model, true);
 
       chart = new Chart(
@@ -2618,6 +2822,9 @@
 
         axisTransitionState.active = true;
         axisTransitionState.max = startMaximum;
+        resetTickStepTransition(
+          adaptiveMajorStepForMaximum(startMaximum)
+        );
 
         chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
         chart.update('none');
@@ -2645,6 +2852,9 @@
 
             chart.options.scales.x.max = displayedMaximum;
             axisTransitionState.max = displayedMaximum;
+            updateDisplayedMajorStep(
+              displayedMaximum
+            );
             chart.update('none');
           },
 
@@ -2658,6 +2868,9 @@
 
             axisTransitionState.active = false;
             axisTransitionState.max = targetMaximum;
+            updateDisplayedMajorStep(
+              targetMaximum
+            );
 
             chart.update('none');
             setSpineGeometry(chart.chartArea);
@@ -2696,6 +2909,9 @@
         spineTransitionState.active = false;
         axisTransitionState.active = false;
         axisTransitionState.max = activeAxisSpec.max;
+        resetTickStepTransition(
+          activeAxisSpec.majorStep
+        );
         setSpineGeometry(nextArea);
         chart.draw();
       }
@@ -2837,6 +3053,9 @@
             activeAxisSpec = axisSpecFor(activeModel);
             axisTransitionState.active = false;
             axisTransitionState.max = activeAxisSpec.max;
+            resetTickStepTransition(
+              activeAxisSpec.majorStep
+            );
             chart.data = chartData(activeModel);
             chart.options = chartOptions(activeModel);
             chart.resize();
