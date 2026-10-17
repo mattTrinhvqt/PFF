@@ -637,10 +637,10 @@
       active: false,
       fromMajorStep: NaN,
       toMajorStep: NaN,
+      fromMaximum: NaN,
+      toMaximum: NaN,
       progress: 1
     };
-
-    let tickStepTransitionFrame = null;
 
     const collator =
       new Intl.Collator('en-AU', {
@@ -2096,11 +2096,6 @@
     }
 
     function resetTickStepTransition(majorStep) {
-      if (tickStepTransitionFrame !== null) {
-        cancelAnimationFrame(tickStepTransitionFrame);
-        tickStepTransitionFrame = null;
-      }
-
       const step = Math.max(
         1,
         Number(majorStep) || 1
@@ -2110,116 +2105,18 @@
       tickStepTransitionState.active = false;
       tickStepTransitionState.fromMajorStep = step;
       tickStepTransitionState.toMajorStep = step;
+      tickStepTransitionState.fromMaximum = NaN;
+      tickStepTransitionState.toMaximum = NaN;
       tickStepTransitionState.progress = 1;
-    }
-
-    function animateTickStepChange(
-      fromMajorStep,
-      toMajorStep,
-      duration = 180,
-      onComplete = null
-    ) {
-      const from = Math.max(
-        1,
-        Number(fromMajorStep) || 1
-      );
-      const to = Math.max(
-        1,
-        Number(toMajorStep) || 1
-      );
-
-      if (tickStepTransitionFrame !== null) {
-        cancelAnimationFrame(tickStepTransitionFrame);
-        tickStepTransitionFrame = null;
-      }
-
-      axisTransitionState.displayMajorStep = to;
-
-      if (
-        PFF.reducedMotion() ||
-        duration <= 0 ||
-        Math.abs(from - to) < 1e-9
-      ) {
-        resetTickStepTransition(to);
-        chart?.draw();
-        onComplete?.();
-        return;
-      }
-
-      tickStepTransitionState.active = true;
-      tickStepTransitionState.fromMajorStep = from;
-      tickStepTransitionState.toMajorStep = to;
-      tickStepTransitionState.progress = 0;
-
-      const startedAt = performance.now();
-
-      function frame(now) {
-        const rawProgress = Math.min(
-          (now - startedAt) / duration,
-          1
-        );
-        const progress =
-          PFFCharts.easeInOutCubic(rawProgress);
-
-        tickStepTransitionState.progress = progress;
-        chart?.draw();
-
-        if (rawProgress < 1) {
-          tickStepTransitionFrame =
-            requestAnimationFrame(frame);
-        } else {
-          tickStepTransitionFrame = null;
-          tickStepTransitionState.active = false;
-          tickStepTransitionState.fromMajorStep = to;
-          tickStepTransitionState.toMajorStep = to;
-          tickStepTransitionState.progress = 1;
-          chart?.draw();
-          onComplete?.();
-        }
-      }
-
-      tickStepTransitionFrame =
-        requestAnimationFrame(frame);
-    }
-
-    function settleDisplayedMajorStep(
-      maximum,
-      heldMajorStep
-    ) {
-      const held = Math.max(
-        1,
-        Number(heldMajorStep) ||
-          Number(axisTransitionState.displayMajorStep) ||
-          1
-      );
-      const next =
-        majorStepWithHysteresis(
-          maximum,
-          held
-        );
-
-      if (Math.abs(held - next) > 1e-9) {
-        animateTickStepChange(
-          held,
-          next,
-          180
-        );
-      } else {
-        resetTickStepTransition(held);
-        chart?.draw();
-      }
     }
 
     function setTickStepHandoff(
       fromMajorStep,
       toMajorStep,
-      progress
+      progress,
+      fromMaximum,
+      toMaximum
     ) {
-      if (tickStepTransitionFrame !== null) {
-        cancelAnimationFrame(tickStepTransitionFrame);
-        tickStepTransitionFrame = null;
-      }
-
       const from = Math.max(
         1,
         Number(fromMajorStep) || 1
@@ -2242,6 +2139,14 @@
       tickStepTransitionState.active = true;
       tickStepTransitionState.fromMajorStep = from;
       tickStepTransitionState.toMajorStep = to;
+      tickStepTransitionState.fromMaximum =
+        Number.isFinite(Number(fromMaximum))
+          ? Math.max(0, Number(fromMaximum))
+          : NaN;
+      tickStepTransitionState.toMaximum =
+        Number.isFinite(Number(toMaximum))
+          ? Math.max(0, Number(toMaximum))
+          : NaN;
       tickStepTransitionState.progress = amount;
     }
 
@@ -2300,6 +2205,8 @@
               tickStepTransitionState.fromMajorStep,
             minorStep:
               tickStepTransitionState.fromMajorStep / 2,
+            max:
+              tickStepTransitionState.fromMaximum,
             alpha: 1 - progress
           },
           {
@@ -2307,6 +2214,8 @@
               tickStepTransitionState.toMajorStep,
             minorStep:
               tickStepTransitionState.toMajorStep / 2,
+            max:
+              tickStepTransitionState.toMaximum,
             alpha: progress
           }
         ].filter(layer => layer.alpha > 0.001);
@@ -2321,6 +2230,7 @@
         {
           majorStep,
           minorStep: majorStep / 2,
+          max: displayedAxisMaximum(),
           alpha: 1
         }
       ];
@@ -2330,8 +2240,12 @@
       const marks = new Map();
 
       axisTickLayers().forEach(layer => {
-        const lastValue = Math.ceil(
-          currentMaximum / layer.minorStep
+        const layerMaximum = Number.isFinite(layer.max)
+          ? Math.max(0, layer.max)
+          : currentMaximum;
+        const lastValue = Math.floor(
+          (layerMaximum + layer.minorStep * 1e-7) /
+          layer.minorStep
         ) * layer.minorStep;
 
         for (
@@ -2350,29 +2264,49 @@
             value: roundedValue,
             alpha: 0,
             labelAlpha: 0,
-            major: false
+            majorAlpha: 0,
+            minorAlpha: 0
           };
 
           existing.alpha = Math.min(
             1,
             existing.alpha + layer.alpha
           );
-          existing.major = existing.major || major;
 
           if (major) {
+            existing.majorAlpha += layer.alpha;
             existing.labelAlpha = Math.min(
               1,
               existing.labelAlpha + layer.alpha
             );
+          } else {
+            existing.minorAlpha += layer.alpha;
           }
 
           marks.set(key, existing);
         }
       });
 
-      return Array.from(marks.values()).sort(
-        (a, b) => a.value - b.value
-      );
+      return Array.from(marks.values())
+        .map(mark => {
+          const styleWeight =
+            mark.majorAlpha + mark.minorAlpha;
+
+          return {
+            ...mark,
+            majorStrength:
+              styleWeight > 1e-9
+                ? Math.max(
+                    0,
+                    Math.min(
+                      1,
+                      mark.majorAlpha / styleWeight
+                    )
+                  )
+                : 0
+          };
+        })
+        .sort((a, b) => a.value - b.value);
     }
 
     function copyChartArea(area) {
@@ -2544,7 +2478,9 @@
             tickStepHandoffProgress(
               progress,
               expanding
-            )
+            ),
+            from,
+            to
           );
         }
 
@@ -2694,10 +2630,12 @@
           }
 
           context.globalAlpha = mark.alpha;
-          context.strokeStyle = mark.major
-            ? 'rgba(105, 113, 138, 0.075)'
-            : 'rgba(105, 113, 138, 0.035)';
-          context.lineWidth = mark.major ? 1 : 0.7;
+          const gridOpacity =
+            0.035 + 0.04 * mark.majorStrength;
+          context.strokeStyle =
+            `rgba(105, 113, 138, ${gridOpacity})`;
+          context.lineWidth =
+            0.7 + 0.3 * mark.majorStrength;
           context.beginPath();
           context.moveTo(Math.round(x) + 0.5, geometry.top);
           context.lineTo(Math.round(x) + 0.5, geometry.bottom);
@@ -2786,10 +2724,12 @@
           }
 
           context.globalAlpha = mark.alpha;
-          const tickLength = mark.major ? 6 : 2;
+          const tickLength =
+            2 + 4 * mark.majorStrength;
 
           context.beginPath();
-          context.lineWidth = mark.major ? 1 : 0.7;
+          context.lineWidth =
+            0.7 + 0.3 * mark.majorStrength;
           context.moveTo(Math.round(x) + 0.5, geometry.bottom);
           context.lineTo(
             Math.round(x) + 0.5,
@@ -3179,7 +3119,9 @@
                 tickStepHandoffProgress(
                   progress,
                   expanding
-                )
+                ),
+                startMaximum,
+                targetMaximum
               );
             }
 
