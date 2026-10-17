@@ -25,7 +25,7 @@
 
     .loader-ellipsis > span {
       opacity: 0;
-      animation: landscapeLoaderDot 1.05s infinite;
+      animation: landscapeLoaderDot 1.05s steps(1, end) infinite;
     }
 
     .loader-ellipsis > span:nth-child(1) { animation-delay: 0ms; }
@@ -33,9 +33,9 @@
     .loader-ellipsis > span:nth-child(3) { animation-delay: 360ms; }
 
     @keyframes landscapeLoaderDot {
-      0%, 20% { opacity: 0; }
-      30%, 70% { opacity: 1; }
-      80%, 100% { opacity: 0; }
+      0%, 19.9% { opacity: 0; }
+      20%, 39.9% { opacity: 1; }
+      40%, 100% { opacity: 0; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -135,6 +135,14 @@
       overscroll-behavior: contain;
       scrollbar-width: thin;
       scrollbar-color: rgba(105, 113, 138, 0.34) transparent;
+    }
+
+    .location-menu-section {
+      border-bottom: 1px solid var(--pff-track);
+    }
+
+    .location-menu-section[hidden] {
+      display: none !important;
     }
 
     .area-option-name {
@@ -315,44 +323,6 @@
         </div>
 
         <div class="heading-controls">
-          <div id="basisControl" class="state-control">
-            <button
-              id="basisButton"
-              class="state-button basis-button"
-              type="button"
-              aria-expanded="false"
-              aria-controls="basisMenu"
-            >
-              <span>Basis</span>
-              <span id="basisButtonValue" class="state-button-value">Suburb</span>
-              <span class="menu-arrow" aria-hidden="true"></span>
-            </button>
-
-            <div id="basisMenu" class="state-menu basis-menu" role="menu">
-              <div class="state-menu-title">Show basis</div>
-              <div id="basisOptions"></div>
-            </div>
-          </div>
-
-          <div id="radiusControl" class="state-control" hidden>
-            <button
-              id="radiusButton"
-              class="state-button radius-button"
-              type="button"
-              aria-expanded="false"
-              aria-controls="radiusMenu"
-            >
-              <span>Radius</span>
-              <span id="radiusButtonValue" class="state-button-value">3 km</span>
-              <span class="menu-arrow" aria-hidden="true"></span>
-            </button>
-
-            <div id="radiusMenu" class="state-menu radius-menu" role="menu">
-              <div class="state-menu-title">Show radius</div>
-              <div id="radiusOptions"></div>
-            </div>
-          </div>
-
           <div id="areaControl" class="state-control">
             <button
               id="areaButton"
@@ -369,6 +339,10 @@
             <div id="areaMenu" class="state-menu area-menu" role="menu">
               <div class="state-menu-title">Show location</div>
               <div id="areaOptions"></div>
+              <div id="locationRadiusSection" class="location-menu-section" hidden>
+                <div class="state-menu-title">Radius</div>
+                <div id="locationRadiusOptions"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -529,36 +503,6 @@
     const chartHeadingDetail =
       document.getElementById('chartHeadingDetail');
 
-    const basisControl =
-      document.getElementById('basisControl');
-
-    const basisButton =
-      document.getElementById('basisButton');
-
-    const basisButtonValue =
-      document.getElementById('basisButtonValue');
-
-    const basisMenu =
-      document.getElementById('basisMenu');
-
-    const basisOptions =
-      document.getElementById('basisOptions');
-
-    const radiusControl =
-      document.getElementById('radiusControl');
-
-    const radiusButton =
-      document.getElementById('radiusButton');
-
-    const radiusButtonValue =
-      document.getElementById('radiusButtonValue');
-
-    const radiusMenu =
-      document.getElementById('radiusMenu');
-
-    const radiusOptions =
-      document.getElementById('radiusOptions');
-
     const headingScrollViewport =
       document.getElementById('headingScrollViewport');
 
@@ -583,6 +527,12 @@
     const areaOptions =
       document.getElementById('areaOptions');
 
+    const locationRadiusSection =
+      document.getElementById('locationRadiusSection');
+
+    const locationRadiusOptions =
+      document.getElementById('locationRadiusOptions');
+
     const chartShell =
       document.getElementById('chartShell');
 
@@ -601,7 +551,6 @@
     let activeModel = null;
     let activeView = 'brands';
     let activeArea = 'AUS';
-    let activeBasis = 'suburb';
     let activeRadius = 3;
     let radiusCountCache = new Map();
     let activeAxisSpec = null;
@@ -1117,7 +1066,7 @@
       let grouped;
       if (activeView === 'brands') {
         grouped = buildBrandGroups(areaRows);
-      } else if (activeView === 'dense' && activeBasis === 'suburb') {
+      } else if (activeView === 'dense') {
         grouped = buildSuburbGroups(areaRows);
       } else {
         grouped = radiusGroupsFor(areaRows, activeRadius);
@@ -1162,6 +1111,14 @@
       }
 
       return `${text.slice(0, Math.max(1, limit - 1))}…`;
+    }
+
+    function axisTickLabel(group) {
+      const text = tickLabel(group);
+
+      return activeView === 'brands'
+        ? clippedTickLabel(text)
+        : text;
     }
 
     function brandColourKey(value) {
@@ -1264,9 +1221,14 @@
     }
 
     function headingDetail() {
-      if (activeView === 'brands') return 'brand (non-independent)';
-      if (activeView === 'dense' && activeBasis === 'suburb') return 'densest locations by suburb';
-      if (activeView === 'dense') return `densest locations within ${PFF.formatInteger(activeRadius)} km`;
+      if (activeView === 'brands') {
+        return 'brand (non-independent)';
+      }
+
+      if (activeView === 'dense') {
+        return 'densest locations by suburb';
+      }
+
       return `sparsest locations within ${PFF.formatInteger(activeRadius)} km`;
     }
 
@@ -1294,40 +1256,41 @@
       );
     }
 
-    const DENSE_RADIUS_OPTIONS = Object.freeze([3, 10, 30, 100]);
-    const SPARSE_RADIUS_OPTIONS = Object.freeze([50, 100, 200]);
+    const SPARSE_RADIUS_OPTIONS_BY_AREA = Object.freeze({
+      AUS: [300, 500, 1000],
+      NSW: [100, 200, 300],
+      VIC: [50, 100, 200],
+      QLD: [200, 300, 500],
+      SA: [200, 300, 500],
+      WA: [300, 500, 1000],
+      TAS: [10, 30, 50],
+      NT: [300, 500, 750],
+      ACT: [10, 50, 100]
+    });
 
-    function buildBasisMenu() {
-      basisOptions.textContent = '';
-      [
-        { value: 'suburb', label: 'Suburb' },
-        { value: 'radius', label: 'Radius' }
-      ].forEach(option => {
-        const label = document.createElement('label');
-        label.className = 'state-option';
-        const input = document.createElement('input');
-        input.type = 'radio';
-        input.name = 'practice-landscape-basis';
-        input.value = option.value;
-        input.checked = option.value === activeBasis;
-        const box = document.createElement('span');
-        box.className = 'state-option-box';
-        box.setAttribute('aria-hidden', 'true');
-        const name = document.createElement('span');
-        name.className = 'area-option-name';
-        name.textContent = option.label;
-        label.append(input, box, name);
-        basisOptions.appendChild(label);
-      });
-      basisButtonValue.textContent = activeBasis === 'radius' ? 'Radius' : 'Suburb';
+    function sparseRadiusOptionsForArea() {
+      return SPARSE_RADIUS_OPTIONS_BY_AREA[activeArea] ||
+        SPARSE_RADIUS_OPTIONS_BY_AREA.AUS;
     }
 
     function radiusOptionsForView() {
-      return activeView === 'sparse' ? SPARSE_RADIUS_OPTIONS : DENSE_RADIUS_OPTIONS;
+      return activeView === 'sparse'
+        ? sparseRadiusOptionsForArea()
+        : [];
     }
 
-    function buildRadiusMenu() {
-      radiusOptions.textContent = '';
+    function buildLocationRadiusOptions() {
+      locationRadiusOptions.textContent = '';
+
+      const visible =
+        activeView === 'sparse';
+
+      locationRadiusSection.hidden = !visible;
+
+      if (!visible) {
+        return;
+      }
+
       radiusOptionsForView().forEach(radius => {
         const label = document.createElement('label');
         label.className = 'state-option';
@@ -1343,31 +1306,12 @@
         name.className = 'area-option-name';
         name.textContent = `${PFF.formatInteger(radius)} km`;
         label.append(input, box, name);
-        radiusOptions.appendChild(label);
+        locationRadiusOptions.appendChild(label);
       });
-      radiusButtonValue.textContent = `${PFF.formatInteger(activeRadius)} km`;
-    }
-
-    function syncBasisRadiusVisibility() {
-      basisControl.hidden = activeView !== 'dense';
-      radiusControl.hidden = !((activeView === 'dense' && activeBasis === 'radius') || activeView === 'sparse');
-      if (basisControl.hidden) basisMenu.classList.remove('is-open');
-      if (radiusControl.hidden) radiusMenu.classList.remove('is-open');
-    }
-
-    function syncBasisRadiusControls(animate = true) {
-      const basisNext = activeBasis === 'radius' ? 'Radius' : 'Suburb';
-      const radiusNext = `${PFF.formatInteger(activeRadius)} km`;
-      if (!animate || PFF.reducedMotion()) {
-        basisButtonValue.textContent = basisNext;
-        radiusButtonValue.textContent = radiusNext;
-        return;
-      }
-      if (!basisControl.hidden) PFF.animateTextChange(basisButtonValue, basisNext, { fadeOutMs: 130, fadeInMs: 200 });
-      if (!radiusControl.hidden) PFF.animateTextChange(radiusButtonValue, radiusNext, { fadeOutMs: 130, fadeInMs: 200 });
     }
 
     function buildAreaMenu() {
+      buildLocationRadiusOptions();
       areaOptions.textContent = '';
 
       const options = [
@@ -1405,34 +1349,22 @@
         label.append(input, box, name);
         areaOptions.appendChild(label);
       });
+
+      syncLocationMenuSelection();
     }
 
-    function syncAreaControl(animate = true) {
-      const next = areaLabel();
-
-      areaButtonValue.style.color = activeArea === 'AUS'
-        ? 'var(--landscape-australia)'
-        : PFF.stateColours?.[activeArea] || '#69718a';
-
+    function syncLocationMenuSelection() {
       areaOptions
         .querySelectorAll('input[name="practice-landscape-area"]')
         .forEach(input => {
           input.checked = input.value === activeArea;
         });
 
-      if (!animate || PFF.reducedMotion()) {
-        areaButtonValue.textContent = next;
-        return;
-      }
-
-      PFF.animateTextChange(
-        areaButtonValue,
-        next,
-        {
-          fadeOutMs: 130,
-          fadeInMs: 200
-        }
-      );
+      locationRadiusOptions
+        .querySelectorAll('input[name="practice-landscape-radius"]')
+        .forEach(input => {
+          input.checked = Number(input.value) === activeRadius;
+        });
     }
 
     function stageHeightFor() {
@@ -1933,7 +1865,36 @@
         context.fillStyle = '#151515';
         context.textAlign = 'right';
         context.textBaseline = 'middle';
-        context.font = `400 ${mobile ? 9 : 10}px Lato, sans-serif`;
+
+        const labelBaseSize =
+          mobile ? 9 : 10;
+        const labelMinSize =
+          mobile ? 6 : 7;
+        const labelMaxWidth =
+          Math.max(50, geometry.left - 8);
+        const labelTexts =
+          (activeModel?.groups || []).map(
+            group => axisTickLabel(group)
+          );
+
+        let labelFontSize =
+          labelBaseSize;
+
+        context.font =
+          `400 ${labelFontSize}px Lato, sans-serif`;
+
+        while (
+          labelFontSize > labelMinSize &&
+          labelTexts.some(
+            text =>
+              context.measureText(text).width >
+              labelMaxWidth
+          )
+        ) {
+          labelFontSize -= 0.5;
+          context.font =
+            `400 ${labelFontSize}px Lato, sans-serif`;
+        }
 
         (activeModel?.groups || []).forEach((group, index) => {
           const bar = meta?.data?.[index];
@@ -1943,7 +1904,7 @@
           }
 
           context.fillText(
-            clippedTickLabel(tickLabel(group)),
+            labelTexts[index] || '',
             geometry.left - 5,
             bar.y
           );
@@ -2360,9 +2321,9 @@
       const first = activeModel.groups[0];
       const subject = activeView === 'brands'
         ? 'non-independent brand or parent categories'
-        : activeView === 'dense' && activeBasis === 'suburb'
+        : activeView === 'dense'
           ? 'suburbs'
-          : `${activeView === 'dense' ? 'densest' : 'sparsest'} radius locations`;
+          : 'sparsest radius locations';
       const topText = first
         ? ` Highest shown: ${tickLabel(first)}, ${PFF.formatInteger(first.count)} practices.`
         : '';
@@ -2378,8 +2339,8 @@
       const model = buildModel();
 
       updateHeading(animate);
-      syncBasisRadiusVisibility();
-      syncBasisRadiusControls(animate);
+      buildLocationRadiusOptions();
+      syncLocationMenuSelection();
       syncAreaControl(animate);
       updateChart(model, animate);
       updateAccessibleSummary();
@@ -2404,65 +2365,34 @@
           activeView = value;
           areaMenuController?.closeMenu?.();
 
-          if (activeView === 'dense') {
-            activeBasis = 'suburb';
-            activeRadius = DENSE_RADIUS_OPTIONS[0];
-          } else if (activeView === 'sparse') {
-            activeRadius = SPARSE_RADIUS_OPTIONS[0];
+          if (activeView === 'sparse') {
+            activeRadius = sparseRadiusOptionsForArea()[0];
           }
 
-          buildBasisMenu();
-          buildRadiusMenu();
+          buildAreaMenu();
           radiusCountCache.clear();
           renderView({ animate: true });
         }
       });
 
-      const basisMenuController =
+      areaMenuController =
         PFF.setupMenu({
-          menu: basisControl,
-          button: basisButton,
-          panel: basisMenu,
+          menu: areaControl,
+          button: areaButton,
+          panel: areaMenu,
           focusOnOpen: false
         });
 
-      basisOptions.addEventListener('change', event => {
-        const input = event.target.closest(
-          'input[name="practice-landscape-basis"]'
-        );
-        if (!input) return;
-        activeBasis = input.value;
-        basisMenuController?.closeMenu?.();
-        if (activeBasis === 'radius') activeRadius = DENSE_RADIUS_OPTIONS[0];
-        buildBasisMenu();
-        buildRadiusMenu();
-        radiusCountCache.clear();
-        renderView({ animate: true });
-      });
 
-      const radiusMenuController =
-        PFF.setupMenu({
-          menu: radiusControl,
-          button: radiusButton,
-          panel: radiusMenu,
-          focusOnOpen: false
-        });
-
-      radiusOptions.addEventListener('change', event => {
+      locationRadiusOptions.addEventListener('change', event => {
         const input = event.target.closest(
           'input[name="practice-landscape-radius"]'
         );
         if (!input) return;
-        activeRadius = Number(input.value);
-        radiusMenuController?.closeMenu?.();
-        renderView({ animate: true });
-      });
 
-      areaMenuController = PFF.setupMenu({
-        menu: areaControl,
-        button: areaButton,
-        panel: areaMenu,
-        focusOnOpen: false
+        activeRadius = Number(input.value);
+        areaMenuController?.closeMenu?.();
+        renderView({ animate: true });
       });
 
       areaOptions.addEventListener('change', event => {
@@ -2475,10 +2405,19 @@
         }
 
         activeArea = input.value;
+
+        if (activeView === 'sparse') {
+          const options = sparseRadiusOptionsForArea();
+          if (!options.includes(activeRadius)) {
+            activeRadius = options[0];
+          }
+        }
+
+        buildAreaMenu();
         areaMenuController?.closeMenu?.();
+        radiusCountCache.clear();
         renderView({ animate: true });
       });
-
 
       chartInteractionController =
         PFFCharts.setupChartInteractions({
@@ -2538,8 +2477,6 @@
 
         setLoadedSourceIndicator(loaded);
         radiusCountCache.clear();
-        buildBasisMenu();
-        buildRadiusMenu();
         buildAreaMenu();
         configureControls();
 
