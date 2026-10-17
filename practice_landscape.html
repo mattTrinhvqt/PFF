@@ -7,8 +7,8 @@
   <title>PFF Practice Landscape</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <script src="./assets/pff_loader.js"></script>
-  <script src="./assets/pff_chart_core.js?v=1.2.11-20260917"></script>
+  <script src="./assets/pff_loader.js?v=1.2.5-20261013a"></script>
+  <script src="./assets/pff_chart_core.js?v=1.2.11-20260919a"></script>
 
   <style>
 
@@ -16,6 +16,55 @@
       --landscape-purple: #6600ff;
       --landscape-unclassified: #bfc3c7;
       --landscape-australia: #0b5d1e;
+    }
+
+    .loader-ellipsis {
+      display: inline-flex;
+      width: 1.12em;
+    }
+
+    .loader-ellipsis > span {
+      opacity: 0;
+      animation-duration: 1.2s;
+      animation-timing-function: steps(1, end);
+      animation-iteration-count: infinite;
+    }
+
+    .loader-ellipsis > span:nth-child(1) {
+      animation-name: landscapeLoaderDotOne;
+    }
+
+    .loader-ellipsis > span:nth-child(2) {
+      animation-name: landscapeLoaderDotTwo;
+    }
+
+    .loader-ellipsis > span:nth-child(3) {
+      animation-name: landscapeLoaderDotThree;
+    }
+
+    @keyframes landscapeLoaderDotOne {
+      0%, 19.9% { opacity: 0; }
+      20%, 99.9% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes landscapeLoaderDotTwo {
+      0%, 44.9% { opacity: 0; }
+      45%, 99.9% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    @keyframes landscapeLoaderDotThree {
+      0%, 69.9% { opacity: 0; }
+      70%, 99.9% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .loader-ellipsis > span {
+        opacity: 1;
+        animation: none;
+      }
     }
 
     .chart-heading-row {
@@ -57,11 +106,20 @@
       margin-left: 0.28em;
     }
 
+    .chart-heading-fixed:empty + .chart-heading-detail {
+      margin-left: 0;
+    }
+
     .heading-controls {
       margin-left: auto;
       padding-top: 2px;
       flex: 0 0 auto;
     }
+
+
+
+
+
 
     .area-button {
       min-width: 84px;
@@ -79,6 +137,8 @@
       scrollbar-width: thin;
       scrollbar-color: rgba(105, 113, 138, 0.34) transparent;
     }
+
+
 
     .area-option-name {
       min-width: 0;
@@ -158,7 +218,10 @@
           <span class="cone green"></span>
           <span class="cone red"></span>
         </div>
-        <p class="loader-text">Loading practice landscape data…</p>
+        <p
+          class="loader-text"
+          aria-label="Excellent… let’s see the eyecare landscape"
+        >Excellent<span class="loader-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span> let’s see the eyecare landscape</p>
       </div>
 
       <div class="module-top">
@@ -182,15 +245,23 @@
               role="tab"
               data-view="brands"
               aria-selected="true"
-            >Brands (non-independent)</button>
+            >Brands</button>
 
             <button
               class="chart-tab"
               type="button"
               role="tab"
-              data-view="suburbs"
+              data-view="dense"
               aria-selected="false"
-            >Suburbs</button>
+            >Densest locations</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              data-view="remote"
+              aria-selected="false"
+            >Remoteness</button>
           </div>
 
           <button
@@ -225,7 +296,7 @@
 
           <div id="headingScrollViewport" class="heading-scroll-viewport">
             <h2 id="chartHeading" class="chart-heading">
-              <span class="chart-heading-fixed">Practice landscape by</span>
+              <span id="chartHeadingFixed" class="chart-heading-fixed">Practice landscape by</span>
               <span id="chartHeadingDetail" class="chart-heading-detail">brand (non-independent)</span>
             </h2>
           </div>
@@ -282,22 +353,34 @@
         '1v6nHeJDkbYF-Pan7OEDLLBhYLghuGxFVBoRX4ibuWSE',
 
       sheetName:
-        '2026 Optometrist practice directory',
+        '2026 Optom EAT',
 
       sheetGid:
-        '1701358020',
+        '884596310',
 
       sourceRange:
-        'B32:AF',
+        'B32:AJ',
 
       sourceColumnCount:
-        31,
+        35,
+
+      locationSheetName:
+        'Localities',
+
+      locationRange:
+        'A4:J',
+
+      locationSourceColumnCount:
+        10,
 
       fetchTimeoutMs:
         25000,
 
       jsonFallbackUrl:
         './assets/practice_directory_fallback.json',
+
+      jsonFallbackVersion:
+        8,
 
       jsonFetchTimeoutMs:
         15000,
@@ -306,7 +389,7 @@
         'pff-optom-practice-directory',
 
       localCacheKey:
-        'pff-practice-landscape-rows-v2',
+        'pff-practice-landscape-rows-v4',
 
       minimumRows:
         100,
@@ -403,6 +486,9 @@
     const tabScrollRight =
       document.getElementById('tabScrollRight');
 
+    const chartHeadingFixed =
+      document.getElementById('chartHeadingFixed');
+
     const chartHeadingDetail =
       document.getElementById('chartHeadingDetail');
 
@@ -442,11 +528,78 @@
     const chartCanvas =
       document.getElementById('practiceLandscapeChart');
 
+
+    const landscapeLoaderText =
+      document.querySelector('#loadingState > .loader-text');
+
+    function positionLandscapeLoaderDots() {
+      if (!landscapeLoaderText) {
+        return;
+      }
+
+      const pffDots =
+        landscapeLoaderText.querySelector('.pff-loader-dots');
+      const pffLabel =
+        landscapeLoaderText.querySelector('.pff-loading-label');
+
+      if (!pffDots || !pffLabel) {
+        return;
+      }
+
+      const suffixText =
+        ' let’s see the eyecare landscape';
+
+      if (
+        pffLabel.textContent === 'Excellent' &&
+        landscapeLoaderText.querySelector('.landscape-loader-suffix')
+      ) {
+        return;
+      }
+
+      pffLabel.textContent =
+        'Excellent';
+
+      const suffix =
+        document.createElement('span');
+      suffix.className =
+        'landscape-loader-suffix';
+      suffix.textContent =
+        suffixText;
+
+      landscapeLoaderText.replaceChildren(
+        pffLabel,
+        pffDots,
+        suffix
+      );
+    }
+
+    if (landscapeLoaderText) {
+      const landscapeLoaderObserver =
+        new MutationObserver(
+          positionLandscapeLoaderDots
+        );
+
+      landscapeLoaderObserver.observe(
+        landscapeLoaderText,
+        {
+          childList: true,
+          subtree: true
+        }
+      );
+
+      window.requestAnimationFrame(
+        positionLandscapeLoaderDots
+      );
+    }
+
     let sourceRows = [];
+    let locationRows = [];
     let chart = null;
     let activeModel = null;
     let activeView = 'brands';
     let activeArea = 'AUS';
+    let practiceSpatialIndex = null;
+    const nearestDistanceCache = new Map();
     let activeAxisSpec = null;
     let tabsController = null;
     let headingScroller = null;
@@ -476,7 +629,17 @@
 
     const axisTransitionState = {
       active: false,
-      max: NaN
+      max: NaN,
+      displayMajorStep: NaN
+    };
+
+    const tickStepTransitionState = {
+      active: false,
+      fromMajorStep: NaN,
+      toMajorStep: NaN,
+      fromMaximum: NaN,
+      toMaximum: NaN,
+      progress: 1
     };
 
     const collator =
@@ -504,71 +667,79 @@
       return text;
     }
 
+    const LOCATION_KEYS = Object.freeze([
+      'postcode',
+      'suburb',
+      'latitude',
+      'longitude',
+      'phn',
+      'mmm',
+      'state',
+      'population',
+      'optometrists',
+      'populationCoverage'
+    ]);
+
+    function dataNumber(value) {
+      const cleaned = String(value ?? '').replace(/,/g, '').trim();
+      if (!cleaned) return NaN;
+      const number = Number(cleaned);
+      return Number.isFinite(number) ? number : NaN;
+    }
+
+    function normaliseLocationRow(values, sourceIndex) {
+      if (!Array.isArray(values) || values.length < CONFIG.locationSourceColumnCount) return null;
+      const row = {};
+      LOCATION_KEYS.forEach((key, index) => { row[key] = PFF.cleanText(values[index]); });
+      row.sourceIndex = sourceIndex;
+      row.stateCode = PFF.normaliseState(row.state);
+      row.latitudeNumber = dataNumber(row.latitude);
+      row.longitudeNumber = dataNumber(row.longitude);
+      if (!row.suburb || !row.stateCode || !Number.isFinite(row.latitudeNumber) || !Number.isFinite(row.longitudeNumber)) return null;
+      return row;
+    }
+
     function sourceRowsFromTable(table) {
       return (table?.rows || [])
         .map(rawRow => {
           const cells = rawRow?.c || [];
-
-          return Array.from(
-            { length: CONFIG.sourceColumnCount },
-            (_, index) => PFF.cleanText(
-              PFF.cellValue(cells[index])
-            )
-          );
+          return Array.from({ length: CONFIG.sourceColumnCount }, (_, index) => PFF.cleanText(PFF.cellValue(cells[index])));
         })
-        .filter(values =>
-          Boolean(
-            PFF.cleanText(
-              values[CONFIG.columns.practiceName]
-            )
-          )
-        );
+        .filter(values => Boolean(PFF.cleanText(values[CONFIG.columns.practiceName])));
+    }
+
+    function locationRowsFromTable(table) {
+      return (table?.rows || [])
+        .map(rawRow => {
+          const cells = rawRow?.c || [];
+          return Array.from({ length: CONFIG.locationSourceColumnCount }, (_, index) => PFF.cleanText(PFF.cellValue(cells[index])));
+        })
+        .map((values, sourceIndex) => normaliseLocationRow(values, sourceIndex))
+        .filter(Boolean);
     }
 
     function sourceRowsFromRemoteCache(payload) {
-      const rows = Array.isArray(payload?.data?.rows)
-        ? payload.data.rows
-        : [];
+      const rows = Array.isArray(payload?.data?.rows) ? payload.data.rows : [];
 
       return rows
         .map(row => {
-          if (!Array.isArray(row)) {
-            return null;
-          }
-
-          /*
-           * Current Practice Directory fallback rows are A:AF (32 columns)
-           * and include the practice ID in column A. This chart's live
-           * source uses B:AF (31 columns), so drop the ID when present.
-           */
-          const offset =
-            row.length >= CONFIG.sourceColumnCount + 1
-              ? 1
-              : 0;
-
-          if (
-            row.length <
-            CONFIG.sourceColumnCount + offset
-          ) {
-            return null;
-          }
-
-          return Array.from(
-            { length: CONFIG.sourceColumnCount },
-            (_, index) =>
-              PFF.cleanText(
-                row[index + offset]
-              )
-          );
+          if (!Array.isArray(row)) return null;
+          const offset = row.length >= CONFIG.sourceColumnCount + 1 ? 1 : 0;
+          if (row.length < CONFIG.sourceColumnCount + offset) return null;
+          return Array.from({ length: CONFIG.sourceColumnCount }, (_, index) => PFF.cleanText(row[index + offset]));
         })
         .filter(Boolean)
-        .filter(values =>
-          Boolean(
-            PFF.cleanText(
-              values[CONFIG.columns.practiceName]
-            )
-          )
-        );
+        .filter(values => Boolean(PFF.cleanText(values[CONFIG.columns.practiceName])));
+    }
+
+    function locationRowsFromRemoteCache(payload) {
+      return (Array.isArray(payload?.data?.locationRows)
+        ? payload.data.locationRows
+        : [])
+        .map((values, sourceIndex) =>
+          normaliseLocationRow(values, sourceIndex)
+        )
+        .filter(Boolean);
     }
 
     function normaliseRows(rows) {
@@ -603,10 +774,103 @@
             ),
             brand: normaliseBrand(
               values[CONFIG.columns.cleanedBrandParent]
-            )
+            ),
+            latitudeNumber: dataNumber(values[5]),
+            longitudeNumber: dataNumber(values[6])
           };
         })
         .filter(Boolean);
+    }
+
+    /*
+     * Keep the browser fallback compact while preserving everything required
+     * by Brands, Densest locations and Remoteness.  The shared cache loader
+     * stores the parsed row array, so practices and Localities are tagged and
+     * cached together instead of relying on an in-memory side effect.
+     */
+    function encodeLandscapeCacheRows(practices, locations) {
+      return [
+        ...practices.map(row => [
+          'P',
+          row.practiceName,
+          row.suburb,
+          row.state,
+          row.employerType,
+          row.brand,
+          row.latitudeNumber,
+          row.longitudeNumber
+        ]),
+        ...locations.map(row => [
+          'L',
+          row.postcode,
+          row.suburb,
+          row.stateCode,
+          row.latitudeNumber,
+          row.longitudeNumber
+        ])
+      ];
+    }
+
+    function decodeLandscapeCacheRows(rows) {
+      const practices = [];
+      const locations = [];
+
+      (Array.isArray(rows) ? rows : []).forEach(row => {
+        if (!Array.isArray(row) || !row.length) {
+          return;
+        }
+
+        if (row[0] === 'P') {
+          const practiceName = PFF.cleanText(row[1]);
+          const state = PFF.normaliseState(row[3]);
+
+          if (!practiceName || !state) {
+            return;
+          }
+
+          practices.push({
+            sourceIndex: practices.length,
+            practiceName,
+            suburb: normaliseGroupingText(row[2]),
+            state,
+            employerType: normaliseGroupingText(row[4]),
+            brand: normaliseBrand(row[5]),
+            latitudeNumber: dataNumber(row[6]),
+            longitudeNumber: dataNumber(row[7])
+          });
+          return;
+        }
+
+        if (row[0] === 'L') {
+          const suburb = PFF.cleanText(row[2]);
+          const stateCode = PFF.normaliseState(row[3]);
+          const latitudeNumber = dataNumber(row[4]);
+          const longitudeNumber = dataNumber(row[5]);
+
+          if (
+            !suburb ||
+            !stateCode ||
+            !Number.isFinite(latitudeNumber) ||
+            !Number.isFinite(longitudeNumber)
+          ) {
+            return;
+          }
+
+          locations.push({
+            sourceIndex: locations.length,
+            postcode: PFF.cleanText(row[1]),
+            suburb,
+            stateCode,
+            latitudeNumber,
+            longitudeNumber
+          });
+        }
+      });
+
+      return {
+        practices,
+        locations
+      };
     }
 
     async function loadJsonFallback() {
@@ -664,6 +928,15 @@
         ) {
           throw new Error(
             'Static JSON fallback has the wrong app key.'
+          );
+        }
+
+        if (
+          Number(payload.version) !==
+          CONFIG.jsonFallbackVersion
+        ) {
+          throw new Error(
+            'Static JSON fallback has the wrong version.'
           );
         }
 
@@ -728,35 +1001,87 @@
         cacheKey: CONFIG.localCacheKey,
         minRows: CONFIG.minimumRows,
 
-        loadLive: () =>
-          PFFCharts.loadGVizSheet({
-            sheetId: CONFIG.spreadsheetId,
-            sheetName: CONFIG.sheetName,
-            gid: CONFIG.sheetGid,
-            range: CONFIG.sourceRange,
-            headers: '1',
-            timeoutMs: CONFIG.fetchTimeoutMs
-          }),
+        loadLive: async () => {
+          const [practiceTable, locationTable] = await Promise.all([
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.spreadsheetId,
+              sheetName: CONFIG.sheetName,
+              gid: CONFIG.sheetGid,
+              range: CONFIG.sourceRange,
+              headers: '1',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.spreadsheetId,
+              sheetName: CONFIG.locationSheetName,
+              range: CONFIG.locationRange,
+              headers: '1',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            })
+          ]);
+          return { practiceTable, locationTable };
+        },
 
-        parseLive: sourceRowsFromTable,
+        parseLive: payload => {
+          const practices = normaliseRows(
+            sourceRowsFromTable(payload?.practiceTable)
+          );
+          const locations = locationRowsFromTable(
+            payload?.locationTable
+          );
 
-        loadRemoteCache:
-          loadJsonFallback,
+          if (practices.length < CONFIG.minimumRows) {
+            throw new Error(
+              'Live optometry practice data did not contain enough usable rows.'
+            );
+          }
 
-        parseRemoteCache: sourceRowsFromRemoteCache,
+          if (!locations.length) {
+            throw new Error(
+              'Live Localities data did not contain any usable rows.'
+            );
+          }
 
-        onLiveError(error) {
-          console.warn(
-            'Live practice-landscape data unavailable; trying static JSON fallback.',
-            error
+          return encodeLandscapeCacheRows(
+            practices,
+            locations
           );
         },
 
-        onRemoteCacheError(error) {
-          console.warn(
-            'Practice Directory static JSON fallback unavailable; trying browser cache.',
-            error
+        loadRemoteCache: loadJsonFallback,
+
+        parseRemoteCache: payload => {
+          const practices = normaliseRows(
+            sourceRowsFromRemoteCache(payload)
           );
+          const locations = locationRowsFromRemoteCache(
+            payload
+          );
+
+          if (practices.length < CONFIG.minimumRows) {
+            throw new Error(
+              'Static fallback optometry data did not contain enough usable rows.'
+            );
+          }
+
+          if (!locations.length) {
+            throw new Error(
+              'Static fallback Localities data did not contain any usable rows.'
+            );
+          }
+
+          return encodeLandscapeCacheRows(
+            practices,
+            locations
+          );
+        },
+
+        onLiveError(error) {
+          console.warn('Live practice-landscape data unavailable; trying static JSON fallback.', error);
+        },
+
+        onRemoteCacheError(error) {
+          console.warn('Practice Directory static JSON fallback unavailable; trying browser cache.', error);
         }
       });
     }
@@ -795,6 +1120,29 @@
       return CONFIG.rankLimit;
     }
 
+    function titleCaseLocation(value) {
+      const text = PFF.cleanText(value);
+
+      if (!text) {
+        return '';
+      }
+
+      let titled = text
+        .toLocaleLowerCase('en-AU')
+        .replace(
+          /(^|[\s\-'/])([a-z])/g,
+          (_, prefix, letter) =>
+            `${prefix}${letter.toLocaleUpperCase('en-AU')}`
+        );
+
+      titled = titled.replace(
+        /\bMc([a-z])/g,
+        (_, letter) => `Mc${letter.toLocaleUpperCase('en-AU')}`
+      );
+
+      return titled;
+    }
+
     function buildSuburbGroups(rows) {
       const groups = new Map();
       let usableRows = 0;
@@ -812,7 +1160,7 @@
         if (!groups.has(key)) {
           groups.set(key, {
             key: `suburb:${key}`,
-            label: row.suburb,
+            label: titleCaseLocation(row.suburb),
             state: row.state,
             count: 0
           });
@@ -824,6 +1172,264 @@
       return {
         groups: Array.from(groups.values()),
         usableRows
+      };
+    }
+
+    function haversineKm(
+      latitude1,
+      longitude1,
+      latitude2,
+      longitude2
+    ) {
+      const lat1 = Number(latitude1);
+      const lon1 = Number(longitude1);
+      const lat2 = Number(latitude2);
+      const lon2 = Number(longitude2);
+
+      if (
+        ![lat1, lon1, lat2, lon2]
+          .every(Number.isFinite)
+      ) {
+        return NaN;
+      }
+
+      const toRadians =
+        degrees =>
+          degrees * Math.PI / 180;
+
+      const dLat =
+        toRadians(lat2 - lat1);
+
+      const dLon =
+        toRadians(lon2 - lon1);
+
+      const firstLat =
+        toRadians(lat1);
+
+      const secondLat =
+        toRadians(lat2);
+
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(firstLat) *
+          Math.cos(secondLat) *
+          Math.sin(dLon / 2) ** 2;
+
+      return 6371 * 2 *
+        Math.asin(
+          Math.sqrt(
+            Math.min(1, a)
+          )
+        );
+    }
+
+    function buildPracticeSpatialIndex(rows) {
+      const cellDegrees = 1;
+      const spatial = new Map();
+
+      rows.forEach(row => {
+        if (
+          !Number.isFinite(row.latitudeNumber) ||
+          !Number.isFinite(row.longitudeNumber)
+        ) {
+          return;
+        }
+
+        const latCell =
+          Math.floor(row.latitudeNumber / cellDegrees);
+        const lonCell =
+          Math.floor(row.longitudeNumber / cellDegrees);
+        const key =
+          `${latCell}:${lonCell}`;
+
+        if (!spatial.has(key)) {
+          spatial.set(key, []);
+        }
+
+        spatial.get(key).push([
+          row.latitudeNumber,
+          row.longitudeNumber
+        ]);
+      });
+
+      return {
+        spatial,
+        cellDegrees
+      };
+    }
+
+    function nearestPracticeDistanceKm(location) {
+      if (
+        !location ||
+        !practiceSpatialIndex ||
+        !Number.isFinite(location.latitudeNumber) ||
+        !Number.isFinite(location.longitudeNumber)
+      ) {
+        return NaN;
+      }
+
+      const cacheKey = [
+        location.sourceIndex,
+        location.latitudeNumber,
+        location.longitudeNumber
+      ].join(':');
+
+      if (nearestDistanceCache.has(cacheKey)) {
+        return nearestDistanceCache.get(cacheKey);
+      }
+
+      const latitude =
+        location.latitudeNumber;
+      const longitude =
+        location.longitudeNumber;
+      const cellDegrees =
+        practiceSpatialIndex.cellDegrees;
+      const centerLatCell =
+        Math.floor(latitude / cellDegrees);
+      const centerLonCell =
+        Math.floor(longitude / cellDegrees);
+
+      let best = Infinity;
+      const maximumRing = 60;
+
+      const inspectCell = (
+        latCell,
+        lonCell
+      ) => {
+        const bucket =
+          practiceSpatialIndex.spatial.get(
+            `${latCell}:${lonCell}`
+          );
+
+        if (!bucket) {
+          return;
+        }
+
+        bucket.forEach(point => {
+          const distance =
+            haversineKm(
+              latitude,
+              longitude,
+              point[0],
+              point[1]
+            );
+
+          if (
+            Number.isFinite(distance) &&
+            distance < best
+          ) {
+            best = distance;
+          }
+        });
+      };
+
+      for (
+        let ring = 0;
+        ring <= maximumRing;
+        ring += 1
+      ) {
+        if (ring === 0) {
+          inspectCell(
+            centerLatCell,
+            centerLonCell
+          );
+        } else {
+          const minLat =
+            centerLatCell - ring;
+          const maxLat =
+            centerLatCell + ring;
+          const minLon =
+            centerLonCell - ring;
+          const maxLon =
+            centerLonCell + ring;
+
+          for (
+            let lonCell = minLon;
+            lonCell <= maxLon;
+            lonCell += 1
+          ) {
+            inspectCell(minLat, lonCell);
+            inspectCell(maxLat, lonCell);
+          }
+
+          for (
+            let latCell = minLat + 1;
+            latCell < maxLat;
+            latCell += 1
+          ) {
+            inspectCell(latCell, minLon);
+            inspectCell(latCell, maxLon);
+          }
+        }
+
+        /*
+         * At Australian latitudes, one degree of longitude is at least
+         * roughly 79 km. Using 70 km gives a conservative lower bound for
+         * cells beyond the searched square, including cell-edge effects.
+         */
+        const outsideLowerBoundKm =
+          Math.max(0, (ring - 1) * 70);
+
+        if (
+          Number.isFinite(best) &&
+          outsideLowerBoundKm > best
+        ) {
+          break;
+        }
+      }
+
+      const result =
+        Number.isFinite(best)
+          ? best
+          : NaN;
+
+      nearestDistanceCache.set(
+        cacheKey,
+        result
+      );
+
+      return result;
+    }
+
+    function buildRemotenessGroups() {
+      const candidates =
+        locationRows.filter(location =>
+          activeArea === 'AUS' ||
+          location.stateCode === activeArea
+        );
+
+      const groups =
+        candidates
+          .map(location => {
+            const distanceKm =
+              nearestPracticeDistanceKm(
+                location
+              );
+
+            if (!Number.isFinite(distanceKm)) {
+              return null;
+            }
+
+            return {
+              key: [
+                'remote',
+                location.stateCode,
+                location.postcode,
+                location.suburb,
+                location.sourceIndex
+              ].join(':'),
+              label: titleCaseLocation(location.suburb),
+              state: location.stateCode,
+              postcode: location.postcode,
+              distanceKm,
+              count: distanceKm
+            };
+          })
+          .filter(Boolean);
+
+      return {
+        groups,
+        usableRows: groups.length
       };
     }
 
@@ -879,32 +1485,61 @@
     }
 
     function buildModel() {
-      const areaRows = filteredRowsForArea();
-      const grouped = activeView === 'suburbs'
-        ? buildSuburbGroups(areaRows)
-        : buildBrandGroups(areaRows);
+      const areaRows =
+        filteredRowsForArea();
 
-      const allGroups = grouped.groups
-        .sort((a, b) => {
-          const countDifference = b.count - a.count;
+      let grouped;
 
-          if (countDifference !== 0) {
-            return countDifference;
+      if (activeView === 'brands') {
+        grouped =
+          buildBrandGroups(areaRows);
+      } else if (activeView === 'dense') {
+        grouped =
+          buildSuburbGroups(areaRows);
+      } else {
+        grouped =
+          buildRemotenessGroups();
+      }
+
+      const allGroups =
+        grouped.groups.sort((a, b) => {
+          const valueDifference =
+            activeView === 'remote'
+              ? b.distanceKm - a.distanceKm
+              : b.count - a.count;
+
+          if (valueDifference !== 0) {
+            return valueDifference;
           }
 
-          if (activeView === 'suburbs') {
-            const stateDifference =
-              collator.compare(a.state, b.state);
+          const stateDifference =
+            collator.compare(
+              a.state || '',
+              b.state || ''
+            );
 
-            if (stateDifference !== 0) {
-              return stateDifference;
-            }
+          if (stateDifference !== 0) {
+            return stateDifference;
           }
 
-          return collator.compare(a.label, b.label);
+          const labelDifference =
+            collator.compare(
+              a.label || '',
+              b.label || ''
+            );
+
+          if (labelDifference !== 0) {
+            return labelDifference;
+          }
+
+          return collator.compare(
+            a.postcode || '',
+            b.postcode || ''
+          );
         });
 
-      const groups = allGroups.slice(0, rankLimit());
+      const groups =
+        allGroups.slice(0, rankLimit());
 
       return {
         view: activeView,
@@ -913,7 +1548,12 @@
         usableRows: grouped.usableRows,
         totalCategories: allGroups.length,
         groups,
-        values: groups.map(group => group.count)
+        values:
+          groups.map(group =>
+            activeView === 'remote'
+              ? group.distanceKm
+              : group.count
+          )
       };
     }
 
@@ -922,22 +1562,51 @@
         return '';
       }
 
-      if (activeView === 'suburbs' && activeArea === 'AUS') {
-        return `${group.label} · ${group.state}`;
+      if (activeView === 'brands') {
+        return group.label;
       }
 
-      return group.label;
+      if (activeView === 'remote') {
+        const locationSuffix =
+          activeArea === 'AUS'
+            ? [group.state, group.postcode]
+                .filter(Boolean)
+                .join(' ')
+            : group.postcode;
+
+        return locationSuffix
+          ? `${group.label} · ${locationSuffix}`
+          : group.label;
+      }
+
+      return activeArea === 'AUS'
+        ? `${group.label} · ${group.state}`
+        : group.label;
     }
 
     function clippedTickLabel(value) {
       const text = String(value || '');
-      const limit = PFF.mobileLayout() ? 21 : 30;
+      const limit =
+        PFF.mobileLayout()
+          ? 21
+          : 30;
 
       if (text.length <= limit) {
         return text;
       }
 
-      return `${text.slice(0, Math.max(1, limit - 1))}…`;
+      return `${text.slice(
+        0,
+        Math.max(1, limit - 1)
+      )}…`;
+    }
+
+    function axisTickLabel(group) {
+      const text = tickLabel(group);
+
+      return activeView === 'brands'
+        ? clippedTickLabel(text)
+        : text;
     }
 
     function brandColourKey(value) {
@@ -964,7 +1633,7 @@
     }
 
     function groupAppearance(group) {
-      if (activeView === 'suburbs') {
+      if (activeView !== 'brands') {
         const colour =
           PFF.stateColours?.[group?.state] || '#69718a';
 
@@ -1031,32 +1700,71 @@
       };
     }
 
+    function metricValueText(value) {
+      const rounded =
+        Math.max(
+          0,
+          Math.round(Number(value) || 0)
+        );
+
+      return activeView === 'remote'
+        ? `${PFF.formatInteger(rounded)} km`
+        : PFF.formatInteger(rounded);
+    }
+
     function valueText(group) {
       if (!group) {
         return '';
       }
 
-      return PFF.formatInteger(group.count);
+      return metricValueText(
+        activeView === 'remote'
+          ? group.distanceKm
+          : group.count
+      );
+    }
+
+    function headingFixedText() {
+      return activeView === 'brands'
+        ? 'Practice landscape by'
+        : '';
     }
 
     function headingDetail() {
-      return activeView === 'suburbs'
-        ? 'suburb'
-        : 'brand (non-independent)';
+      if (activeView === 'brands') {
+        return 'brand (non-independent)';
+      }
+
+      if (activeView === 'dense') {
+        return 'Densest locations by suburb';
+      }
+
+      return 'Remoteness (nearest-practice distance)';
     }
 
     function updateHeading(animate = true) {
-      const next = headingDetail();
+      const nextFixed = headingFixedText();
+      const nextDetail = headingDetail();
 
       if (!animate || PFF.reducedMotion()) {
-        chartHeadingDetail.textContent = next;
+        chartHeadingFixed.textContent = nextFixed;
+        chartHeadingDetail.textContent = nextDetail;
         requestAnimationFrame(() => headingScroller?.update?.());
         return;
       }
 
       PFF.animateTextChange(
+        chartHeadingFixed,
+        nextFixed,
+        {
+          fadeOutMs: 150,
+          fadeInMs: 220
+        }
+      );
+
+      PFF.animateTextChange(
         chartHeadingDetail,
-        next,
+        nextDetail,
         {
           fadeOutMs: 150,
           fadeInMs: 220
@@ -1107,6 +1815,19 @@
         label.append(input, box, name);
         areaOptions.appendChild(label);
       });
+
+      syncLocationMenuSelection();
+    }
+
+    function syncLocationMenuSelection() {
+      areaOptions
+        .querySelectorAll(
+          'input[name="practice-landscape-area"]'
+        )
+        .forEach(input => {
+          input.checked =
+            input.value === activeArea;
+        });
     }
 
     function syncAreaControl(animate = true) {
@@ -1116,11 +1837,7 @@
         ? 'var(--landscape-australia)'
         : PFF.stateColours?.[activeArea] || '#69718a';
 
-      areaOptions
-        .querySelectorAll('input[name="practice-landscape-area"]')
-        .forEach(input => {
-          input.checked = input.value === activeArea;
-        });
+      syncLocationMenuSelection();
 
       if (!animate || PFF.reducedMotion()) {
         areaButtonValue.textContent = next;
@@ -1203,7 +1920,7 @@
                 )
               : NaN;
           const text = Number.isFinite(animatedValue)
-            ? PFF.formatInteger(Math.round(animatedValue))
+            ? metricValueText(animatedValue)
             : valueText(group);
           const width = ctx.measureText(text).width;
           const proposedX = properties.x + 5;
@@ -1336,6 +2053,262 @@
       };
     }
 
+
+    function adaptiveMajorStepForMaximum(maximum) {
+      return Math.max(
+        1,
+        Math.round(
+          niceAxisStep(
+            Math.max(Number(maximum) || 1, 1) / 5
+          )
+        )
+      );
+    }
+
+    function majorStepWithHysteresis(
+      maximum,
+      currentStep
+    ) {
+      const max = Math.max(
+        Number(maximum) || 1,
+        1
+      );
+      const current = Math.max(
+        1,
+        Number(currentStep) || 1
+      );
+      const intervalCount =
+        max / current;
+
+      /*
+       * Keep the current tick interval while it still gives a sensible
+       * number of major divisions. This prevents small range changes from
+       * causing distracting 5 -> 4 -> 5 style tick-step changes.
+       */
+      if (
+        intervalCount >= 3.5 &&
+        intervalCount <= 6.5
+      ) {
+        return current;
+      }
+
+      return adaptiveMajorStepForMaximum(max);
+    }
+
+    function resetTickStepTransition(majorStep) {
+      const step = Math.max(
+        1,
+        Number(majorStep) || 1
+      );
+
+      axisTransitionState.displayMajorStep = step;
+      tickStepTransitionState.active = false;
+      tickStepTransitionState.fromMajorStep = step;
+      tickStepTransitionState.toMajorStep = step;
+      tickStepTransitionState.fromMaximum = NaN;
+      tickStepTransitionState.toMaximum = NaN;
+      tickStepTransitionState.progress = 1;
+    }
+
+    function setTickStepHandoff(
+      fromMajorStep,
+      toMajorStep,
+      progress,
+      fromMaximum,
+      toMaximum
+    ) {
+      const from = Math.max(
+        1,
+        Number(fromMajorStep) || 1
+      );
+      const to = Math.max(
+        1,
+        Number(toMajorStep) || 1
+      );
+      const amount = Math.max(
+        0,
+        Math.min(1, Number(progress) || 0)
+      );
+
+      if (Math.abs(from - to) < 1e-9 || amount >= 1) {
+        resetTickStepTransition(to);
+        return;
+      }
+
+      axisTransitionState.displayMajorStep = to;
+      tickStepTransitionState.active = true;
+      tickStepTransitionState.fromMajorStep = from;
+      tickStepTransitionState.toMajorStep = to;
+      tickStepTransitionState.fromMaximum =
+        Number.isFinite(Number(fromMaximum))
+          ? Math.max(0, Number(fromMaximum))
+          : NaN;
+      tickStepTransitionState.toMaximum =
+        Number.isFinite(Number(toMaximum))
+          ? Math.max(0, Number(toMaximum))
+          : NaN;
+      tickStepTransitionState.progress = amount;
+    }
+
+    function tickStepHandoffProgress(
+      resizeProgress,
+      expanding
+    ) {
+      const progress = Math.max(
+        0,
+        Math.min(1, Number(resizeProgress) || 0)
+      );
+
+      /*
+       * On expansion, introduce the coarser scale early so labels never
+       * become crowded. On contraction, retain the coarser scale for most
+       * of the slide and introduce the finer scale before the movement ends.
+       * Both paths overlap continuously, so the X axis is never blank.
+       */
+      const localProgress = expanding
+        ? Math.min(progress / 0.34, 1)
+        : Math.max(
+            0,
+            Math.min((progress - 0.58) / 0.42, 1)
+          );
+
+      return PFFCharts.easeInOutCubic(localProgress);
+    }
+
+    function axisTickLayers() {
+      const currentStep = Number.isFinite(
+        axisTransitionState.displayMajorStep
+      )
+        ? axisTransitionState.displayMajorStep
+        : activeAxisSpec?.majorStep;
+
+      if (
+        tickStepTransitionState.active &&
+        Number.isFinite(
+          tickStepTransitionState.fromMajorStep
+        ) &&
+        Number.isFinite(
+          tickStepTransitionState.toMajorStep
+        )
+      ) {
+        const progress = Math.max(
+          0,
+          Math.min(
+            1,
+            tickStepTransitionState.progress
+          )
+        );
+
+        return [
+          {
+            majorStep:
+              tickStepTransitionState.fromMajorStep,
+            minorStep:
+              tickStepTransitionState.fromMajorStep / 2,
+            max:
+              tickStepTransitionState.fromMaximum,
+            alpha: 1 - progress
+          },
+          {
+            majorStep:
+              tickStepTransitionState.toMajorStep,
+            minorStep:
+              tickStepTransitionState.toMajorStep / 2,
+            max:
+              tickStepTransitionState.toMaximum,
+            alpha: progress
+          }
+        ].filter(layer => layer.alpha > 0.001);
+      }
+
+      const majorStep = Math.max(
+        1,
+        Number(currentStep) || 1
+      );
+
+      return [
+        {
+          majorStep,
+          minorStep: majorStep / 2,
+          max: displayedAxisMaximum(),
+          alpha: 1
+        }
+      ];
+    }
+
+    function axisTickMarks(currentMaximum) {
+      const marks = new Map();
+
+      axisTickLayers().forEach(layer => {
+        const layerMaximum = Number.isFinite(layer.max)
+          ? Math.max(0, layer.max)
+          : currentMaximum;
+        const lastValue = Math.floor(
+          (layerMaximum + layer.minorStep * 1e-7) /
+          layer.minorStep
+        ) * layer.minorStep;
+
+        for (
+          let value = 0;
+          value <= lastValue + layer.minorStep * 0.25;
+          value += layer.minorStep
+        ) {
+          const roundedValue =
+            Math.round(value * 1e9) / 1e9;
+          const key = roundedValue.toFixed(9);
+          const major = Math.abs(
+            roundedValue / layer.majorStep -
+            Math.round(roundedValue / layer.majorStep)
+          ) < 1e-6;
+          const existing = marks.get(key) || {
+            value: roundedValue,
+            alpha: 0,
+            labelAlpha: 0,
+            majorAlpha: 0,
+            minorAlpha: 0
+          };
+
+          existing.alpha = Math.min(
+            1,
+            existing.alpha + layer.alpha
+          );
+
+          if (major) {
+            existing.majorAlpha += layer.alpha;
+            existing.labelAlpha = Math.min(
+              1,
+              existing.labelAlpha + layer.alpha
+            );
+          } else {
+            existing.minorAlpha += layer.alpha;
+          }
+
+          marks.set(key, existing);
+        }
+      });
+
+      return Array.from(marks.values())
+        .map(mark => {
+          const styleWeight =
+            mark.majorAlpha + mark.minorAlpha;
+
+          return {
+            ...mark,
+            majorStrength:
+              styleWeight > 1e-9
+                ? Math.max(
+                    0,
+                    Math.min(
+                      1,
+                      mark.majorAlpha / styleWeight
+                    )
+                  )
+                : 0
+          };
+        })
+        .sort((a, b) => a.value - b.value);
+    }
+
     function copyChartArea(area) {
       if (!area) {
         return null;
@@ -1441,20 +2414,46 @@
 
       const from = Number(fromMaximum);
       const to = Number(toMaximum);
+      const heldMajorStep = Math.max(
+        1,
+        Number(axisTransitionState.displayMajorStep) ||
+          adaptiveMajorStepForMaximum(from)
+      );
 
       if (!Number.isFinite(from) || !Number.isFinite(to)) {
         axisTransitionState.active = false;
         axisTransitionState.max = to;
+        resetTickStepTransition(
+          activeAxisSpec?.majorStep || 1
+        );
         chart?.draw();
         return;
       }
 
+      const targetMajorStep =
+        majorStepWithHysteresis(
+          to,
+          heldMajorStep
+        );
+      const expanding =
+        to > from + 1e-9;
+      const stepChanges =
+        Math.abs(
+          targetMajorStep - heldMajorStep
+        ) > 1e-9;
+
       axisTransitionState.active = true;
       axisTransitionState.max = from;
+      resetTickStepTransition(heldMajorStep);
 
-      if (PFF.reducedMotion() || duration <= 0 || from === to) {
+      if (
+        PFF.reducedMotion() ||
+        duration <= 0 ||
+        from === to
+      ) {
         axisTransitionState.max = to;
         axisTransitionState.active = false;
+        resetTickStepTransition(targetMajorStep);
         chart?.draw();
         return;
       }
@@ -1466,22 +2465,41 @@
           (now - startedAt) / duration,
           1
         );
-        const eased = PFFCharts.easeInOutCubic(progress);
+        const eased =
+          PFFCharts.easeInOutCubic(progress);
 
-        axisTransitionState.max = from + (to - from) * eased;
+        axisTransitionState.max =
+          from + (to - from) * eased;
+
+        if (stepChanges) {
+          setTickStepHandoff(
+            heldMajorStep,
+            targetMajorStep,
+            tickStepHandoffProgress(
+              progress,
+              expanding
+            ),
+            from,
+            to
+          );
+        }
+
         chart?.draw();
 
         if (progress < 1) {
-          axisTransitionFrame = requestAnimationFrame(frame);
+          axisTransitionFrame =
+            requestAnimationFrame(frame);
         } else {
           axisTransitionFrame = null;
           axisTransitionState.max = to;
           axisTransitionState.active = false;
+          resetTickStepTransition(targetMajorStep);
           chart?.draw();
         }
       }
 
-      axisTransitionFrame = requestAnimationFrame(frame);
+      axisTransitionFrame =
+        requestAnimationFrame(frame);
     }
 
     function currentAxisGeometry(chartInstance) {
@@ -1531,6 +2549,27 @@
         (Number(value) / displayedAxisMaximum());
     }
 
+    function displayedAxisSpec() {
+      if (!activeAxisSpec) {
+        return null;
+      }
+
+      const currentMaximum =
+        displayedAxisMaximum();
+      const majorStep = Math.max(
+        1,
+        Number(
+          axisTransitionState.displayMajorStep
+        ) || activeAxisSpec.majorStep
+      );
+
+      return {
+        max: currentMaximum,
+        majorStep,
+        minorStep: majorStep / 2
+      };
+    }
+
     const constantSpinePlugin = {
       id: 'pffPracticeLandscapeConstantSpines',
 
@@ -1567,53 +2606,49 @@
 
       beforeDatasetsDraw(chartInstance) {
         const geometry = currentAxisGeometry(chartInstance);
-        const spec = activeAxisSpec;
+        const spec = displayedAxisSpec();
 
         if (!geometry || !spec) {
           return;
         }
 
         const currentMaximum = displayedAxisMaximum();
-        const lastValue = Math.ceil(
-          currentMaximum / spec.minorStep
-        ) * spec.minorStep;
         const context = chartInstance.ctx;
+        const marks = axisTickMarks(currentMaximum);
 
         context.save();
         context.lineCap = 'butt';
 
-        for (
-          let value = 0;
-          value <= lastValue + spec.minorStep * 0.25;
-          value += spec.minorStep
-        ) {
-          const x = xAxisPixel(geometry, value);
+        marks.forEach(mark => {
+          const x = xAxisPixel(
+            geometry,
+            mark.value
+          );
 
           if (x < geometry.left - 1 || x > geometry.right + 1) {
-            continue;
+            return;
           }
 
-          const major = Math.abs(
-            value / spec.majorStep -
-            Math.round(value / spec.majorStep)
-          ) < 1e-6;
-
-          context.strokeStyle = major
-            ? 'rgba(105, 113, 138, 0.075)'
-            : 'rgba(105, 113, 138, 0.035)';
-          context.lineWidth = major ? 1 : 0.7;
+          context.globalAlpha = mark.alpha;
+          const gridOpacity =
+            0.035 + 0.04 * mark.majorStrength;
+          context.strokeStyle =
+            `rgba(105, 113, 138, ${gridOpacity})`;
+          context.lineWidth =
+            0.7 + 0.3 * mark.majorStrength;
           context.beginPath();
           context.moveTo(Math.round(x) + 0.5, geometry.top);
           context.lineTo(Math.round(x) + 0.5, geometry.bottom);
           context.stroke();
-        }
+        });
 
+        context.globalAlpha = 1;
         context.restore();
       },
 
       afterDraw(chartInstance) {
         const geometry = currentAxisGeometry(chartInstance);
-        const spec = activeAxisSpec;
+        const spec = displayedAxisSpec();
 
         if (!geometry || !spec) {
           return;
@@ -1624,9 +2659,7 @@
         const tickFontSize = mobile ? 9 : 10;
         const titleFontSize = mobile ? 12 : 13;
         const currentMaximum = displayedAxisMaximum();
-        const lastValue = Math.ceil(
-          currentMaximum / spec.minorStep
-        ) * spec.minorStep;
+        const marks = axisTickMarks(currentMaximum);
         const meta = chartInstance.getDatasetMeta(0);
 
         context.save();
@@ -1635,7 +2668,19 @@
         context.fillStyle = '#151515';
         context.textAlign = 'right';
         context.textBaseline = 'middle';
-        context.font = `400 ${mobile ? 9 : 10}px Lato, sans-serif`;
+
+        const labelBaseSize =
+          mobile ? 9 : 10;
+        const labelMinSize =
+          activeView === 'brands'
+            ? (mobile ? 6 : 7)
+            : (mobile ? 5 : 5.5);
+        const labelMaxWidth =
+          Math.max(50, geometry.left - 8);
+        const labelTexts =
+          (activeModel?.groups || []).map(
+            group => axisTickLabel(group)
+          );
 
         (activeModel?.groups || []).forEach((group, index) => {
           const bar = meta?.data?.[index];
@@ -1644,69 +2689,89 @@
             return;
           }
 
+          const text =
+            labelTexts[index] || '';
+          let labelFontSize =
+            labelBaseSize;
+
+          context.font =
+            `400 ${labelFontSize}px Lato, sans-serif`;
+
+          while (
+            labelFontSize > labelMinSize &&
+            context.measureText(text).width > labelMaxWidth
+          ) {
+            labelFontSize -= 0.5;
+            context.font =
+              `400 ${labelFontSize}px Lato, sans-serif`;
+          }
+
           context.fillText(
-            clippedTickLabel(tickLabel(group)),
+            text,
             geometry.left - 5,
             bar.y
           );
         });
 
-        for (
-          let value = 0;
-          value <= lastValue + spec.minorStep * 0.25;
-          value += spec.minorStep
-        ) {
-          const x = xAxisPixel(geometry, value);
+        marks.forEach(mark => {
+          const x = xAxisPixel(
+            geometry,
+            mark.value
+          );
 
           if (x < geometry.left - 1 || x > geometry.right + 1) {
-            continue;
+            return;
           }
 
-          const major = Math.abs(
-            value / spec.majorStep -
-            Math.round(value / spec.majorStep)
-          ) < 1e-6;
-          const tickLength = major ? 6 : 2;
+          context.globalAlpha = mark.alpha;
+          const tickLength =
+            2 + 4 * mark.majorStrength;
 
           context.beginPath();
-          context.lineWidth = major ? 1 : 0.7;
+          context.lineWidth =
+            0.7 + 0.3 * mark.majorStrength;
           context.moveTo(Math.round(x) + 0.5, geometry.bottom);
           context.lineTo(
             Math.round(x) + 0.5,
             geometry.bottom + tickLength
           );
           context.stroke();
-        }
+        });
 
         context.font = `400 ${tickFontSize}px Lato, sans-serif`;
         context.textBaseline = 'top';
 
-        for (
-          let value = 0;
-          value <= lastValue + spec.majorStep * 0.25;
-          value += spec.majorStep
-        ) {
-          const x = xAxisPixel(geometry, value);
+        marks
+          .filter(mark => mark.labelAlpha > 0.001)
+          .forEach(mark => {
+            const x = xAxisPixel(
+              geometry,
+              mark.value
+            );
 
-          if (x < geometry.left - 1 || x > geometry.right + 1) {
-            continue;
-          }
+            if (x < geometry.left - 1 || x > geometry.right + 1) {
+              return;
+            }
 
-          context.textAlign = value === 0
-            ? 'left'
-            : 'center';
-          context.fillText(
-            PFF.formatInteger(value),
-            x,
-            geometry.bottom + 9
-          );
-        }
+            context.globalAlpha = mark.labelAlpha;
+            context.textAlign = mark.value === 0
+              ? 'left'
+              : 'center';
+            context.fillText(
+              PFF.formatInteger(mark.value),
+              x,
+              geometry.bottom + 9
+            );
+          });
 
+        context.globalAlpha = 1;
         context.font = `700 ${titleFontSize}px Lato, sans-serif`;
         context.textAlign = 'center';
         context.textBaseline = 'alphabetic';
         context.fillText(
-          'Number of practices',
+          activeView === 'remote'
+            ? 'Distance to nearest practice (km)'
+            : 'Number of practices',
           geometry.left + (geometry.right - geometry.left) / 2,
           geometry.bottom + 42
         );
@@ -1718,14 +2783,27 @@
     function tooltipCallbacks() {
       return {
         title(items) {
-          const index = items?.[0]?.dataIndex;
-          const group = activeModel?.groups?.[index];
+          const index =
+            items?.[0]?.dataIndex;
+          const group =
+            activeModel?.groups?.[index];
 
           if (!group) {
             return '';
           }
 
-          if (activeView === 'suburbs') {
+          if (activeView === 'remote') {
+            return [
+              group.label,
+              [group.state, group.postcode]
+                .filter(Boolean)
+                .join(' ')
+            ]
+              .filter(Boolean)
+              .join(', ');
+          }
+
+          if (activeView === 'dense') {
             return `${group.label}, ${group.state}`;
           }
 
@@ -1733,10 +2811,17 @@
         },
 
         label(context) {
-          const group = activeModel?.groups?.[context.dataIndex];
+          const group =
+            activeModel?.groups?.[
+              context.dataIndex
+            ];
 
           if (!group) {
             return '';
+          }
+
+          if (activeView === 'remote') {
+            return `Nearest practice: ${metricValueText(group.distanceKm)}`;
           }
 
           return `Practices: ${PFF.formatInteger(group.count)}`;
@@ -1828,7 +2913,9 @@
         labels: model.groups.map(group => tickLabel(group)),
         datasets: [
           {
-            label: 'Practices',
+            label: model.view === 'remote'
+              ? 'Distance to nearest practice (km)'
+              : 'Practices',
             data: model.values,
             backgroundColor: appearances.map(item => item.background),
             hoverBackgroundColor: appearances.map(
@@ -1852,6 +2939,9 @@
       activeAxisSpec = axisSpecFor(model);
       axisTransitionState.max = activeAxisSpec.max;
       axisTransitionState.active = false;
+      resetTickStepTransition(
+        activeAxisSpec.majorStep
+      );
       updateStageGeometry(model, true);
 
       chart = new Chart(
@@ -1969,14 +3059,37 @@
         locationReorderState.progress = 0;
         locationReorderState.fromYByKey = previousYByKey;
 
+        const heldMajorStep = Math.max(
+          1,
+          Number(axisTransitionState.displayMajorStep) ||
+            adaptiveMajorStepForMaximum(startMaximum)
+        );
+
         axisTransitionState.active = true;
         axisTransitionState.max = startMaximum;
+        resetTickStepTransition(heldMajorStep);
 
         chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
         chart.update('none');
 
         const nextArea = copyChartArea(chart.chartArea);
         animateSpineGeometry(previousArea, nextArea);
+
+        const targetMajorStep =
+          majorStepWithHysteresis(
+            targetMaximum,
+            heldMajorStep
+          );
+        const expanding =
+          targetMaximum > startMaximum + 1e-9;
+        const stepChanges =
+          Math.abs(
+            targetMajorStep - heldMajorStep
+          ) > 1e-9;
+
+        resetTickStepTransition(heldMajorStep);
+        axisTransitionState.active = true;
+        axisTransitionState.max = startMaximum;
 
         locationTransitionAnimator.run({
           duration: CONFIG.locationTransitionMs,
@@ -1998,6 +3111,20 @@
 
             chart.options.scales.x.max = displayedMaximum;
             axisTransitionState.max = displayedMaximum;
+
+            if (stepChanges) {
+              setTickStepHandoff(
+                heldMajorStep,
+                targetMajorStep,
+                tickStepHandoffProgress(
+                  progress,
+                  expanding
+                ),
+                startMaximum,
+                targetMaximum
+              );
+            }
+
             chart.update('none');
           },
 
@@ -2011,6 +3138,7 @@
 
             axisTransitionState.active = false;
             axisTransitionState.max = targetMaximum;
+            resetTickStepTransition(targetMajorStep);
 
             chart.update('none');
             setSpineGeometry(chart.chartArea);
@@ -2049,6 +3177,9 @@
         spineTransitionState.active = false;
         axisTransitionState.active = false;
         axisTransitionState.max = activeAxisSpec.max;
+        resetTickStepTransition(
+          activeAxisSpec.majorStep
+        );
         setSpineGeometry(nextArea);
         chart.draw();
       }
@@ -2059,17 +3190,42 @@
         return;
       }
 
-      const first = activeModel.groups[0];
-      const subject = activeView === 'suburbs'
-        ? 'suburbs'
-        : 'non-independent brand or parent categories';
-      const topText = first
-        ? ` Highest shown: ${tickLabel(first)}, ${PFF.formatInteger(first.count)} practices.`
-        : '';
+      const first =
+        activeModel.groups[0];
+
+      let summaryText = '';
+
+      if (activeView === 'brands') {
+        summaryText =
+          `Practice landscape showing ${PFF.formatInteger(activeModel.groups.length)} non-independent brand or parent categories for ${areaLongLabel()}. ` +
+          `${PFF.formatInteger(activeModel.usableRows)} practice rows contribute to this view.`;
+
+        if (first) {
+          summaryText +=
+            ` Highest shown: ${tickLabel(first)}, ${PFF.formatInteger(first.count)} practices.`;
+        }
+      } else if (activeView === 'dense') {
+        summaryText =
+          `Practice landscape showing the ${PFF.formatInteger(activeModel.groups.length)} densest suburbs for ${areaLongLabel()}. ` +
+          `${PFF.formatInteger(activeModel.usableRows)} practice rows contribute to this view.`;
+
+        if (first) {
+          summaryText +=
+            ` Densest shown: ${tickLabel(first)}, ${PFF.formatInteger(first.count)} practices.`;
+        }
+      } else {
+        summaryText =
+          `Practice landscape showing the ${PFF.formatInteger(activeModel.groups.length)} most remote localities for ${areaLongLabel()}, ranked by distance to the nearest optometry practice anywhere in Australia. ` +
+          `${PFF.formatInteger(activeModel.usableRows)} locality rows contribute to this view.`;
+
+        if (first) {
+          summaryText +=
+            ` Most remote shown: ${tickLabel(first)}, ${metricValueText(first.distanceKm)} from the nearest practice.`;
+        }
+      }
 
       PFFCharts.updateChartSummary(
-        `Practice landscape showing ${PFF.formatInteger(activeModel.groups.length)} ${subject} for ${areaLongLabel()}. ` +
-        `${PFF.formatInteger(activeModel.usableRows)} practice rows contribute to this view.${topText}`,
+        summaryText,
         chartSummary
       );
     }
@@ -2078,6 +3234,7 @@
       const model = buildModel();
 
       updateHeading(animate);
+      syncLocationMenuSelection();
       syncAreaControl(animate);
       updateChart(model, animate);
       updateAccessibleSummary();
@@ -2101,16 +3258,21 @@
         onChange(value) {
           activeView = value;
           areaMenuController?.closeMenu?.();
+
+
+          buildAreaMenu();
           renderView({ animate: true });
         }
       });
 
-      areaMenuController = PFF.setupMenu({
-        menu: areaControl,
-        button: areaButton,
-        panel: areaMenu,
-        focusOnOpen: false
-      });
+      areaMenuController =
+        PFF.setupMenu({
+          menu: areaControl,
+          button: areaButton,
+          panel: areaMenu,
+          focusOnOpen: false
+        });
+
 
       areaOptions.addEventListener('change', event => {
         const input = event.target.closest(
@@ -2122,10 +3284,12 @@
         }
 
         activeArea = input.value;
+
+
+        buildAreaMenu();
         areaMenuController?.closeMenu?.();
         renderView({ animate: true });
       });
-
 
       chartInteractionController =
         PFFCharts.setupChartInteractions({
@@ -2157,6 +3321,9 @@
             activeAxisSpec = axisSpecFor(activeModel);
             axisTransitionState.active = false;
             axisTransitionState.max = activeAxisSpec.max;
+            resetTickStepTransition(
+              activeAxisSpec.majorStep
+            );
             chart.data = chartData(activeModel);
             chart.options = chartOptions(activeModel);
             chart.resize();
@@ -2174,11 +3341,26 @@
       load: loadPracticeRows,
 
       render(loaded) {
-        sourceRows = normaliseRows(loaded.rows);
+        const decoded =
+          decodeLandscapeCacheRows(loaded.rows);
 
-        if (!sourceRows.length) {
+        sourceRows = decoded.practices;
+        locationRows = decoded.locations;
+        practiceSpatialIndex =
+          buildPracticeSpatialIndex(
+            sourceRows
+          );
+        nearestDistanceCache.clear();
+
+        if (sourceRows.length < CONFIG.minimumRows) {
           throw new Error(
             'No usable optometry practice rows were returned from the practice directory.'
+          );
+        }
+
+        if (!locationRows.length) {
+          throw new Error(
+            'No usable Localities rows were returned for the Remoteness view.'
           );
         }
 
