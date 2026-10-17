@@ -2116,7 +2116,8 @@
     function animateTickStepChange(
       fromMajorStep,
       toMajorStep,
-      duration = 180
+      duration = 180,
+      onComplete = null
     ) {
       const from = Math.max(
         1,
@@ -2141,6 +2142,7 @@
       ) {
         resetTickStepTransition(to);
         chart?.draw();
+        onComplete?.();
         return;
       }
 
@@ -2172,6 +2174,7 @@
           tickStepTransitionState.toMajorStep = to;
           tickStepTransitionState.progress = 1;
           chart?.draw();
+          onComplete?.();
         }
       }
 
@@ -2386,52 +2389,95 @@
 
       axisTransitionState.active = true;
       axisTransitionState.max = from;
-
-      /*
-       * Hold the current tick interval for the whole sliding resize.
-       * If a new interval is genuinely needed, change it only after the
-       * axis has settled so tick re-labelling never competes with motion.
-       */
       resetTickStepTransition(heldMajorStep);
 
-      if (PFF.reducedMotion() || duration <= 0 || from === to) {
-        axisTransitionState.max = to;
-        axisTransitionState.active = false;
-        settleDisplayedMajorStep(
+      const targetMajorStep =
+        majorStepWithHysteresis(
           to,
           heldMajorStep
         );
-        chart?.draw();
+
+      const expanding =
+        to > from + 1e-9;
+      const shouldPreCoarsen =
+        expanding &&
+        targetMajorStep > heldMajorStep + 1e-9;
+
+      function runResize(slideMajorStep) {
+        const slideStep = Math.max(
+          1,
+          Number(slideMajorStep) || heldMajorStep
+        );
+
+        resetTickStepTransition(slideStep);
+        axisTransitionState.active = true;
+        axisTransitionState.max = from;
+
+        if (
+          PFF.reducedMotion() ||
+          duration <= 0 ||
+          from === to
+        ) {
+          axisTransitionState.max = to;
+          axisTransitionState.active = false;
+          settleDisplayedMajorStep(
+            to,
+            slideStep
+          );
+          chart?.draw();
+          return;
+        }
+
+        const startedAt = performance.now();
+
+        function frame(now) {
+          const progress = Math.min(
+            (now - startedAt) / duration,
+            1
+          );
+          const eased =
+            PFFCharts.easeInOutCubic(progress);
+
+          axisTransitionState.max =
+            from + (to - from) * eased;
+          chart?.draw();
+
+          if (progress < 1) {
+            axisTransitionFrame =
+              requestAnimationFrame(frame);
+          } else {
+            axisTransitionFrame = null;
+            axisTransitionState.max = to;
+            axisTransitionState.active = false;
+            chart?.draw();
+            settleDisplayedMajorStep(
+              to,
+              slideStep
+            );
+          }
+        }
+
+        axisTransitionFrame =
+          requestAnimationFrame(frame);
+      }
+
+      /*
+       * Expansion can make a previously fine tick interval far too dense.
+       * Cross-fade to the required coarser interval before the sliding
+       * resize begins. Contraction does the opposite: retain the coarser
+       * interval during the slide, then refine it after the axis settles.
+       */
+      if (shouldPreCoarsen) {
+        animateTickStepChange(
+          heldMajorStep,
+          targetMajorStep,
+          180,
+          () => runResize(targetMajorStep)
+        );
         return;
       }
 
-      const startedAt = performance.now();
-
-      function frame(now) {
-        const progress = Math.min(
-          (now - startedAt) / duration,
-          1
-        );
-        const eased = PFFCharts.easeInOutCubic(progress);
-
-        axisTransitionState.max = from + (to - from) * eased;
-        chart?.draw();
-
-        if (progress < 1) {
-          axisTransitionFrame = requestAnimationFrame(frame);
-        } else {
-          axisTransitionFrame = null;
-          axisTransitionState.max = to;
-          axisTransitionState.active = false;
-          chart?.draw();
-          settleDisplayedMajorStep(
-            to,
-            heldMajorStep
-          );
-        }
-      }
-
-      axisTransitionFrame = requestAnimationFrame(frame);
+      runResize(heldMajorStep);
     }
 
     function currentAxisGeometry(chartInstance) {
@@ -3026,48 +3072,79 @@
         const nextArea = copyChartArea(chart.chartArea);
         animateSpineGeometry(previousArea, nextArea);
 
-        locationTransitionAnimator.run({
-          duration: CONFIG.locationTransitionMs,
-          easing: PFFCharts.easeInOutCubic,
+        const targetMajorStep =
+          majorStepWithHysteresis(
+            targetMaximum,
+            heldMajorStep
+          );
+        const shouldPreCoarsen =
+          targetMaximum > startMaximum + 1e-9 &&
+          targetMajorStep > heldMajorStep + 1e-9;
 
-          onFrame(progress) {
-            locationReorderState.progress = progress;
+        function runLocationResize(slideMajorStep) {
+          const slideStep = Math.max(
+            1,
+            Number(slideMajorStep) || heldMajorStep
+          );
 
-            dataset.data = targetValues.map((targetValue, index) => {
-              const startValue = startValues[index] || 0;
+          resetTickStepTransition(slideStep);
+          axisTransitionState.active = true;
+          axisTransitionState.max = startMaximum;
 
-              return startValue +
-                (targetValue - startValue) * progress;
-            });
+          locationTransitionAnimator.run({
+            duration: CONFIG.locationTransitionMs,
+            easing: PFFCharts.easeInOutCubic,
 
-            const displayedMaximum =
-              startMaximum +
-              (targetMaximum - startMaximum) * progress;
+            onFrame(progress) {
+              locationReorderState.progress = progress;
 
-            chart.options.scales.x.max = displayedMaximum;
-            axisTransitionState.max = displayedMaximum;
-            chart.update('none');
-          },
+              dataset.data = targetValues.map((targetValue, index) => {
+                const startValue = startValues[index] || 0;
 
-          onComplete() {
-            dataset.data = targetValues.slice();
-            chart.options.scales.x.max = targetMaximum;
+                return startValue +
+                  (targetValue - startValue) * progress;
+              });
 
-            locationReorderState.active = false;
-            locationReorderState.progress = 1;
-            locationReorderState.fromYByKey = new Map();
+              const displayedMaximum =
+                startMaximum +
+                (targetMaximum - startMaximum) * progress;
 
-            axisTransitionState.active = false;
-            axisTransitionState.max = targetMaximum;
+              chart.options.scales.x.max = displayedMaximum;
+              axisTransitionState.max = displayedMaximum;
+              chart.update('none');
+            },
 
-            chart.update('none');
-            setSpineGeometry(chart.chartArea);
-            settleDisplayedMajorStep(
-              targetMaximum,
-              heldMajorStep
-            );
-          }
-        });
+            onComplete() {
+              dataset.data = targetValues.slice();
+              chart.options.scales.x.max = targetMaximum;
+
+              locationReorderState.active = false;
+              locationReorderState.progress = 1;
+              locationReorderState.fromYByKey = new Map();
+
+              axisTransitionState.active = false;
+              axisTransitionState.max = targetMaximum;
+
+              chart.update('none');
+              setSpineGeometry(chart.chartArea);
+              settleDisplayedMajorStep(
+                targetMaximum,
+                slideStep
+              );
+            }
+          });
+        }
+
+        if (shouldPreCoarsen) {
+          animateTickStepChange(
+            heldMajorStep,
+            targetMajorStep,
+            180,
+            () => runLocationResize(targetMajorStep)
+          );
+        } else {
+          runLocationResize(heldMajorStep);
+        }
 
         return;
       }
