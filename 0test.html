@@ -183,14 +183,6 @@
 
     @media (max-width: 430px) {
 
-      .basis-button {
-        min-width: 74px;
-      }
-
-      .radius-button {
-        min-width: 76px;
-      }
-
       .area-button {
         min-width: 80px;
         padding-right: 4px;
@@ -397,7 +389,7 @@
         'pff-optom-practice-directory',
 
       localCacheKey:
-        'pff-practice-landscape-rows-v3',
+        'pff-practice-landscape-rows-v4',
 
       minimumRows:
         100,
@@ -728,9 +720,6 @@
 
     function sourceRowsFromRemoteCache(payload) {
       const rows = Array.isArray(payload?.data?.rows) ? payload.data.rows : [];
-      locationRows = (Array.isArray(payload?.data?.locationRows) ? payload.data.locationRows : [])
-        .map((values, sourceIndex) => normaliseLocationRow(values, sourceIndex))
-        .filter(Boolean);
 
       return rows
         .map(row => {
@@ -741,6 +730,16 @@
         })
         .filter(Boolean)
         .filter(values => Boolean(PFF.cleanText(values[CONFIG.columns.practiceName])));
+    }
+
+    function locationRowsFromRemoteCache(payload) {
+      return (Array.isArray(payload?.data?.locationRows)
+        ? payload.data.locationRows
+        : [])
+        .map((values, sourceIndex) =>
+          normaliseLocationRow(values, sourceIndex)
+        )
+        .filter(Boolean);
     }
 
     function normaliseRows(rows) {
@@ -781,6 +780,97 @@
           };
         })
         .filter(Boolean);
+    }
+
+    /*
+     * Keep the browser fallback compact while preserving everything required
+     * by Brands, Densest locations and Remoteness.  The shared cache loader
+     * stores the parsed row array, so practices and Localities are tagged and
+     * cached together instead of relying on an in-memory side effect.
+     */
+    function encodeLandscapeCacheRows(practices, locations) {
+      return [
+        ...practices.map(row => [
+          'P',
+          row.practiceName,
+          row.suburb,
+          row.state,
+          row.employerType,
+          row.brand,
+          row.latitudeNumber,
+          row.longitudeNumber
+        ]),
+        ...locations.map(row => [
+          'L',
+          row.postcode,
+          row.suburb,
+          row.stateCode,
+          row.latitudeNumber,
+          row.longitudeNumber
+        ])
+      ];
+    }
+
+    function decodeLandscapeCacheRows(rows) {
+      const practices = [];
+      const locations = [];
+
+      (Array.isArray(rows) ? rows : []).forEach(row => {
+        if (!Array.isArray(row) || !row.length) {
+          return;
+        }
+
+        if (row[0] === 'P') {
+          const practiceName = PFF.cleanText(row[1]);
+          const state = PFF.normaliseState(row[3]);
+
+          if (!practiceName || !state) {
+            return;
+          }
+
+          practices.push({
+            sourceIndex: practices.length,
+            practiceName,
+            suburb: normaliseGroupingText(row[2]),
+            state,
+            employerType: normaliseGroupingText(row[4]),
+            brand: normaliseBrand(row[5]),
+            latitudeNumber: dataNumber(row[6]),
+            longitudeNumber: dataNumber(row[7])
+          });
+          return;
+        }
+
+        if (row[0] === 'L') {
+          const suburb = PFF.cleanText(row[2]);
+          const stateCode = PFF.normaliseState(row[3]);
+          const latitudeNumber = dataNumber(row[4]);
+          const longitudeNumber = dataNumber(row[5]);
+
+          if (
+            !suburb ||
+            !stateCode ||
+            !Number.isFinite(latitudeNumber) ||
+            !Number.isFinite(longitudeNumber)
+          ) {
+            return;
+          }
+
+          locations.push({
+            sourceIndex: locations.length,
+            postcode: PFF.cleanText(row[1]),
+            suburb,
+            stateCode,
+            latitudeNumber,
+            longitudeNumber
+          });
+        }
+      });
+
+      return {
+        practices,
+        locations
+      };
     }
 
     async function loadJsonFallback() {
@@ -933,12 +1023,58 @@
         },
 
         parseLive: payload => {
-          locationRows = locationRowsFromTable(payload?.locationTable);
-          return sourceRowsFromTable(payload?.practiceTable);
+          const practices = normaliseRows(
+            sourceRowsFromTable(payload?.practiceTable)
+          );
+          const locations = locationRowsFromTable(
+            payload?.locationTable
+          );
+
+          if (practices.length < CONFIG.minimumRows) {
+            throw new Error(
+              'Live optometry practice data did not contain enough usable rows.'
+            );
+          }
+
+          if (!locations.length) {
+            throw new Error(
+              'Live Localities data did not contain any usable rows.'
+            );
+          }
+
+          return encodeLandscapeCacheRows(
+            practices,
+            locations
+          );
         },
 
         loadRemoteCache: loadJsonFallback,
-        parseRemoteCache: sourceRowsFromRemoteCache,
+
+        parseRemoteCache: payload => {
+          const practices = normaliseRows(
+            sourceRowsFromRemoteCache(payload)
+          );
+          const locations = locationRowsFromRemoteCache(
+            payload
+          );
+
+          if (practices.length < CONFIG.minimumRows) {
+            throw new Error(
+              'Static fallback optometry data did not contain enough usable rows.'
+            );
+          }
+
+          if (!locations.length) {
+            throw new Error(
+              'Static fallback Localities data did not contain any usable rows.'
+            );
+          }
+
+          return encodeLandscapeCacheRows(
+            practices,
+            locations
+          );
+        },
 
         onLiveError(error) {
           console.warn('Live practice-landscape data unavailable; trying static JSON fallback.', error);
@@ -2728,7 +2864,9 @@
         labels: model.groups.map(group => tickLabel(group)),
         datasets: [
           {
-            label: 'Practices',
+            label: model.view === 'remote'
+              ? 'Distance to nearest practice (km)'
+              : 'Practices',
             data: model.values,
             backgroundColor: appearances.map(item => item.background),
             hoverBackgroundColor: appearances.map(
@@ -3127,16 +3265,26 @@
       load: loadPracticeRows,
 
       render(loaded) {
-        sourceRows = normaliseRows(loaded.rows);
+        const decoded =
+          decodeLandscapeCacheRows(loaded.rows);
+
+        sourceRows = decoded.practices;
+        locationRows = decoded.locations;
         practiceSpatialIndex =
           buildPracticeSpatialIndex(
             sourceRows
           );
         nearestDistanceCache.clear();
 
-        if (!sourceRows.length) {
+        if (sourceRows.length < CONFIG.minimumRows) {
           throw new Error(
             'No usable optometry practice rows were returned from the practice directory.'
+          );
+        }
+
+        if (!locationRows.length) {
+          throw new Error(
+            'No usable Localities rows were returned for the Remoteness view.'
           );
         }
 
