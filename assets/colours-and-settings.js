@@ -1,7 +1,7 @@
 /*
  * colours-and-settings.js — State, rurality and employer colours; breakpoints and general configuration
  * Source: assets/pff_chart_core.js v1.2.20, extended with PFF data-source labels.
- * All original colour assignments preserved; new groups use neutral pending approval.
+ * Existing colour assignments preserved. Selected newer employer groups have visual brand-inspired colour approximations; others remain neutral.
  * Standalone classic script; does not load or alter the old PFF core.
  * Dedicated demo/checklist: ../0test.html
  */
@@ -308,7 +308,10 @@
       key: "provision",
       label: "ProVision",
       fullName: "ProVision",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#5B338E', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://optom.provision.com.au/",
+      colourNote: "Purple: current ProVision website and promotional material",
+      colourVerified: false,
       kind: "Independent network",
       aliases: ["ProVision", "Pro Vision"]
     },
@@ -317,7 +320,10 @@
       key: "eyecareplus",
       label: "Eyecare Plus",
       fullName: "Eyecare Plus",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#F58220', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://www.eyecareplus.com.au/",
+      colourNote: "Orange: Eyecare Plus logo",
+      colourVerified: false,
       kind: "Independent network",
       aliases: ["Eyecare Plus", "Eye Care Plus"]
     },
@@ -344,7 +350,10 @@
       key: "visionaustralia",
       label: "Vision Australia",
       fullName: "Vision Australia",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#192B60', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://www.visionaustralia.org/",
+      colourNote: "Navy: Vision Australia logo",
+      colourVerified: false,
       kind: "Community provider",
       aliases: ["Vision Australia"]
     },
@@ -371,7 +380,10 @@
       key: "healthpartners",
       label: "Health Partners",
       fullName: "Health Partners",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#F6C800', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://www.healthpartners.com.au/phis-faqs",
+      colourNote: "Yellow: explicitly described as Health Partners yellow",
+      colourVerified: false,
       kind: "Health fund/service",
       aliases: ["Health Partners", "Health Partners Optical"]
     },
@@ -389,7 +401,10 @@
       key: "aco",
       label: "Australian College of Optometry",
       fullName: "Australian College of Optometry",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#1FB6B8', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://profession.aco.org.au/our-people",
+      colourNote: "Teal: ACO Eye Health logo",
+      colourVerified: false,
       kind: "Community provider",
       aliases: ["Australian College of Optometry", "ACO Eye Health", "ACO Optometry"]
     },
@@ -425,7 +440,10 @@
       key: "westfund",
       label: "Westfund",
       fullName: "Westfund",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#A20A61', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://www.laubmanandpank.com.au/health-funds/health-fund-partners",
+      colourNote: "Magenta: Westfund logo lettering",
+      colourVerified: false,
       kind: "Health fund/service",
       aliases: ["Westfund", "Westfund Health Insurance"]
     },
@@ -479,7 +497,10 @@
       key: "gmhba",
       label: "GMHBA",
       fullName: "GMHBA",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#25D4E7', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://www.gmhba.com.au/",
+      colourNote: "Cyan: GMHBA logo",
+      colourVerified: false,
       kind: "Health fund/service",
       aliases: ["GMHBA", "GMHBA Optical"]
     },
@@ -488,7 +509,10 @@
       key: "owndays",
       label: "OWNDAYS",
       fullName: "OWNDAYS",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#171717', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://www.owndays.com/au/en",
+      colourNote: "Black: OWNDAYS main wordmark",
+      colourVerified: false,
       kind: "Source-labelled group",
       aliases: ["OWNDAYS", "Own Days"]
     },
@@ -497,7 +521,10 @@
       key: "parismiki",
       label: "Paris Miki",
       fullName: "Paris Miki",
-      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      colour: '#084E78', // Brand-inspired approximation from published visual identity; not an official colour specification.
+      colourSource: "https://www.paris-miki.com/",
+      colourNote: "Deep blue: PARIS MIKI wordmark",
+      colourVerified: false,
       kind: "Source-labelled group",
       aliases: ["Paris Miki"]
     },
@@ -734,7 +761,7 @@
     console.warn('[PFF Modules] settings already loaded; replacing its namespace');
   }
   modules.settings = Object.freeze({
-    version: '0.2.0',
+    version: '0.3.0',
     defaults: DEFAULTS,
     stateColours: STATE_COLOURS,
     mmmColours: MMM_COLOURS,
