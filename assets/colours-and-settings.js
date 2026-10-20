@@ -1,8 +1,9 @@
 /*
  * colours-and-settings.js — State, rurality and employer colours; breakpoints and general configuration
- * Source: assets/pff_chart_core.js v1.2.20, with behaviour preserved.
+ * Source: assets/pff_chart_core.js v1.2.20, extended with PFF data-source labels.
+ * All original colour assignments preserved; new groups use neutral pending approval.
  * Standalone classic script; does not load or alter the old PFF core.
- * Dedicated demo/checklist: ./0test.html
+ * Dedicated demo/checklist: ../0test.html
  */
 (function (global) {
   'use strict';
@@ -49,7 +50,9 @@
       aliases: [
         'TOSS',
         'The Optical Superstore',
-        'The Optical Super Store'
+        'The Optical Super Store',
+        'Optical Superstore',
+        'Optical Super Store'
       ]
     },
   
@@ -65,7 +68,9 @@
         'Teachers Health Fund',
         "Teacher's Health",
         "Teacher's Health Fund",
-        'Teacher’s Health Fund'
+        'Teacher’s Health Fund',
+        'Teachers Health Group',
+        'Teachers Health Centre'
       ]
     },
   
@@ -144,7 +149,8 @@
       colour: '#da1c5c',
       aliases: [
         'HCF',
-        'HCF Eyecare'
+        'HCF Eyecare',
+        'HCF Eyecare Centres'
       ]
     },
   
@@ -169,7 +175,14 @@
         'TOC',
         'The Optical Company',
         'The Optical Company (incl. NIB)',
-        'NIB (incl. the Optical Company)'
+        'NIB (incl. the Optical Company)',
+        'nib Eye Care Centre',
+        'nib Eyecare',
+        'The Optical Co',
+        'Kevin Paisley Optometrists',
+        'Stacey & Stacey Optometrists',
+        'Kosmac & Clemens Optometrists',
+        'Shire Optometrists'
       ]
     },
   
@@ -208,12 +221,27 @@
   
     {
       key: 'opsm',
+      parentGroup: 'EssilorLuxottica',
       label: 'OPSM',
       fullName: 'OPSM',
       colour: '#6fb0d4',
       aliases: [
         'OPSM',
-        'OPSM (incl. L&P, EyeQ)'
+        'OPSM (incl. L&P, EyeQ)',
+        'EssilorLuxottica',
+        'Essilor Luxottica',
+        'Essilor-Luxottica',
+        'Luxottica',
+        'Luxottica Retail Australia',
+        'Lux',
+        'L&P',
+        'Laubman & Pank',
+        'Laubman and Pank',
+        'Laubman&Pank',
+        'Laubman Pank',
+        'EyeQ',
+        'Eye Q',
+        'EyeQ Optometrists'
       ]
     },
   
@@ -235,7 +263,8 @@
       colour: '#2cb4a6',
       aliases: [
         'ObNP',
-        'Optical by National Pharmacies'
+        'Optical by National Pharmacies',
+        'National Pharmacies'
       ]
     },
   
@@ -270,8 +299,252 @@
       aliases: [
         'iContact',
         'IContact',
-        'i Contact'
+        'i Contact',
+        'iContact Optometrists'
       ]
+    },
+
+    {
+      key: "provision",
+      label: "ProVision",
+      fullName: "ProVision",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Independent network",
+      aliases: ["ProVision", "Pro Vision"]
+    },
+
+    {
+      key: "eyecareplus",
+      label: "Eyecare Plus",
+      fullName: "Eyecare Plus",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Independent network",
+      aliases: ["Eyecare Plus", "Eye Care Plus"]
+    },
+
+    {
+      key: "options",
+      label: "Options Optometrists",
+      fullName: "Options Optometrists",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Options Optometrists", "Options Optical"]
+    },
+
+    {
+      key: "quinn",
+      label: "Quinn & Co. Eyecare",
+      fullName: "Quinn & Co. Eyecare",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Quinn & Co. Eyecare", "Quinn and Co Eyecare"]
+    },
+
+    {
+      key: "visionaustralia",
+      label: "Vision Australia",
+      fullName: "Vision Australia",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Community provider",
+      aliases: ["Vision Australia"]
+    },
+
+    {
+      key: "totaleyecare",
+      label: "Total Eyecare",
+      fullName: "Total Eyecare",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Total Eyecare"]
+    },
+
+    {
+      key: "specsplus",
+      label: "SpecsPlus",
+      fullName: "SpecsPlus",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["SpecsPlus", "Specs Plus"]
+    },
+
+    {
+      key: "healthpartners",
+      label: "Health Partners",
+      fullName: "Health Partners",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Health fund/service",
+      aliases: ["Health Partners", "Health Partners Optical"]
+    },
+
+    {
+      key: "eyesandvision",
+      label: "Eyes & Vision",
+      fullName: "Eyes & Vision",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Eyes & Vision", "Eyes and Vision"]
+    },
+
+    {
+      key: "aco",
+      label: "Australian College of Optometry",
+      fullName: "Australian College of Optometry",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Community provider",
+      aliases: ["Australian College of Optometry", "ACO Eye Health", "ACO Optometry"]
+    },
+
+    {
+      key: "zoomoptics",
+      label: "Zoom Optics",
+      fullName: "Zoom Optics",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Zoom Optics"]
+    },
+
+    {
+      key: "acuity",
+      label: "Acuity Eyecare",
+      fullName: "Acuity Eyecare",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Acuity Eyecare", "Acuity Eye Care"]
+    },
+
+    {
+      key: "bluefrog",
+      label: "Blue Frog Optics",
+      fullName: "Blue Frog Optics",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Blue Frog Optics"]
+    },
+
+    {
+      key: "westfund",
+      label: "Westfund",
+      fullName: "Westfund",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Health fund/service",
+      aliases: ["Westfund", "Westfund Health Insurance"]
+    },
+
+    {
+      key: "cityoptics",
+      label: "City Optics",
+      fullName: "City Optics",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["City Optics"]
+    },
+
+    {
+      key: "abernethy",
+      label: "Abernethy Owens",
+      fullName: "Abernethy Owens",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Abernethy Owens", "Abernethy & Owens"]
+    },
+
+    {
+      key: "evolve",
+      label: "Evolve Optometry",
+      fullName: "Evolve Optometry",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Evolve Optometry"]
+    },
+
+    {
+      key: "spectaclehub",
+      label: "Spectacle Hub",
+      fullName: "Spectacle Hub",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Spectacle Hub"]
+    },
+
+    {
+      key: "eyetrend",
+      label: "Eye Trend",
+      fullName: "Eye Trend",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Eye Trend", "Eyetrend"]
+    },
+
+    {
+      key: "gmhba",
+      label: "GMHBA",
+      fullName: "GMHBA",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Health fund/service",
+      aliases: ["GMHBA", "GMHBA Optical"]
+    },
+
+    {
+      key: "owndays",
+      label: "OWNDAYS",
+      fullName: "OWNDAYS",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["OWNDAYS", "Own Days"]
+    },
+
+    {
+      key: "parismiki",
+      label: "Paris Miki",
+      fullName: "Paris Miki",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Paris Miki"]
+    },
+
+    {
+      key: "modernspecs",
+      label: "Modernspecs",
+      fullName: "Modernspecs",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Modernspecs", "Modern Specs"]
+    },
+
+    {
+      key: "visionsplendid",
+      label: "Vision Splendid",
+      fullName: "Vision Splendid",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Vision Splendid", "Vision Splendid Optometrist"]
+    },
+
+    {
+      key: "hunterdiscount",
+      label: "Hunter Discount Specs",
+      fullName: "Hunter Discount Specs",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Hunter Discount Specs"]
+    },
+
+    {
+      key: "dryeyesolution",
+      label: "Dry Eye Solution",
+      fullName: "Dry Eye Solution",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Dry Eye Solution"]
+    },
+
+    {
+      key: "darin",
+      label: "Da Rin Optometrist",
+      fullName: "Da Rin Optometrist",
+      colour: '#777777', // Provisional neutral. Do not silently introduce a new colour palette.
+      kind: "Source-labelled group",
+      aliases: ["Da Rin Optometrist"]
     }
   ].map(employer =>
     Object.freeze({
@@ -329,6 +602,12 @@
            * match whole tokens only. This prevents, for
            * example, "ss" matching an unrelated word.
            */
+          // 'Lux' alone is valid, but 'Lux Optical' is not safe to infer as
+          // EssilorLuxottica from an ambiguous abbreviation.
+          if (candidate === 'lux') {
+            return normalised === candidate;
+          }
+
           if (candidate.length <= 3) {
             return (
               normalised === candidate ||
@@ -455,7 +734,7 @@
     console.warn('[PFF Modules] settings already loaded; replacing its namespace');
   }
   modules.settings = Object.freeze({
-    version: '0.1.0',
+    version: '0.2.0',
     defaults: DEFAULTS,
     stateColours: STATE_COLOURS,
     mmmColours: MMM_COLOURS,
