@@ -7,6 +7,7 @@
 <title>CPD Tracker – Online &amp; Live | PFF</title>
 <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap" rel="stylesheet">
 <script src="./assets/pff_loader.js?v=1.2.5"></script>
+<script src="./assets/pff_chart_core.js?v=1.2.20"></script>
 <style>
   /* PFF job_tracker_1.html-style table and controls. Standalone file. */
   :root {
@@ -100,6 +101,16 @@
   col.hours-col,col.clin-col,col.ther-col,col.inter-col{width:53px}
   col.title-col{width:404px} col.provider-col{width:119px} col.date-col{width:96px} col.time-col{width:137px}
   thead{position:sticky;top:0;z-index:5;background:#fff}
+  /* Match the fixed, horizontally synced header used in job_tracker_1 and
+     practice_directory. The real header remains in the scrolling table. */
+  .sticky-table-header{position:fixed;top:0;left:0;z-index:40;display:none;overflow:hidden;background:#fff;pointer-events:none}
+  .sticky-table-header.is-visible{display:block}
+  .sticky-table-header-scroll{width:100%;overflow:hidden}
+  .sticky-table-header .data-table thead{position:relative;top:auto}
+  .sticky-table-header .data-table th{background:#fff}
+  /* Carry the first-column divider into the floating header, without adding
+     a second grey border. */
+  .sticky-table-header::after{content:"";position:absolute;top:0;bottom:0;left:calc(var(--first-column-width) - 1px);z-index:15;width:1px;pointer-events:none;background:linear-gradient(to bottom,#fff 0%,rgba(21,21,21,.16) 10%,var(--pff-ink) 18%,rgba(21,21,21,.16) 78%,#fff 100%)}
   .data-table th,.data-table td{position:relative;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;vertical-align:middle;border-right:1px solid var(--track);border-bottom:1px solid var(--row-line);padding:6px 6px;line-height:1.2}
   .data-table th{height:35px;background:#fff;color:var(--pff-muted);border-bottom:1px solid var(--pff-ink);font-size:12px;font-weight:700;z-index:1;overflow:visible}
   .data-table td{height:var(--row-height);background:#fff;color:var(--pff-ink);font-size:12px}
@@ -249,6 +260,30 @@ const ZONES=[
   {label:'Canberra',short:'Canberra',state:'ACT',zone:'Australia/Canberra'}
 ];
 const $=id=>document.getElementById(id);
+// Use the same sticky-header controller as the job tracker and directory.
+// A fixed clone is necessary because .table-scroll handles horizontal
+// overflow, which otherwise prevents the native table heading from sticking
+// during vertical page scrolling in desktop/mobile iframes.
+const cpdTable=$('cpdTable');
+const cpdShell=document.querySelector('.table-shell');
+const cpdScroller=document.querySelector('.table-scroll');
+const stickyTableHeader=document.createElement('div');
+stickyTableHeader.className='sticky-table-header';
+stickyTableHeader.setAttribute('aria-hidden','true');
+const stickyTableHeaderScroll=document.createElement('div');
+stickyTableHeaderScroll.className='sticky-table-header-scroll';
+stickyTableHeaderScroll.inert=true;
+const stickyHeaderTable=document.createElement('table');
+stickyHeaderTable.className='data-table';
+stickyTableHeaderScroll.appendChild(stickyHeaderTable);
+stickyTableHeader.appendChild(stickyTableHeaderScroll);
+document.body.appendChild(stickyTableHeader);
+const stickyHeaderController=window.PFF?.setupStickyTableHeader?.({
+  table:cpdTable,shell:cpdShell,scroller:cpdScroller,
+  stickyHeader:stickyTableHeader,stickyScroller:stickyTableHeaderScroll,
+  stickyTable:stickyHeaderTable
+})||{sync(){},update(){}};
+
 let records=[],source='preview',busy=false,sortKey='date',sortDirection=1;
 let topicSelection=null,providerSelection=null;
 let zone=ZONES[0];
@@ -419,6 +454,7 @@ function render(){
   $('resultCount').innerHTML=`Showing <span class="status-count">${visible.length}</span> of <span class="status-count">${upcoming.length}</span> upcoming CPD events within 8 wks`;
   document.querySelectorAll('[data-arrow]').forEach(el=>el.textContent=el.dataset.arrow===sortKey?(sortDirection===1?'▲':'▼'):'');
   document.querySelectorAll('.sort-button').forEach(btn=>btn.closest('th').setAttribute('aria-sort',btn.dataset.sort===sortKey?(sortDirection===1?'ascending':'descending'):'none'));
+  stickyHeaderController.sync();
 }
 function closeMenus(except=''){
   for(const id of ['topic','provider','zone']){if(id===except)continue;$(id+'Menu').classList.remove('open');$(id+'Button').setAttribute('aria-expanded','false')}
@@ -581,11 +617,12 @@ document.querySelectorAll('button[data-sort]').forEach(btn=>btn.addEventListener
 records=SNAPSHOT.map((r,i)=>parseRow(r,i,true)).filter(x=>x.title);
 refreshMenus();render();showSource('preview');
 // Prefer live Google Sheets, but do not hide the offline preview indefinitely if access is slow.
-const finishLoading=()=>{$('app').classList.remove('is-loading');};
+const finishLoading=()=>{$('app').classList.remove('is-loading');stickyHeaderController.sync();};
 const loadingFallback=setTimeout(finishLoading,4000);
 window.PFFLoader?.sync();
 refresh().finally(()=>{clearTimeout(loadingFallback);finishLoading()});
 window.addEventListener('resize',render);
+window.addEventListener('pageshow',()=>stickyHeaderController.update());
 document.fonts?.ready.then(render).catch(()=>{});
 setInterval(render,30000); // Removes an event automatically as soon as it has ended (no user action required).
 })();
