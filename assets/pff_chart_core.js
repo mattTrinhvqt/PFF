@@ -9087,6 +9087,19 @@ function getEmployerAppearance(
           return;
         }
 
+        /*
+         * Charts with their own onClick handler own their
+         * on-canvas interactions. Allow presses on the
+         * canvas-drawn tooltip to pass through so the
+         * underlying chart element can receive the tap.
+         */
+        if (
+          typeof chart?.options?.onClick ===
+            'function'
+        ) {
+          return;
+        }
+
         if (event.cancelable) {
           event.preventDefault();
         }
