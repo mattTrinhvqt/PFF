@@ -596,16 +596,48 @@
 
   function completeHeldLoader(entry, pending) {
     if (entry.pending !== pending) return;
-    cancelPending(entry);
+
     const { app } = entry;
+
     if (app.classList.contains('is-loading')) {
+      cancelPending(entry);
       app.classList.remove('pff-loader-cycle-hold');
       return;
     }
+
+    // A fast browser-cache warm start can make the data ready before the
+    // first visible spectral cycle has actually finished. Do not allow an
+    // early animation event or fallback timer to interrupt that first cycle.
+    if (
+      activeLoaderStyle === 2 &&
+      entry.initialCycleStarted &&
+      Number.isFinite(entry.cycleEpoch)
+    ) {
+      const now = global.performance?.now?.() ?? Date.now();
+      const elapsed = Math.max(0, now - entry.cycleEpoch);
+      const remaining = SPECTRAL_CYCLE_MS - elapsed;
+
+      if (remaining > 0) {
+        if (pending.timer !== null) {
+          global.clearTimeout(pending.timer);
+        }
+
+        pending.timer = global.setTimeout(
+          () => completeHeldLoader(entry, pending),
+          remaining + 20
+        );
+
+        return;
+      }
+    }
+
+    cancelPending(entry);
+
     const loader = getSpectralLoader(app);
     if (loader && activeLoaderStyle === 2) {
       loader.classList.add('pff-spectral-complete');
     }
+
     // Paint the completed spectral curve before revealing the app. A single
     // animation frame can run before the browser actually paints that frame.
     // Keep the completed curve visible briefly after two paint opportunities.
@@ -614,7 +646,9 @@
       if (app.classList.contains('is-loading')) return;
       app.classList.remove('pff-loader-cycle-hold');
     };
+
     const holdFinalFrame = () => global.setTimeout(release, 180);
+
     if (typeof global.requestAnimationFrame === 'function') {
       global.requestAnimationFrame(() => {
         global.requestAnimationFrame(holdFinalFrame);
