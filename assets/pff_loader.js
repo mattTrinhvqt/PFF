@@ -1,5 +1,5 @@
 /*
- * PFF Loader v1.2.5 — independent loading animations for PFF web apps.
+ * PFF Loader v1.2.6 — independent loading animations for PFF web apps.
  *
  * Change DEFAULT_LOADER_STYLE below, then update ONLY this file to experiment.
  *   1 = original S/M/L cone triangles
@@ -937,7 +937,7 @@
   }
 
   const publicAPI = Object.freeze({
-    version: '1.2.5',
+    version: '1.2.6',
     init,
     sync: syncLoaderStyles,
     getLoaderStyle,
