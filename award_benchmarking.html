@@ -1,0 +1,2964 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Award & Income Benchmarking</title>
+
+  <!-- Standalone app: no PFF core/loader/assets. Chart.js is the only UI library. -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --pff-purple: #6600ff;
+      --pff-ink: #151515;
+      --pff-muted: #69718a;
+      --pff-track: #e8eaf0;
+      --pff-error: #b42318;
+      --pff-white: #ffffff;
+      --pff-positive: #14823b;
+      --pff-chart-max-width: 520px;
+      --motion-fast: 140ms;
+      --motion-medium: 260ms;
+      --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      padding: 0;
+      background: var(--pff-white);
+    }
+
+    body {
+      overflow-x: hidden;
+      color: var(--pff-ink);
+      background: var(--pff-white);
+      font-family: Lato, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    #fit {
+      display: flex;
+      width: 100%;
+      min-height: 100dvh;
+      align-items: flex-start;
+      justify-content: center;
+    }
+
+    #app {
+      position: relative;
+      display: flex;
+      width: min(calc(100% - 12px), var(--pff-chart-max-width));
+      min-width: 0;
+      min-height: 100dvh;
+      margin-inline: auto;
+      padding: 0 4px 10px;
+      flex-direction: column;
+      background: var(--pff-white);
+    }
+
+    /* ============================================================
+     * Loading
+     * ============================================================ */
+    .app-loading {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      min-height: 280px;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: var(--pff-white);
+    }
+
+    #app:not(.is-loading) .app-loading {
+      display: none;
+    }
+
+    #app.is-loading > :not(.app-loading) {
+      visibility: hidden;
+    }
+
+    .loader-cones {
+      position: relative;
+      width: 38px;
+      height: 24px;
+    }
+
+    .loader-cone {
+      position: absolute;
+      bottom: 1px;
+      width: 12px;
+      height: 22px;
+      border-radius: 50% 50% 44% 44%;
+      opacity: 0.82;
+      transform-origin: 50% 100%;
+      animation: conePulse 900ms ease-in-out infinite alternate;
+    }
+
+    .loader-cone:nth-child(1) {
+      left: 0;
+      background: rgba(74, 86, 255, 0.82);
+    }
+
+    .loader-cone:nth-child(2) {
+      left: 13px;
+      background: rgba(36, 210, 116, 0.78);
+      animation-delay: 110ms;
+    }
+
+    .loader-cone:nth-child(3) {
+      left: 26px;
+      background: rgba(255, 92, 48, 0.76);
+      animation-delay: 220ms;
+    }
+
+    @keyframes conePulse {
+      from { transform: scaleY(0.72); opacity: 0.5; }
+      to { transform: scaleY(1); opacity: 0.95; }
+    }
+
+    .loader-text {
+      color: var(--pff-muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    /* ============================================================
+     * Permanent-graph style top
+     * ============================================================ */
+    .module-top {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 32px;
+      flex: 0 0 auto;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 4px;
+      border-bottom: 1px solid var(--pff-track);
+    }
+
+    .single-tab-shell {
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+
+    .single-tab {
+      position: relative;
+      display: inline-flex;
+      max-width: 100%;
+      min-height: 31px;
+      align-items: center;
+      padding: 0 8px 1px;
+      overflow: hidden;
+      color: var(--pff-ink);
+      background: transparent;
+      border: 0;
+      border-bottom: 2px solid var(--pff-purple);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .live-data {
+      display: inline-flex;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 4px;
+      padding-bottom: 3px;
+      color: var(--pff-muted);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+    }
+
+    .live-data-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #e53935;
+      box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.10);
+    }
+
+    .live-data.is-loading .live-data-dot {
+      background: #c27c00;
+      box-shadow: 0 0 0 2px rgba(194, 124, 0, 0.10);
+    }
+
+    .live-data.is-error {
+      color: var(--pff-error);
+    }
+
+    .live-data.is-error .live-data-dot {
+      background: var(--pff-error);
+    }
+
+    #status {
+      min-height: 0;
+      color: var(--pff-error);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1.3;
+      text-align: center;
+    }
+
+    #status:empty {
+      display: none;
+    }
+
+    .chart-heading-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 34px;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .chart-heading {
+      min-width: 0;
+      margin: 0;
+      overflow: hidden;
+      color: var(--pff-ink);
+      font-size: clamp(15px, 4.6vw, 19px);
+      font-weight: 700;
+      line-height: 1.1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .active-year {
+      flex: 0 0 auto;
+      color: var(--pff-purple);
+      font-size: 10px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    /* ============================================================
+     * Benchmark input
+     * ============================================================ */
+    .benchmark-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      width: 100%;
+      min-width: 0;
+      align-items: end;
+      gap: 9px;
+      padding: 5px 0 6px;
+      border-bottom: 1px solid var(--pff-track);
+    }
+
+    .benchmark-field {
+      min-width: 0;
+    }
+
+    .benchmark-label {
+      display: block;
+      margin: 0 0 2px;
+      color: var(--pff-muted);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .benchmark-input-wrap {
+      position: relative;
+      display: flex;
+      min-width: 0;
+      align-items: center;
+    }
+
+    .benchmark-prefix {
+      position: absolute;
+      left: 1px;
+      color: var(--pff-muted);
+      font-size: 12px;
+      pointer-events: none;
+    }
+
+    #benchmarkInput {
+      width: 100%;
+      min-width: 0;
+      height: 27px;
+      padding: 0 2px 0 12px;
+      color: var(--pff-ink);
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--pff-muted);
+      border-radius: 0;
+      outline: 0;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #benchmarkInput:focus {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    #benchmarkInput::placeholder {
+      color: var(--pff-muted);
+      font-weight: 400;
+      opacity: 0.8;
+    }
+
+    .benchmark-clear {
+      display: inline-flex;
+      min-width: 50px;
+      height: 27px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 6px;
+      color: var(--pff-muted);
+      background: var(--pff-white);
+      border: 1px solid var(--pff-track);
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .benchmark-clear:hover,
+    .benchmark-clear:focus-visible {
+      color: var(--pff-ink);
+      border-color: var(--pff-ink);
+      outline: 0;
+    }
+
+    /* ============================================================
+     * Legend + chart
+     * ============================================================ */
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .chart-legend {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      align-items: center;
+      gap: 11px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 2px 1px 3px;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .chart-legend::-webkit-scrollbar {
+      display: none;
+    }
+
+    .legend-item {
+      --series-colour: var(--pff-muted);
+      display: inline-flex;
+      min-width: max-content;
+      align-items: center;
+      gap: 5px;
+      color: var(--pff-muted);
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .legend-mark {
+      display: inline-block;
+      width: 14px;
+      height: 3px;
+      background: var(--series-colour);
+      border-radius: 2px;
+    }
+
+    .legend-mark.is-benchmark {
+      height: 0;
+      background: transparent;
+      border-top: 2px dotted var(--series-colour);
+      border-radius: 0;
+    }
+
+    .legend-value {
+      color: var(--pff-ink);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .chart-shell {
+      position: relative;
+      width: 100%;
+      height: 300px;
+      min-height: 0;
+      flex: 0 0 auto;
+      overflow: hidden;
+      contain: layout paint;
+      isolation: isolate;
+    }
+
+    .chart-shell canvas {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      outline: none;
+    }
+
+    .chart-empty,
+    .chart-error {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      color: var(--pff-muted);
+      background: rgba(255, 255, 255, 0.93);
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    .chart-error {
+      color: var(--pff-error);
+    }
+
+    .chart-empty[hidden],
+    .chart-error[hidden] {
+      display: none !important;
+    }
+
+    /* ============================================================
+     * Slider
+     * ============================================================ */
+    .time-section {
+      width: 100%;
+      padding: 4px 1px 5px;
+      border-top: 1px solid var(--pff-track);
+    }
+
+    .time-label-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 1px;
+    }
+
+    .time-label {
+      color: var(--pff-muted);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .time-value {
+      color: var(--pff-ink);
+      font-size: 9px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .time-slider-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .time-end {
+      color: var(--pff-muted);
+      font-size: 8px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #yearSlider {
+      --slider-progress: 0%;
+      width: 100%;
+      height: 18px;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      accent-color: var(--pff-purple);
+      cursor: ew-resize;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    #yearSlider::-webkit-slider-runnable-track {
+      height: 4px;
+      background:
+        linear-gradient(
+          to right,
+          var(--pff-purple) 0,
+          var(--pff-purple) var(--slider-progress),
+          var(--pff-track) var(--slider-progress),
+          var(--pff-track) 100%
+        );
+      border-radius: 999px;
+    }
+
+    #yearSlider::-webkit-slider-thumb {
+      width: 14px;
+      height: 14px;
+      margin-top: -5px;
+      background: var(--pff-white);
+      border: 2px solid var(--pff-purple);
+      border-radius: 50%;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    #yearSlider::-moz-range-track {
+      height: 4px;
+      background: var(--pff-track);
+      border: 0;
+      border-radius: 999px;
+    }
+
+    #yearSlider::-moz-range-progress {
+      height: 4px;
+      background: var(--pff-purple);
+      border-radius: 999px;
+    }
+
+    #yearSlider::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      background: var(--pff-white);
+      border: 2px solid var(--pff-purple);
+      border-radius: 50%;
+    }
+
+    /* ============================================================
+     * Bottom comparator picker
+     * ============================================================ */
+    .picker-section {
+      width: 100%;
+      margin-top: 2px;
+      padding-top: 6px;
+      border-top: 1px solid var(--pff-track);
+    }
+
+    .picker-head {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 5px;
+    }
+
+    .picker-label {
+      color: var(--pff-muted);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .source-switch {
+      --switch-index: 0;
+      position: relative;
+      display: grid;
+      width: 178px;
+      max-width: 52%;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      padding: 2px;
+      background: var(--pff-track);
+      border-radius: 5px;
+      isolation: isolate;
+    }
+
+    .source-switch::before {
+      content: "";
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      left: 2px;
+      z-index: -1;
+      width: calc((100% - 4px) / 2);
+      background: var(--pff-white);
+      border: 1px solid rgba(21, 21, 21, 0.08);
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(21, 21, 21, 0.06);
+      transform: translateX(calc(var(--switch-index) * 100%));
+      transition: transform var(--motion-medium) var(--motion-ease);
+    }
+
+    .source-button {
+      min-width: 0;
+      min-height: 24px;
+      padding: 0 4px;
+      color: var(--pff-muted);
+      background: transparent;
+      border: 0;
+      border-radius: 4px;
+      font-size: 8.5px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .source-button.is-active {
+      color: var(--pff-ink);
+    }
+
+    .source-button:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 1px;
+    }
+
+    .option-strip {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      gap: 4px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 1px 1px 4px;
+      scrollbar-width: none;
+      scroll-snap-type: x proximity;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .option-strip::-webkit-scrollbar {
+      display: none;
+    }
+
+    .option-card {
+      --series-colour: var(--pff-purple);
+      position: relative;
+      display: flex;
+      min-width: 112px;
+      min-height: 42px;
+      flex: 0 0 auto;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 2px;
+      padding: 5px 7px;
+      overflow: hidden;
+      color: var(--pff-ink);
+      background: var(--pff-white);
+      border: 1px solid var(--pff-track);
+      border-radius: 5px;
+      text-align: left;
+      cursor: pointer;
+      scroll-snap-align: start;
+      transition:
+        border-color var(--motion-fast) ease,
+        box-shadow var(--motion-fast) ease,
+        transform var(--motion-fast) ease;
+    }
+
+    .option-card:hover {
+      border-color: var(--pff-muted);
+    }
+
+    .option-card.is-selected {
+      border-color: var(--series-colour);
+      box-shadow: inset 3px 0 0 var(--series-colour);
+    }
+
+    .option-card:active {
+      transform: scale(0.985);
+    }
+
+    .option-card:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
+    }
+
+    .option-title {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      align-items: center;
+      gap: 5px;
+      color: var(--pff-ink);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    .option-dot {
+      width: 7px;
+      height: 7px;
+      flex: 0 0 7px;
+      background: var(--series-colour);
+      border-radius: 50%;
+    }
+
+    .option-card[data-source="abs"] .option-dot {
+      border-radius: 0;
+    }
+
+    .option-subtitle {
+      max-width: 100%;
+      overflow: hidden;
+      color: var(--pff-muted);
+      font-size: 7.8px;
+      font-weight: 400;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .source-note {
+      margin: 1px 1px 0;
+      color: var(--pff-muted);
+      font-size: 7.8px;
+      line-height: 1.3;
+      text-align: center;
+    }
+
+    .source-note a,
+    .source-note a:visited {
+      color: var(--pff-purple);
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    @media (max-width: 430px) {
+      #app {
+        width: min(calc(100% - 8px), var(--pff-chart-max-width));
+        padding-inline: 2px;
+      }
+
+      .single-tab {
+        padding-inline: 5px;
+        font-size: 10px;
+      }
+
+      .chart-heading {
+        font-size: 15px;
+      }
+
+      .benchmark-row {
+        grid-template-columns: minmax(0, 1fr) 45px;
+        gap: 6px;
+      }
+
+      .benchmark-clear {
+        min-width: 45px;
+        padding-inline: 4px;
+        font-size: 8px;
+      }
+
+      .chart-shell {
+        height: 258px;
+      }
+
+      .legend-item {
+        font-size: 8.5px;
+      }
+
+      .source-switch {
+        width: 154px;
+        max-width: 58%;
+      }
+
+      .source-button {
+        font-size: 8px;
+      }
+
+      .option-card {
+        min-width: 102px;
+        min-height: 40px;
+        padding: 4px 6px;
+      }
+
+      .option-title {
+        font-size: 8.5px;
+      }
+
+      .option-subtitle {
+        font-size: 7.3px;
+      }
+    }
+
+    @media (max-width: 350px) {
+      .chart-shell {
+        height: 235px;
+      }
+
+      .source-switch {
+        width: 142px;
+      }
+
+      .picker-label,
+      .benchmark-label,
+      .time-label,
+      .time-value {
+        font-size: 8px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div id="loadingState" class="app-loading" role="status" aria-label="Loading benchmarking data">
+        <div class="loader-cones" aria-hidden="true">
+          <span class="loader-cone"></span>
+          <span class="loader-cone"></span>
+          <span class="loader-cone"></span>
+        </div>
+        <div class="loader-text">Loading benchmark data…</div>
+      </div>
+
+      <div class="module-top">
+        <div class="single-tab-shell">
+          <div id="activeTab" class="single-tab" role="tab" aria-selected="true">HPSS Level 2</div>
+        </div>
+
+        <div id="dataSourceIndicator" class="live-data is-loading" aria-live="polite">
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="dataSourceText">LOADING</span>
+        </div>
+      </div>
+
+      <div id="status" role="alert" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <h2 class="chart-heading">FTE salary benchmarking over time</h2>
+        <span id="activeYear" class="active-year">—</span>
+      </div>
+
+      <div class="benchmark-row">
+        <div class="benchmark-field">
+          <label class="benchmark-label" for="benchmarkInput">Your current FTE salary benchmark <span style="font-weight:400">(optional)</span></label>
+          <div class="benchmark-input-wrap">
+            <span class="benchmark-prefix" aria-hidden="true">$</span>
+            <input
+              id="benchmarkInput"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              maxlength="8"
+              placeholder="e.g. 100,000"
+              aria-label="Current FTE salary benchmark in Australian dollars"
+            >
+          </div>
+        </div>
+
+        <button id="benchmarkClear" class="benchmark-clear" type="button">Clear</button>
+      </div>
+
+      <div class="chart-options-row">
+        <div id="chartLegend" class="chart-legend" aria-label="Chart legend"></div>
+      </div>
+
+      <div class="chart-shell">
+        <canvas id="benchmarkChart" aria-label="Award and income benchmarking chart"></canvas>
+        <div id="chartEmpty" class="chart-empty" hidden>Select a benchmark below.</div>
+        <div id="chartError" class="chart-error" hidden></div>
+      </div>
+
+      <section class="time-section" aria-label="Forecast year">
+        <div class="time-label-row">
+          <span class="time-label">Time</span>
+          <span id="timeValue" class="time-value">Now</span>
+        </div>
+
+        <div class="time-slider-row">
+          <span id="sliderStart" class="time-end">—</span>
+          <input
+            id="yearSlider"
+            type="range"
+            min="0"
+            max="20"
+            step="1"
+            value="0"
+            aria-label="Forecast year, now to 20 years"
+          >
+          <span id="sliderEnd" class="time-end">—</span>
+        </div>
+      </section>
+
+      <section class="picker-section" aria-label="Benchmark selection">
+        <div class="picker-head">
+          <span class="picker-label">Compare with</span>
+
+          <div id="sourceSwitch" class="source-switch" role="group" aria-label="Benchmark source">
+            <button id="sourceHpss" class="source-button is-active" type="button" aria-pressed="true">HPSS Award</button>
+            <button id="sourceAbs" class="source-button" type="button" aria-pressed="false">ABS data</button>
+          </div>
+        </div>
+
+        <div id="optionStrip" class="option-strip" role="radiogroup" aria-label="Benchmark options"></div>
+
+        <p id="sourceNote" class="source-note"></p>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    /* ============================================================
+     * Standalone configuration
+     * ============================================================ */
+    const CURRENT_YEAR = new Date().getFullYear();
+    const FORECAST_YEARS = 20;
+    const STANDARD_WEEKLY_HOURS = 38;
+    const WEEKS_PER_YEAR = 52;
+
+    const HPSS_SHEET_ID =
+      '1ihTDzfCD_rXQN8qV_aaik98-Zkwj1WTrS_QZZj-3r18';
+
+    const HPSS_SHEET_GID =
+      '0';
+
+    const HPSS_RANGE =
+      'A10:AD29';
+
+    const ABS_SHEET_ID =
+      '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
+
+    const ABS_SHEET_NAME =
+      'ABSincome';
+
+    const ABS_RANGE =
+      'A31:P';
+
+    const ABS_SOURCE_URL =
+      'https://www.abs.gov.au/statistics/labour/earnings-and-working-conditions/employee-earnings/latest-release';
+
+    const HPSS_START_PAY_POINT_BY_LEVEL = Object.freeze({
+      'Level 1': 4,
+      'Level 2': 1,
+      'Level 3': 1,
+      'Level 4': 1
+    });
+
+    const HPSS_LEVEL_META = Object.freeze({
+      'Level 1': {
+        label: 'Entry / new graduate',
+        colour: '#4a90e2'
+      },
+      'Level 2': {
+        label: 'Independent clinician',
+        colour: '#57bb8a'
+      },
+      'Level 3': {
+        label: 'Experienced clinician',
+        colour: '#d0021b'
+      },
+      'Level 4': {
+        label: 'Senior / strategic responsibility',
+        colour: '#6600ff'
+      }
+    });
+
+    const ABS_SERIES = Object.freeze([
+      { key: 'total', column: 1, label: 'Total (all employees)', shortLabel: 'Total', group: 'Broad comparisons', colour: '#1D4ED8' },
+      { key: 'professionals', column: 2, label: 'Professionals (all)', shortLabel: 'Professionals', group: 'Broad comparisons', colour: '#16A34A' },
+      { key: 'artsMedia', column: 3, label: 'Arts and Media Professionals', shortLabel: 'Arts & Media', group: 'Professional occupations', colour: '#F59E0B' },
+      { key: 'businessHrMarketing', column: 4, label: 'Business, HR, and Marketing Professionals', shortLabel: 'Business / HR / Marketing', group: 'Professional occupations', colour: '#8B5CF6' },
+      { key: 'designEngineeringScienceTransport', column: 5, label: 'Design, Engineering, Science, and Transport Professionals', shortLabel: 'Design / Engineering / Science / Transport', group: 'Professional occupations', colour: '#06B6D4' },
+      { key: 'education', column: 6, label: 'Education Professionals', shortLabel: 'Education', group: 'Professional occupations', colour: '#EC4899' },
+      { key: 'health', column: 7, label: 'Health Professionals', shortLabel: 'Health', group: 'Professional occupations', colour: '#F97316' },
+      { key: 'ict', column: 8, label: 'ICT Professionals', shortLabel: 'ICT', group: 'Professional occupations', colour: '#0F766E' },
+      { key: 'legalSocialWelfare', column: 9, label: 'Legal, Social, and Welfare Professionals', shortLabel: 'Legal / Social / Welfare', group: 'Professional occupations', colour: '#84CC16' },
+      { key: 'nonSchoolQualification', column: 10, label: 'Non-school qualification', shortLabel: 'Non-school qualification', group: 'Highest non-school qualification', colour: '#64748B' },
+      { key: 'certIIIIV', column: 11, label: 'Cert III or IV (AQF 3–4)', shortLabel: 'Cert III / IV', group: 'Highest non-school qualification', colour: '#2563EB' },
+      { key: 'advDiplomaDiploma', column: 12, label: 'Adv Diploma or Diploma (AQF 5–6)', shortLabel: 'Adv Diploma / Diploma', group: 'Highest non-school qualification', colour: '#CA8A04' },
+      { key: 'bachelor', column: 13, label: 'Bachelor Degree (AQF 7)', shortLabel: 'Bachelor Degree', group: 'Highest non-school qualification', colour: '#9333EA' },
+      { key: 'graduateDiplomaCert', column: 14, label: 'Graduate Diploma or Cert (AQF 8)', shortLabel: 'Graduate Diploma / Cert', group: 'Highest non-school qualification', colour: '#BE123C' },
+      { key: 'postgrad', column: 15, label: 'Postgrad Degree (AQF 9–10)', shortLabel: 'Postgrad Degree', group: 'Highest non-school qualification', colour: '#059669' }
+    ]);
+
+    /* ============================================================
+     * State
+     * ============================================================ */
+    const app = document.getElementById('app');
+    const activeTab = document.getElementById('activeTab');
+    const statusElement = document.getElementById('status');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
+    const activeYearElement = document.getElementById('activeYear');
+    const chartLegend = document.getElementById('chartLegend');
+    const chartCanvas = document.getElementById('benchmarkChart');
+    const chartEmpty = document.getElementById('chartEmpty');
+    const chartError = document.getElementById('chartError');
+    const benchmarkInput = document.getElementById('benchmarkInput');
+    const benchmarkClear = document.getElementById('benchmarkClear');
+    const yearSlider = document.getElementById('yearSlider');
+    const timeValue = document.getElementById('timeValue');
+    const sliderStart = document.getElementById('sliderStart');
+    const sliderEnd = document.getElementById('sliderEnd');
+    const sourceSwitch = document.getElementById('sourceSwitch');
+    const sourceHpss = document.getElementById('sourceHpss');
+    const sourceAbs = document.getElementById('sourceAbs');
+    const optionStrip = document.getElementById('optionStrip');
+    const sourceNote = document.getElementById('sourceNote');
+
+    let chart = null;
+    let activeSource = 'hpss';
+    let activeKey = 'Level 2';
+    let activeOffset = 0;
+    let benchmarkAnnual = null;
+    let hpssData = null;
+    let absRows = [];
+    let hpssPromise = null;
+    let absPromise = null;
+
+    /* ============================================================
+     * Generic helpers
+     * ============================================================ */
+    function formatMoney(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '—';
+
+      return new Intl.NumberFormat('en-AU', {
+        style: 'currency',
+        currency: 'AUD',
+        maximumFractionDigits: 0
+      }).format(numeric);
+    }
+
+    function compactMoney(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '—';
+
+      if (Math.abs(numeric) >= 1000000) {
+        return `$${(numeric / 1000000).toFixed(1).replace(/\.0$/, '')}m`;
+      }
+
+      if (Math.abs(numeric) >= 1000) {
+        return `$${Math.round(numeric / 1000)}k`;
+      }
+
+      return `$${Math.round(numeric)}`;
+    }
+
+    function parseBenchmark(value) {
+      const cleaned = String(value ?? '')
+        .replace(/[$,\s]/g, '')
+        .replace(/\D/g, '')
+        .slice(0, 6);
+
+      if (!cleaned) return null;
+
+      const numeric = Number(cleaned);
+      return Number.isFinite(numeric) && numeric > 0
+        ? numeric
+        : null;
+    }
+
+    function formatBenchmarkInput(value) {
+      const numeric = parseBenchmark(value);
+
+      return Number.isFinite(numeric)
+        ? new Intl.NumberFormat('en-AU', {
+            maximumFractionDigits: 0
+          }).format(numeric)
+        : '';
+    }
+
+    function setStatus(message = '') {
+      statusElement.textContent = message;
+    }
+
+    function setDataState(state, label) {
+      dataSourceIndicator.classList.toggle('is-loading', state === 'loading');
+      dataSourceIndicator.classList.toggle('is-error', state === 'error');
+      dataSourceText.textContent = label;
+    }
+
+    function rgba(hex, alpha) {
+      const cleaned = String(hex).replace('#', '');
+      const normalised = cleaned.length === 3
+        ? cleaned.split('').map(character => character + character).join('')
+        : cleaned;
+
+      const number = Number.parseInt(normalised, 16);
+
+      if (!Number.isFinite(number)) {
+        return `rgba(105,113,138,${alpha})`;
+      }
+
+      const red = (number >> 16) & 255;
+      const green = (number >> 8) & 255;
+      const blue = number & 255;
+
+      return `rgba(${red},${green},${blue},${alpha})`;
+    }
+
+    function parseCellNumber(cell) {
+      const raw = cell?.v ?? cell?.f ?? '';
+
+      if (
+        typeof raw === 'number' &&
+        Number.isFinite(raw)
+      ) {
+        return raw;
+      }
+
+      const numeric = Number(
+        String(raw)
+          .replace(/[$,\s]/g, '')
+          .trim()
+      );
+
+      return Number.isFinite(numeric)
+        ? numeric
+        : NaN;
+    }
+
+    function cellText(cell) {
+      return String(
+        cell?.f ?? cell?.v ?? ''
+      ).trim();
+    }
+
+    function parseCellYear(cell) {
+      const raw = cell?.v ?? cell?.f ?? '';
+
+      if (
+        typeof raw === 'number' &&
+        Number.isFinite(raw) &&
+        raw >= 1900 &&
+        raw <= 2100
+      ) {
+        return Math.round(raw);
+      }
+
+      const text = String(
+        cell?.f ?? cell?.v ?? ''
+      ).trim();
+
+      const directYear =
+        text.match(/\b(19|20)\d{2}\b/);
+
+      if (directYear) {
+        return Number(directYear[0]);
+      }
+
+      const googleDate =
+        text.match(/^Date\((\d{4}),/);
+
+      if (googleDate) {
+        return Number(googleDate[1]);
+      }
+
+      const parsed =
+        Date.parse(text);
+
+      return Number.isFinite(parsed)
+        ? new Date(parsed).getUTCFullYear()
+        : NaN;
+    }
+
+    function linearRegressionValue(points, targetX, valueKey = 'value') {
+      const usable = (points || [])
+        .map(point => ({
+          x: Number(point.year ?? point.x),
+          y: Number(point[valueKey] ?? point.y)
+        }))
+        .filter(point =>
+          Number.isFinite(point.x) &&
+          Number.isFinite(point.y) &&
+          point.y > 0
+        );
+
+      if (!usable.length) return null;
+      if (usable.length === 1) return usable[0].y;
+
+      const meanX =
+        usable.reduce((sum, point) => sum + point.x, 0) /
+        usable.length;
+
+      const meanY =
+        usable.reduce((sum, point) => sum + point.y, 0) /
+        usable.length;
+
+      let numerator = 0;
+      let denominator = 0;
+
+      usable.forEach(point => {
+        const dx = point.x - meanX;
+        numerator += dx * (point.y - meanY);
+        denominator += dx * dx;
+      });
+
+      const slope =
+        denominator > 0
+          ? numerator / denominator
+          : 0;
+
+      const projected =
+        meanY +
+        slope *
+        (Number(targetX) - meanX);
+
+      return Number.isFinite(projected) && projected > 0
+        ? projected
+        : usable[usable.length - 1].y;
+    }
+
+    function callGoogleSheetQuery({
+      spreadsheetId,
+      sheetName = '',
+      gid = '',
+      range = '',
+      headers = '0',
+      timeoutMs = 20000
+    }) {
+      return new Promise((resolve, reject) => {
+        const callbackName =
+          `awardBenchmarkCallback_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+        const script =
+          document.createElement('script');
+
+        const timeout =
+          window.setTimeout(() => {
+            cleanup();
+            reject(
+              new Error('Google Sheets request timed out.')
+            );
+          }, timeoutMs);
+
+        function cleanup() {
+          window.clearTimeout(timeout);
+
+          try {
+            delete window[callbackName];
+          } catch (_) {
+            window[callbackName] = undefined;
+          }
+
+          script.remove();
+        }
+
+        window[callbackName] = response => {
+          cleanup();
+
+          if (
+            !response ||
+            response.status === 'error'
+          ) {
+            reject(
+              new Error(
+                response?.errors?.[0]?.detailed_message ||
+                'Could not read the Google Sheet.'
+              )
+            );
+            return;
+          }
+
+          resolve(response);
+        };
+
+        script.onerror = () => {
+          cleanup();
+          reject(
+            new Error('Could not read the Google Sheet.')
+          );
+        };
+
+        const params =
+          new URLSearchParams({
+            headers,
+            tqx:
+              `responseHandler:${callbackName}`
+          });
+
+        if (sheetName) {
+          params.set('sheet', sheetName);
+        }
+
+        if (gid) {
+          params.set('gid', gid);
+        }
+
+        if (range) {
+          params.set('range', range);
+        }
+
+        script.src =
+          `https://docs.google.com/spreadsheets/d/` +
+          `${spreadsheetId}/gviz/tq?${params.toString()}`;
+
+        document.body.appendChild(script);
+      });
+    }
+
+    /* ============================================================
+     * HPSS data
+     * ============================================================ */
+    function linearProjectHpssRate(history, targetYear) {
+      const exact =
+        Number(history?.[targetYear]);
+
+      if (
+        Number.isFinite(exact) &&
+        exact > 0
+      ) {
+        return exact;
+      }
+
+      const points =
+        Object.entries(history || {})
+          .map(([year, rate]) => ({
+            year: Number(year),
+            value: Number(rate)
+          }))
+          .filter(point =>
+            Number.isFinite(point.year) &&
+            Number.isFinite(point.value) &&
+            point.value > 0
+          )
+          .sort((first, second) =>
+            first.year - second.year
+          );
+
+      return linearRegressionValue(
+        points,
+        targetYear
+      );
+    }
+
+    function loadHpssData() {
+      if (hpssData) {
+        return Promise.resolve(hpssData);
+      }
+
+      if (hpssPromise) {
+        return hpssPromise;
+      }
+
+      setDataState('loading', 'LOADING');
+
+      hpssPromise =
+        callGoogleSheetQuery({
+          spreadsheetId: HPSS_SHEET_ID,
+          gid: HPSS_SHEET_GID,
+          range: HPSS_RANGE,
+          headers: '0',
+          timeoutMs: 20000
+        })
+          .then(response => {
+            const rows =
+              response?.table?.rows || [];
+
+            if (rows.length < 2) {
+              throw new Error(
+                'HPSS Award rows are unavailable.'
+              );
+            }
+
+            const headerCells =
+              rows[0]?.c || [];
+
+            const currentRateYear =
+              parseCellYear(
+                headerCells[2]
+              );
+
+            const yearColumns = [];
+
+            headerCells.forEach(
+              (cell, columnIndex) => {
+                if (columnIndex < 5) {
+                  return;
+                }
+
+                const year =
+                  parseCellYear(cell);
+
+                if (
+                  Number.isFinite(year) &&
+                  year <= CURRENT_YEAR
+                ) {
+                  yearColumns.push({
+                    columnIndex,
+                    year
+                  });
+                }
+              }
+            );
+
+            if (yearColumns.length < 2) {
+              throw new Error(
+                'Historical HPSS Award columns could not be read.'
+              );
+            }
+
+            const levels = {};
+            let currentLevel = '';
+
+            rows
+              .slice(1)
+              .forEach(row => {
+                const cells =
+                  row?.c || [];
+
+                const levelText =
+                  cellText(cells[0]);
+
+                if (
+                  /^Level\s+[1-4]$/i.test(
+                    levelText
+                  )
+                ) {
+                  currentLevel =
+                    levelText.replace(
+                      /^level/i,
+                      'Level'
+                    );
+                }
+
+                if (!currentLevel) {
+                  return;
+                }
+
+                const pointText =
+                  cellText(cells[3]);
+
+                const pointMatch =
+                  pointText.match(/(\d+)/);
+
+                if (!pointMatch) {
+                  return;
+                }
+
+                const point =
+                  Number(pointMatch[1]);
+
+                if (!Number.isFinite(point)) {
+                  return;
+                }
+
+                const currentWeekly =
+                  parseCellNumber(cells[2]);
+
+                const history = {};
+
+                yearColumns.forEach(
+                  ({ columnIndex, year }) => {
+                    const rate =
+                      parseCellNumber(
+                        cells[columnIndex]
+                      );
+
+                    if (
+                      Number.isFinite(rate) &&
+                      rate > 0
+                    ) {
+                      history[year] = rate;
+                    }
+                  }
+                );
+
+                if (
+                  Number.isFinite(currentRateYear) &&
+                  currentRateYear <= CURRENT_YEAR &&
+                  Number.isFinite(currentWeekly) &&
+                  currentWeekly > 0
+                ) {
+                  history[currentRateYear] =
+                    currentWeekly;
+                }
+
+                if (!levels[currentLevel]) {
+                  levels[currentLevel] = {
+                    level: currentLevel,
+                    points: []
+                  };
+                }
+
+                levels[currentLevel]
+                  .points
+                  .push({
+                    point,
+                    history
+                  });
+              });
+
+            const parsedLevels =
+              Object.values(levels)
+                .filter(level =>
+                  level.points.length > 0
+                )
+                .sort((first, second) =>
+                  Number(
+                    first.level.match(/\d+/)?.[0]
+                  ) -
+                  Number(
+                    second.level.match(/\d+/)?.[0]
+                  )
+                );
+
+            if (parsedLevels.length < 4) {
+              throw new Error(
+                'Not all HPSS Award levels could be read.'
+              );
+            }
+
+            parsedLevels.forEach(level => {
+              level.points.sort(
+                (first, second) =>
+                  first.point - second.point
+              );
+            });
+
+            const observedYears =
+              parsedLevels
+                .flatMap(level =>
+                  level.points.flatMap(
+                    point =>
+                      Object
+                        .keys(point.history)
+                        .map(Number)
+                  )
+                )
+                .filter(Number.isFinite);
+
+            const baseYear =
+              observedYears.length
+                ? Math.max(...observedYears)
+                : NaN;
+
+            if (!Number.isFinite(baseYear)) {
+              throw new Error(
+                'No current HPSS Award year could be identified.'
+              );
+            }
+
+            hpssData = {
+              levels: parsedLevels,
+              baseYear,
+              sourceYears:
+                [...new Set(observedYears)]
+                  .sort(
+                    (first, second) =>
+                      first - second
+                  )
+            };
+
+            setDataState('live', 'LIVE data');
+
+            return hpssData;
+          })
+          .catch(error => {
+            setDataState('error', 'DATA ERROR');
+            throw error;
+          })
+          .finally(() => {
+            hpssPromise = null;
+          });
+
+      return hpssPromise;
+    }
+
+    function getHpssLevel(levelKey) {
+      return hpssData?.levels
+        ?.find(level =>
+          level.level === levelKey
+        ) || null;
+    }
+
+    function buildHpssSeries(levelKey) {
+      const level =
+        getHpssLevel(levelKey);
+
+      if (!level) {
+        return null;
+      }
+
+      const startPoint =
+        HPSS_START_PAY_POINT_BY_LEVEL[
+          levelKey
+        ];
+
+      const startIndex =
+        level.points.findIndex(
+          point =>
+            point.point === startPoint
+        );
+
+      if (startIndex < 0) {
+        return null;
+      }
+
+      const initialPoint =
+        level.points[startIndex];
+
+      const observed =
+        Object.entries(
+          initialPoint.history || {}
+        )
+          .map(([year, weeklyRate]) => ({
+            x: Number(year),
+            y:
+              Number(weeklyRate) *
+              WEEKS_PER_YEAR
+          }))
+          .filter(point =>
+            Number.isFinite(point.x) &&
+            Number.isFinite(point.y) &&
+            point.y > 0
+          )
+          .sort(
+            (first, second) =>
+              first.x - second.x
+          );
+
+      const future = [];
+
+      for (
+        let offset = 0;
+        offset <= FORECAST_YEARS;
+        offset += 1
+      ) {
+        const pointIndex =
+          Math.min(
+            startIndex + offset,
+            level.points.length - 1
+          );
+
+        const pointData =
+          level.points[pointIndex];
+
+        const year =
+          hpssData.baseYear +
+          offset;
+
+        const weeklyRate =
+          linearProjectHpssRate(
+            pointData.history,
+            year
+          );
+
+        const annual =
+          Number(weeklyRate) *
+          WEEKS_PER_YEAR;
+
+        if (
+          Number.isFinite(annual) &&
+          annual > 0
+        ) {
+          future.push({
+            x: year,
+            y: annual
+          });
+        }
+      }
+
+      return {
+        observed,
+        future
+      };
+    }
+
+    /* ============================================================
+     * ABS data
+     * ============================================================ */
+    function buildAbsRows(table) {
+      const rows = [];
+
+      (table?.rows || [])
+        .forEach(row => {
+          const cells =
+            row?.c || [];
+
+          const year =
+            parseCellYear(cells[0]);
+
+          if (!Number.isFinite(year)) {
+            return;
+          }
+
+          const item = { year };
+          let hasValue = false;
+
+          ABS_SERIES.forEach(meta => {
+            const value =
+              parseCellNumber(
+                cells[meta.column]
+              );
+
+            item[meta.key] =
+              Number.isFinite(value) &&
+              value > 0
+                ? value
+                : null;
+
+            hasValue =
+              hasValue ||
+              item[meta.key] !== null;
+          });
+
+          if (hasValue) {
+            rows.push(item);
+          }
+        });
+
+      rows.sort(
+        (first, second) =>
+          first.year - second.year
+      );
+
+      if (!rows.length) {
+        throw new Error(
+          'No ABS income rows were found.'
+        );
+      }
+
+      return rows;
+    }
+
+    function loadAbsData() {
+      if (absRows.length) {
+        return Promise.resolve(absRows);
+      }
+
+      if (absPromise) {
+        return absPromise;
+      }
+
+      setDataState('loading', 'LOADING');
+
+      absPromise =
+        callGoogleSheetQuery({
+          spreadsheetId: ABS_SHEET_ID,
+          sheetName: ABS_SHEET_NAME,
+          range: ABS_RANGE,
+          headers: '0',
+          timeoutMs: 15000
+        })
+          .then(response => {
+            absRows =
+              buildAbsRows(
+                response?.table
+              );
+
+            setDataState(
+              'live',
+              'LIVE data'
+            );
+
+            return absRows;
+          })
+          .catch(error => {
+            setDataState(
+              'error',
+              'DATA ERROR'
+            );
+
+            throw error;
+          })
+          .finally(() => {
+            absPromise = null;
+          });
+
+      return absPromise;
+    }
+
+    function absObservedRows(key) {
+      return absRows
+        .map(row => ({
+          year: Number(row.year),
+          value: Number(row[key])
+        }))
+        .filter(row =>
+          Number.isFinite(row.year) &&
+          Number.isFinite(row.value) &&
+          row.value > 0
+        )
+        .sort(
+          (first, second) =>
+            first.year - second.year
+        );
+    }
+
+    function buildAbsSeries(key) {
+      const observedHourly =
+        absObservedRows(key);
+
+      if (!observedHourly.length) {
+        return null;
+      }
+
+      const latest =
+        observedHourly[
+          observedHourly.length - 1
+        ];
+
+      const observed =
+        observedHourly.map(row => ({
+          x: row.year,
+          y:
+            row.value *
+            STANDARD_WEEKLY_HOURS *
+            WEEKS_PER_YEAR
+        }));
+
+      const future = [
+        {
+          x: latest.year,
+          y:
+            latest.value *
+            STANDARD_WEEKLY_HOURS *
+            WEEKS_PER_YEAR
+        }
+      ];
+
+      const maxYear =
+        CURRENT_YEAR +
+        FORECAST_YEARS;
+
+      for (
+        let year = latest.year + 1;
+        year <= maxYear;
+        year += 1
+      ) {
+        const hourly =
+          linearRegressionValue(
+            observedHourly,
+            year
+          );
+
+        const annual =
+          Number(hourly) *
+          STANDARD_WEEKLY_HOURS *
+          WEEKS_PER_YEAR;
+
+        if (
+          Number.isFinite(annual) &&
+          annual > 0
+        ) {
+          future.push({
+            x: year,
+            y: annual
+          });
+        }
+      }
+
+      return {
+        observed,
+        future
+      };
+    }
+
+    /* ============================================================
+     * Selection metadata
+     * ============================================================ */
+    function activeMeta() {
+      if (activeSource === 'hpss') {
+        const levelMeta =
+          HPSS_LEVEL_META[activeKey];
+
+        return {
+          key: activeKey,
+          label: activeKey,
+          shortLabel: activeKey,
+          subtitle:
+            levelMeta?.label || '',
+          colour:
+            levelMeta?.colour ||
+            '#6600ff',
+          shape: 'circle'
+        };
+      }
+
+      const meta =
+        ABS_SERIES.find(
+          item =>
+            item.key === activeKey
+        );
+
+      return {
+        ...(meta || ABS_SERIES[0]),
+        subtitle:
+          meta?.group || '',
+        shape: 'square'
+      };
+    }
+
+    function renderPicker() {
+      sourceSwitch.style.setProperty(
+        '--switch-index',
+        activeSource === 'hpss'
+          ? '0'
+          : '1'
+      );
+
+      sourceHpss.classList.toggle(
+        'is-active',
+        activeSource === 'hpss'
+      );
+
+      sourceAbs.classList.toggle(
+        'is-active',
+        activeSource === 'abs'
+      );
+
+      sourceHpss.setAttribute(
+        'aria-pressed',
+        String(
+          activeSource === 'hpss'
+        )
+      );
+
+      sourceAbs.setAttribute(
+        'aria-pressed',
+        String(
+          activeSource === 'abs'
+        )
+      );
+
+      const items =
+        activeSource === 'hpss'
+          ? Object
+              .entries(HPSS_LEVEL_META)
+              .map(([key, meta]) => ({
+                key,
+                title: key,
+                subtitle: meta.label,
+                colour: meta.colour,
+                source: 'hpss'
+              }))
+          : ABS_SERIES.map(meta => ({
+              key: meta.key,
+              title:
+                meta.shortLabel,
+              subtitle:
+                meta.group,
+              colour:
+                meta.colour,
+              source: 'abs'
+            }));
+
+      optionStrip.innerHTML =
+        items
+          .map(item => `
+            <button
+              class="option-card${item.key === activeKey ? ' is-selected' : ''}"
+              type="button"
+              role="radio"
+              aria-checked="${String(item.key === activeKey)}"
+              data-key="${item.key}"
+              data-source="${item.source}"
+              style="--series-colour:${item.colour};"
+            >
+              <span class="option-title">
+                <span class="option-dot" aria-hidden="true"></span>
+                <span>${item.title}</span>
+              </span>
+              <span class="option-subtitle">${item.subtitle}</span>
+            </button>
+          `)
+          .join('');
+
+      activeTab.textContent =
+        activeSource === 'hpss'
+          ? activeKey
+          : (
+              ABS_SERIES.find(
+                item =>
+                  item.key === activeKey
+              )?.shortLabel ||
+              'ABS'
+            );
+
+      if (activeSource === 'hpss') {
+        sourceNote.textContent =
+          'HPSS Award minimum uses standard 38-hour weeks and excludes penalty loadings.';
+      } else {
+        sourceNote.innerHTML =
+          `ABS hourly earnings are annualised at 38 hrs/wk. ` +
+          `<a href="${ABS_SOURCE_URL}" target="_blank" rel="noopener noreferrer">ABS source</a>.`;
+      }
+    }
+
+    /* ============================================================
+     * Chart
+     * ============================================================ */
+    function currentTargetYear() {
+      return CURRENT_YEAR + activeOffset;
+    }
+
+    function dataValueAtYear(points, year) {
+      const sorted =
+        (points || [])
+          .map(point => ({
+            x: Number(point.x),
+            y: Number(point.y)
+          }))
+          .filter(point =>
+            Number.isFinite(point.x) &&
+            Number.isFinite(point.y)
+          )
+          .sort(
+            (first, second) =>
+              first.x - second.x
+          );
+
+      if (!sorted.length) {
+        return null;
+      }
+
+      const exact =
+        sorted.find(
+          point =>
+            point.x === year
+        );
+
+      if (exact) {
+        return exact.y;
+      }
+
+      for (
+        let index = 0;
+        index < sorted.length - 1;
+        index += 1
+      ) {
+        const first =
+          sorted[index];
+
+        const second =
+          sorted[index + 1];
+
+        if (
+          year > first.x &&
+          year < second.x
+        ) {
+          const ratio =
+            (year - first.x) /
+            (second.x - first.x);
+
+          return (
+            first.y +
+            (second.y - first.y) *
+            ratio
+          );
+        }
+      }
+
+      if (year < sorted[0].x) {
+        return sorted[0].y;
+      }
+
+      return sorted[
+        sorted.length - 1
+      ].y;
+    }
+
+    function buildChartModel() {
+      const meta =
+        activeMeta();
+
+      const sourceSeries =
+        activeSource === 'hpss'
+          ? buildHpssSeries(activeKey)
+          : buildAbsSeries(activeKey);
+
+      if (!sourceSeries) {
+        return null;
+      }
+
+      const datasets = [];
+      const targetYear =
+        currentTargetYear();
+
+      const colour =
+        meta.colour;
+
+      if (sourceSeries.observed.length) {
+        datasets.push({
+          label:
+            activeSource === 'hpss'
+              ? 'HPSS Award minimum'
+              : meta.label,
+          pffType: 'comparison',
+          pffObserved: true,
+          data:
+            sourceSeries.observed,
+          parsing: false,
+          borderColor:
+            colour,
+          backgroundColor:
+            colour,
+          borderWidth: 1.8,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          tension: 0,
+          fill: false,
+          spanGaps: false,
+          order: 3
+        });
+      }
+
+      if (sourceSeries.future.length) {
+        datasets.push({
+          label:
+            activeSource === 'hpss'
+              ? 'HPSS Award minimum forecast'
+              : `${meta.label} forecast`,
+          pffType: 'comparison',
+          pffProjected: true,
+          data:
+            sourceSeries.future,
+          parsing: false,
+          borderColor:
+            rgba(colour, 0.82),
+          backgroundColor:
+            rgba(colour, 0.82),
+          borderWidth: 1.8,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          borderDash: [1.5, 3.5],
+          borderCapStyle: 'round',
+          tension: 0,
+          fill: false,
+          spanGaps: true,
+          order: 4
+        });
+      }
+
+      if (
+        Number.isFinite(benchmarkAnnual) &&
+        benchmarkAnnual > 0
+      ) {
+        datasets.push({
+          label: 'Your benchmark',
+          pffType: 'benchmark',
+          data: [
+            {
+              x: CURRENT_YEAR,
+              y: benchmarkAnnual
+            },
+            {
+              x:
+                CURRENT_YEAR +
+                FORECAST_YEARS,
+              y: benchmarkAnnual
+            }
+          ],
+          parsing: false,
+          borderColor:
+            '#b42318',
+          backgroundColor:
+            '#b42318',
+          borderWidth: 1.8,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          borderDash: [1.5, 3.5],
+          borderCapStyle: 'round',
+          tension: 0,
+          fill: false,
+          spanGaps: true,
+          order: 2
+        });
+      }
+
+      const allComparisonPoints =
+        [
+          ...sourceSeries.observed,
+          ...sourceSeries.future
+        ];
+
+      const comparisonValue =
+        dataValueAtYear(
+          allComparisonPoints,
+          targetYear
+        );
+
+      return {
+        meta,
+        sourceSeries,
+        datasets,
+        targetYear,
+        comparisonValue
+      };
+    }
+
+    function minChartYear(model) {
+      const years =
+        model
+          .sourceSeries
+          .observed
+          .map(point =>
+            Number(point.x)
+          )
+          .filter(Number.isFinite);
+
+      return years.length
+        ? Math.min(...years)
+        : CURRENT_YEAR;
+    }
+
+    function chartYRange(model) {
+      const maxYear =
+        model.targetYear;
+
+      const values = [];
+
+      model.datasets.forEach(dataset => {
+        (dataset.data || [])
+          .forEach(point => {
+            const x =
+              Number(point.x);
+
+            const y =
+              Number(point.y);
+
+            if (
+              Number.isFinite(x) &&
+              Number.isFinite(y) &&
+              x <= maxYear
+            ) {
+              values.push(y);
+            }
+          });
+      });
+
+      if (!values.length) {
+        return {
+          min: 50000,
+          max: 150000
+        };
+      }
+
+      const rawMin =
+        Math.min(...values);
+
+      const rawMax =
+        Math.max(...values);
+
+      const minimumSpan = 40000;
+      const padding =
+        Math.max(
+          5000,
+          (rawMax - rawMin) *
+          0.14
+        );
+
+      let min =
+        rawMin - padding;
+
+      let max =
+        rawMax + padding;
+
+      if (max - min < minimumSpan) {
+        const centre =
+          (min + max) / 2;
+
+        min =
+          centre -
+          minimumSpan / 2;
+
+        max =
+          centre +
+          minimumSpan / 2;
+      }
+
+      const snap = 5000;
+
+      min =
+        Math.max(
+          0,
+          Math.floor(min / snap) *
+          snap
+        );
+
+      max =
+        Math.ceil(max / snap) *
+        snap;
+
+      return { min, max };
+    }
+
+    const activeYearPlugin = {
+      id: 'activeBenchmarkYear',
+
+      afterDatasetsDraw(chartInstance) {
+        const area =
+          chartInstance.chartArea;
+
+        const xScale =
+          chartInstance.scales?.x;
+
+        if (!area || !xScale) {
+          return;
+        }
+
+        const year =
+          currentTargetYear();
+
+        const x =
+          xScale.getPixelForValue(
+            year
+          );
+
+        if (
+          !Number.isFinite(x) ||
+          x < area.left - 1 ||
+          x > area.right + 1
+        ) {
+          return;
+        }
+
+        const context =
+          chartInstance.ctx;
+
+        context.save();
+        context.strokeStyle =
+          'rgba(21, 21, 21, 0.20)';
+        context.lineWidth = 1;
+        context.setLineDash([2, 3]);
+        context.beginPath();
+        context.moveTo(x, area.top);
+        context.lineTo(x, area.bottom);
+        context.stroke();
+        context.restore();
+      }
+    };
+
+    function chartOptions(model) {
+      const yRange =
+        chartYRange(model);
+
+      return {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation:
+          window.matchMedia(
+            '(prefers-reduced-motion: reduce)'
+          ).matches
+            ? false
+            : {
+                duration: 260,
+                easing: 'easeOutCubic'
+              },
+        interaction: {
+          mode: 'nearest',
+          axis: 'x',
+          intersect: false
+        },
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            displayColors: false,
+            backgroundColor: '#151515',
+            titleColor: '#fff',
+            bodyColor: '#fff',
+            padding: 8,
+            cornerRadius: 4,
+            titleFont: {
+              family: 'Lato, Arial, sans-serif',
+              size: 10,
+              weight: '700'
+            },
+            bodyFont: {
+              family: 'Lato, Arial, sans-serif',
+              size: 10,
+              weight: '400'
+            },
+            callbacks: {
+              title(items) {
+                const year =
+                  Math.round(
+                    Number(
+                      items?.[0]?.parsed?.x
+                    )
+                  );
+
+                return Number.isFinite(year)
+                  ? String(year)
+                  : '';
+              },
+
+              label(context) {
+                return (
+                  `${context.dataset.label}: ` +
+                  formatMoney(
+                    context.parsed.y
+                  )
+                );
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min:
+              minChartYear(model),
+            max:
+              model.targetYear,
+            bounds: 'ticks',
+            ticks: {
+              color: '#69718a',
+              maxTicksLimit:
+                window.matchMedia(
+                  '(max-width: 430px)'
+                ).matches
+                  ? 5
+                  : 7,
+              padding: 4,
+              font: {
+                family: 'Lato, Arial, sans-serif',
+                size: 9,
+                weight: '400'
+              },
+              callback(value) {
+                const year =
+                  Math.round(
+                    Number(value)
+                  );
+
+                return Number.isFinite(year)
+                  ? String(year)
+                  : '';
+              }
+            },
+            grid: {
+              color:
+                'rgba(105, 113, 138, 0.06)',
+              drawTicks: false
+            },
+            border: {
+              display: false
+            }
+          },
+          y: {
+            min:
+              yRange.min,
+            max:
+              yRange.max,
+            title: {
+              display: true,
+              text: 'FTE salary ($)',
+              color: '#151515',
+              font: {
+                family: 'Lato, Arial, sans-serif',
+                size: 11,
+                weight: '700'
+              }
+            },
+            ticks: {
+              color: '#69718a',
+              padding: 4,
+              maxTicksLimit: 6,
+              font: {
+                family: 'Lato, Arial, sans-serif',
+                size: 9,
+                weight: '400'
+              },
+              callback(value) {
+                return compactMoney(
+                  Number(value)
+                );
+              }
+            },
+            grid: {
+              color:
+                'rgba(105, 113, 138, 0.075)',
+              drawTicks: false
+            },
+            border: {
+              display: false
+            }
+          }
+        },
+        elements: {
+          line: {
+            borderCapStyle: 'round',
+            borderJoinStyle: 'round'
+          },
+          point: {
+            hitRadius: 6
+          }
+        }
+      };
+    }
+
+    function renderLegend(model) {
+      const items = [];
+
+      if (
+        Number.isFinite(benchmarkAnnual) &&
+        benchmarkAnnual > 0
+      ) {
+        items.push({
+          label: 'Your benchmark',
+          value: benchmarkAnnual,
+          colour: '#b42318',
+          benchmark: true
+        });
+      }
+
+      items.push({
+        label:
+          model.meta.shortLabel ||
+          model.meta.label,
+        value:
+          model.comparisonValue,
+        colour:
+          model.meta.colour,
+        benchmark: false
+      });
+
+      if (
+        Number.isFinite(benchmarkAnnual) &&
+        Number.isFinite(
+          model.comparisonValue
+        )
+      ) {
+        items.push({
+          label: 'Difference',
+          value:
+            benchmarkAnnual -
+            model.comparisonValue,
+          difference: true,
+          colour:
+            benchmarkAnnual >=
+            model.comparisonValue
+              ? '#14823b'
+              : '#b42318'
+        });
+      }
+
+      chartLegend.innerHTML =
+        items
+          .map(item => {
+            if (item.difference) {
+              const sign =
+                item.value > 0
+                  ? '+'
+                  : item.value < 0
+                    ? '−'
+                    : '';
+
+              return `
+                <span class="legend-item" style="--series-colour:${item.colour};">
+                  <span>${item.label}</span>
+                  <span class="legend-value" style="color:${item.colour};">${sign}${formatMoney(Math.abs(item.value))}</span>
+                </span>
+              `;
+            }
+
+            return `
+              <span class="legend-item" style="--series-colour:${item.colour};">
+                <span class="legend-mark${item.benchmark ? ' is-benchmark' : ''}" aria-hidden="true"></span>
+                <span>${item.label}</span>
+                <span class="legend-value">${formatMoney(item.value)}</span>
+              </span>
+            `;
+          })
+          .join('');
+    }
+
+    function renderChart() {
+      chartError.hidden = true;
+      chartEmpty.hidden = true;
+
+      let model = null;
+
+      try {
+        model =
+          buildChartModel();
+      } catch (error) {
+        console.warn(error);
+      }
+
+      if (!model) {
+        if (chart) {
+          chart.destroy();
+          chart = null;
+        }
+
+        chartLegend.innerHTML = '';
+        chartEmpty.hidden = false;
+        return;
+      }
+
+      activeYearElement.textContent =
+        String(model.targetYear);
+
+      timeValue.textContent =
+        activeOffset === 0
+          ? `Now (${model.targetYear})`
+          : `+${activeOffset} ${activeOffset === 1 ? 'yr' : 'yrs'} (${model.targetYear})`;
+
+      renderLegend(model);
+
+      const options =
+        chartOptions(model);
+
+      if (!chart) {
+        chart =
+          new Chart(
+            chartCanvas,
+            {
+              type: 'line',
+              data: {
+                datasets:
+                  model.datasets
+              },
+              options,
+              plugins: [
+                activeYearPlugin
+              ]
+            }
+          );
+
+        return;
+      }
+
+      chart.data.datasets =
+        model.datasets;
+
+      chart.options =
+        options;
+
+      chart.update();
+    }
+
+    /* ============================================================
+     * UI events
+     * ============================================================ */
+    function updateSliderUi() {
+      const max =
+        Number(yearSlider.max) || 20;
+
+      const value =
+        Number(yearSlider.value) || 0;
+
+      activeOffset =
+        Math.max(
+          0,
+          Math.min(
+            max,
+            Math.round(value)
+          )
+        );
+
+      const progress =
+        max > 0
+          ? (
+              activeOffset /
+              max
+            ) * 100
+          : 0;
+
+      yearSlider.style.setProperty(
+        '--slider-progress',
+        `${progress}%`
+      );
+
+      sliderStart.textContent =
+        String(CURRENT_YEAR);
+
+      sliderEnd.textContent =
+        String(
+          CURRENT_YEAR +
+          FORECAST_YEARS
+        );
+    }
+
+    async function ensureActiveSourceLoaded() {
+      setStatus('');
+      chartError.hidden = true;
+
+      try {
+        if (activeSource === 'hpss') {
+          await loadHpssData();
+        } else {
+          await loadAbsData();
+        }
+      } catch (error) {
+        const message =
+          activeSource === 'hpss'
+            ? 'HPSS Award data could not be loaded.'
+            : 'ABS income data could not be loaded.';
+
+        setStatus(message);
+
+        chartError.textContent =
+          `${message} ${error?.message || ''}`.trim();
+
+        chartError.hidden = false;
+
+        throw error;
+      }
+    }
+
+    async function activateSource(source) {
+      const nextSource =
+        source === 'abs'
+          ? 'abs'
+          : 'hpss';
+
+      if (
+        activeSource === nextSource
+      ) {
+        return;
+      }
+
+      activeSource =
+        nextSource;
+
+      activeKey =
+        activeSource === 'hpss'
+          ? 'Level 2'
+          : 'health';
+
+      renderPicker();
+
+      setDataState(
+        'loading',
+        'LOADING'
+      );
+
+      try {
+        await ensureActiveSourceLoaded();
+        renderChart();
+      } catch (_) {}
+    }
+
+    async function activateOption(key) {
+      if (!key || key === activeKey) {
+        return;
+      }
+
+      activeKey = key;
+      renderPicker();
+
+      try {
+        await ensureActiveSourceLoaded();
+        renderChart();
+      } catch (_) {}
+
+      requestAnimationFrame(() => {
+        const selected =
+          optionStrip.querySelector(
+            '.option-card.is-selected'
+          );
+
+        selected?.scrollIntoView({
+          block: 'nearest',
+          inline: 'nearest',
+          behavior:
+            window.matchMedia(
+              '(prefers-reduced-motion: reduce)'
+            ).matches
+              ? 'auto'
+              : 'smooth'
+        });
+      });
+    }
+
+    benchmarkInput.addEventListener(
+      'input',
+      () => {
+        const raw =
+          String(
+            benchmarkInput.value ?? ''
+          );
+
+        const digits =
+          raw
+            .replace(/\D/g, '')
+            .slice(0, 6);
+
+        if (
+          raw.replace(/[$,\s]/g, '') !==
+          digits
+        ) {
+          benchmarkInput.value =
+            digits;
+        }
+
+        benchmarkAnnual =
+          parseBenchmark(
+            benchmarkInput.value
+          );
+
+        renderChart();
+      }
+    );
+
+    benchmarkInput.addEventListener(
+      'blur',
+      () => {
+        benchmarkAnnual =
+          parseBenchmark(
+            benchmarkInput.value
+          );
+
+        benchmarkInput.value =
+          formatBenchmarkInput(
+            benchmarkInput.value
+          );
+
+        renderChart();
+      }
+    );
+
+    benchmarkInput.addEventListener(
+      'focus',
+      () => {
+        if (
+          Number.isFinite(
+            benchmarkAnnual
+          )
+        ) {
+          benchmarkInput.value =
+            String(
+              Math.round(
+                benchmarkAnnual
+              )
+            );
+        }
+
+        requestAnimationFrame(() => {
+          try {
+            benchmarkInput.select();
+          } catch (_) {}
+        });
+      }
+    );
+
+    benchmarkClear.addEventListener(
+      'click',
+      () => {
+        benchmarkAnnual = null;
+        benchmarkInput.value = '';
+        renderChart();
+        benchmarkInput.focus();
+      }
+    );
+
+    yearSlider.addEventListener(
+      'input',
+      () => {
+        updateSliderUi();
+        renderChart();
+      }
+    );
+
+    sourceHpss.addEventListener(
+      'click',
+      () => {
+        activateSource('hpss');
+      }
+    );
+
+    sourceAbs.addEventListener(
+      'click',
+      () => {
+        activateSource('abs');
+      }
+    );
+
+    optionStrip.addEventListener(
+      'click',
+      event => {
+        const button =
+          event.target.closest(
+            '.option-card'
+          );
+
+        if (!button) return;
+
+        activateOption(
+          button.dataset.key
+        );
+      }
+    );
+
+    window.addEventListener(
+      'resize',
+      () => {
+        chart?.resize();
+      }
+    );
+
+    /* ============================================================
+     * Start
+     * ============================================================ */
+    async function start() {
+      if (
+        typeof Chart === 'undefined'
+      ) {
+        app.classList.remove('is-loading');
+        app.setAttribute('aria-busy', 'false');
+        setStatus(
+          'Chart.js could not be loaded.'
+        );
+        chartError.textContent =
+          'Chart.js could not be loaded.';
+        chartError.hidden = false;
+        return;
+      }
+
+      updateSliderUi();
+      renderPicker();
+
+      try {
+        await ensureActiveSourceLoaded();
+        renderChart();
+      } catch (_) {
+        /* Error is already rendered. */
+      } finally {
+        app.classList.remove('is-loading');
+        app.setAttribute('aria-busy', 'false');
+      }
+    }
+
+    start();
+  </script>
+</body>
+</html>
