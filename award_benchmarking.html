@@ -1668,17 +1668,21 @@
 
     /* Keep the AWR control anchored while the explanatory copy changes. */
     .forecast-note-row {
-      grid-template-columns: minmax(0, 1fr) 48px !important;
-      align-items: start !important;
+      position: relative;
+      display: block !important;
       min-height: 26px;
+      padding-right: 58px !important;
     }
     .forecast-note {
       min-height: calc(2 * 1.3em);
+      white-space: pre-line;
     }
     .awr-toggle-wrap {
-      justify-self: end;
-      align-self: start;
-      margin-top: 0;
+      position: absolute !important;
+      top: 0;
+      right: 2px;
+      margin: 0 !important;
+      justify-content: flex-end;
     }
 
     /* Large tap target without making the visible HPSS help icon larger. */
@@ -3149,15 +3153,14 @@
         getChart() { return chart; },
         getScale() { return chartYRange(chartModel); },
         getDecimals() { return 0; },
-        getTitle() { return yAxisTitle(); },
+        getTitle() { return ''; },
         formatValue(value) {
           const numeric = Number(value);
           if (!Number.isFinite(numeric)) return '';
           if (Math.abs(numeric) >= 1000) {
-            const scaled = numeric / 1000;
-            return `$${Math.abs(scaled - Math.round(scaled)) < 0.001 ? Math.round(scaled) : trimNumberDecimals(scaled, 1)}k`;
+            return `$${Math.round(numeric / 1000)}k`;
           }
-          return `$${Math.abs(numeric - Math.round(numeric)) < 0.001 ? Math.round(numeric) : trimNumberDecimals(numeric, 1)}`;
+          return `$${Math.round(numeric)}`;
         }
       });
       lastYAxisTitle = yAxisTitle();
@@ -3198,11 +3201,7 @@
         fromDecimals: 0,
         toDecimals: 0
       });
-      const nextTitle = yAxisTitle();
-      if (nextTitle !== lastYAxisTitle) {
-        unifiedYAxis.animateTitle(lastYAxisTitle, nextTitle, duration);
-        lastYAxisTitle = nextTitle;
-      }
+      lastYAxisTitle = yAxisTitle();
     }
 
     const axisSpinesPlugin = {
@@ -3290,6 +3289,26 @@
       }
     };
 
+    const fixedYAxisTitlePlugin = {
+      id: 'awardBenchmarkFixedYAxisTitle',
+      afterDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const mobile = window.matchMedia('(max-width: 430px)').matches;
+        const x = mobile ? 14 : 16;
+        const y = chartArea.top + chartArea.height / 2;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillStyle = '#151515';
+        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(yAxisTitle(), 0, 0);
+        ctx.restore();
+      }
+    };
+
     const currentYearPlugin = {
       id: 'awardBenchmarkCurrentYear',
       beforeDatasetsDraw(chartInstance) {
@@ -3313,7 +3332,7 @@
 
     const pointOverlayPlugin = {
       id: 'awardBenchmarkPointOverlay',
-      afterDatasetsDraw(chartInstance) {
+      afterDraw(chartInstance) {
         const ctx = chartInstance.ctx;
         chartInstance.data.datasets.forEach((dataset, datasetIndex) => {
           if (dataset.hidden) return;
@@ -3331,7 +3350,9 @@
             ctx.fillStyle = colour;
             ctx.strokeStyle = colour;
             ctx.lineWidth = 1;
-            const radius = Math.max(2.35, configured);
+            const radius = dataset.pffMarkerShape === 'square'
+              ? Math.max(2.9, configured * 1.25)
+              : Math.max(2.35, configured);
             if (dataset.pffMarkerShape === 'square') {
               ctx.fillRect(props.x - radius, props.y - radius, radius * 2, radius * 2);
             } else {
@@ -3538,7 +3559,7 @@
         ? 'HPSS: published rates + projected AWR based on historical reviews and available actual rates'
         : 'HPSS: published rates + no future AWR increase (lowest-rate scenario)';
       const absText = selectedAbs.size
-        ? ' ABS: projections based on historical trends'
+        ? '\nABS: projections based on historical trends'
         : '';
       forecastNote.textContent = hpssText + absText;
     }
@@ -3618,6 +3639,7 @@
           ...(unifiedYAxis ? [unifiedYAxis.plugin] : [axisSpinesPlugin]),
           currentYearPlugin,
           axisTicksPlugin,
+          fixedYAxisTitlePlugin,
           pointOverlayPlugin,
           benchmarkLabelPlugin
         ];
@@ -3628,7 +3650,7 @@
           options: chartOptions(nextModel)
         });
         unifiedYAxis?.setImmediately?.(chartYRange(nextModel), 0);
-        unifiedYAxis?.setTitleImmediately?.(yAxisTitle());
+        unifiedYAxis?.setTitleImmediately?.('');
         lastYAxisTitle = yAxisTitle();
         pendingSeriesFadeIn.clear();
         return;
