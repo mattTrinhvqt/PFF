@@ -52,30 +52,45 @@
 
     button, input { font: inherit; }
 
-    /* Use the shared repository loader, but keep it centred near the top of this long app.
-       pff_loader.js supplies the animation and reveal lifecycle. */
+    /* Shared repository loader. Keep the app fully hidden until startup completes,
+       and anchor the loader to the horizontal centre near the top of this long app. */
+    #app.is-loading > :not(.app-loading) {
+      visibility: hidden !important;
+    }
+
     #app > .app-loading {
-      position: absolute;
-      inset: auto 0 auto 0;
-      top: clamp(34px, 7dvh, 68px);
-      z-index: 9998;
-      width: 100%;
-      height: auto;
-      min-height: 0;
-      padding: 0;
-      align-items: center;
-      justify-content: flex-start;
-      background: transparent;
+      position: absolute !important;
+      inset: auto !important;
+      top: clamp(26px, 5dvh, 48px) !important;
+      left: 50% !important;
+      z-index: 9998 !important;
+      display: flex;
+      width: min(360px, 100%) !important;
+      height: 116px !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+      flex-direction: column;
+      align-items: center !important;
+      justify-content: flex-start !important;
+      color: var(--pff-muted);
+      background: transparent !important;
+      text-align: center;
+      transform: translateX(-50%);
       pointer-events: none;
     }
 
     #app > .app-loading > .cone-loader {
-      margin-right: auto;
-      margin-left: auto;
+      margin-right: auto !important;
+      margin-left: auto !important;
     }
 
     #app > .app-loading > .loader-text {
-      text-align: center;
+      width: 100%;
+      text-align: center !important;
+    }
+
+    #loadingState[hidden] {
+      display: none !important;
     }
 
     #fit {
@@ -1109,12 +1124,50 @@
 
     .chart-overlay[hidden] { display: none !important; }
 
-    .forecast-note {
+    .forecast-note-row {
+      display: grid;
+      width: 100%;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
       margin: 1px 2px 5px;
+      padding: 0 2px;
+    }
+
+    .forecast-note {
+      min-width: 0;
+      margin: 0;
       color: var(--pff-muted);
       font-size: 8.5px;
       line-height: 1.3;
-      text-align: center;
+      text-align: left;
+    }
+
+    .awr-toggle-wrap {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      color: var(--pff-muted);
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .awr-toggle {
+      width: 17px;
+      height: 17px;
+      margin: 0;
+      accent-color: var(--pff-purple);
+      cursor: pointer;
+    }
+
+    .awr-toggle:focus-visible {
+      outline: 2px solid rgba(102, 0, 255, 0.22);
+      outline-offset: 2px;
     }
 
     .picker-section {
@@ -1626,7 +1679,7 @@
         </div>
 
         <div class="hpss-loading-block">
-          <div class="hpss-hours-heading"><strong>Loading</strong> – avg. hours worked per week on...:</div>
+          <div class="hpss-hours-heading"><strong>Loadings</strong> – avg. hours worked per week on...:</div>
           <div class="hpss-loading-grid">
             <div id="eveningControl" class="benchmark-control hpss-hours-row">
               <label for="eveningHours">Weekdays finishing &gt;6pm <em>(entire shift)</em></label>
@@ -1737,7 +1790,13 @@
 
 
 
-      <p class="forecast-note">HPSS projections show published staged rates plus estimated Annual Wage Review (AWR) adjustments based on the observed AWR trend. ABS projections are based on historical trends.</p>
+      <div class="forecast-note-row">
+        <p id="forecastNote" class="forecast-note">HPSS projections include estimated Annual Wage Review (AWR) increases based on the observed AWR trend. ABS projections use historical trends.</p>
+        <label class="awr-toggle-wrap" for="awrToggle" title="Include estimated future Annual Wage Review increases">
+          <input id="awrToggle" class="awr-toggle" type="checkbox" checked aria-label="Include estimated future Annual Wage Review increases">
+          <span>AWR</span>
+        </label>
+      </div>
 
       <section class="picker-section" aria-label="Benchmark selection">
         <h3 class="picker-heading">Compare with</h3>
@@ -1851,12 +1910,15 @@
     const chartOverlay = document.getElementById('chartOverlay');
     const hpssOptions = document.getElementById('hpssOptions');
     const absOptions = document.getElementById('absOptions');
+    const forecastNote = document.getElementById('forecastNote');
+    const awrToggle = document.getElementById('awrToggle');
 
     const selectedHpss = new Set(Object.keys(HPSS_LEVEL_META));
     const selectedAbs = new Set();
 
     let benchmarkAnnual = null;
     let viewMode = 'salary';
+    let awrEnabled = true;
     let hpssData = null;
     let absRows = [];
     let hpssPromise = null;
@@ -1867,6 +1929,7 @@
     let yAxisNumberAnimationFrame = null;
     let yAxisNumberAnimationProgress = 1;
     let forceYAxisNumberAnimation = false;
+    let awrFlipResetTimer = null;
 
     const prefersReducedMotion = () =>
       window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
@@ -2205,6 +2268,7 @@
     function projectedAwrFactorForYear(targetYear) {
       const year = Number(targetYear);
       if (!Number.isFinite(year) || !hpssData) return 1;
+      if (!awrEnabled) return 1;
       const exact = Number(hpssData.cumulativeAwrFactors?.[year]);
       if (Number.isFinite(exact) && exact > 0) return exact;
 
@@ -2991,7 +3055,7 @@
               ? Number(dataset.pointRadius({ dataset, datasetIndex, dataIndex, chart: chartInstance }))
               : Number(dataset.pointRadius);
             if (!Number.isFinite(configured) || configured <= 0) return;
-            const props = element.getProps(['x', 'y'], true);
+            const props = element.getProps(['x', 'y'], false);
             if (!Number.isFinite(props.x) || !Number.isFinite(props.y)) return;
             const colour = dataset.backgroundColor || dataset.borderColor || '#151515';
             ctx.save();
@@ -3043,7 +3107,7 @@
               },
               afterLabel(context) {
                 const lessAwr = Number(context.raw?.pffLessAwrY);
-                return context.dataset.pffProjected && Number.isFinite(lessAwr) && lessAwr > 0
+                return context.dataset.pffProjected && awrEnabled && Number.isFinite(lessAwr) && lessAwr > 0
                   ? `Less AWR: ${formatMoney(lessAwr)}`
                   : '';
               }
@@ -3185,7 +3249,7 @@
       if (existing) cancelAnimationFrame(existing);
       if (prefersReducedMotion()) {
         datasets.forEach(dataset => setDatasetVisualAlpha(dataset, to));
-        chart.draw();
+        chart.update('none');
         seriesFadeFrames.delete(seriesId);
         if (typeof onDone === 'function') onDone();
         return;
@@ -3196,7 +3260,7 @@
         const eased = easeInOutCubic(progress);
         const alpha = from + (to - from) * eased;
         datasets.forEach(dataset => setDatasetVisualAlpha(dataset, alpha));
-        chart.draw();
+        chart.update('none');
         if (progress < 1) {
           const id = requestAnimationFrame(frame);
           seriesFadeFrames.set(seriesId, id);
@@ -3207,6 +3271,66 @@
       };
       const id = requestAnimationFrame(frame);
       seriesFadeFrames.set(seriesId, id);
+    }
+
+    function updateAwrUi() {
+      if (awrToggle) awrToggle.checked = awrEnabled;
+      if (!forecastNote) return;
+      forecastNote.textContent = awrEnabled
+        ? 'HPSS projections include estimated Annual Wage Review (AWR) increases based on the observed AWR trend. ABS projections use historical trends.'
+        : 'HPSS projections use staged rates without future AWR increases (lowest-rate scenario). ABS projections use historical trends.';
+    }
+
+    function rebuildChartWithFlip(duration = 220) {
+      const nextModel = buildChartModel();
+      if (!nextModel) return;
+      chartModel = nextModel;
+
+      if (!nextModel.datasets.length) showChartOverlay('Select at least one HPSS or ABS benchmark below.');
+      else showChartOverlay('');
+
+      if (!chart) {
+        rebuildChart(false);
+        return;
+      }
+
+      const options = chartOptions(nextModel);
+      chart.data.datasets = nextModel.datasets;
+      Object.assign(chart.options.scales.x, options.scales.x);
+      Object.assign(chart.options.scales.y, options.scales.y);
+
+      const reduced = prefersReducedMotion();
+      if (awrFlipResetTimer) {
+        window.clearTimeout(awrFlipResetTimer);
+        awrFlipResetTimer = null;
+      }
+      chart.options.animation = reduced
+        ? false
+        : { duration, easing: 'easeOutCubic' };
+      chart.update(reduced ? 'none' : undefined);
+
+      if (!reduced) {
+        awrFlipResetTimer = window.setTimeout(() => {
+          awrFlipResetTimer = null;
+          if (!chart) return;
+          chart.options.animation = false;
+        }, duration + 40);
+      }
+    }
+
+    function setAwrEnabled(enabled) {
+      const next = Boolean(enabled);
+      if (next === awrEnabled) {
+        updateAwrUi();
+        return;
+      }
+      awrEnabled = next;
+      for (const frame of seriesFadeFrames.values()) cancelAnimationFrame(frame);
+      seriesFadeFrames.clear();
+      pendingSeriesFadeIn.clear();
+      updateAwrUi();
+      updateHpssValueTable(true);
+      rebuildChartWithFlip(220);
     }
 
     function rebuildChart(animate = true) {
@@ -3469,7 +3593,8 @@
         weekendHoursInput,
         eveningHoursInput,
         hpssOptions,
-        absOptions
+        absOptions,
+        awrToggle
       ];
       if (requiredElements.some(element => !element)) {
         throw new Error('A required interface element is missing from the page.');
@@ -3494,6 +3619,7 @@
 
     benchmarkModeSalary.addEventListener('click', () => setBenchmarkMode('salary'));
     benchmarkModeHourly.addEventListener('click', () => setBenchmarkMode('hourly'));
+    awrToggle?.addEventListener('change', () => setAwrEnabled(awrToggle.checked));
 
 
     yearSlider.addEventListener('input', () => {
@@ -3580,6 +3706,7 @@
         renderPicker();
         wireAllHelpTooltips();
         syncBenchmarkModeUi();
+        updateAwrUi();
         await loadHpssData();
         activeDisplayYear = Math.min(hpssMaxYear(), Math.max(CURRENT_YEAR, hpssStartYear()));
         updateTimelineUi();
@@ -3590,21 +3717,28 @@
         setStatus(`Award benchmarking data could not be loaded. ${error?.message || ''}`.trim());
         showChartOverlay('Award benchmarking data could not be loaded.');
       } finally {
-        // Never leave the app permanently behind the loading overlay.
-        app.classList.remove('is-loading');
-        app.classList.remove('pff-loader-cycle-hold', 'pff-reveal-pending');
-        app.setAttribute('aria-busy', 'false');
+        // Hide the shared loader before releasing the app. Inline !important prevents
+        // the loader helper's cycle-hold rule from leaving a residual white overlay.
         const loadingState = document.getElementById('loadingState');
-        if (loadingState) loadingState.hidden = true;
+        if (loadingState) {
+          loadingState.hidden = true;
+          loadingState.style.setProperty('display', 'none', 'important');
+        }
+        app.classList.remove('is-loading', 'pff-loader-cycle-hold', 'pff-reveal-pending');
+        app.setAttribute('aria-busy', 'false');
+        requestAnimationFrame(() => app.classList.remove('pff-loader-cycle-hold', 'pff-reveal-pending'));
       }
     }
 
     const startupFailsafe = window.setTimeout(() => {
       if (!app.classList.contains('is-loading')) return;
+      const loadingState = document.getElementById('loadingState');
+      if (loadingState) {
+        loadingState.hidden = true;
+        loadingState.style.setProperty('display', 'none', 'important');
+      }
       app.classList.remove('is-loading', 'pff-loader-cycle-hold', 'pff-reveal-pending');
       app.setAttribute('aria-busy', 'false');
-      const loadingState = document.getElementById('loadingState');
-      if (loadingState) loadingState.hidden = true;
       setStatus('Loading took too long. Refresh the page or check the Google Sheet connection.');
     }, 18000);
 
