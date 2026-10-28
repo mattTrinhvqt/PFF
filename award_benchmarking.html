@@ -2011,7 +2011,7 @@
 
 
       <div class="forecast-note-row">
-        <p id="forecastNote" class="forecast-note">HPSS: published rates + projected Annual Wage Review (AWR) increases based on historical reviews and available actual rates</p>
+        <p id="forecastNote" class="forecast-note">HPSS: published rates + projected Annual Wage Review (AWR) increases based on the latest 10 observed reviews</p>
         <label class="awr-toggle-wrap" for="awrToggle" title="Include estimated future Annual Wage Review increases">
           <input id="awrToggle" class="awr-toggle" type="checkbox" checked aria-label="Include estimated future Annual Wage Review increases">
           <span id="awrToggleLabel">AWR</span>
@@ -2048,6 +2048,7 @@
     const HPSS_EVENING_MULTIPLIER = 1.15;
     const CHART_ANIMATION_MS = 320;
     const CHART_SCALE_ANIMATION_MS = 360;
+    const AWR_HISTORY_WINDOW_YEARS = 10;
 
     // Modern-award minimum-rate increases from Annual Wage Reviews.
     // Used only to estimate FUTURE AWR adjustments; published/actual HPSS rates still take precedence.
@@ -2453,7 +2454,12 @@
           .map(([year, rate]) => ({ year: Number(year), rate: Number(rate) }))
           .filter(item => Number.isFinite(item.year) && Number.isFinite(item.rate) && item.rate > -1)
           .sort((a, b) => a.year - b.year);
-        const historicalAwrMultipliers = observedAwrSeries.map(item => 1 + item.rate);
+
+        // Forecast future AWR using a rolling trailing 10-year window. When a new
+        // actual HPSS rate is added (for example 2027), its observed AWR replaces
+        // the oldest year in the window automatically (2017–2026 -> 2018–2027).
+        const awrProjectionSeries = observedAwrSeries.slice(-AWR_HISTORY_WINDOW_YEARS);
+        const historicalAwrMultipliers = awrProjectionSeries.map(item => 1 + item.rate);
         const averageAnnualAwrMultiplier = geometricMean(historicalAwrMultipliers);
 
         hpssData = {
@@ -2464,6 +2470,7 @@
           actualYears: factorYears,
           cumulativeAwrFactors,
           observedAwrSeries,
+          awrProjectionSeries,
           averageAnnualAwrMultiplier: Number.isFinite(averageAnnualAwrMultiplier) && averageAnnualAwrMultiplier > 0
             ? averageAnnualAwrMultiplier
             : 1
@@ -2807,26 +2814,37 @@
       const validExperience = Number.isFinite(yearsSinceGraduating) && yearsSinceGraduating >= 0 && yearsSinceGraduating <= 60;
       const validWeekend = Number.isFinite(weekend) && weekend >= 0 && weekend <= 20;
       const validEvening = Number.isFinite(evening) && evening >= 0 && evening <= (validFte ? fte : 45);
+      const loadingHoursOverlap =
+        validFte &&
+        validWeekend &&
+        validEvening &&
+        (weekend + evening) > (fte + 1e-9);
 
       fteControl.classList.toggle('is-invalid', !validFte);
       experienceControl.classList.toggle('is-invalid', !validExperience);
-      weekendControl.classList.toggle('is-invalid', !validWeekend);
-      eveningControl.classList.toggle('is-invalid', !validEvening);
+      weekendControl.classList.toggle('is-invalid', !validWeekend || loadingHoursOverlap);
+      eveningControl.classList.toggle('is-invalid', !validEvening || loadingHoursOverlap);
       salaryControl.classList.remove('is-invalid');
 
-      if (!validFte || !validExperience || !validWeekend || !validEvening) {
+      weekendHoursInput.setAttribute('aria-invalid', String(!validWeekend || loadingHoursOverlap));
+      eveningHoursInput.setAttribute('aria-invalid', String(!validEvening || loadingHoursOverlap));
+
+      if (!validFte || !validExperience || !validWeekend || !validEvening || loadingHoursOverlap) {
         inputStatus.textContent = !validFte
           ? 'Paid FT hours must be between 35 and 45 hrs/wk'
           : !validExperience
             ? 'Years since graduating must be between 0 and 60'
             : !validWeekend
               ? 'Weekend hours must be between 0 and 20 hrs/wk'
-              : `Weekday >6pm shift hours must be between 0 and ${validFte ? fte : 45} hrs/wk`;
+              : !validEvening
+                ? `Weekday >6pm shift hours must be between 0 and ${validFte ? fte : 45} hrs/wk`
+                : `Combined weekday >6pm shift and weekend hours cannot exceed ${fte} hrs/wk`;
         return null;
       }
 
       inputStatus.textContent = '';
-      eveningHoursInput.setAttribute('aria-label', `Average hours worked per week across entire weekday shifts finishing after 6 pm, maximum ${fte}`);
+      eveningHoursInput.setAttribute('aria-label', `Average hours worked per week across entire weekday shifts finishing after 6 pm; combined with weekend hours cannot exceed ${fte}`);
+      weekendHoursInput.setAttribute('aria-label', `Average hours worked per week on a weekend, maximum 20; combined with weekday >6pm shift hours cannot exceed ${fte}`);
       return { fte, yearsSinceGraduating, weekend, evening };
     }
 
@@ -3637,7 +3655,7 @@
       }
       if (!forecastNote) return;
       const hpssText = awrEnabled
-        ? 'HPSS: published rates + projected Annual Wage Review (AWR) increases based on historical reviews and available actual rates'
+        ? 'HPSS: published rates + projected Annual Wage Review (AWR) increases based on the latest 10 observed reviews'
         : 'HPSS: published rates + no future Annual Wage Review (AWR) increase (lowest-rate scenario)';
       const absText = selectedAbs.size
         ? '. ABS projections based on historical trends'
