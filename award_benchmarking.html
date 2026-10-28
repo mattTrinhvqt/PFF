@@ -2100,6 +2100,48 @@
       });
     }
 
+    function buildAbsRows(table) {
+      const rows = [];
+      (table?.rows || []).forEach(row => {
+        const cells = row?.c || [];
+        const year = parseCellYear(cells[0]);
+        if (!Number.isFinite(year)) return;
+        const item = { year };
+        let hasValue = false;
+        ABS_SERIES.forEach(meta => {
+          const value = parseCellNumber(cells[meta.column]);
+          item[meta.key] = Number.isFinite(value) && value > 0 ? value : null;
+          hasValue = hasValue || item[meta.key] !== null;
+        });
+        if (hasValue) rows.push(item);
+      });
+      rows.sort((a, b) => a.year - b.year);
+      if (!rows.length) throw new Error('No ABS income rows were found.');
+      return rows;
+    }
+
+    function loadAbsData() {
+      if (absRows.length) return Promise.resolve(absRows);
+      if (absPromise) return absPromise;
+      showChartOverlay('Loading ABS income history…');
+
+      absPromise = callGoogleSheetQuery({
+        spreadsheetId: ABS_SHEET_ID,
+        sheetName: ABS_SHEET_NAME,
+        range: ABS_RANGE,
+        headers: '0',
+        timeoutMs: 15000
+      }).then(response => {
+        absRows = buildAbsRows(response?.table);
+        return absRows;
+      }).finally(() => {
+        absPromise = null;
+        showChartOverlay('');
+      });
+
+      return absPromise;
+    }
+
     function parseBenchmarkNumber(raw) {
       const numeric = Number(String(raw ?? '').replace(/[$,\s]/g, '').trim());
       return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
@@ -2908,6 +2950,15 @@
       });
     }
 
+    function syncBenchmarkFromInput() {
+      const sanitized = sanitizeBenchmarkTyping(benchmarkInput.value);
+      const comparable = String(benchmarkInput.value ?? '').replace(/[$,\s]/g, '').trim();
+      if (comparable !== sanitized) benchmarkInput.value = sanitized;
+      benchmarkAnnual = benchmarkInputToAnnual(benchmarkInput.value);
+      updateHpssValueTable(true);
+      queueRebuild(true);
+    }
+
     function syncBenchmarkModeUi() {
       const hourly = !salaryMode();
       benchmarkModeToggle.classList.toggle('is-hourly-selected', hourly);
@@ -3017,24 +3068,6 @@
       rebuildChart(false);
     }
 
-    benchmarkInput.addEventListener('input', syncBenchmarkFromInput);
-    benchmarkInput.addEventListener('blur', () => {
-      benchmarkAnnual = benchmarkInputToAnnual(benchmarkInput.value);
-      benchmarkInput.value = formatBenchmarkInputValue(benchmarkDisplayValue());
-      updateHpssValueTable(true);
-      queueRebuild(true);
-    });
-    benchmarkInput.addEventListener('focus', () => {
-      const display = benchmarkDisplayValue();
-      if (Number.isFinite(display)) {
-        benchmarkInput.value = salaryMode() ? String(Math.round(display)) : trimNumberDecimals(display, 2);
-      }
-      requestAnimationFrame(() => { try { benchmarkInput.select(); } catch (_) {} });
-    });
-
-    benchmarkModeSalary.addEventListener('click', () => setBenchmarkMode('salary'));
-    benchmarkModeHourly.addEventListener('click', () => setBenchmarkMode('hourly'));
-
     function positionHelpTooltip(button, tooltip) {
       if (!button || !tooltip) return;
       const rect = button.getBoundingClientRect();
@@ -3099,6 +3132,48 @@
       root.querySelectorAll('.help-tooltip-button').forEach(wireHelpTooltip);
     }
 
+    let staticEventsWired = false;
+
+    function wireStaticEvents() {
+      if (staticEventsWired) return;
+
+      const requiredElements = [
+        app,
+        benchmarkInput,
+        benchmarkModeSalary,
+        benchmarkModeHourly,
+        fteHoursInput,
+        yearsSinceGraduatingInput,
+        weekendHoursInput,
+        eveningHoursInput,
+        hpssOptions,
+        absOptions
+      ];
+      if (requiredElements.some(element => !element)) {
+        throw new Error('A required interface element is missing from the page.');
+      }
+
+      staticEventsWired = true;
+
+    benchmarkInput.addEventListener('input', syncBenchmarkFromInput);
+    benchmarkInput.addEventListener('blur', () => {
+      benchmarkAnnual = benchmarkInputToAnnual(benchmarkInput.value);
+      benchmarkInput.value = formatBenchmarkInputValue(benchmarkDisplayValue());
+      updateHpssValueTable(true);
+      queueRebuild(true);
+    });
+    benchmarkInput.addEventListener('focus', () => {
+      const display = benchmarkDisplayValue();
+      if (Number.isFinite(display)) {
+        benchmarkInput.value = salaryMode() ? String(Math.round(display)) : trimNumberDecimals(display, 2);
+      }
+      requestAnimationFrame(() => { try { benchmarkInput.select(); } catch (_) {} });
+    });
+
+    benchmarkModeSalary.addEventListener('click', () => setBenchmarkMode('salary'));
+    benchmarkModeHourly.addEventListener('click', () => setBenchmarkMode('hourly'));
+
+
     document.addEventListener('pointerdown', event => {
       if (event.target.closest?.('.help-tooltip-button')) return;
       document.querySelectorAll('.help-tooltip.is-visible').forEach(tooltip => tooltip.classList.remove('is-visible'));
@@ -3159,10 +3234,13 @@
       chart?.resize();
     });
 
+    }
+
     async function start() {
       try {
         if (typeof Chart === 'undefined') throw new Error('Chart.js could not be loaded.');
 
+        wireStaticEvents();
         renderPicker();
         wireAllHelpTooltips();
         syncBenchmarkModeUi();
