@@ -52,6 +52,10 @@
 
     button, input { font: inherit; }
 
+    /* Loader lifecycle fallback: keep the page recoverable even if pff_loader.js fails. */
+    #app.is-loading > :not(.app-loading) { visibility: hidden; }
+    #app:not(.is-loading) > .app-loading { display: none; }
+
     #fit {
       display: flex;
       width: 100%;
@@ -1631,7 +1635,8 @@
 
     const HPSS_SHEET_ID = '1ihTDzfCD_rXQN8qV_aaik98-Zkwj1WTrS_QZZj-3r18';
     const HPSS_SHEET_NAME = 'base';
-    const HPSS_RANGE = 'A10:AD29';
+    const HPSS_SHEET_GID = '269040819';
+    const HPSS_RANGE = 'A10:AD24';
 
     const ABS_SHEET_ID = '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE';
     const ABS_SHEET_NAME = 'ABSincome';
@@ -1892,14 +1897,25 @@
 
       hpssPromise = callGoogleSheetQuery({
         spreadsheetId: HPSS_SHEET_ID,
-        sheetName: HPSS_SHEET_NAME,
+        gid: HPSS_SHEET_GID,
         range: HPSS_RANGE,
-        headers: '0'
+        headers: '0',
+        timeoutMs: 15000
       }).then(response => {
         const rows = response?.table?.rows || [];
         if (rows.length < 2) throw new Error('HPSS Award rows are unavailable.');
 
-        const headerCells = rows[0]?.c || [];
+        // Do not assume Google Visualization preserves the first sheet row as row 0.
+        // Find the real table header defensively from the labels/dates in base row 10.
+        const headerRowIndex = rows.findIndex(row => {
+          const cells = row?.c || [];
+          const first = cellText(cells[0]).toLowerCase();
+          const fourth = cellText(cells[3]).toLowerCase();
+          return first.includes('pay level') || fourth.includes('years') || Number.isFinite(parseCellYear(cells[4]));
+        });
+        if (headerRowIndex < 0) throw new Error('HPSS header row could not be identified.');
+
+        const headerCells = rows[headerRowIndex]?.c || [];
         const lessAwrColumns = [];
         const actualColumns = [];
 
@@ -1919,7 +1935,7 @@
 
         const levels = {};
         let currentLevel = '';
-        rows.slice(1).forEach(row => {
+        rows.slice(headerRowIndex + 1).forEach(row => {
           const cells = row?.c || [];
           const levelText = cellText(cells[0]);
           if (/^Level\s+[1-4]$/i.test(levelText)) currentLevel = levelText.replace(/^level/i, 'Level');
@@ -3057,6 +3073,41 @@
       }
     }
 
+    function syncBenchmarkFromInput() {
+      const sanitized = sanitizeBenchmarkTyping(benchmarkInput.value);
+      const comparable = String(benchmarkInput.value ?? '').replace(/[$,\s]/g, '').trim();
+      if (comparable !== sanitized) benchmarkInput.value = sanitized;
+      benchmarkAnnual = benchmarkInputToAnnual(benchmarkInput.value);
+      updateHpssValueTable(true);
+      queueRebuild(true);
+    }
+
+    function syncBenchmarkModeUi() {
+      const hourly = !salaryMode();
+      benchmarkModeToggle.classList.toggle('is-hourly-selected', hourly);
+      benchmarkModeSalary.classList.toggle('is-active', !hourly);
+      benchmarkModeHourly.classList.toggle('is-active', hourly);
+      benchmarkModeSalary.setAttribute('aria-pressed', String(!hourly));
+      benchmarkModeHourly.setAttribute('aria-pressed', String(hourly));
+      benchmarkLabelText.textContent = hourly ? 'Current hourly rate benchmark' : 'Current FTE salary benchmark';
+      benchmarkLabelModeRow.classList.toggle('is-hourly-mode', hourly);
+      benchmarkEntryGrid.classList.toggle('is-hourly-mode', hourly);
+      if (chartMetricLabel) chartMetricLabel.textContent = hourly ? 'Hourly rate' : 'FTE salary';
+      benchmarkInput.setAttribute('inputmode', hourly ? 'decimal' : 'numeric');
+      benchmarkInput.setAttribute('maxlength', hourly ? '6' : '8');
+      benchmarkInput.setAttribute('aria-label', hourly
+        ? 'Current hourly rate benchmark in Australian dollars'
+        : 'Current FTE salary benchmark in Australian dollars');
+      salaryHelpBtn?.setAttribute('aria-label', hourly
+        ? 'More information about current hourly rate'
+        : 'More information about current FTE salary');
+      benchmarkInput.placeholder = 'Optional';
+      const display = benchmarkDisplayValue();
+      benchmarkInput.value = formatBenchmarkInputValue(display);
+      readInputs();
+      updateHpssValueTable(true);
+    }
+
     function setBenchmarkMode(nextMode) {
       if (nextMode !== 'salary' && nextMode !== 'hourly') return;
       if (nextMode === viewMode) {
@@ -3267,34 +3318,39 @@
     });
 
     async function start() {
-      if (typeof Chart === 'undefined') {
-        app.classList.remove('is-loading');
-        app.setAttribute('aria-busy', 'false');
-        setStatus('Chart.js could not be loaded.');
-        return;
-      }
-
-      renderPicker();
-      wireAllHelpTooltips();
-      syncBenchmarkModeUi();
-      updateSliderUi(false);
-
       try {
+        if (typeof Chart === 'undefined') throw new Error('Chart.js could not be loaded.');
+
+        renderPicker();
+        wireAllHelpTooltips();
+        syncBenchmarkModeUi();
+        updateSliderUi(false);
+
         await loadHpssData();
         configureTimelineFromHpssData();
         updateSliderUi(false);
         updateHpssValueTable(false);
         rebuildChart(false);
       } catch (error) {
-        setStatus(`HPSS Award data could not be loaded. ${error?.message || ''}`.trim());
-        showChartOverlay('HPSS Award data could not be loaded.');
+        console.error('Award benchmarking startup failed:', error);
+        setStatus(`Award benchmarking data could not be loaded. ${error?.message || ''}`.trim());
+        showChartOverlay('Award benchmarking data could not be loaded.');
       } finally {
+        // Never leave the app permanently behind the loading overlay.
         app.classList.remove('is-loading');
+        app.classList.remove('pff-loader-cycle-hold', 'pff-reveal-pending');
         app.setAttribute('aria-busy', 'false');
       }
     }
 
-    start();
+    const startupFailsafe = window.setTimeout(() => {
+      if (!app.classList.contains('is-loading')) return;
+      app.classList.remove('is-loading', 'pff-loader-cycle-hold', 'pff-reveal-pending');
+      app.setAttribute('aria-busy', 'false');
+      setStatus('Loading took too long. Refresh the page or check the Google Sheet connection.');
+    }, 18000);
+
+    start().finally(() => window.clearTimeout(startupFailsafe));
   </script>
 </body>
 </html>
