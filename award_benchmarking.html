@@ -116,6 +116,25 @@
       background: var(--pff-white);
     }
 
+    /* Long-form app: never let loader/core layout states clip the controls below the chart. */
+    #app:not(.is-loading) {
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+
+    #app:not(.is-loading) .forecast-note-row {
+      display: flex;
+      visibility: visible;
+      opacity: 1;
+    }
+
+    #app:not(.is-loading) .picker-section {
+      display: block;
+      visibility: visible;
+      opacity: 1;
+    }
+
     /* PFF graph header styling, copied locally so this app does not depend on core.js. */
     .module-top {
       display: flex;
@@ -1180,10 +1199,13 @@
     }
 
     .picker-section {
+      position: relative;
+      z-index: 1;
+      display: block;
       width: 100%;
       flex: 0 0 auto;
       margin-top: 1px;
-      padding: 7px 2px 2px;
+      padding: 7px 2px 18px;
       border-top: 1px solid var(--pff-track);
     }
 
@@ -1845,6 +1867,23 @@
     const CHART_ANIMATION_MS = 320;
     const CHART_SCALE_ANIMATION_MS = 360;
 
+    // Modern-award minimum-rate increases from Annual Wage Reviews.
+    // Used only to estimate FUTURE AWR adjustments; published/actual HPSS rates still take precedence.
+    const HISTORICAL_AWR_RATES = Object.freeze([
+      { year: 2015, rate: 0.0250 },
+      { year: 2016, rate: 0.0240 },
+      { year: 2017, rate: 0.0330 },
+      { year: 2018, rate: 0.0350 },
+      { year: 2019, rate: 0.0300 },
+      { year: 2020, rate: 0.0175 },
+      { year: 2021, rate: 0.0250 },
+      { year: 2022, rate: 0.0460 },
+      { year: 2023, rate: 0.0575 },
+      { year: 2024, rate: 0.0375 },
+      { year: 2025, rate: 0.0350 },
+      { year: 2026, rate: 0.0475 }
+    ]);
+
     const HPSS_SHEET_ID = '1ihTDzfCD_rXQN8qV_aaik98-Zkwj1WTrS_QZZj-3r18';
     const HPSS_SHEET_NAME = 'base';
     const HPSS_SHEET_GID = '269040819';
@@ -2203,21 +2242,37 @@
         });
 
         const factorYears = Object.keys(cumulativeAwrFactors).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
-        const annualAwrMultipliers = [];
+
+        // Start with a long-run Award history, then replace/add years for which this
+        // HPSS sheet provides an actual-vs-less-AWR observation. This means the
+        // projection automatically learns from 2027, 2028, etc. once actual columns
+        // are populated, instead of extrapolating the unusually large 2026 AWR alone.
+        const observedAwrByYear = new Map(
+          HISTORICAL_AWR_RATES.map(item => [Number(item.year), Number(item.rate)])
+        );
         let previousYear = startYear - 1;
         let previousFactor = 1;
         factorYears.forEach(year => {
-          const factor = cumulativeAwrFactors[year];
+          const factor = Number(cumulativeAwrFactors[year]);
           const gap = Math.max(1, year - previousYear);
-          const annualised = Math.pow(factor / previousFactor, 1 / gap);
-          if (Number.isFinite(annualised) && annualised > 0) {
-            for (let index = 0; index < gap; index += 1) annualAwrMultipliers.push(annualised);
+          const annualisedMultiplier = Math.pow(factor / previousFactor, 1 / gap);
+          if (Number.isFinite(annualisedMultiplier) && annualisedMultiplier > 0) {
+            const annualisedRate = annualisedMultiplier - 1;
+            for (let observedYear = previousYear + 1; observedYear <= year; observedYear += 1) {
+              observedAwrByYear.set(observedYear, annualisedRate);
+            }
           }
           previousYear = year;
           previousFactor = factor;
         });
 
-        const averageAnnualAwrMultiplier = geometricMean(annualAwrMultipliers);
+        const observedAwrSeries = [...observedAwrByYear.entries()]
+          .map(([year, rate]) => ({ year: Number(year), rate: Number(rate) }))
+          .filter(item => Number.isFinite(item.year) && Number.isFinite(item.rate) && item.rate > -1)
+          .sort((a, b) => a.year - b.year);
+        const historicalAwrMultipliers = observedAwrSeries.map(item => 1 + item.rate);
+        const averageAnnualAwrMultiplier = geometricMean(historicalAwrMultipliers);
+
         hpssData = {
           levels: parsedLevels,
           startYear,
@@ -2225,6 +2280,7 @@
           lessAwrYears,
           actualYears: factorYears,
           cumulativeAwrFactors,
+          observedAwrSeries,
           averageAnnualAwrMultiplier: Number.isFinite(averageAnnualAwrMultiplier) && averageAnnualAwrMultiplier > 0
             ? averageAnnualAwrMultiplier
             : 1
@@ -2532,6 +2588,27 @@
       const integerPart = (parts[0] || '').slice(0, 3);
       const decimalPart = (parts[1] || '').slice(0, 2);
       return parts.length > 1 ? `${integerPart}.${decimalPart}` : integerPart;
+    }
+
+    function formatSalaryInputWhileTyping(input) {
+      if (!input) return '';
+      const raw = String(input.value ?? '');
+      const caret = Number.isFinite(input.selectionStart) ? input.selectionStart : raw.length;
+      const digitsBeforeCaret = raw.slice(0, caret).replace(/\D/g, '').length;
+      const digits = raw.replace(/\D/g, '').slice(0, 6);
+      const formatted = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      input.value = formatted;
+
+      if (document.activeElement === input && typeof input.setSelectionRange === 'function') {
+        let nextCaret = 0;
+        let digitsSeen = 0;
+        while (nextCaret < formatted.length && digitsSeen < digitsBeforeCaret) {
+          if (/\d/.test(formatted[nextCaret])) digitsSeen += 1;
+          nextCaret += 1;
+        }
+        try { input.setSelectionRange(nextCaret, nextCaret); } catch (_) {}
+      }
+      return digits;
     }
 
     function readInputs() {
@@ -3312,7 +3389,7 @@
       if (awrToggle) awrToggle.checked = awrEnabled;
       if (!forecastNote) return;
       const hpssText = awrEnabled
-        ? 'HPSS: published rates + projected AWR increases based on observed trend.'
+        ? 'HPSS: published rates + projected AWR based on historical reviews and available actual rates.'
         : 'HPSS: published rates + no future AWR increase (lowest-rate scenario).';
       const absText = selectedAbs.size
         ? ' ABS: projections based on historical trends.'
@@ -3450,10 +3527,14 @@
     }
 
     function syncBenchmarkFromInput() {
-      const sanitized = sanitizeBenchmarkTyping(benchmarkInput.value);
-      const comparable = String(benchmarkInput.value ?? '').replace(/[$,\s]/g, '').trim();
-      if (comparable !== sanitized) benchmarkInput.value = sanitized;
-      benchmarkAnnual = benchmarkInputToAnnual(benchmarkInput.value);
+      if (salaryMode()) {
+        const digits = formatSalaryInputWhileTyping(benchmarkInput);
+        benchmarkAnnual = benchmarkInputToAnnual(digits);
+      } else {
+        const sanitized = sanitizeBenchmarkTyping(benchmarkInput.value);
+        if (benchmarkInput.value !== sanitized) benchmarkInput.value = sanitized;
+        benchmarkAnnual = benchmarkInputToAnnual(sanitized);
+      }
       updateHpssValueTable(true);
       queueRebuild(true);
     }
