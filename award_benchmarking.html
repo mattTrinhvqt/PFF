@@ -11,6 +11,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
 
   <style>
     :root {
@@ -56,16 +57,18 @@
        and anchor the loader to the horizontal centre near the top of this long app. */
     #app.is-loading > :not(.app-loading) {
       visibility: hidden !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
     }
 
     #app > .app-loading {
-      position: absolute !important;
+      position: fixed !important;
       inset: auto !important;
-      top: clamp(26px, 5dvh, 48px) !important;
-      left: 50% !important;
+      top: max(24px, calc(env(safe-area-inset-top, 0px) + 18px)) !important;
+      left: 50vw !important;
       z-index: 9998 !important;
       display: flex;
-      width: min(360px, 100%) !important;
+      width: 220px !important;
       height: 116px !important;
       min-height: 0 !important;
       padding: 0 !important;
@@ -75,8 +78,8 @@
       color: var(--pff-muted);
       background: transparent !important;
       text-align: center;
-      transform: translateX(-50%);
-      pointer-events: none;
+      transform: translateX(-50%) !important;
+      pointer-events: none !important;
     }
 
     #app > .app-loading > .cone-loader {
@@ -1065,12 +1068,17 @@
     }
 
     .hpss-experience-value {
-      display: inline-flex;
+      display: inline-grid;
+      grid-template-columns: 42px max-content;
       max-width: 100%;
       align-items: baseline;
       justify-content: center;
-      gap: 3px;
+      column-gap: 3px;
       white-space: nowrap;
+    }
+
+    .hpss-experience-value > .hpss-table-value {
+      text-align: right;
     }
 
     .hpss-experience-suffix {
@@ -1078,6 +1086,7 @@
       font-size: clamp(7px, 1.7vw, 8.5px);
       font-weight: 400;
       line-height: 1;
+      text-align: left;
       white-space: nowrap;
     }
 
@@ -1247,8 +1256,15 @@
       position: absolute;
       top: 50%;
       right: 5px;
-      z-index: 4;
+      z-index: 8;
       transform: translateY(-50%);
+      pointer-events: auto;
+      touch-action: manipulation;
+    }
+
+    .hpss-option-help .help-tooltip-button {
+      pointer-events: auto;
+      touch-action: manipulation;
     }
 
     .hpss-option-help .help-tooltip-button {
@@ -1671,7 +1687,7 @@
           <div id="experienceControl" class="benchmark-control hpss-hours-row hpss-experience-row">
             <label for="yearsSinceGraduating"><strong>Experience</strong> – years since graduating</label>
             <div class="hpss-hours-input-wrap">
-              <input id="yearsSinceGraduating" type="number" inputmode="numeric" enterkeyhint="next" min="0" max="60" step="1" placeholder="0" aria-label="Years since graduating">
+              <input id="yearsSinceGraduating" type="text" inputmode="numeric" enterkeyhint="next" autocomplete="off" pattern="[0-9]*" maxlength="2" placeholder="0" aria-label="Completed years since graduating">
               <span>yrs</span>
             </div>
             <span class="hpss-hours-rate" aria-hidden="true">—</span>
@@ -1740,7 +1756,7 @@
                     <span class="help-tooltip-wrap">
                       <button id="hpssPayPointColumnHelpBtn" class="help-tooltip-button" type="button" aria-label="Explain HPSS experience years" aria-expanded="false" aria-controls="hpssPayPointColumnTooltip">?</button>
                       <span id="hpssPayPointColumnTooltip" class="help-tooltip" role="tooltip">
-                        <span class="hpss-description-line">Level 1 uses total professional experience</span>
+                        <span class="hpss-description-line">Level 1 uses total professional experience (0 completed years = 1st-year rate)</span>
                         <span class="hpss-description-line">Level 2.1: &lt;5 years performing Level 2 duties</span>
                         <span class="hpss-description-line">Level 2.2: ≥5 years performing Level 2 duties</span>
                         <span class="hpss-description-line">Levels 3–4 have a single Award rate</span>
@@ -1808,7 +1824,7 @@
         <div id="hpssOptions" class="option-grid hpss-grid"></div>
 
         <div class="picker-subheading abs-section-heading">
-          <span><a class="abs-heading-link" href="https://www.abs.gov.au/statistics/labour/earnings-and-working-conditions/employee-earnings/latest-release" target="_blank" rel="noopener noreferrer">ABS INCOME</a> COMPARISONS</span>
+          <span><a class="abs-heading-link" href="https://www.abs.gov.au/statistics/labour/earnings-and-working-conditions/employee-earnings/latest-release" target="_blank" rel="noopener noreferrer">ABS INCOME</a> MEDIANS</span>
           <em>optional</em>
         </div>
         <div id="absOptions" class="abs-multi-picker"></div>
@@ -1926,9 +1942,8 @@
     let chart = null;
     let chartModel = null;
     let renderQueued = false;
-    let yAxisNumberAnimationFrame = null;
-    let yAxisNumberAnimationProgress = 1;
-    let forceYAxisNumberAnimation = false;
+    let unifiedYAxis = null;
+    let lastYAxisTitle = '';
     let awrFlipResetTimer = null;
 
     const prefersReducedMotion = () =>
@@ -2911,7 +2926,6 @@
           </div>
         </div>
       `;
-      wireAllHelpTooltips(hpssOptions);
     }
 
     function datasetValueAtYear(dataset, year) {
@@ -2931,6 +2945,65 @@
         }
       }
       return null;
+    }
+
+    function yAxisTitle() {
+      return salaryMode() ? 'FTE salary ($)' : 'Hourly rate ($)';
+    }
+
+    function ensureUnifiedYAxis() {
+      if (unifiedYAxis || !window.PFFCharts?.createUnifiedYAxis) return unifiedYAxis;
+      unifiedYAxis = window.PFFCharts.createUnifiedYAxis({
+        id: 'awardBenchmarkUnifiedYAxis',
+        getChart() { return chart; },
+        getScale() { return chartYRange(chartModel); },
+        getDecimals() { return 0; },
+        getTitle() { return yAxisTitle(); },
+        formatValue(value) { return compactMoney(value, 1); }
+      });
+      lastYAxisTitle = yAxisTitle();
+      return unifiedYAxis;
+    }
+
+    function datasetIdentity(dataset) {
+      const series = dataset?.pffSeriesId || dataset?.label || 'dataset';
+      const phase = dataset?.pffProjected
+        ? 'forecast'
+        : dataset?.pffObserved
+          ? 'observed'
+          : dataset?.pffBenchmark
+            ? 'benchmark'
+            : 'other';
+      return `${series}::${phase}`;
+    }
+
+    function syncDatasetsInPlace(nextDatasets) {
+      if (!chart) return;
+      const currentByKey = new Map(
+        (chart.data.datasets || []).map(dataset => [datasetIdentity(dataset), dataset])
+      );
+      chart.data.datasets = (nextDatasets || []).map(nextDataset => {
+        const key = datasetIdentity(nextDataset);
+        const current = currentByKey.get(key);
+        if (!current) return nextDataset;
+        Object.assign(current, nextDataset);
+        current.data = nextDataset.data;
+        return current;
+      });
+    }
+
+    function animateUnifiedYAxis(fromScale, toScale, duration) {
+      if (!unifiedYAxis) return;
+      unifiedYAxis.animate(fromScale, toScale, {
+        duration,
+        fromDecimals: 0,
+        toDecimals: 0
+      });
+      const nextTitle = yAxisTitle();
+      if (nextTitle !== lastYAxisTitle) {
+        unifiedYAxis.animateTitle(lastYAxisTitle, nextTitle, duration);
+        lastYAxisTitle = nextTitle;
+      }
     }
 
     const axisSpinesPlugin = {
@@ -2967,49 +3040,46 @@
         for (let year = startYear; year <= endYear; year += 1) {
           const x = xScale.getPixelForValue(year);
           if (!Number.isFinite(x) || x < chartArea.left - 1 || x > chartArea.right + 1) continue;
-          const major = true;
-          const length = 5;
           ctx.strokeStyle = '#151515';
           ctx.globalAlpha = 1;
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + length);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 5);
           ctx.stroke();
-          {
-            ctx.globalAlpha = 1;
-            ctx.fillStyle = '#151515';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.font = `${window.matchMedia('(max-width: 430px)').matches ? 9 : 10}px Lato, sans-serif`;
-            ctx.fillText(String(year), x, chartArea.bottom + 8);
-          }
+          ctx.fillStyle = '#151515';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.font = `${window.matchMedia('(max-width: 430px)').matches ? 9 : 10}px Lato, sans-serif`;
+          ctx.fillText(String(year), x, chartArea.bottom + 8);
         }
 
-        (yScale.ticks || []).forEach(tick => {
-          const value = Number(tick?.value);
-          if (!Number.isFinite(value)) return;
-          const y = yScale.getPixelForValue(value);
-          if (!Number.isFinite(y)) return;
-          const major = tick?.pffMajor !== false;
-          const length = major ? 5 : 2;
-          ctx.strokeStyle = major ? '#151515' : '#69718a';
-          ctx.globalAlpha = major ? 1 : 0.60;
-          ctx.lineWidth = major ? 1 : 0.7;
-          ctx.beginPath();
-          ctx.moveTo(chartArea.left - length, Math.round(y) + 0.5);
-          ctx.lineTo(chartArea.left, Math.round(y) + 0.5);
-          ctx.stroke();
-          if (major) {
-            ctx.globalAlpha = 1;
-            ctx.fillStyle = '#151515';
-            ctx.textAlign = 'right';
-            ctx.textBaseline = 'middle';
-            ctx.font = `${window.matchMedia('(max-width: 430px)').matches ? 9 : 10}px Lato, sans-serif`;
-            const animatedValue = value * easeInOutCubic(yAxisNumberAnimationProgress);
-            ctx.fillText(compactMoney(animatedValue, yAxisNumberAnimationProgress), chartArea.left - 8, y);
-          }
-        });
+        /* Fallback only if the shared animated-axis helper is unavailable. */
+        if (!unifiedYAxis) {
+          (yScale.ticks || []).forEach(tick => {
+            const value = Number(tick?.value);
+            if (!Number.isFinite(value)) return;
+            const y = yScale.getPixelForValue(value);
+            if (!Number.isFinite(y)) return;
+            const major = tick?.pffMajor !== false;
+            const length = major ? 5 : 2;
+            ctx.strokeStyle = major ? '#151515' : '#69718a';
+            ctx.globalAlpha = major ? 1 : 0.60;
+            ctx.lineWidth = major ? 1 : 0.7;
+            ctx.beginPath();
+            ctx.moveTo(chartArea.left - length, Math.round(y) + 0.5);
+            ctx.lineTo(chartArea.left, Math.round(y) + 0.5);
+            ctx.stroke();
+            if (major) {
+              ctx.globalAlpha = 1;
+              ctx.fillStyle = '#151515';
+              ctx.textAlign = 'right';
+              ctx.textBaseline = 'middle';
+              ctx.font = `${window.matchMedia('(max-width: 430px)').matches ? 9 : 10}px Lato, sans-serif`;
+              ctx.fillText(compactMoney(value, 1), chartArea.left - 8, y);
+            }
+          });
+        }
 
         ctx.globalAlpha = 1;
         ctx.fillStyle = '#151515';
@@ -3107,7 +3177,7 @@
               },
               afterLabel(context) {
                 const lessAwr = Number(context.raw?.pffLessAwrY);
-                return context.dataset.pffProjected && awrEnabled && Number.isFinite(lessAwr) && lessAwr > 0
+                return context.dataset.pffProjected && Number.isFinite(lessAwr) && lessAwr > 0
                   ? `Less AWR: ${formatMoney(lessAwr)}`
                   : '';
               }
@@ -3147,24 +3217,13 @@
             max: yRange.max,
             afterBuildTicks(scale) { buildYTicks(scale, yRange); },
             afterFit(scale) { scale.width = window.matchMedia('(max-width: 430px)').matches ? 66 : 72; },
-            title: {
-              display: true,
-              text: salaryMode() ? 'FTE salary ($)' : 'Hourly rate ($)',
-              color: '#151515',
-              font: { family: 'Lato', size: 13, weight: '700' }
-            },
+            title: { display: false },
             ticks: {
-              color: 'rgba(21,21,21,0)',
+              display: false,
               autoSkip: false,
-              padding: 3,
-              font: { family: 'Lato', size: window.matchMedia('(max-width: 430px)').matches ? 9 : 10, weight: '400' },
-              callback() { return ''; }
+              padding: 3
             },
-            grid: {
-              color(context) { return context.tick?.pffMajor === false ? 'rgba(105,113,138,0.035)' : 'rgba(105,113,138,0.075)'; },
-              lineWidth(context) { return context.tick?.pffMajor === false ? 0.7 : 1; },
-              drawTicks: false
-            },
+            grid: { display: false, drawTicks: false },
             border: { display: false }
           }
         },
@@ -3179,30 +3238,6 @@
     function easeInOutCubic(progress) {
       const t = Math.max(0, Math.min(1, Number(progress) || 0));
       return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    }
-
-    function animateYAxisNumbers(duration = CHART_SCALE_ANIMATION_MS) {
-      if (!chart) return;
-      if (yAxisNumberAnimationFrame) cancelAnimationFrame(yAxisNumberAnimationFrame);
-      if (prefersReducedMotion()) {
-        yAxisNumberAnimationProgress = 1;
-        chart.draw();
-        return;
-      }
-      yAxisNumberAnimationProgress = 0;
-      const started = performance.now();
-      const frame = now => {
-        yAxisNumberAnimationProgress = Math.min(1, (now - started) / duration);
-        chart.draw();
-        if (yAxisNumberAnimationProgress < 1) {
-          yAxisNumberAnimationFrame = requestAnimationFrame(frame);
-        } else {
-          yAxisNumberAnimationFrame = null;
-          yAxisNumberAnimationProgress = 1;
-          chart.draw();
-        }
-      };
-      yAxisNumberAnimationFrame = requestAnimationFrame(frame);
     }
 
     function animateXAxisMax(targetMax, duration = CHART_ANIMATION_MS) {
@@ -3276,45 +3311,55 @@
     function updateAwrUi() {
       if (awrToggle) awrToggle.checked = awrEnabled;
       if (!forecastNote) return;
-      forecastNote.textContent = awrEnabled
-        ? 'HPSS projections include estimated Annual Wage Review (AWR) increases based on the observed AWR trend. ABS projections use historical trends.'
-        : 'HPSS projections use staged rates without future AWR increases (lowest-rate scenario). ABS projections use historical trends.';
+      const hpssText = awrEnabled
+        ? 'HPSS: published rates + projected AWR increases based on observed trend.'
+        : 'HPSS: published rates + no future AWR increase (lowest-rate scenario).';
+      const absText = selectedAbs.size
+        ? ' ABS: projections based on historical trends.'
+        : '';
+      forecastNote.textContent = hpssText + absText;
     }
 
-    function rebuildChartWithFlip(duration = 220) {
+    function rebuildChartWithFlip(duration = 240) {
       const nextModel = buildChartModel();
       if (!nextModel) return;
-      chartModel = nextModel;
 
       if (!nextModel.datasets.length) showChartOverlay('Select at least one HPSS or ABS benchmark below.');
       else showChartOverlay('');
 
       if (!chart) {
+        chartModel = nextModel;
         rebuildChart(false);
         return;
       }
 
+      const reduced = prefersReducedMotion();
+      const oldScale = unifiedYAxis?.currentScale?.() || chartYRange(chartModel);
+      const nextScale = chartYRange(nextModel);
+      chartModel = nextModel;
+
       const options = chartOptions(nextModel);
-      chart.data.datasets = nextModel.datasets;
+      syncDatasetsInPlace(nextModel.datasets);
       Object.assign(chart.options.scales.x, options.scales.x);
       Object.assign(chart.options.scales.y, options.scales.y);
 
-      const reduced = prefersReducedMotion();
-      if (awrFlipResetTimer) {
-        window.clearTimeout(awrFlipResetTimer);
-        awrFlipResetTimer = null;
-      }
-      chart.options.animation = reduced
-        ? false
-        : { duration, easing: 'easeOutCubic' };
+      const animationDuration = reduced ? 0 : duration;
+      chart.options.animation = reduced ? false : { duration: animationDuration, easing: 'easeInOutCubic' };
+      chart.options.animations = reduced ? undefined : {
+        x: { duration: 0 },
+        y: { duration: animationDuration, easing: 'easeInOutCubic' },
+        colors: { duration: 0 }
+      };
       chart.update(reduced ? 'none' : undefined);
+      animateUnifiedYAxis(oldScale, nextScale, animationDuration);
 
+      if (awrFlipResetTimer) window.clearTimeout(awrFlipResetTimer);
       if (!reduced) {
         awrFlipResetTimer = window.setTimeout(() => {
           awrFlipResetTimer = null;
           if (!chart) return;
           chart.options.animation = false;
-        }, duration + 40);
+        }, animationDuration + 50);
       }
     }
 
@@ -3336,7 +3381,6 @@
     function rebuildChart(animate = true) {
       const nextModel = buildChartModel();
       if (!nextModel) return;
-      chartModel = nextModel;
 
       if (!nextModel.datasets.length) {
         showChartOverlay('Select at least one HPSS or ABS benchmark below.');
@@ -3345,41 +3389,50 @@
       }
 
       if (!chart) {
+        chartModel = nextModel;
+        ensureUnifiedYAxis();
+        const plugins = [
+          ...(unifiedYAxis ? [unifiedYAxis.plugin] : [axisSpinesPlugin]),
+          currentYearPlugin,
+          axisTicksPlugin,
+          pointOverlayPlugin
+        ];
         chart = new Chart(chartCanvas.getContext('2d'), {
           type: 'line',
           data: { datasets: nextModel.datasets },
-          plugins: [axisSpinesPlugin, currentYearPlugin, axisTicksPlugin, pointOverlayPlugin],
+          plugins,
           options: chartOptions(nextModel)
         });
-        yAxisNumberAnimationProgress = 1;
+        unifiedYAxis?.setImmediately?.(chartYRange(nextModel), 0);
+        unifiedYAxis?.setTitleImmediately?.(yAxisTitle());
+        lastYAxisTitle = yAxisTitle();
         pendingSeriesFadeIn.clear();
         return;
       }
 
-      const previousMajorTicks = (chart.scales?.y?.ticks || [])
-        .filter(tick => tick?.pffMajor !== false)
-        .map(tick => Number(tick.value))
-        .filter(Number.isFinite);
+      const reduced = prefersReducedMotion();
+      const duration = animate && !reduced ? CHART_SCALE_ANIMATION_MS : 0;
+      const oldScale = unifiedYAxis?.currentScale?.() || chartYRange(chartModel);
+      const nextScale = chartYRange(nextModel);
       const fadeIds = new Set(pendingSeriesFadeIn);
+      chartModel = nextModel;
       const options = chartOptions(nextModel);
-      chart.data.datasets = nextModel.datasets;
-      /* Refresh the complete scale definitions so mode-specific tick builders,
-         labels and dimensions change with Salary / Hourly. */
+
+      syncDatasetsInPlace(nextModel.datasets);
       Object.assign(chart.options.scales.x, options.scales.x);
       Object.assign(chart.options.scales.y, options.scales.y);
-      chart.options.animation = false;
-      chart.update('none');
-
-      const nextMajorTicks = (chart.scales?.y?.ticks || [])
-        .filter(tick => tick?.pffMajor !== false)
-        .map(tick => Number(tick.value))
-        .filter(Number.isFinite);
-      const tickSignatureChanged = previousMajorTicks.length !== nextMajorTicks.length ||
-        previousMajorTicks.some((value, index) => Math.abs(value - (nextMajorTicks[index] ?? value)) > 0.0001);
-      if (tickSignatureChanged || forceYAxisNumberAnimation) {
-        forceYAxisNumberAnimation = false;
-        animateYAxisNumbers();
-      }
+      chart.options.animation = duration
+        ? { duration, easing: 'easeInOutCubic' }
+        : false;
+      chart.options.animations = duration
+        ? {
+            x: { duration: 0 },
+            y: { duration, easing: 'easeInOutCubic' },
+            colors: { duration: 0 }
+          }
+        : undefined;
+      chart.update(duration ? undefined : 'none');
+      animateUnifiedYAxis(oldScale, nextScale, duration);
 
       fadeIds.forEach(seriesId => {
         pendingSeriesFadeIn.delete(seriesId);
@@ -3441,7 +3494,6 @@
       benchmarkAnnual = benchmarkInputToAnnual(benchmarkInput.value);
       viewMode = nextMode;
       syncBenchmarkModeUi();
-      forceYAxisNumberAnimation = true;
       queueRebuild(true);
     }
 
@@ -3453,7 +3505,8 @@
       if (!input.checked) {
         animateSeriesAlpha(seriesId, 1, 0, 260, () => {
           selectedAbs.delete(key);
-          rebuildChart(false);
+          updateAwrUi();
+          rebuildChart(true);
         });
         return;
       }
@@ -3464,6 +3517,7 @@
         seriesFadeFrames.delete(seriesId);
       }
       selectedAbs.add(key);
+      updateAwrUi();
       if (!absRows.length) {
         try {
           await loadAbsData();
@@ -3471,6 +3525,7 @@
         } catch (error) {
           selectedAbs.delete(key);
           input.checked = false;
+          updateAwrUi();
           setStatus(`ABS income data could not be loaded. ${error?.message || ''}`.trim());
           showChartOverlay('');
           return;
@@ -3480,7 +3535,7 @@
       }
 
       pendingSeriesFadeIn.add(seriesId);
-      rebuildChart(false);
+      rebuildChart(true);
     }
 
     function handleHpssSelection(input) {
@@ -3496,7 +3551,7 @@
           remaining -= 1;
           if (remaining > 0) return;
           selectedHpss.delete(key);
-          rebuildChart(false);
+          rebuildChart(true);
         };
         seriesIds.forEach(seriesId => animateSeriesAlpha(seriesId, 1, 0, 260, done));
         return;
@@ -3511,7 +3566,7 @@
         pendingSeriesFadeIn.add(seriesId);
       });
       selectedHpss.add(key);
-      rebuildChart(false);
+      rebuildChart(true);
     }
 
     function positionHelpTooltip(button, tooltip) {
@@ -3538,7 +3593,7 @@
     }
 
     function wireHelpTooltip(button) {
-      if (!button || button.dataset.tooltipBound === 'true') return;
+      if (!button || button.closest?.('.hpss-option-help') || button.dataset.tooltipBound === 'true') return;
       const tooltipId = button.getAttribute('aria-controls');
       const tooltip = tooltipId ? document.getElementById(tooltipId) : null;
       if (!tooltip) return;
@@ -3680,6 +3735,51 @@
       weekendHoursInput.blur();
     });
 
+    hpssOptions.addEventListener('click', event => {
+      const button = event.target.closest?.('.hpss-option-help .help-tooltip-button');
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const tooltipId = button.getAttribute('aria-controls');
+      const tooltip = tooltipId ? document.getElementById(tooltipId) : null;
+      if (!tooltip) return;
+      const pin = button.dataset.tooltipPinned !== 'true';
+      document.querySelectorAll('.help-tooltip-button[data-tooltip-pinned="true"]').forEach(openButton => {
+        if (openButton === button) return;
+        openButton.dataset.tooltipPinned = 'false';
+        const openId = openButton.getAttribute('aria-controls');
+        setHelpVisible(openButton, openId ? document.getElementById(openId) : null, false);
+      });
+      button.dataset.tooltipPinned = String(pin);
+      setHelpVisible(button, tooltip, pin);
+    }, true);
+
+    hpssOptions.addEventListener('mouseover', event => {
+      const button = event.target.closest?.('.hpss-option-help .help-tooltip-button');
+      if (!button || button.dataset.tooltipPinned === 'true') return;
+      const tooltipId = button.getAttribute('aria-controls');
+      setHelpVisible(button, tooltipId ? document.getElementById(tooltipId) : null, true);
+    });
+    hpssOptions.addEventListener('mouseout', event => {
+      const button = event.target.closest?.('.hpss-option-help .help-tooltip-button');
+      if (!button || button.dataset.tooltipPinned === 'true') return;
+      if (event.relatedTarget && button.contains(event.relatedTarget)) return;
+      const tooltipId = button.getAttribute('aria-controls');
+      setHelpVisible(button, tooltipId ? document.getElementById(tooltipId) : null, false);
+    });
+    hpssOptions.addEventListener('focusin', event => {
+      const button = event.target.closest?.('.hpss-option-help .help-tooltip-button');
+      if (!button || button.dataset.tooltipPinned === 'true') return;
+      const tooltipId = button.getAttribute('aria-controls');
+      setHelpVisible(button, tooltipId ? document.getElementById(tooltipId) : null, true);
+    });
+    hpssOptions.addEventListener('focusout', event => {
+      const button = event.target.closest?.('.hpss-option-help .help-tooltip-button');
+      if (!button || button.dataset.tooltipPinned === 'true') return;
+      const tooltipId = button.getAttribute('aria-controls');
+      setHelpVisible(button, tooltipId ? document.getElementById(tooltipId) : null, false);
+    });
+
     hpssOptions.addEventListener('change', event => {
       const input = event.target.closest?.('input[data-hpss]');
       if (input) handleHpssSelection(input);
@@ -3703,8 +3803,9 @@
         if (typeof Chart === 'undefined') throw new Error('Chart.js could not be loaded.');
 
         wireStaticEvents();
+        yearsSinceGraduatingInput.value = '';
         renderPicker();
-        wireAllHelpTooltips();
+        wireAllHelpTooltips(document);
         syncBenchmarkModeUi();
         updateAwrUi();
         await loadHpssData();
