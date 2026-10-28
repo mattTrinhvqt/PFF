@@ -55,7 +55,8 @@
 
     /* Shared repository loader. Keep the app fully hidden until startup completes,
        and anchor the loader to the horizontal centre near the top of this long app. */
-    #app.is-loading > :not(.app-loading) {
+    #app.is-loading > :not(.app-loading),
+    #app.pff-loader-cycle-hold > :not(.app-loading) {
       visibility: hidden !important;
       opacity: 0 !important;
       pointer-events: none !important;
@@ -78,6 +79,24 @@
       color: var(--pff-muted);
       background: transparent !important;
       text-align: center;
+      transform: translateX(-50%) !important;
+      pointer-events: none !important;
+    }
+
+    /* Keep the repository loader in the same top-centred position while
+       pff_loader.js holds it to finish the current animation cycle. */
+    html body #app.pff-loader-cycle-hold > .app-loading {
+      position: fixed !important;
+      inset: auto !important;
+      top: max(24px, calc(env(safe-area-inset-top, 0px) + 18px)) !important;
+      left: 50vw !important;
+      width: 220px !important;
+      height: 116px !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+      align-items: center !important;
+      justify-content: flex-start !important;
+      background: transparent !important;
       transform: translateX(-50%) !important;
       pointer-events: none !important;
     }
@@ -117,19 +136,19 @@
     }
 
     /* Long-form app: never let loader/core layout states clip the controls below the chart. */
-    #app:not(.is-loading) {
+    #app:not(.is-loading):not(.pff-loader-cycle-hold) {
       height: auto !important;
       max-height: none !important;
       overflow: visible !important;
     }
 
-    #app:not(.is-loading) .forecast-note-row {
+    #app:not(.is-loading):not(.pff-loader-cycle-hold) .forecast-note-row {
       display: flex;
       visibility: visible;
       opacity: 1;
     }
 
-    #app:not(.is-loading) .picker-section {
+    #app:not(.is-loading):not(.pff-loader-cycle-hold) .picker-section {
       display: block;
       visibility: visible;
       opacity: 1;
@@ -1638,7 +1657,7 @@
   </style>
 </head>
 
-<body class="pff-chart-app">
+<body>
   <div id="fit">
     <main id="app" class="is-loading" aria-busy="true">
       <div id="loadingState" class="app-loading" role="status" aria-label="Loading award and income benchmarking data">
@@ -3899,29 +3918,36 @@
         setStatus(`Award benchmarking data could not be loaded. ${error?.message || ''}`.trim());
         showChartOverlay('Award benchmarking data could not be loaded.');
       } finally {
-        // Hide the shared loader before releasing the app. Inline !important prevents
-        // the loader helper's cycle-hold rule from leaving a residual white overlay.
-        const loadingState = document.getElementById('loadingState');
-        if (loadingState) {
-          loadingState.hidden = true;
-          loadingState.style.setProperty('display', 'none', 'important');
-        }
-        app.classList.remove('is-loading', 'pff-loader-cycle-hold', 'pff-reveal-pending');
+        // Data are ready. Hand completion to pff_loader.js so the CURRENT visible
+        // loader cycle finishes naturally before the application is revealed.
+        // Pre-apply the hold class to prevent a one-frame content flash while the
+        // loader's MutationObserver reacts to removal of is-loading.
+        const hasSharedLoader = Boolean(window.PFFLoader);
+        if (hasSharedLoader) app.classList.add('pff-loader-cycle-hold');
+        app.classList.remove('is-loading', 'pff-reveal-pending');
         app.setAttribute('aria-busy', 'false');
-        requestAnimationFrame(() => app.classList.remove('pff-loader-cycle-hold', 'pff-reveal-pending'));
+
+        // Fallback only if the shared loader cannot release its hold for some reason.
+        // This is longer than one full spectral cycle and does not normally run.
+        if (hasSharedLoader) {
+          window.setTimeout(() => {
+            if (!app.classList.contains('pff-loader-cycle-hold')) return;
+            app.classList.remove('pff-loader-cycle-hold', 'pff-reveal-pending');
+          }, 4200);
+        }
       }
     }
 
     const startupFailsafe = window.setTimeout(() => {
       if (!app.classList.contains('is-loading')) return;
-      const loadingState = document.getElementById('loadingState');
-      if (loadingState) {
-        loadingState.hidden = true;
-        loadingState.style.setProperty('display', 'none', 'important');
-      }
-      app.classList.remove('is-loading', 'pff-loader-cycle-hold', 'pff-reveal-pending');
+      const hasSharedLoader = Boolean(window.PFFLoader);
+      if (hasSharedLoader) app.classList.add('pff-loader-cycle-hold');
+      app.classList.remove('is-loading', 'pff-reveal-pending');
       app.setAttribute('aria-busy', 'false');
       setStatus('Loading took too long. Refresh the page or check the Google Sheet connection.');
+      if (hasSharedLoader) {
+        window.setTimeout(() => app.classList.remove('pff-loader-cycle-hold', 'pff-reveal-pending'), 4200);
+      }
     }, 18000);
 
     start().finally(() => window.clearTimeout(startupFailsafe));
