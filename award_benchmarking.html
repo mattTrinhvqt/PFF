@@ -1745,6 +1745,25 @@
       padding-right: 28px;
     }
 
+    /* Make the Loadings heading and both rows share one exact compact rhythm. */
+    .hpss-loading-block {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: 0 !important;
+    }
+    .hpss-loading-block .hpss-loading-grid {
+      gap: 0 !important;
+    }
+    .hpss-loading-block .hpss-hours-heading,
+    .hpss-loading-block .hpss-hours-row {
+      min-height: 18px !important;
+      height: 18px;
+      margin: 0 !important;
+    }
+    .hpss-loading-block .hpss-hours-input-wrap > span {
+      line-height: 18px !important;
+    }
+
     @media (max-width: 430px) {
       /* Match the Loadings heading to the Experience line above. */
       .hpss-hours-heading {
@@ -1752,7 +1771,8 @@
       }
       .hpss-loading-block .hpss-hours-heading,
       .hpss-loading-block .hpss-hours-row {
-        min-height: 19px !important;
+        min-height: 18px !important;
+        height: 18px;
       }
       .forecast-note-row {
         min-height: 34px;
@@ -2582,8 +2602,9 @@
       };
     }
 
-    function updateHpssValueTable(animate = true) {
+    function updateHpssValueTable(animate = true, options = {}) {
       const inputs = readInputs();
+      const delayHourlyDecimals = Boolean(options?.delayHourlyDecimals);
       if (!inputs || !hpssData) return;
       if (hpssValueMetricHeader) {
         const year = hpssDisplayYear();
@@ -2619,11 +2640,12 @@
               style: 'currency', currency: 'AUD', maximumFractionDigits: 0
             }).format(value);
           }
+          const showDecimals = !delayHourlyDecimals || final || progress >= 0.985;
           return new Intl.NumberFormat('en-AU', {
             style: 'currency',
             currency: 'AUD',
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2
+            minimumFractionDigits: showDecimals ? 2 : 0,
+            maximumFractionDigits: showDecimals ? 2 : 0
           }).format(value) + '/hr';
         };
 
@@ -2858,6 +2880,8 @@
     function addSeriesDatasets(datasets, series, meta, markerShape) {
       if (!series) return;
       const fadeIn = pendingSeriesFadeIn.has(meta.id);
+      const isAbsSeries = markerShape === 'square';
+      const absDashPattern = [7, 3, 1.5, 3];
       const common = {
         parsing: false,
         borderWidth: 1.8,
@@ -2882,6 +2906,8 @@
           pointHoverRadius: 4,
           borderColor: fadeIn ? rgba(meta.colour, 0) : meta.colour,
           backgroundColor: fadeIn ? rgba(meta.colour, 0) : meta.colour,
+          borderDash: isAbsSeries ? absDashPattern : [],
+          borderCapStyle: 'round',
           spanGaps: false,
           order: 4
         });
@@ -2897,7 +2923,7 @@
           pointHoverRadius: 4,
           borderColor: rgba(meta.colour, fadeIn ? 0 : 0.82),
           backgroundColor: rgba(meta.colour, fadeIn ? 0 : 0.82),
-          borderDash: [1.5, 3.5],
+          borderDash: isAbsSeries ? absDashPattern : [1.5, 3.5],
           borderCapStyle: 'round',
           spanGaps: true,
           order: 5
@@ -3716,8 +3742,9 @@
       queueRebuild(true);
     }
 
-    function syncBenchmarkModeUi() {
+    function syncBenchmarkModeUi(options = {}) {
       const hourly = !salaryMode();
+      const delayHourlyDecimals = Boolean(options?.delayHourlyDecimals);
       benchmarkModeToggle.classList.toggle('is-hourly-selected', hourly);
       benchmarkModeSalary.classList.toggle('is-active', !hourly);
       benchmarkModeHourly.classList.toggle('is-active', hourly);
@@ -3739,7 +3766,7 @@
       const display = benchmarkDisplayValue();
       benchmarkInput.value = formatBenchmarkInputValue(display);
       readInputs();
-      updateHpssValueTable(true);
+      updateHpssValueTable(true, { delayHourlyDecimals });
     }
 
     function setBenchmarkMode(nextMode) {
@@ -3749,9 +3776,12 @@
       }
 
       /* Capture any uncommitted text using the mode it was entered in. */
+      const previousMode = viewMode;
       benchmarkAnnual = benchmarkInputToAnnual(benchmarkInput.value);
       viewMode = nextMode;
-      syncBenchmarkModeUi();
+      syncBenchmarkModeUi({
+        delayHourlyDecimals: previousMode === 'salary' && nextMode === 'hourly'
+      });
       queueRebuild(true);
     }
 
