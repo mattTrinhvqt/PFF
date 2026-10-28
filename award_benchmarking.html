@@ -3081,7 +3081,14 @@
       return 20 * magnitude;
     }
 
-    function chartYRange(model) {
+    /* Keep each display mode on a stable Y-axis wherever possible.
+       Data-series changes can expand the remembered range, but do not
+       contract it. This preserves visual context when AWR or comparison
+       selections are toggled. A user benchmark may temporarily expand the
+       visible range without permanently widening the remembered data scale. */
+    const stableDataYAxisByMode = { salary: null, hourly: null };
+
+    function calculateChartYRange(model) {
       const values = (model?.datasets || [])
         .flatMap(dataset => (dataset.data || []).map(point => Number(point.y)))
         .filter(value => Number.isFinite(value) && value > 0);
@@ -3134,6 +3141,55 @@
         minorStep: step / 2,
         intervals: range.intervals
       };
+    }
+
+    function yAxisModeKey() {
+      return salaryMode() ? 'salary' : 'hourly';
+    }
+
+    function rangeModel(...ranges) {
+      const values = ranges
+        .filter(Boolean)
+        .flatMap(range => [Number(range.min), Number(range.max)])
+        .filter(value => Number.isFinite(value) && value > 0);
+      return { datasets: [{ data: values.map(y => ({ y })) }] };
+    }
+
+    function modelHasPositiveYValues(model) {
+      return (model?.datasets || []).some(dataset =>
+        (dataset.data || []).some(point => Number.isFinite(Number(point.y)) && Number(point.y) > 0)
+      );
+    }
+
+    function chartYRange(model) {
+      const modeKey = yAxisModeKey();
+      const nonBenchmarkDatasets = (model?.datasets || []).filter(dataset => !dataset?.pffBenchmark);
+      const nonBenchmarkModel = { datasets: nonBenchmarkDatasets };
+      let stableDataRange = stableDataYAxisByMode[modeKey];
+
+      if (modelHasPositiveYValues(nonBenchmarkModel)) {
+        const candidate = calculateChartYRange(nonBenchmarkModel);
+        if (!stableDataRange) {
+          stableDataRange = candidate;
+        } else if (candidate.min < stableDataRange.min || candidate.max > stableDataRange.max) {
+          stableDataRange = calculateChartYRange(rangeModel(stableDataRange, candidate));
+        }
+        stableDataYAxisByMode[modeKey] = stableDataRange;
+      } else if (!stableDataRange) {
+        stableDataRange = calculateChartYRange(nonBenchmarkModel);
+        stableDataYAxisByMode[modeKey] = stableDataRange;
+      }
+
+      const benchmarkModel = {
+        datasets: (model?.datasets || []).filter(dataset => dataset?.pffBenchmark)
+      };
+      if (!modelHasPositiveYValues(benchmarkModel)) return stableDataRange;
+
+      const benchmarkRange = calculateChartYRange(benchmarkModel);
+      if (benchmarkRange.min >= stableDataRange.min && benchmarkRange.max <= stableDataRange.max) {
+        return stableDataRange;
+      }
+      return calculateChartYRange(rangeModel(stableDataRange, benchmarkRange));
     }
 
     function buildYTicks(scale, range) {
