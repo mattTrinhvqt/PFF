@@ -2495,6 +2495,8 @@
     }
 
     let activeDisplayYear = NaN;
+    let experienceAnchorYear = NaN;
+    let experienceAnchorYears = 0;
 
     function hpssDisplayYear() {
       const start = hpssStartYear();
@@ -2502,6 +2504,35 @@
       const fallback = Math.min(end, Math.max(CURRENT_YEAR, start));
       const selected = Number(activeDisplayYear);
       return Number.isFinite(selected) ? Math.min(end, Math.max(start, selected)) : fallback;
+    }
+
+    function clampExperienceYears(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return 0;
+      return Math.min(60, Math.max(0, Math.floor(numeric)));
+    }
+
+    function experienceYearsAtYear(targetYear, anchorYear = experienceAnchorYear, anchorYears = experienceAnchorYears) {
+      const year = Number(targetYear);
+      const baseYear = Number(anchorYear);
+      const baseYears = Number(anchorYears);
+      if (!Number.isFinite(year)) return 0;
+      if (!Number.isFinite(baseYear) || !Number.isFinite(baseYears)) return 0;
+      return clampExperienceYears(baseYears + (year - baseYear));
+    }
+
+    function updateExperienceAnchorFromInput() {
+      const raw = yearsSinceGraduatingInput?.value?.trim?.() ?? '';
+      const value = raw === '' ? 0 : Number(raw);
+      if (!Number.isFinite(value) || value < 0 || value > 60) return false;
+      experienceAnchorYear = hpssDisplayYear();
+      experienceAnchorYears = clampExperienceYears(value);
+      return true;
+    }
+
+    function syncExperienceInputToDisplayYear() {
+      if (!yearsSinceGraduatingInput) return;
+      yearsSinceGraduatingInput.value = String(experienceYearsAtYear(hpssDisplayYear()));
     }
 
     function updateTimelineUi() {
@@ -2531,10 +2562,34 @@
       }
     }
 
+    function confirmedAwrFactorForYear(targetYear) {
+      const year = Number(targetYear);
+      if (!Number.isFinite(year) || !hpssData) return 1;
+
+      const exact = Number(hpssData.cumulativeAwrFactors?.[year]);
+      if (Number.isFinite(exact) && exact > 0) return exact;
+
+      // AWR OFF still includes every AWR decision already known. For a future
+      // staged year, carry forward the latest observed cumulative AWR factor;
+      // only unknown future AWR decisions are excluded.
+      const factorYears = (hpssData.actualYears || [])
+        .map(Number)
+        .filter(value => Number.isFinite(value) && value < year)
+        .sort((a, b) => a - b);
+      if (!factorYears.length) return 1;
+
+      const priorYear = factorYears[factorYears.length - 1];
+      const priorFactor = Number(hpssData.cumulativeAwrFactors?.[priorYear]);
+      return Number.isFinite(priorFactor) && priorFactor > 0 ? priorFactor : 1;
+    }
+
     function projectedAwrFactorForYear(targetYear) {
       const year = Number(targetYear);
       if (!Number.isFinite(year) || !hpssData) return 1;
-      if (!awrEnabled) return 1;
+
+      const confirmedFactor = confirmedAwrFactorForYear(year);
+      if (!awrEnabled) return confirmedFactor;
+
       const exact = Number(hpssData.cumulativeAwrFactors?.[year]);
       if (Number.isFinite(exact) && exact > 0) return exact;
 
@@ -2552,12 +2607,9 @@
         }
       }
 
-      const firstYear = factorYears[0];
-      const firstFactor = Number(hpssData.cumulativeAwrFactors?.[firstYear]);
-      if (Number.isFinite(firstFactor) && firstFactor > 0 && year < firstYear) {
-        return firstFactor / Math.pow(safeAnnualMultiplier, firstYear - year);
-      }
-      return 1;
+      // Do not back-cast future-AWR assumptions into years before the first
+      // observed factor. Those years retain only confirmed information.
+      return confirmedFactor;
     }
 
     function hpssClassificationEntry(classificationKey, targetYear, inputs) {
@@ -2568,9 +2620,15 @@
 
       let experienceYear = Number(meta.fixedExperienceYear);
       if (classificationKey === 'Level 1') {
-        const yearsSinceGraduating = Math.max(0, Math.floor(Number(inputs?.yearsSinceGraduating) || 0));
-        const elapsed = Math.max(0, Number(targetYear) - hpssStartYear());
-        experienceYear = yearsSinceGraduating + 1 + elapsed;
+        const fallbackAnchorYear = hpssDisplayYear();
+        const anchorYear = Number.isFinite(Number(inputs?.experienceAnchorYear))
+          ? Number(inputs.experienceAnchorYear)
+          : fallbackAnchorYear;
+        const anchorYears = Number.isFinite(Number(inputs?.experienceAnchorYears))
+          ? Number(inputs.experienceAnchorYears)
+          : Math.max(0, Math.floor(Number(inputs?.yearsSinceGraduating) || 0));
+        const yearsSinceGraduating = experienceYearsAtYear(targetYear, anchorYear, anchorYears);
+        experienceYear = yearsSinceGraduating + 1;
       }
 
       const years = level.years.slice().sort((a, b) => a.experienceYear - b.experienceYear);
@@ -2591,10 +2649,19 @@
       }
       const lessAwr = Number(entry.lessAwr?.[year]);
       if (!Number.isFinite(lessAwr) || lessAwr <= 0) return null;
+      const confirmedFactor = confirmedAwrFactorForYear(year);
       const factor = projectedAwrFactorForYear(year);
       const rate = lessAwr * factor;
+      const confirmedRate = lessAwr * confirmedFactor;
       return Number.isFinite(rate) && rate > 0
-        ? { rate, projected: true, experienceYear: entry.experienceYear, lessAwrRate: lessAwr }
+        ? {
+            rate,
+            projected: true,
+            experienceYear: entry.experienceYear,
+            // Keep the comparison baseline aligned with AWR OFF: confirmed staged
+            // rates plus all known AWR decisions, excluding only future unknown AWR.
+            lessAwrRate: Number.isFinite(confirmedRate) && confirmedRate > 0 ? confirmedRate : lessAwr
+          }
         : null;
     }
 
@@ -2850,7 +2917,14 @@
       inputStatus.textContent = '';
       eveningHoursInput.setAttribute('aria-label', `Average hours worked per week across entire weekday shifts finishing after 6 pm; combined with weekend hours cannot exceed ${fte}`);
       weekendHoursInput.setAttribute('aria-label', `Average hours worked per week on a weekend, maximum 20; combined with weekday >6pm shift hours cannot exceed ${fte}`);
-      return { fte, yearsSinceGraduating, weekend, evening };
+      return {
+        fte,
+        yearsSinceGraduating,
+        weekend,
+        evening,
+        experienceAnchorYear: Number.isFinite(Number(experienceAnchorYear)) ? Number(experienceAnchorYear) : hpssDisplayYear(),
+        experienceAnchorYears: Number.isFinite(Number(experienceAnchorYears)) ? Number(experienceAnchorYears) : yearsSinceGraduating
+      };
     }
 
     function hpssAnnualFromWeekly(weeklyRate, inputs) {
@@ -4105,6 +4179,7 @@
       if (Number.isFinite(nextYear)) activeDisplayYear = nextYear;
       hpssSliderWrap?.classList.add('has-been-dragged');
       updateTimelineUi();
+      syncExperienceInputToDisplayYear();
       updateHpssValueTable(true);
       if (chart) chart.draw();
     });
@@ -4124,6 +4199,7 @@
 
     [fteHoursInput, yearsSinceGraduatingInput, weekendHoursInput, eveningHoursInput].forEach(input => {
       input.addEventListener('input', () => {
+        if (input === yearsSinceGraduatingInput) updateExperienceAnchorFromInput();
         const hourlyEntry = !salaryMode() ? parseBenchmarkNumber(benchmarkInput.value) : null;
         if (readInputs()) {
           if (!salaryMode() && Number.isFinite(hourlyEntry)) {
@@ -4234,6 +4310,8 @@
         await loadHpssData();
         updateAwrUi();
         activeDisplayYear = Math.min(hpssMaxYear(), Math.max(CURRENT_YEAR, hpssStartYear()));
+        experienceAnchorYear = activeDisplayYear;
+        experienceAnchorYears = 0;
         updateTimelineUi();
         updateHpssValueTable(false);
         rebuildChart(false);
