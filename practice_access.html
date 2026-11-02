@@ -1,0 +1,2001 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>PFF Geographic Access to Eyecare</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_loader.js?v=1.2.5-20261013a"></script>
+  <script src="./assets/pff_chart_core.js?v=1.2.11-20260919a"></script>
+
+  <style>
+    :root {
+      --access-purple: #6600ff;
+      --access-australia: #0b5d1e;
+    }
+
+    /* App-specific styling only. Shared PFF chart styling lives in pff_chart_core.js. */
+
+    .chart-heading-row {
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    .chart-heading-row .heading-scroll-shell {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .chart-heading-row .heading-scroll-viewport {
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+
+    .chart-heading-row .heading-scroll-viewport::-webkit-scrollbar {
+      display: none;
+    }
+
+    .chart-heading {
+      width: max-content;
+      min-width: max-content;
+      max-width: none;
+      margin: 0;
+      white-space: nowrap;
+    }
+
+    .chart-heading-fixed,
+    .chart-heading-detail {
+      display: inline-block;
+    }
+
+    .chart-heading-detail {
+      margin-left: 0.28em;
+    }
+
+    .chart-heading-fixed:empty + .chart-heading-detail {
+      margin-left: 0;
+    }
+
+    .heading-controls {
+      margin-left: auto;
+      padding-top: 2px;
+      flex: 0 0 auto;
+    }
+
+    .area-button {
+      min-width: 84px;
+      grid-template-columns: max-content minmax(30px, 1fr) 8px;
+      gap: 3px;
+      padding-right: 4px;
+      padding-left: 4px;
+    }
+
+    .area-menu {
+      min-width: 164px;
+      max-height: min(390px, calc(100vh - 92px));
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(105, 113, 138, 0.34) transparent;
+    }
+
+    .area-option-name {
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .view-controls-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 30px;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      padding: 0 0 2px;
+    }
+
+    .view-controls-row.is-hidden {
+      display: none;
+    }
+
+    .view-control-label {
+      color: var(--pff-muted);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .access-metric-switch {
+      width: 92px;
+    }
+
+    .threshold-switch {
+      width: 146px;
+    }
+
+    .access-summary {
+      display: grid;
+      width: 100%;
+      min-width: 0;
+      min-height: 47px;
+      flex: 0 0 auto;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: stretch;
+      margin: 0 0 2px;
+      overflow: hidden;
+      border-top: 1px solid rgba(232, 234, 240, 0.78);
+      border-bottom: 1px solid rgba(232, 234, 240, 0.78);
+    }
+
+    .access-summary-item {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 5px 4px 4px;
+      text-align: center;
+    }
+
+    .access-summary-item + .access-summary-item {
+      border-left: 1px solid rgba(232, 234, 240, 0.78);
+    }
+
+    .access-summary-value {
+      min-width: 0;
+      color: var(--access-purple);
+      font-size: 16px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .access-summary-label {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--pff-muted);
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1.1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .access-summary-detail {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--pff-muted);
+      font-size: 8px;
+      font-weight: 400;
+      line-height: 1;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chart-shell {
+      margin-top: -1px;
+    }
+
+    .chart-scroll {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .chart-stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      min-height: 100%;
+    }
+
+    .chart-stage canvas {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      opacity: 1;
+      will-change: opacity;
+    }
+
+    .method-note {
+      width: 100%;
+      min-width: 0;
+      flex: 0 0 auto;
+      margin: 3px 2px 0;
+      color: var(--pff-muted);
+      font-size: 8.5px;
+      line-height: 1.25;
+      text-align: left;
+    }
+
+    .method-note strong {
+      color: var(--pff-ink);
+      font-weight: 700;
+    }
+
+    @media (max-width: 430px) {
+      .area-button {
+        min-width: 80px;
+        padding-right: 4px;
+        padding-left: 4px;
+      }
+
+      .area-menu {
+        width: min(238px, calc(100vw - 14px));
+      }
+
+      .access-summary {
+        min-height: 44px;
+      }
+
+      .access-summary-value {
+        font-size: 14px;
+      }
+
+      .access-summary-label {
+        font-size: 8px;
+      }
+
+      .access-summary-detail,
+      .method-note {
+        font-size: 7.5px;
+      }
+
+      .threshold-switch {
+        width: 136px;
+      }
+    }
+
+    @media (max-width: 350px) {
+      .area-button {
+        min-width: 78px;
+      }
+
+      .access-summary-value {
+        font-size: 13px;
+      }
+
+      .access-summary-label {
+        font-size: 7.5px;
+      }
+    }
+  </style>
+</head>
+
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div
+        id="loadingState"
+        class="app-loading"
+        role="status"
+        aria-label="Loading geographic access data"
+      >
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p class="loader-text">Loading geographic access data…</p>
+      </div>
+
+      <div class="module-top">
+        <div class="tab-scroll-shell">
+          <button
+            id="tabScrollLeft"
+            class="tab-scroll-button tab-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll geographic access tabs left"
+          >‹</button>
+
+          <div
+            id="tabList"
+            class="tab-list"
+            role="tablist"
+            aria-label="Geographic access views"
+          >
+            <button
+              class="chart-tab is-active"
+              type="button"
+              role="tab"
+              data-view="access"
+              aria-selected="true"
+            >Access gaps</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              data-view="mmm"
+              aria-selected="false"
+            >Remoteness</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              data-view="phn"
+              aria-selected="false"
+            >PHN pressure</button>
+          </div>
+
+          <button
+            id="tabScrollRight"
+            class="tab-scroll-button tab-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll geographic access tabs right"
+          >›</button>
+        </div>
+
+        <div
+          id="dataSourceIndicator"
+          class="live-data"
+          aria-label="Live data"
+          aria-live="polite"
+        >
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="dataSourceText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div id="headingScrollShell" class="heading-scroll-shell">
+          <button
+            id="headingScrollLeft"
+            class="heading-scroll-button heading-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll chart heading left"
+          >‹</button>
+
+          <div id="headingScrollViewport" class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">
+              <span id="chartHeadingFixed" class="chart-heading-fixed">Geographic access</span>
+              <span id="chartHeadingDetail" class="chart-heading-detail">distance to nearest eyecare practice</span>
+            </h2>
+          </div>
+
+          <button
+            id="headingScrollRight"
+            class="heading-scroll-button heading-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll chart heading right"
+          >›</button>
+        </div>
+
+        <div class="heading-controls">
+          <div id="areaControl" class="state-control">
+            <button
+              id="areaButton"
+              class="state-button area-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="areaMenu"
+            >
+              <span>Location</span>
+              <span id="areaButtonValue" class="state-button-value">Australia</span>
+              <span class="menu-arrow" aria-hidden="true"></span>
+            </button>
+
+            <div id="areaMenu" class="state-menu area-menu" role="menu">
+              <div class="state-menu-title">Show location</div>
+              <div id="areaOptions"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="accessControls" class="view-controls-row">
+        <span class="view-control-label">Display</span>
+        <div id="accessMetricSwitch" class="metric-switch access-metric-switch" role="group" aria-label="Access gap display metric">
+          <button class="metric-button is-active" type="button" data-metric="count" aria-pressed="true">Count</button>
+          <button class="metric-button" type="button" data-metric="share" aria-pressed="false">%</button>
+        </div>
+      </div>
+
+      <div id="mmmControls" class="view-controls-row is-hidden">
+        <span class="view-control-label">Distance threshold</span>
+        <div id="thresholdSwitch" class="metric-switch threshold-switch" role="group" aria-label="Distance threshold">
+          <button class="metric-button" type="button" data-threshold="50" aria-pressed="false">50 km</button>
+          <button class="metric-button is-active" type="button" data-threshold="100" aria-pressed="true">100 km</button>
+          <button class="metric-button" type="button" data-threshold="200" aria-pressed="false">200 km</button>
+        </div>
+      </div>
+
+      <div id="accessSummary" class="access-summary" aria-live="polite">
+        <div class="access-summary-item">
+          <span id="summaryValue1" class="access-summary-value">—</span>
+          <span id="summaryLabel1" class="access-summary-label">more than 50 km</span>
+          <span id="summaryDetail1" class="access-summary-detail">—</span>
+        </div>
+        <div class="access-summary-item">
+          <span id="summaryValue2" class="access-summary-value">—</span>
+          <span id="summaryLabel2" class="access-summary-label">more than 100 km</span>
+          <span id="summaryDetail2" class="access-summary-detail">—</span>
+        </div>
+        <div class="access-summary-item">
+          <span id="summaryValue3" class="access-summary-value">—</span>
+          <span id="summaryLabel3" class="access-summary-label">more than 200 km</span>
+          <span id="summaryDetail3" class="access-summary-detail">—</span>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <div class="chart-scroll">
+          <div class="chart-stage">
+            <canvas
+              id="accessChart"
+              aria-label="Australian geographic access to eyecare chart"
+              role="img"
+            ></canvas>
+          </div>
+        </div>
+      </div>
+
+      <p id="methodNote" class="method-note">
+        <strong>Measure:</strong> one unique postcode + centroid combination after de-duplicating repeated locality rows. Distances are straight-line centroid-to-practice distances and are not population weighted.
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+
+    const CONFIG = Object.freeze({
+      spreadsheetId: '1v6nHeJDkbYF-Pan7OEDLLBhYLghuGxFVBoRX4ibuWSE',
+      practiceSheetName: '2026 Optom EAT',
+      practiceSheetGid: '884596310',
+      practiceRange: 'B32:AJ',
+      practiceColumnCount: 35,
+      locationSheetName: 'Localities',
+      locationRange: 'A4:J',
+      locationColumnCount: 10,
+      fetchTimeoutMs: 25000,
+      jsonFallbackUrl: './assets/practice_directory_fallback.json',
+      jsonFallbackVersion: 8,
+      jsonFetchTimeoutMs: 15000,
+      appKey: 'pff-optom-practice-directory',
+      localCacheKey: 'pff-practice-access-v1',
+      minimumPractices: 100,
+      coordinateDecimals: 5
+    });
+
+    const STATE_ORDER = Object.freeze([
+      'NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'
+    ]);
+
+    const STATE_NAMES = Object.freeze({
+      NSW: 'New South Wales',
+      VIC: 'Victoria',
+      QLD: 'Queensland',
+      SA: 'South Australia',
+      WA: 'Western Australia',
+      TAS: 'Tasmania',
+      NT: 'Northern Territory',
+      ACT: 'Australian Capital Territory'
+    });
+
+    const MMM_ORDER = Object.freeze([
+      'MM1', 'MM2', 'MM3', 'MM4', 'MM5', 'MM6', 'MM7'
+    ]);
+
+    const DISTANCE_BANDS = Object.freeze([
+      { key: '0-25', label: '≤25 km', min: -Infinity, max: 25 },
+      { key: '25-50', label: '25–50 km', min: 25, max: 50 },
+      { key: '50-100', label: '50–100 km', min: 50, max: 100 },
+      { key: '100-200', label: '100–200 km', min: 100, max: 200 },
+      { key: '200+', label: '>200 km', min: 200, max: Infinity }
+    ]);
+
+    const app = document.getElementById('app');
+    const statusElement = document.getElementById('status');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
+    const tabList = document.getElementById('tabList');
+    const tabScrollLeft = document.getElementById('tabScrollLeft');
+    const tabScrollRight = document.getElementById('tabScrollRight');
+    const chartHeadingFixed = document.getElementById('chartHeadingFixed');
+    const chartHeadingDetail = document.getElementById('chartHeadingDetail');
+    const headingScrollViewport = document.getElementById('headingScrollViewport');
+    const headingScrollLeft = document.getElementById('headingScrollLeft');
+    const headingScrollRight = document.getElementById('headingScrollRight');
+    const areaControl = document.getElementById('areaControl');
+    const areaButton = document.getElementById('areaButton');
+    const areaButtonValue = document.getElementById('areaButtonValue');
+    const areaMenu = document.getElementById('areaMenu');
+    const areaOptions = document.getElementById('areaOptions');
+    const accessControls = document.getElementById('accessControls');
+    const mmmControls = document.getElementById('mmmControls');
+    const accessMetricSwitch = document.getElementById('accessMetricSwitch');
+    const thresholdSwitch = document.getElementById('thresholdSwitch');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('accessChart');
+    const methodNote = document.getElementById('methodNote');
+
+    const summaryValueElements = [
+      document.getElementById('summaryValue1'),
+      document.getElementById('summaryValue2'),
+      document.getElementById('summaryValue3')
+    ];
+
+    const summaryLabelElements = [
+      document.getElementById('summaryLabel1'),
+      document.getElementById('summaryLabel2'),
+      document.getElementById('summaryLabel3')
+    ];
+
+    const summaryDetailElements = [
+      document.getElementById('summaryDetail1'),
+      document.getElementById('summaryDetail2'),
+      document.getElementById('summaryDetail3')
+    ];
+
+    let practiceRows = [];
+    let rawLocationRows = [];
+    let accessUnits = [];
+    let phnMetricMap = new Map();
+    let practiceSpatialIndex = null;
+    const nearestDistanceCache = new Map();
+
+    let activeView = 'access';
+    let activeArea = 'AUS';
+    let accessMetric = 'count';
+    let mmmThresholdKm = 100;
+    let chart = null;
+    let activeModel = null;
+    let tabsController = null;
+    let areaMenuController = null;
+    let headingScroller = null;
+    let accessMetricController = null;
+    let thresholdController = null;
+    let chartInteractionController = null;
+    let responsiveController = null;
+    let chartSummary = null;
+
+    const collator = new Intl.Collator('en-AU', {
+      sensitivity: 'base',
+      numeric: true
+    });
+
+    function cleanText(value) {
+      return PFF.cleanText(value).replace(/\s+/g, ' ').trim();
+    }
+
+    function dataNumber(value) {
+      const cleaned = String(value ?? '').replace(/,/g, '').trim();
+      if (!cleaned) return NaN;
+      const number = Number(cleaned);
+      return Number.isFinite(number) ? number : NaN;
+    }
+
+    function modeText(values) {
+      const counts = new Map();
+
+      values
+        .map(cleanText)
+        .filter(Boolean)
+        .forEach(value => {
+          counts.set(value, (counts.get(value) || 0) + 1);
+        });
+
+      if (!counts.size) return '';
+
+      return [...counts.entries()]
+        .sort((a, b) => {
+          const countDifference = b[1] - a[1];
+          return countDifference || collator.compare(a[0], b[0]);
+        })[0][0];
+    }
+
+    function modeNumber(values) {
+      const counts = new Map();
+
+      values
+        .map(dataNumber)
+        .filter(Number.isFinite)
+        .forEach(value => {
+          const key = String(value);
+          const current = counts.get(key) || { value, count: 0 };
+          current.count += 1;
+          counts.set(key, current);
+        });
+
+      if (!counts.size) return NaN;
+
+      return [...counts.values()]
+        .sort((a, b) => b.count - a.count || a.value - b.value)[0]
+        .value;
+    }
+
+    function percentile(values, probability) {
+      const source = values
+        .map(Number)
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+
+      if (!source.length) return NaN;
+      if (source.length === 1) return source[0];
+
+      const p = Math.max(0, Math.min(1, Number(probability) || 0));
+      const index = (source.length - 1) * p;
+      const lower = Math.floor(index);
+      const upper = Math.ceil(index);
+      const fraction = index - lower;
+
+      return source[lower] + (source[upper] - source[lower]) * fraction;
+    }
+
+    function median(values) {
+      return percentile(values, 0.5);
+    }
+
+    function formatPercent(value, decimals = 1) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '—';
+      return `${number.toFixed(decimals)}%`;
+    }
+
+    function formatDistance(value, decimals = 0) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '—';
+      return `${number.toFixed(decimals)} km`;
+    }
+
+    function parsePracticeValues(values, sourceIndex) {
+      if (!Array.isArray(values) || values.length < CONFIG.practiceColumnCount) {
+        return null;
+      }
+
+      const practiceName = cleanText(values[0]);
+      const state = PFF.normaliseState(values[3]);
+      const latitudeNumber = dataNumber(values[5]);
+      const longitudeNumber = dataNumber(values[6]);
+
+      if (
+        !practiceName ||
+        !Number.isFinite(latitudeNumber) ||
+        !Number.isFinite(longitudeNumber)
+      ) {
+        return null;
+      }
+
+      return {
+        sourceIndex,
+        practiceName,
+        state,
+        latitudeNumber,
+        longitudeNumber
+      };
+    }
+
+    function parseLocationValues(values, sourceIndex) {
+      if (!Array.isArray(values) || values.length < CONFIG.locationColumnCount) {
+        return null;
+      }
+
+      const postcode = cleanText(values[0]);
+      const suburb = cleanText(values[1]);
+      const latitudeNumber = dataNumber(values[2]);
+      const longitudeNumber = dataNumber(values[3]);
+      const phn = cleanText(values[4]);
+      const mmm = cleanText(values[5]).toUpperCase();
+      const stateCode = PFF.normaliseState(values[6]);
+
+      if (
+        !postcode ||
+        !Number.isFinite(latitudeNumber) ||
+        !Number.isFinite(longitudeNumber)
+      ) {
+        return null;
+      }
+
+      return {
+        sourceIndex,
+        postcode,
+        suburb,
+        latitudeNumber,
+        longitudeNumber,
+        phn,
+        mmm,
+        stateCode,
+        phnPopulationNumber: dataNumber(values[7]),
+        phnOptometristsNumber: dataNumber(values[8]),
+        populationCoverageNumber: dataNumber(values[9])
+      };
+    }
+
+    function practiceRowsFromTable(table) {
+      return (table?.rows || [])
+        .map(rawRow => {
+          const cells = rawRow?.c || [];
+          return Array.from(
+            { length: CONFIG.practiceColumnCount },
+            (_, index) => PFF.cleanText(PFF.cellValue(cells[index]))
+          );
+        })
+        .map((values, sourceIndex) => parsePracticeValues(values, sourceIndex))
+        .filter(Boolean);
+    }
+
+    function locationRowsFromTable(table) {
+      return (table?.rows || [])
+        .map(rawRow => {
+          const cells = rawRow?.c || [];
+          return Array.from(
+            { length: CONFIG.locationColumnCount },
+            (_, index) => PFF.cleanText(PFF.cellValue(cells[index]))
+          );
+        })
+        .map((values, sourceIndex) => parseLocationValues(values, sourceIndex))
+        .filter(Boolean);
+    }
+
+    function practiceRowsFromRemoteCache(payload) {
+      return (Array.isArray(payload?.data?.rows) ? payload.data.rows : [])
+        .map((row, sourceIndex) => {
+          if (!Array.isArray(row)) return null;
+          const offset = row.length >= CONFIG.practiceColumnCount + 1 ? 1 : 0;
+          if (row.length < CONFIG.practiceColumnCount + offset) return null;
+          const values = Array.from(
+            { length: CONFIG.practiceColumnCount },
+            (_, index) => PFF.cleanText(row[index + offset])
+          );
+          return parsePracticeValues(values, sourceIndex);
+        })
+        .filter(Boolean);
+    }
+
+    function locationRowsFromRemoteCache(payload) {
+      return (Array.isArray(payload?.data?.locationRows)
+        ? payload.data.locationRows
+        : [])
+        .map((values, sourceIndex) => parseLocationValues(values, sourceIndex))
+        .filter(Boolean);
+    }
+
+    function encodeCacheRows(practices, locations) {
+      return [
+        ...practices.map(row => [
+          'P',
+          row.practiceName,
+          row.state,
+          row.latitudeNumber,
+          row.longitudeNumber
+        ]),
+        ...locations.map(row => [
+          'L',
+          row.postcode,
+          row.suburb,
+          row.latitudeNumber,
+          row.longitudeNumber,
+          row.phn,
+          row.mmm,
+          row.stateCode,
+          row.phnPopulationNumber,
+          row.phnOptometristsNumber,
+          row.populationCoverageNumber
+        ])
+      ];
+    }
+
+    function decodeCacheRows(rows) {
+      const practices = [];
+      const locations = [];
+
+      (Array.isArray(rows) ? rows : []).forEach(row => {
+        if (!Array.isArray(row) || !row.length) return;
+
+        if (row[0] === 'P') {
+          const latitudeNumber = dataNumber(row[3]);
+          const longitudeNumber = dataNumber(row[4]);
+
+          if (!Number.isFinite(latitudeNumber) || !Number.isFinite(longitudeNumber)) {
+            return;
+          }
+
+          practices.push({
+            sourceIndex: practices.length,
+            practiceName: cleanText(row[1]),
+            state: PFF.normaliseState(row[2]),
+            latitudeNumber,
+            longitudeNumber
+          });
+          return;
+        }
+
+        if (row[0] === 'L') {
+          const latitudeNumber = dataNumber(row[3]);
+          const longitudeNumber = dataNumber(row[4]);
+
+          if (!row[1] || !Number.isFinite(latitudeNumber) || !Number.isFinite(longitudeNumber)) {
+            return;
+          }
+
+          locations.push({
+            sourceIndex: locations.length,
+            postcode: cleanText(row[1]),
+            suburb: cleanText(row[2]),
+            latitudeNumber,
+            longitudeNumber,
+            phn: cleanText(row[5]),
+            mmm: cleanText(row[6]).toUpperCase(),
+            stateCode: PFF.normaliseState(row[7]),
+            phnPopulationNumber: dataNumber(row[8]),
+            phnOptometristsNumber: dataNumber(row[9]),
+            populationCoverageNumber: dataNumber(row[10])
+          });
+        }
+      });
+
+      return { practices, locations };
+    }
+
+    async function loadJsonFallback() {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(
+        () => controller.abort(),
+        CONFIG.jsonFetchTimeoutMs
+      );
+
+      try {
+        const url = new URL(CONFIG.jsonFallbackUrl, window.location.href);
+        url.searchParams.set('_', String(Date.now()));
+
+        const response = await fetch(url.toString(), {
+          cache: 'no-store',
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          throw new Error(`Static JSON fallback returned HTTP ${response.status}.`);
+        }
+
+        const payload = await response.json();
+
+        if (!payload || payload.ok !== true || !payload.data) {
+          throw new Error(payload?.error || 'Static JSON fallback is invalid.');
+        }
+
+        if (payload.appKey !== CONFIG.appKey) {
+          throw new Error('Static JSON fallback has the wrong app key.');
+        }
+
+        if (Number(payload.version) !== CONFIG.jsonFallbackVersion) {
+          throw new Error('Static JSON fallback has the wrong version.');
+        }
+
+        return payload;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    async function loadAccessRows() {
+      return PFFCharts.loadLiveCacheFallback({
+        cacheKey: CONFIG.localCacheKey,
+        minRows: CONFIG.minimumPractices,
+
+        loadLive: async () => {
+          const [practiceTable, locationTable] = await Promise.all([
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.spreadsheetId,
+              sheetName: CONFIG.practiceSheetName,
+              gid: CONFIG.practiceSheetGid,
+              range: CONFIG.practiceRange,
+              headers: '1',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.spreadsheetId,
+              sheetName: CONFIG.locationSheetName,
+              range: CONFIG.locationRange,
+              headers: '1',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            })
+          ]);
+
+          return { practiceTable, locationTable };
+        },
+
+        parseLive(payload) {
+          const practices = practiceRowsFromTable(payload?.practiceTable);
+          const locations = locationRowsFromTable(payload?.locationTable);
+
+          if (practices.length < CONFIG.minimumPractices) {
+            throw new Error('Live practice data did not contain enough usable rows.');
+          }
+
+          if (!locations.length) {
+            throw new Error('Live Localities data did not contain any usable rows.');
+          }
+
+          return encodeCacheRows(practices, locations);
+        },
+
+        loadRemoteCache: loadJsonFallback,
+
+        parseRemoteCache(payload) {
+          const practices = practiceRowsFromRemoteCache(payload);
+          const locations = locationRowsFromRemoteCache(payload);
+
+          if (practices.length < CONFIG.minimumPractices) {
+            throw new Error('Static fallback practice data did not contain enough usable rows.');
+          }
+
+          if (!locations.length) {
+            throw new Error('Static fallback Localities data did not contain any usable rows.');
+          }
+
+          return encodeCacheRows(practices, locations);
+        },
+
+        onLiveError(error) {
+          console.warn('Live geographic-access data unavailable; trying static JSON fallback.', error);
+        },
+
+        onRemoteCacheError(error) {
+          console.warn('Static geographic-access fallback unavailable; trying browser cache.', error);
+        }
+      });
+    }
+
+    function setLoadedSourceIndicator(loaded) {
+      if (loaded?.source === 'live') {
+        PFF.setDataSourceIndicator('live', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+        dataSourceText.textContent = 'LIVE data';
+        return;
+      }
+
+      if (loaded?.source === 'cached' && loaded?.remote) {
+        PFF.setDataSourceIndicator('cached', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+        dataSourceText.textContent = 'JSON cache';
+        return;
+      }
+
+      if (loaded?.source === 'cached') {
+        PFF.setDataSourceIndicator('cached', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+        dataSourceText.textContent = 'BROWSER cache';
+        return;
+      }
+
+      PFF.setDataSourceIndicator('unavailable', {
+        indicator: dataSourceIndicator,
+        text: dataSourceText
+      });
+    }
+
+    function buildPhnMetricMap(rows) {
+      const groups = new Map();
+
+      rows.forEach(row => {
+        if (!row.phn) return;
+        if (!groups.has(row.phn)) {
+          groups.set(row.phn, {
+            populations: [],
+            optometrists: [],
+            coverages: [],
+            states: []
+          });
+        }
+
+        const group = groups.get(row.phn);
+        group.populations.push(row.phnPopulationNumber);
+        group.optometrists.push(row.phnOptometristsNumber);
+        group.coverages.push(row.populationCoverageNumber);
+        group.states.push(row.stateCode);
+      });
+
+      const output = new Map();
+
+      groups.forEach((group, phn) => {
+        const population = modeNumber(group.populations);
+        const optometrists = modeNumber(group.optometrists);
+        const suppliedCoverage = modeNumber(group.coverages);
+        const calculatedCoverage =
+          Number.isFinite(population) &&
+          Number.isFinite(optometrists) &&
+          optometrists > 0
+            ? population / optometrists
+            : NaN;
+
+        output.set(phn, {
+          phn,
+          state: PFF.normaliseState(modeText(group.states)),
+          population,
+          optometrists,
+          populationCoverage:
+            Number.isFinite(suppliedCoverage)
+              ? suppliedCoverage
+              : calculatedCoverage
+        });
+      });
+
+      return output;
+    }
+
+    function buildAccessUnits(rows) {
+      const groups = new Map();
+      const decimals = CONFIG.coordinateDecimals;
+
+      rows.forEach(row => {
+        const key = [
+          row.postcode,
+          row.latitudeNumber.toFixed(decimals),
+          row.longitudeNumber.toFixed(decimals)
+        ].join('|');
+
+        if (!groups.has(key)) {
+          groups.set(key, {
+            key,
+            postcode: row.postcode,
+            latitudeNumber: row.latitudeNumber,
+            longitudeNumber: row.longitudeNumber,
+            suburbs: [],
+            states: [],
+            mmms: [],
+            phns: []
+          });
+        }
+
+        const group = groups.get(key);
+        group.suburbs.push(row.suburb);
+        group.states.push(row.stateCode);
+        group.mmms.push(row.mmm);
+        group.phns.push(row.phn);
+      });
+
+      return [...groups.values()]
+        .map((group, sourceIndex) => ({
+          sourceIndex,
+          key: group.key,
+          postcode: group.postcode,
+          suburb: modeText(group.suburbs),
+          stateCode: PFF.normaliseState(modeText(group.states)),
+          mmm: modeText(group.mmms).toUpperCase(),
+          phn: modeText(group.phns),
+          latitudeNumber: group.latitudeNumber,
+          longitudeNumber: group.longitudeNumber,
+          distanceKm: NaN
+        }))
+        .filter(unit => unit.stateCode && Number.isFinite(unit.latitudeNumber) && Number.isFinite(unit.longitudeNumber));
+    }
+
+    function haversineKm(latitude1, longitude1, latitude2, longitude2) {
+      const lat1 = Number(latitude1);
+      const lon1 = Number(longitude1);
+      const lat2 = Number(latitude2);
+      const lon2 = Number(longitude2);
+
+      if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return NaN;
+
+      const toRadians = degrees => degrees * Math.PI / 180;
+      const dLat = toRadians(lat2 - lat1);
+      const dLon = toRadians(lon2 - lon1);
+      const firstLat = toRadians(lat1);
+      const secondLat = toRadians(lat2);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(firstLat) * Math.cos(secondLat) * Math.sin(dLon / 2) ** 2;
+
+      return 6371 * 2 * Math.asin(Math.sqrt(Math.min(1, a)));
+    }
+
+    function buildPracticeSpatialIndex(rows) {
+      const cellDegrees = 1;
+      const spatial = new Map();
+
+      rows.forEach(row => {
+        if (!Number.isFinite(row.latitudeNumber) || !Number.isFinite(row.longitudeNumber)) {
+          return;
+        }
+
+        const latCell = Math.floor(row.latitudeNumber / cellDegrees);
+        const lonCell = Math.floor(row.longitudeNumber / cellDegrees);
+        const key = `${latCell}:${lonCell}`;
+
+        if (!spatial.has(key)) spatial.set(key, []);
+        spatial.get(key).push([row.latitudeNumber, row.longitudeNumber]);
+      });
+
+      return { spatial, cellDegrees };
+    }
+
+    function nearestPracticeDistanceKm(location) {
+      if (
+        !location ||
+        !practiceSpatialIndex ||
+        !Number.isFinite(location.latitudeNumber) ||
+        !Number.isFinite(location.longitudeNumber)
+      ) {
+        return NaN;
+      }
+
+      const cacheKey = location.key || [
+        location.sourceIndex,
+        location.latitudeNumber,
+        location.longitudeNumber
+      ].join(':');
+
+      if (nearestDistanceCache.has(cacheKey)) {
+        return nearestDistanceCache.get(cacheKey);
+      }
+
+      const latitude = location.latitudeNumber;
+      const longitude = location.longitudeNumber;
+      const cellDegrees = practiceSpatialIndex.cellDegrees;
+      const centerLatCell = Math.floor(latitude / cellDegrees);
+      const centerLonCell = Math.floor(longitude / cellDegrees);
+      let best = Infinity;
+      const maximumRing = 60;
+
+      const inspectCell = (latCell, lonCell) => {
+        const bucket = practiceSpatialIndex.spatial.get(`${latCell}:${lonCell}`);
+        if (!bucket) return;
+
+        bucket.forEach(point => {
+          const distance = haversineKm(
+            latitude,
+            longitude,
+            point[0],
+            point[1]
+          );
+
+          if (Number.isFinite(distance) && distance < best) best = distance;
+        });
+      };
+
+      for (let ring = 0; ring <= maximumRing; ring += 1) {
+        if (ring === 0) {
+          inspectCell(centerLatCell, centerLonCell);
+        } else {
+          const minLat = centerLatCell - ring;
+          const maxLat = centerLatCell + ring;
+          const minLon = centerLonCell - ring;
+          const maxLon = centerLonCell + ring;
+
+          for (let lonCell = minLon; lonCell <= maxLon; lonCell += 1) {
+            inspectCell(minLat, lonCell);
+            inspectCell(maxLat, lonCell);
+          }
+
+          for (let latCell = minLat + 1; latCell < maxLat; latCell += 1) {
+            inspectCell(latCell, minLon);
+            inspectCell(latCell, maxLon);
+          }
+        }
+
+        const outsideLowerBoundKm = Math.max(0, (ring - 1) * 70);
+        if (Number.isFinite(best) && outsideLowerBoundKm > best) break;
+      }
+
+      const result = Number.isFinite(best) ? best : NaN;
+      nearestDistanceCache.set(cacheKey, result);
+      return result;
+    }
+
+    function prepareAccessDistances() {
+      accessUnits.forEach(unit => {
+        unit.distanceKm = nearestPracticeDistanceKm(unit);
+      });
+    }
+
+    function availableStates() {
+      const found = new Set(accessUnits.map(row => row.stateCode).filter(Boolean));
+      return STATE_ORDER.filter(state => found.has(state));
+    }
+
+    function filteredAccessUnits() {
+      return accessUnits.filter(unit =>
+        Number.isFinite(unit.distanceKm) &&
+        (activeArea === 'AUS' || unit.stateCode === activeArea)
+      );
+    }
+
+    function areaLabel(value = activeArea) {
+      return value === 'AUS' ? 'Australia' : value;
+    }
+
+    function areaLongLabel(value = activeArea) {
+      return value === 'AUS' ? 'Australia' : (STATE_NAMES[value] || value);
+    }
+
+    function activeColour() {
+      return activeArea === 'AUS'
+        ? 'var(--access-purple)'
+        : (PFF.stateColours?.[activeArea] || 'var(--access-purple)');
+    }
+
+    function buildAreaMenu() {
+      areaOptions.textContent = '';
+
+      const options = [
+        { value: 'AUS', label: 'Australia' },
+        ...availableStates().map(state => ({ value: state, label: state }))
+      ];
+
+      options.forEach(option => {
+        const label = document.createElement('label');
+        label.className = 'state-option';
+
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'practice-access-area';
+        input.value = option.value;
+        input.checked = option.value === activeArea;
+
+        const box = document.createElement('span');
+        box.className = 'state-option-box';
+        box.setAttribute('aria-hidden', 'true');
+
+        const name = document.createElement('span');
+        name.className = 'area-option-name';
+        name.textContent = option.label;
+        name.style.color = option.value === 'AUS'
+          ? 'var(--access-australia)'
+          : (PFF.stateColours?.[option.value] || '#69718a');
+
+        label.append(input, box, name);
+        areaOptions.appendChild(label);
+      });
+    }
+
+    function syncAreaControl(animate = true) {
+      const next = areaLabel();
+
+      areaButtonValue.style.color = activeArea === 'AUS'
+        ? 'var(--access-australia)'
+        : (PFF.stateColours?.[activeArea] || '#69718a');
+
+      areaOptions
+        .querySelectorAll('input[name="practice-access-area"]')
+        .forEach(input => {
+          input.checked = input.value === activeArea;
+        });
+
+      if (!animate || PFF.reducedMotion()) {
+        areaButtonValue.textContent = next;
+        return;
+      }
+
+      PFF.animateTextChange(areaButtonValue, next, {
+        fadeOutMs: 130,
+        fadeInMs: 200
+      });
+    }
+
+    function rgbaFromHex(hex, alpha) {
+      const clean = String(hex || '').replace('#', '').trim();
+      if (!/^[0-9a-f]{6}$/i.test(clean)) return hex;
+      const red = parseInt(clean.slice(0, 2), 16);
+      const green = parseInt(clean.slice(2, 4), 16);
+      const blue = parseInt(clean.slice(4, 6), 16);
+      return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+    }
+
+    function resolvedActiveHex() {
+      if (activeArea !== 'AUS') {
+        return PFF.stateColours?.[activeArea] || '#6600ff';
+      }
+      return '#6600ff';
+    }
+
+    function distanceBandColour(index) {
+      const base = resolvedActiveHex();
+      const alphas = [0.28, 0.42, 0.56, 0.72, 0.90];
+      return rgbaFromHex(base, alphas[index] ?? 0.72);
+    }
+
+    function unitsBeyond(units, threshold) {
+      return units.filter(unit => unit.distanceKm > threshold);
+    }
+
+    function buildAccessModel() {
+      const units = filteredAccessUnits();
+      const total = units.length;
+
+      const groups = DISTANCE_BANDS.map((band, index) => {
+        const count = units.filter(unit =>
+          unit.distanceKm > band.min && unit.distanceKm <= band.max
+        ).length;
+
+        return {
+          key: band.key,
+          label: band.label,
+          count,
+          share: total > 0 ? count / total * 100 : 0,
+          colour: distanceBandColour(index)
+        };
+      });
+
+      return {
+        view: 'access',
+        units,
+        total,
+        groups,
+        values: groups.map(group =>
+          accessMetric === 'share' ? group.share : group.count
+        )
+      };
+    }
+
+    function buildMmmModel() {
+      const units = filteredAccessUnits();
+      const groups = MMM_ORDER
+        .map(mmm => {
+          const rows = units.filter(unit => unit.mmm === mmm);
+          const affected = rows.filter(unit => unit.distanceKm > mmmThresholdKm).length;
+          const share = rows.length ? affected / rows.length * 100 : 0;
+
+          return {
+            key: mmm,
+            label: mmm,
+            total: rows.length,
+            affected,
+            share,
+            medianDistance: median(rows.map(unit => unit.distanceKm)),
+            colour: resolvedActiveHex()
+          };
+        })
+        .filter(group => group.total > 0);
+
+      return {
+        view: 'mmm',
+        units,
+        total: units.length,
+        groups,
+        values: groups.map(group => group.share)
+      };
+    }
+
+    function buildPhnModel() {
+      const units = filteredAccessUnits();
+      const groups = new Map();
+
+      units.forEach(unit => {
+        if (!unit.phn) return;
+        if (!groups.has(unit.phn)) {
+          groups.set(unit.phn, {
+            phn: unit.phn,
+            distances: [],
+            states: []
+          });
+        }
+
+        const group = groups.get(unit.phn);
+        group.distances.push(unit.distanceKm);
+        group.states.push(unit.stateCode);
+      });
+
+      const points = [...groups.values()]
+        .map(group => {
+          const metrics = phnMetricMap.get(group.phn);
+          const x = metrics?.populationCoverage;
+          const y = percentile(group.distances, 0.90);
+          const state = PFF.normaliseState(modeText(group.states)) || metrics?.state || '';
+
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+          return {
+            key: group.phn,
+            phn: group.phn,
+            state,
+            x,
+            y,
+            medianDistance: median(group.distances),
+            units: group.distances.length,
+            population: metrics?.population,
+            optometrists: metrics?.optometrists,
+            colour: PFF.stateColours?.[state] || '#6600ff'
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.x - b.x || collator.compare(a.phn, b.phn));
+
+      return {
+        view: 'phn',
+        units,
+        total: units.length,
+        points
+      };
+    }
+
+    function buildModel() {
+      if (activeView === 'mmm') return buildMmmModel();
+      if (activeView === 'phn') return buildPhnModel();
+      return buildAccessModel();
+    }
+
+    function headingTexts() {
+      if (activeView === 'mmm') {
+        return ['Geographic access', 'by Modified Monash Model'];
+      }
+
+      if (activeView === 'phn') {
+        return ['PHN pressure', 'workforce availability vs geographic access'];
+      }
+
+      return ['Geographic access', 'distance to nearest eyecare practice'];
+    }
+
+    function updateHeading(animate = true) {
+      const [fixed, detail] = headingTexts();
+
+      if (!animate || PFF.reducedMotion()) {
+        chartHeadingFixed.textContent = fixed;
+        chartHeadingDetail.textContent = detail;
+        requestAnimationFrame(() => headingScroller?.update?.());
+        return;
+      }
+
+      PFF.animateTextChange(chartHeadingFixed, fixed, {
+        fadeOutMs: 150,
+        fadeInMs: 220
+      });
+      PFF.animateTextChange(chartHeadingDetail, detail, {
+        fadeOutMs: 150,
+        fadeInMs: 220
+      });
+
+      window.setTimeout(() => headingScroller?.update?.(), 230);
+    }
+
+    function setSummaryItem(index, value, label, detail) {
+      summaryValueElements[index].textContent = value;
+      summaryValueElements[index].style.color = activeColour();
+      summaryLabelElements[index].textContent = label;
+      summaryDetailElements[index].textContent = detail;
+    }
+
+    function updateSummary(model) {
+      const units = model.units || [];
+      const total = units.length;
+
+      if (activeView === 'access') {
+        [50, 100, 200].forEach((threshold, index) => {
+          const count = unitsBeyond(units, threshold).length;
+          const share = total ? count / total * 100 : 0;
+          setSummaryItem(
+            index,
+            PFF.formatInteger(count),
+            `more than ${threshold} km`,
+            `${formatPercent(share)} of postcode centroids`
+          );
+        });
+        return;
+      }
+
+      if (activeView === 'mmm') {
+        const affected = unitsBeyond(units, mmmThresholdKm).length;
+        const share = total ? affected / total * 100 : 0;
+        const medianDistance = median(units.map(unit => unit.distanceKm));
+
+        setSummaryItem(0, PFF.formatInteger(affected), `more than ${mmmThresholdKm} km`, `${formatPercent(share)} overall`);
+        setSummaryItem(1, formatPercent(share), 'share beyond threshold', `${PFF.formatInteger(total)} postcode centroids`);
+        setSummaryItem(2, formatDistance(medianDistance), 'median nearest-practice distance', areaLongLabel());
+        return;
+      }
+
+      const points = model.points || [];
+      const medianCoverage = median(points.map(point => point.x));
+      const medianP90 = median(points.map(point => point.y));
+
+      setSummaryItem(0, PFF.formatInteger(points.length), 'PHNs shown', areaLongLabel());
+      setSummaryItem(1, Number.isFinite(medianCoverage) ? PFF.formatInteger(Math.round(medianCoverage)) : '—', 'median people per FTE', 'PHN workforce measure');
+      setSummaryItem(2, formatDistance(medianP90), 'median PHN 90th percentile', 'postcode-centroid distance');
+    }
+
+    function updateControls() {
+      accessControls.classList.toggle('is-hidden', activeView !== 'access');
+      mmmControls.classList.toggle('is-hidden', activeView !== 'mmm');
+    }
+
+    function updateMethodNote() {
+      if (activeView === 'phn') {
+        methodNote.innerHTML = '<strong>Measure:</strong> x-axis uses PHN population per FTE clinician from the Localities sheet; y-axis is the 90th percentile postcode-centroid distance to the nearest practice. Geographic values are not population weighted.';
+        return;
+      }
+
+      if (activeView === 'mmm') {
+        methodNote.innerHTML = `<strong>Measure:</strong> percentage of unique postcode + centroid combinations in each MMM category more than ${mmmThresholdKm} km from the nearest practice. Distances are straight-line and are not population weighted.`;
+        return;
+      }
+
+      methodNote.innerHTML = '<strong>Measure:</strong> one unique postcode + centroid combination after de-duplicating repeated locality rows. Distances are straight-line centroid-to-practice distances and are not population weighted.';
+    }
+
+    function accessChartData(model) {
+      return {
+        labels: model.groups.map(group => group.label),
+        datasets: [{
+          label: accessMetric === 'share' ? 'Postcode centroids (%)' : 'Postcode centroids',
+          data: model.values,
+          backgroundColor: model.groups.map(group => group.colour),
+          hoverBackgroundColor: model.groups.map(group => group.colour),
+          borderColor: model.groups.map(group => group.colour),
+          borderWidth: 0,
+          borderRadius: 2,
+          barPercentage: 0.72,
+          categoryPercentage: 0.78
+        }]
+      };
+    }
+
+    function mmmChartData(model) {
+      return {
+        labels: model.groups.map(group => group.label),
+        datasets: [{
+          label: `More than ${mmmThresholdKm} km`,
+          data: model.values,
+          backgroundColor: model.groups.map((group, index) =>
+            rgbaFromHex(group.colour, 0.32 + index * 0.09)
+          ),
+          hoverBackgroundColor: model.groups.map((group, index) =>
+            rgbaFromHex(group.colour, Math.min(0.95, 0.44 + index * 0.08))
+          ),
+          borderColor: model.groups.map(group => group.colour),
+          borderWidth: 0,
+          borderRadius: 2,
+          barPercentage: 0.72,
+          categoryPercentage: 0.80
+        }]
+      };
+    }
+
+    function phnChartData(model) {
+      return {
+        datasets: [{
+          label: 'PHN',
+          data: model.points.map(point => ({ x: point.x, y: point.y })),
+          pointRadius: PFF.mobileLayout() ? 4 : 4.5,
+          pointHoverRadius: PFF.mobileLayout() ? 5 : 5.5,
+          pointBackgroundColor: model.points.map(point => point.colour),
+          pointBorderColor: '#ffffff',
+          pointBorderWidth: 1,
+          showLine: false
+        }]
+      };
+    }
+
+    function accessTooltipCallbacks() {
+      return {
+        title(items) {
+          const group = activeModel?.groups?.[items?.[0]?.dataIndex];
+          return group?.label || '';
+        },
+        label(context) {
+          const group = activeModel?.groups?.[context.dataIndex];
+          if (!group) return '';
+          return `Postcode centroids: ${PFF.formatInteger(group.count)} (${formatPercent(group.share)})`;
+        }
+      };
+    }
+
+    function mmmTooltipCallbacks() {
+      return {
+        title(items) {
+          return activeModel?.groups?.[items?.[0]?.dataIndex]?.label || '';
+        },
+        label(context) {
+          const group = activeModel?.groups?.[context.dataIndex];
+          if (!group) return '';
+          return [
+            `>${mmmThresholdKm} km: ${formatPercent(group.share)} (${PFF.formatInteger(group.affected)} of ${PFF.formatInteger(group.total)})`,
+            `Median distance: ${formatDistance(group.medianDistance)}`
+          ];
+        }
+      };
+    }
+
+    function phnTooltipCallbacks() {
+      return {
+        title(items) {
+          const point = activeModel?.points?.[items?.[0]?.dataIndex];
+          return point?.phn || '';
+        },
+        label(context) {
+          const point = activeModel?.points?.[context.dataIndex];
+          if (!point) return '';
+          return [
+            `Population per FTE: ${PFF.formatInteger(Math.round(point.x))}`,
+            `90th percentile distance: ${formatDistance(point.y)}`,
+            `Median distance: ${formatDistance(point.medianDistance)}`,
+            `Postcode centroids: ${PFF.formatInteger(point.units)}`
+          ];
+        }
+      };
+    }
+
+    function commonScaleTitle(text) {
+      return {
+        display: true,
+        text,
+        color: '#69718a',
+        font: {
+          family: 'Lato',
+          size: PFF.mobileLayout() ? 9 : 10,
+          weight: '700'
+        },
+        padding: { top: 4, bottom: 0 }
+      };
+    }
+
+    function accessChartOptions() {
+      return PFFCharts.baseChartOptions({
+        interaction: {
+          mode: 'nearest',
+          intersect: true,
+          axis: 'x'
+        },
+        layout: {
+          autoPadding: true,
+          padding: {
+            top: 7,
+            right: 4,
+            bottom: 0,
+            left: 0
+          }
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: '#151515',
+              font: { family: 'Lato', size: PFF.mobileLayout() ? 9 : 10, weight: '700' }
+            },
+            grid: { display: false },
+            border: { color: '#151515' },
+            title: commonScaleTitle('Distance to nearest practice')
+          },
+          y: {
+            beginAtZero: true,
+            max: accessMetric === 'share' ? 100 : undefined,
+            ticks: {
+              color: '#69718a',
+              callback(value) {
+                return accessMetric === 'share'
+                  ? `${Math.round(Number(value))}%`
+                  : PFF.formatInteger(value);
+              },
+              font: { family: 'Lato', size: PFF.mobileLayout() ? 9 : 10 }
+            },
+            grid: { color: 'rgba(105, 113, 138, 0.10)' },
+            border: { display: false },
+            title: commonScaleTitle(accessMetric === 'share' ? 'Postcode centroids (%)' : 'Postcode centroids')
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: PFFCharts.tooltipOptions({
+            callbacks: accessTooltipCallbacks()
+          })
+        }
+      });
+    }
+
+    function mmmChartOptions() {
+      return PFFCharts.baseChartOptions({
+        indexAxis: 'y',
+        interaction: {
+          mode: 'nearest',
+          intersect: true,
+          axis: 'y'
+        },
+        layout: {
+          autoPadding: true,
+          padding: {
+            top: 5,
+            right: 8,
+            bottom: 0,
+            left: 0
+          }
+        },
+        scales: {
+          x: {
+            beginAtZero: true,
+            max: 100,
+            ticks: {
+              color: '#69718a',
+              callback(value) { return `${Math.round(Number(value))}%`; },
+              font: { family: 'Lato', size: PFF.mobileLayout() ? 9 : 10 }
+            },
+            grid: { color: 'rgba(105, 113, 138, 0.10)' },
+            border: { color: '#151515' },
+            title: commonScaleTitle(`Postcode centroids more than ${mmmThresholdKm} km away`)
+          },
+          y: {
+            ticks: {
+              color: '#151515',
+              font: { family: 'Lato', size: PFF.mobileLayout() ? 10 : 11, weight: '700' }
+            },
+            grid: { display: false },
+            border: { color: '#151515' }
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: PFFCharts.tooltipOptions({
+            callbacks: mmmTooltipCallbacks()
+          })
+        }
+      });
+    }
+
+    function phnChartOptions() {
+      return PFFCharts.baseChartOptions({
+        parsing: false,
+        interaction: {
+          mode: 'nearest',
+          intersect: true,
+          axis: 'xy'
+        },
+        layout: {
+          autoPadding: true,
+          padding: {
+            top: 7,
+            right: 8,
+            bottom: 0,
+            left: 0
+          }
+        },
+        scales: {
+          x: {
+            beginAtZero: false,
+            ticks: {
+              color: '#69718a',
+              callback(value) { return PFF.formatInteger(Math.round(Number(value))); },
+              font: { family: 'Lato', size: PFF.mobileLayout() ? 9 : 10 }
+            },
+            grid: { color: 'rgba(105, 113, 138, 0.10)' },
+            border: { color: '#151515' },
+            title: commonScaleTitle('Population per FTE clinician')
+          },
+          y: {
+            beginAtZero: true,
+            ticks: {
+              color: '#69718a',
+              callback(value) { return `${PFF.formatInteger(Math.round(Number(value)))} km`; },
+              font: { family: 'Lato', size: PFF.mobileLayout() ? 9 : 10 }
+            },
+            grid: { color: 'rgba(105, 113, 138, 0.10)' },
+            border: { color: '#151515' },
+            title: commonScaleTitle('90th percentile nearest-practice distance')
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: PFFCharts.tooltipOptions({
+            callbacks: phnTooltipCallbacks()
+          })
+        }
+      });
+    }
+
+    function chartConfigFor(model) {
+      if (model.view === 'mmm') {
+        return {
+          type: 'bar',
+          data: mmmChartData(model),
+          options: mmmChartOptions()
+        };
+      }
+
+      if (model.view === 'phn') {
+        return {
+          type: 'scatter',
+          data: phnChartData(model),
+          options: phnChartOptions()
+        };
+      }
+
+      return {
+        type: 'bar',
+        data: accessChartData(model),
+        options: accessChartOptions()
+      };
+    }
+
+    function updateAccessibleSummary(model) {
+      let text = '';
+
+      if (model.view === 'access') {
+        const beyond100 = unitsBeyond(model.units, 100).length;
+        const share = model.total ? beyond100 / model.total * 100 : 0;
+        text = `${areaLongLabel()} geographic access. ${PFF.formatInteger(beyond100)} unique postcode centroids, ${formatPercent(share)}, are more than 100 kilometres from the nearest eyecare practice.`;
+      } else if (model.view === 'mmm') {
+        text = `${areaLongLabel()} access by Modified Monash Model at a ${mmmThresholdKm} kilometre threshold. ` +
+          model.groups.map(group => `${group.label}: ${formatPercent(group.share)} beyond the threshold`).join('; ') + '.';
+      } else {
+        text = `${areaLongLabel()} PHN workforce pressure versus geographic access. ${model.points.length} PHNs are shown.`;
+      }
+
+      PFFCharts.updateChartSummary(text, chartSummary);
+    }
+
+    function renderChart(model, animate = true) {
+      const config = chartConfigFor(model);
+
+      if (!chart || chart.config.type !== config.type) {
+        chart?.destroy();
+        chart = new Chart(chartCanvas.getContext('2d'), {
+          type: config.type,
+          data: config.data,
+          options: config.options
+        });
+        return;
+      }
+
+      chart.data = config.data;
+      chart.options = config.options;
+      chart.update(animate && !PFF.reducedMotion() ? undefined : 'none');
+    }
+
+    function renderView({ animate = true } = {}) {
+      activeModel = buildModel();
+      updateHeading(animate);
+      updateControls();
+      updateSummary(activeModel);
+      updateMethodNote();
+      syncAreaControl(animate);
+      renderChart(activeModel, animate);
+      updateAccessibleSummary(activeModel);
+    }
+
+    function configureControls() {
+      headingScroller = PFF.setupScrollableRegion({
+        scroller: headingScrollViewport,
+        leftButton: headingScrollLeft,
+        rightButton: headingScrollRight,
+        tolerance: 2
+      });
+
+      tabsController = PFF.setupTabs({
+        tabList,
+        tabs: tabList.querySelectorAll('.chart-tab'),
+        valueAttribute: 'view',
+        initialValue: activeView,
+        leftButton: tabScrollLeft,
+        rightButton: tabScrollRight,
+        onChange(value) {
+          activeView = value;
+          areaMenuController?.closeMenu?.();
+          renderView({ animate: true });
+        }
+      });
+
+      areaMenuController = PFF.setupMenu({
+        menu: areaControl,
+        button: areaButton,
+        panel: areaMenu,
+        focusOnOpen: false
+      });
+
+      areaOptions.addEventListener('change', event => {
+        const input = event.target.closest('input[name="practice-access-area"]');
+        if (!input) return;
+
+        activeArea = input.value;
+        buildAreaMenu();
+        areaMenuController?.closeMenu?.();
+        renderView({ animate: true });
+      });
+
+      accessMetricController = PFF.setupMetricSwitch({
+        element: accessMetricSwitch,
+        buttons: accessMetricSwitch.querySelectorAll('.metric-button'),
+        valueAttribute: 'metric',
+        initialValue: accessMetric,
+        onChange(value) {
+          accessMetric = value;
+          renderView({ animate: true });
+        }
+      });
+
+      thresholdController = PFF.setupMetricSwitch({
+        element: thresholdSwitch,
+        buttons: thresholdSwitch.querySelectorAll('.metric-button'),
+        valueAttribute: 'threshold',
+        initialValue: String(mmmThresholdKm),
+        onChange(value) {
+          mmmThresholdKm = Number(value) || 100;
+          renderView({ animate: true });
+        }
+      });
+
+      chartInteractionController = PFFCharts.setupChartInteractions({
+        canvas: chartCanvas,
+        getChart: () => chart
+      });
+
+      responsiveController = PFFCharts.createResponsiveController({
+        getChart: () => chart,
+        observe: [app, chartShell],
+        applyResponsiveChartOptions: false,
+        onRefresh() {
+          if (!chart || !activeModel) return;
+          renderChart(activeModel, false);
+          tabsController?.update?.();
+          headingScroller?.update?.();
+        }
+      });
+    }
+
+    PFF.initialiseApp({
+      app,
+      status: statusElement,
+      load: loadAccessRows,
+
+      render(loaded) {
+        const decoded = decodeCacheRows(loaded.rows);
+        practiceRows = decoded.practices;
+        rawLocationRows = decoded.locations;
+
+        if (practiceRows.length < CONFIG.minimumPractices) {
+          throw new Error('No usable optometry practice rows were returned.');
+        }
+
+        if (!rawLocationRows.length) {
+          throw new Error('No usable Localities rows were returned.');
+        }
+
+        phnMetricMap = buildPhnMetricMap(rawLocationRows);
+        accessUnits = buildAccessUnits(rawLocationRows);
+        practiceSpatialIndex = buildPracticeSpatialIndex(practiceRows);
+        nearestDistanceCache.clear();
+        prepareAccessDistances();
+
+        if (!accessUnits.some(unit => Number.isFinite(unit.distanceKm))) {
+          throw new Error('No usable postcode-centroid access distances could be calculated.');
+        }
+
+        setLoadedSourceIndicator(loaded);
+        buildAreaMenu();
+        configureControls();
+
+        chartSummary = PFFCharts.ensureChartSummary({
+          id: 'practiceAccessChartSummary',
+          parent: app
+        });
+
+        chartCanvas.setAttribute('aria-describedby', chartSummary.id);
+        renderView({ animate: false });
+        return chart;
+      },
+
+      onError() {
+        PFF.setDataSourceIndicator('unavailable', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+      },
+
+      errorMessage: 'Geographic access data unavailable.'
+    });
+  </script>
+</body>
+</html>
