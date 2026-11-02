@@ -281,7 +281,7 @@
               role="tab"
               data-view="access"
               aria-selected="true"
-            >Geographic access</button>
+            >Access by postcode</button>
 
             <button
               class="chart-tab"
@@ -289,7 +289,7 @@
               role="tab"
               data-view="mmm"
               aria-selected="false"
-            >Rurality</button>
+            >Access by rurality</button>
           </div>
 
           <button
@@ -380,11 +380,11 @@
       <div id="accessSummary" class="access-summary" aria-live="polite">
         <div class="access-summary-item">
           <span id="summaryValue1" class="access-summary-value">—</span>
-          <span id="summaryLabel1" class="access-summary-label">Australian postcode centroids ≤100 km from a practice</span>
+          <span id="summaryLabel1" class="access-summary-label">Postcodes ≤100 km from a practice</span>
         </div>
         <div class="access-summary-item">
           <span id="summaryValue2" class="access-summary-value">—</span>
-          <span id="summaryLabel2" class="access-summary-label">Australian postcode centroids &gt;100 km from a practice</span>
+          <span id="summaryLabel2" class="access-summary-label">Postcodes &gt;100 km from a practice</span>
         </div>
       </div>
 
@@ -419,7 +419,7 @@
       jsonFallbackVersion: 8,
       jsonFetchTimeoutMs: 15000,
       appKey: 'pff-optom-practice-directory',
-      localCacheKey: 'pff-practice-access-v3',
+      localCacheKey: 'pff-practice-access-v4',
       minimumPractices: 100,
       coordinateDecimals: 5,
       barTransitionMs: 700,
@@ -441,9 +441,24 @@
       ACT: 'Australian Capital Territory'
     });
 
-    const MMM_ORDER = Object.freeze([
-      'MM1', 'MM2', 'MM3', 'MM4', 'MM5', 'MM6', 'MM7'
+    const RURALITY_GROUPS = Object.freeze([
+      Object.freeze({
+        key: 'mm1-5',
+        label: 'MM1–5',
+        includes: Object.freeze(['MM1', 'MM2', 'MM3', 'MM4', 'MM5'])
+      }),
+      Object.freeze({
+        key: 'mm6-7',
+        label: 'MM6–7',
+        includes: Object.freeze(['MM6', 'MM7'])
+      })
     ]);
+
+    /* Australian Government Department of Health, 2024–25 MMM population totals:
+     * MM6 296,487 + MM7 205,951 = 502,438 people. */
+    const MM67_POPULATION = 502438;
+    const MM67_FTE_AT_10K = MM67_POPULATION / 10000;
+
 
     const app = document.getElementById('app');
     const statusElement = document.getElementById('status');
@@ -471,6 +486,8 @@
     const chartCanvas = document.getElementById('accessChart');
     const summaryValue1 = document.getElementById('summaryValue1');
     const summaryValue2 = document.getElementById('summaryValue2');
+    const summaryLabel1 = document.getElementById('summaryLabel1');
+    const summaryLabel2 = document.getElementById('summaryLabel2');
 
     let practiceRows = [];
     let rawLocationRows = [];
@@ -491,10 +508,23 @@
     let chartSummary = null;
 
     const reorderAnimator = PFFCharts.createAnimationController();
+    const metricAnimator = PFFCharts.createAnimationController();
+
     const reorderState = {
       active: false,
       progress: 1,
       fromYByKey: new Map()
+    };
+
+    const axisTransitionState = {
+      active: false,
+      progress: 1,
+      fromAxis: null,
+      toAxis: null,
+      fromMetric: 'share',
+      toMetric: 'share',
+      fromView: 'access',
+      toView: 'access'
     };
 
     const collator = new Intl.Collator('en-AU', {
@@ -1160,41 +1190,22 @@
     }
 
     function accessGroupsForAreas(areas) {
-      const groups = [];
-
-      areas.forEach(area => {
+      return areas.map(area => {
         const units = unitsForArea(area);
         const total = units.length;
         const withinCount = units.filter(unit => unit.distanceKm <= 100).length;
-        const beyondCount = units.filter(unit => unit.distanceKm > 100).length;
-        const colour = areaColour(area);
 
-        [
-          {
-            keySuffix: 'within-100',
-            bandLabel: '≤100 km',
-            count: withinCount
-          },
-          {
-            keySuffix: 'over-100',
-            bandLabel: '>100 km',
-            count: beyondCount
-          }
-        ].forEach(item => {
-          groups.push({
-            key: `access:${area}:${item.keySuffix}`,
-            area,
-            label: `${areaShortLabel(area)} · ${item.bandLabel}`,
-            bandLabel: item.bandLabel,
-            count: item.count,
-            share: total > 0 ? item.count / total * 100 : 0,
-            total,
-            colour
-          });
-        });
+        return {
+          key: `access:${area}:within-100`,
+          area,
+          label: areaShortLabel(area),
+          bandLabel: '≤100 km',
+          count: withinCount,
+          share: total > 0 ? withinCount / total * 100 : 0,
+          total,
+          colour: areaColour(area)
+        };
       });
-
-      return groups;
     }
 
     function buildAccessModel() {
@@ -1211,7 +1222,8 @@
         view: 'access',
         groups,
         values,
-        axis
+        axis,
+        metric: accessMetric
       };
     }
 
@@ -1222,18 +1234,22 @@
         const areaUnits = unitsForArea(area);
         const colour = areaColour(area);
 
-        MMM_ORDER.forEach(mmm => {
-          const rows = areaUnits.filter(unit => unit.mmm === mmm);
+        RURALITY_GROUPS.forEach(rurality => {
+          const rows = areaUnits.filter(unit =>
+            rurality.includes.includes(unit.mmm)
+          );
+
           if (!rows.length) return;
 
           const affected = rows.filter(unit => unit.distanceKm > 100).length;
           const share = affected / rows.length * 100;
 
           groups.push({
-            key: `mmm:${area}:${mmm}`,
+            key: `mmm:${area}:${rurality.key}`,
             area,
-            mmm,
-            label: `${areaShortLabel(area)} · ${mmm}`,
+            mmm: rurality.label,
+            ruralityKey: rurality.key,
+            label: `${areaShortLabel(area)} · ${rurality.label}`,
             total: rows.length,
             affected,
             share,
@@ -1246,7 +1262,8 @@
         view: 'mmm',
         groups,
         values: groups.map(group => group.share),
-        axis: { max: 100, ticks: [0, 20, 40, 60, 80, 100] }
+        axis: { max: 100, ticks: [0, 20, 40, 60, 80, 100] },
+        metric: 'share'
       };
     }
 
@@ -1258,7 +1275,7 @@
 
     function headingText() {
       return activeView === 'mmm'
-        ? 'Geographic access by rurality'
+        ? 'Distance from postcode centroids to nearest eyecare practice by rurality'
         : 'Distance from postcode centroids to nearest eyecare practice';
     }
 
@@ -1296,33 +1313,88 @@
     }
 
     function updateSummary() {
+      summaryValue1.style.color = '#0b5d1e';
+      summaryValue2.style.color = '#0b5d1e';
+
+      if (activeView === 'mmm') {
+        summaryValue1.textContent = PFF.formatInteger(MM67_POPULATION);
+        summaryValue2.textContent = `${MM67_FTE_AT_10K.toFixed(1)} FTE`;
+        summaryLabel1.textContent = 'People living in MM6–7 (2024–25)';
+        summaryLabel2.textContent = 'Benchmark FTE at 1 per 10,000 people';
+        return;
+      }
+
       const summary = nationalAccessSummary();
       summaryValue1.textContent = formatPercent(summary.withinShare);
       summaryValue2.textContent = formatPercent(summary.beyondShare);
-      summaryValue1.style.color = '#0b5d1e';
-      summaryValue2.style.color = '#0b5d1e';
+      summaryLabel1.textContent = 'Postcodes ≤100 km from a practice';
+      summaryLabel2.textContent = 'Postcodes >100 km from a practice';
     }
 
     function updateControls() {
       accessControls.classList.toggle('is-hidden', activeView !== 'access');
     }
 
-    function xAxisTitle() {
-      if (activeView === 'mmm') {
+    function xAxisTitleFor(view, metric) {
+      if (view === 'mmm') {
         return 'Postcode centroids >100 km from nearest practice (%)';
       }
 
-      return accessMetric === 'share'
-        ? 'Postcode centroids (%)'
-        : 'Postcode centroids';
+      return metric === 'share'
+        ? 'Postcode centroids within 100 km (%)'
+        : 'Postcode centroids within 100 km';
     }
 
-    function formatAxisTick(value) {
-      if (activeView === 'mmm' || accessMetric === 'share') {
+    function xAxisTitle() {
+      return xAxisTitleFor(activeView, activeModel?.metric || accessMetric);
+    }
+
+    function formatAxisTickFor(value, view, metric) {
+      if (view === 'mmm' || metric === 'share') {
         return `${Math.round(Number(value) || 0)}%`;
       }
 
       return PFFCharts.formatAxisValue(Number(value) || 0, 0);
+    }
+
+    function formatAxisTick(value) {
+      return formatAxisTickFor(
+        value,
+        activeView,
+        activeModel?.metric || accessMetric
+      );
+    }
+
+    function axisTickLayers() {
+      if (
+        axisTransitionState.active &&
+        axisTransitionState.fromAxis &&
+        axisTransitionState.toAxis
+      ) {
+        const progress = Math.max(0, Math.min(1, axisTransitionState.progress));
+
+        return [
+          {
+            axis: axisTransitionState.fromAxis,
+            metric: axisTransitionState.fromMetric,
+            view: axisTransitionState.fromView,
+            alpha: 1 - progress
+          },
+          {
+            axis: axisTransitionState.toAxis,
+            metric: axisTransitionState.toMetric,
+            view: axisTransitionState.toView,
+            alpha: progress
+          }
+        ].filter(layer => layer.alpha > 0.001);
+      }
+
+      return [{
+        axis: activeModel?.axis,
+        metric: activeModel?.metric || accessMetric,
+        view: activeModel?.view || activeView,
+        alpha: 1
+      }];
     }
 
     function tooltipCallbacks() {
@@ -1335,7 +1407,7 @@
             return `${areaLongLabel(group.area)} · ${group.mmm}`;
           }
 
-          return `${areaLongLabel(group.area)} · ${group.bandLabel}`;
+          return areaLongLabel(group.area);
         },
 
         label(context) {
@@ -1346,7 +1418,7 @@
             return `More than 100 km: ${formatPercent(group.share)} (${PFF.formatInteger(group.affected)} of ${PFF.formatInteger(group.total)})`;
           }
 
-          return `${formatPercent(group.share)} of postcode centroids (${PFF.formatInteger(group.count)} of ${PFF.formatInteger(group.total)})`;
+          return `Within 100 km: ${formatPercent(group.share)} (${PFF.formatInteger(group.count)} of ${PFF.formatInteger(group.total)} postcode centroids)`;
         }
       };
     }
@@ -1357,74 +1429,126 @@
       beforeDatasetsDraw(chartInstance) {
         const { ctx, chartArea, scales } = chartInstance;
         const xScale = scales?.x;
-        if (!chartArea || !xScale || !activeModel?.axis?.ticks?.length) return;
+        if (!chartArea || !xScale || !activeModel?.axis) return;
 
         ctx.save();
         ctx.lineCap = 'butt';
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.075)';
-        ctx.lineWidth = 1;
 
-        activeModel.axis.ticks.forEach(value => {
-          const x = xScale.getPixelForValue(value);
-          if (!Number.isFinite(x)) return;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.stroke();
+        axisTickLayers().forEach(layer => {
+          if (!layer.axis?.ticks?.length || !(layer.alpha > 0)) return;
+
+          ctx.globalAlpha = layer.alpha;
+          ctx.strokeStyle = 'rgba(105, 113, 138, 0.075)';
+          ctx.lineWidth = 1;
+
+          layer.axis.ticks.forEach(value => {
+            const x = xScale.getPixelForValue(value);
+            if (!Number.isFinite(x) || x < chartArea.left - 1 || x > chartArea.right + 1) return;
+            ctx.beginPath();
+            ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+            ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+            ctx.stroke();
+          });
         });
 
+        ctx.globalAlpha = 1;
         ctx.restore();
       },
 
       afterDraw(chartInstance) {
         const { ctx, chartArea, scales } = chartInstance;
         const xScale = scales?.x;
-        if (!chartArea || !xScale || !activeModel?.axis?.ticks?.length) return;
+        const meta = chartInstance.getDatasetMeta(0);
+        if (!chartArea || !xScale || !meta || !activeModel?.axis) return;
 
         const mobile = PFF.mobileLayout();
-        const ticks = activeModel.axis.ticks;
+        const tickFontSize = mobile ? 9 : 10;
+        const titleFontSize = mobile ? 12 : 13;
+        const labelBaseSize = mobile ? 9 : 10;
+        const labelMinSize = mobile ? 6 : 7;
+        const labelMaxWidth = Math.max(52, chartArea.left - 8);
 
         ctx.save();
         ctx.lineCap = 'butt';
         ctx.strokeStyle = '#151515';
+        ctx.fillStyle = '#151515';
         ctx.lineWidth = 1;
+
+        /* Constant left and bottom spines, matching the repository bar charts. */
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left, chartArea.top);
+        ctx.lineTo(chartArea.left, chartArea.bottom);
+        ctx.stroke();
 
         ctx.beginPath();
         ctx.moveTo(chartArea.left, Math.round(chartArea.bottom) + 0.5);
         ctx.lineTo(chartArea.right, Math.round(chartArea.bottom) + 0.5);
         ctx.stroke();
 
-        ticks.forEach(value => {
-          const x = xScale.getPixelForValue(value);
-          if (!Number.isFinite(x)) return;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 5);
-          ctx.stroke();
+        /* Y-axis labels are drawn against the animated bar geometry so they slide
+         * with retained bars when the Location filter changes. */
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+
+        activeModel.groups.forEach((group, index) => {
+          const bar = meta.data[index];
+          if (!group || !Number.isFinite(bar?.y)) return;
+
+          const text = group.label || '';
+          let fontSize = labelBaseSize;
+          ctx.font = `400 ${fontSize}px Lato, sans-serif`;
+
+          while (
+            fontSize > labelMinSize &&
+            ctx.measureText(text).width > labelMaxWidth
+          ) {
+            fontSize -= 0.5;
+            ctx.font = `400 ${fontSize}px Lato, sans-serif`;
+          }
+
+          ctx.fillText(text, chartArea.left - 5, bar.y);
         });
 
-        ctx.fillStyle = '#151515';
-        ctx.textBaseline = 'top';
-        ctx.font = `${mobile ? 9 : 10}px Lato, sans-serif`;
+        /* X-axis ticks and titles cross-fade while the scale itself interpolates. */
+        axisTickLayers().forEach(layer => {
+          if (!layer.axis?.ticks?.length || !(layer.alpha > 0)) return;
 
-        ticks.forEach((value, index) => {
-          const x = xScale.getPixelForValue(value);
-          if (!Number.isFinite(x)) return;
-          if (index === 0) ctx.textAlign = 'left';
-          else if (index === ticks.length - 1) ctx.textAlign = 'right';
-          else ctx.textAlign = 'center';
-          ctx.fillText(formatAxisTick(value), x, chartArea.bottom + 8);
+          ctx.globalAlpha = layer.alpha;
+          ctx.strokeStyle = '#151515';
+          ctx.fillStyle = '#151515';
+          ctx.font = `400 ${tickFontSize}px Lato, sans-serif`;
+          ctx.textBaseline = 'top';
+
+          layer.axis.ticks.forEach((value, index) => {
+            const x = xScale.getPixelForValue(value);
+            if (!Number.isFinite(x) || x < chartArea.left - 1 || x > chartArea.right + 1) return;
+
+            ctx.beginPath();
+            ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+            ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 5);
+            ctx.stroke();
+
+            if (index === 0) ctx.textAlign = 'left';
+            else if (index === layer.axis.ticks.length - 1) ctx.textAlign = 'right';
+            else ctx.textAlign = 'center';
+
+            ctx.fillText(
+              formatAxisTickFor(value, layer.view, layer.metric),
+              x,
+              chartArea.bottom + 8
+            );
+          });
+
+          ctx.font = `700 ${titleFontSize}px Lato, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText(
+            xAxisTitleFor(layer.view, layer.metric),
+            chartArea.left + chartArea.width / 2,
+            chartArea.bottom + (mobile ? 27 : 28)
+          );
         });
 
-        ctx.fillStyle = '#151515';
-        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(
-          xAxisTitle(),
-          chartArea.left + chartArea.width / 2,
-          chartArea.bottom + (mobile ? 27 : 28)
-        );
-
+        ctx.globalAlpha = 1;
         ctx.restore();
       }
     };
@@ -1482,7 +1606,12 @@
         const meta = chartInstance.getDatasetMeta(0);
         const groups = activeModel?.groups || [];
 
-        if (!meta?.data || meta.data.length < 2 || groups.length < 2) return;
+        if (
+          activeView !== 'mmm' ||
+          !meta?.data ||
+          meta.data.length < 2 ||
+          groups.length < 2
+        ) return;
 
         const { ctx, chartArea } = chartInstance;
         ctx.save();
@@ -1569,8 +1698,8 @@
           borderWidth: 0,
           borderRadius: 2,
           borderSkipped: false,
-          categoryPercentage: activeView === 'mmm' ? 0.80 : 0.82,
-          barPercentage: activeView === 'mmm' ? 0.68 : 0.70,
+          categoryPercentage: activeView === 'mmm' ? 0.80 : 0.80,
+          barPercentage: activeView === 'mmm' ? 0.66 : 0.68,
           minBarLength: 2
         }]
       };
@@ -1661,33 +1790,17 @@
             position: 'left',
 
             afterFit(axis) {
-              axis.width = PFF.mobileLayout() ? 112 : 132;
+              axis.width = PFF.mobileLayout() ? 112 : 148;
             },
 
             grid: {
               display: false,
-              drawTicks: true,
-              tickLength: 3,
-              tickWidth: 1,
-              tickColor: '#151515'
+              drawTicks: false
             },
 
-            border: {
-              display: true,
-              color: '#151515',
-              width: 1
-            },
+            border: { display: false },
 
-            ticks: {
-              autoSkip: false,
-              color: '#151515',
-              padding: 3,
-              font: {
-                family: 'Lato',
-                size: PFF.mobileLayout() ? 9.5 : 10.5,
-                weight: '400'
-              }
-            }
+            ticks: { display: false }
           }
         }
       });
@@ -1695,9 +1808,9 @@
 
     function rowHeightForView() {
       if (activeView === 'mmm') {
-        return PFF.mobileLayout() ? 20 : 22;
+        return PFF.mobileLayout() ? 19 : 21;
       }
-      return PFF.mobileLayout() ? 23 : 25;
+      return PFF.mobileLayout() ? 22 : 24;
     }
 
     function updateStageGeometry(model, resetScroll = false) {
@@ -1755,20 +1868,95 @@
         return;
       }
 
-      const shouldReorder = Boolean(
+      const sameView = Boolean(previousModel && previousModel.view === model.view);
+      const keysChanged = sameView && groupKeysChanged(previousModel, model);
+      const metricChanged = Boolean(
         animate &&
         !PFF.reducedMotion() &&
         previousModel &&
-        previousModel.view === model.view &&
-        groupKeysChanged(previousModel, model)
+        previousModel.view === 'access' &&
+        model.view === 'access' &&
+        previousModel.metric !== model.metric &&
+        !keysChanged
+      );
+      const shouldReorder = Boolean(
+        animate &&
+        !PFF.reducedMotion() &&
+        sameView &&
+        keysChanged
       );
 
-      if (!shouldReorder) {
-        reorderAnimator.cancel();
-        reorderState.active = false;
-        reorderState.progress = 1;
-        reorderState.fromYByKey = new Map();
+      reorderAnimator.cancel();
+      metricAnimator.cancel();
+      reorderState.active = false;
+      reorderState.progress = 1;
+      reorderState.fromYByKey = new Map();
+      axisTransitionState.active = false;
+      axisTransitionState.progress = 1;
 
+      if (metricChanged) {
+        updateStageGeometry(model, false);
+
+        const dataset = chart.data.datasets[0];
+        const targetDataset = nextData.datasets[0];
+        const startValues = (dataset.data || []).map(value => Number(value) || 0);
+        const targetValues = model.values.map(value => Number(value) || 0);
+        const startAxis = previousModel.axis;
+        const targetAxis = model.axis;
+
+        chart.data.labels = nextData.labels;
+        Object.keys(targetDataset).forEach(key => {
+          if (key !== 'data') dataset[key] = targetDataset[key];
+        });
+        dataset.data = startValues.slice();
+
+        chart.options = chartOptions(model, false);
+        chart.options.scales.x.max = startAxis.max;
+        chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+        chart.resize();
+        chart.update('none');
+
+        axisTransitionState.active = true;
+        axisTransitionState.progress = 0;
+        axisTransitionState.fromAxis = startAxis;
+        axisTransitionState.toAxis = targetAxis;
+        axisTransitionState.fromMetric = previousModel.metric;
+        axisTransitionState.toMetric = model.metric;
+        axisTransitionState.fromView = previousModel.view;
+        axisTransitionState.toView = model.view;
+
+        metricAnimator.run({
+          duration: CONFIG.barTransitionMs,
+          easing: PFFCharts.easeInOutCubic,
+
+          onFrame(progress) {
+            axisTransitionState.progress = progress;
+            dataset.data = targetValues.map((target, index) => {
+              const start = startValues[index] || 0;
+              return start + (target - start) * progress;
+            });
+
+            chart.options.scales.x.max =
+              startAxis.max + (targetAxis.max - startAxis.max) * progress;
+            chart.update('none');
+          },
+
+          onComplete() {
+            dataset.data = targetValues.slice();
+            chart.options.scales.x.max = targetAxis.max;
+            axisTransitionState.active = false;
+            axisTransitionState.progress = 1;
+            axisTransitionState.fromAxis = null;
+            axisTransitionState.toAxis = null;
+            chart.options = chartOptions(model, false);
+            chart.update('none');
+          }
+        });
+
+        return;
+      }
+
+      if (!shouldReorder) {
         updateStageGeometry(model, previousModel?.view !== model.view);
         chart.data.labels = nextData.labels;
 
@@ -1797,11 +1985,6 @@
         return oldIndex === undefined ? 0 : previousValues[oldIndex] || 0;
       });
       const targetValues = model.values.map(value => Number(value) || 0);
-
-      reorderAnimator.cancel();
-      reorderState.active = false;
-      reorderState.progress = 1;
-      reorderState.fromYByKey = new Map();
 
       updateStageGeometry(model, false);
       chart.data.labels = nextData.labels;
@@ -1867,7 +2050,7 @@
       let text = `${formatPercent(national.withinShare)} of Australian postcode centroids are within 100 kilometres of an eyecare practice; ${formatPercent(national.beyondShare)} are more than 100 kilometres away.`;
 
       if (activeView === 'mmm') {
-        text += ' Rurality view shows the share more than 100 kilometres from the nearest practice within each Modified Monash category.';
+        text += ' Rurality view compares MM1–5 with MM6–7, showing the share more than 100 kilometres from the nearest practice. The 2024–25 MM6–7 population is 502,438, equivalent to 50.2 FTE at a one-per-10,000 benchmark.';
       }
 
       text += ` Visible locations: ${visible.length ? visible.map(areaShortLabel).join(', ') : 'none'}.`;
@@ -1958,6 +2141,11 @@
           if (!chart || !activeModel) return;
 
           reorderAnimator.cancel();
+          metricAnimator.cancel();
+          axisTransitionState.active = false;
+          axisTransitionState.progress = 1;
+          axisTransitionState.fromAxis = null;
+          axisTransitionState.toAxis = null;
           reorderState.active = false;
           reorderState.progress = 1;
           reorderState.fromYByKey = new Map();
