@@ -75,7 +75,7 @@
     }
 
     .area-menu {
-      min-width: 164px;
+      min-width: 178px;
       max-height: min(390px, calc(100vh - 92px));
       overflow-y: auto;
       overscroll-behavior: contain;
@@ -118,10 +118,6 @@
 
     .access-metric-switch {
       width: 92px;
-    }
-
-    .threshold-switch {
-      width: 104px;
     }
 
     .access-summary {
@@ -180,12 +176,19 @@
       position: absolute;
       inset: 0;
       overflow: hidden;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(105, 113, 138, 0.30) transparent;
+    }
+
+    .chart-scroll.is-scrollable {
+      overflow-x: hidden;
+      overflow-y: auto;
     }
 
     .chart-stage {
       position: relative;
       width: 100%;
-      height: 100%;
       min-width: 0;
       min-height: 100%;
     }
@@ -221,10 +224,6 @@
 
       .access-summary-label {
         font-size: 8px;
-      }
-
-      .threshold-switch {
-        width: 100px;
       }
     }
 
@@ -326,7 +325,7 @@
           <div id="headingScrollViewport" class="heading-scroll-viewport">
             <h2 id="chartHeading" class="chart-heading">
               <span id="chartHeadingFixed" class="chart-heading-fixed"></span>
-              <span id="chartHeadingDetail" class="chart-heading-detail">Distance to nearest eyecare practice</span>
+              <span id="chartHeadingDetail" class="chart-heading-detail">Distance from postcode centroids to nearest eyecare practice</span>
             </h2>
           </div>
 
@@ -348,12 +347,17 @@
               aria-controls="areaMenu"
             >
               <span>Location</span>
-              <span id="areaButtonValue" class="state-button-value">Australia</span>
+              <span id="areaButtonValue" class="state-button-value">All</span>
               <span class="menu-arrow" aria-hidden="true"></span>
             </button>
 
             <div id="areaMenu" class="state-menu area-menu" role="menu">
-              <div class="state-menu-title">Show location</div>
+              <div class="state-menu-title">Show locations</div>
+              <label class="state-option">
+                <input id="areaAll" type="checkbox" checked>
+                <span class="state-option-box" aria-hidden="true"></span>
+                <span class="area-option-name">All locations</span>
+              </label>
               <div id="areaOptions"></div>
             </div>
           </div>
@@ -362,34 +366,31 @@
 
       <div id="accessControls" class="view-controls-row">
         <span class="view-control-label">Display</span>
-        <div id="accessMetricSwitch" class="metric-switch access-metric-switch" role="group" aria-label="Access display metric">
-          <button class="metric-button is-active" type="button" data-metric="share" aria-pressed="true">%</button>
+        <div
+          id="accessMetricSwitch"
+          class="metric-switch access-metric-switch"
+          role="group"
+          aria-label="Access display metric"
+        >
           <button class="metric-button" type="button" data-metric="count" aria-pressed="false">Count</button>
-        </div>
-      </div>
-
-      <div id="mmmControls" class="view-controls-row is-hidden">
-        <span class="view-control-label">Distance threshold</span>
-        <div id="thresholdSwitch" class="metric-switch threshold-switch" role="group" aria-label="Distance threshold">
-          <button class="metric-button" type="button" data-threshold="50" aria-pressed="false">50 km</button>
-          <button class="metric-button is-active" type="button" data-threshold="100" aria-pressed="true">100 km</button>
+          <button class="metric-button is-active" type="button" data-metric="share" aria-pressed="true">%</button>
         </div>
       </div>
 
       <div id="accessSummary" class="access-summary" aria-live="polite">
         <div class="access-summary-item">
           <span id="summaryValue1" class="access-summary-value">—</span>
-          <span id="summaryLabel1" class="access-summary-label">within 50 km of a practice</span>
+          <span id="summaryLabel1" class="access-summary-label">Australian postcode centroids ≤100 km from a practice</span>
         </div>
         <div class="access-summary-item">
           <span id="summaryValue2" class="access-summary-value">—</span>
-          <span id="summaryLabel2" class="access-summary-label">within 100 km of a practice</span>
+          <span id="summaryLabel2" class="access-summary-label">Australian postcode centroids &gt;100 km from a practice</span>
         </div>
       </div>
 
       <div id="chartShell" class="chart-shell">
-        <div class="chart-scroll">
-          <div class="chart-stage">
+        <div id="chartScroll" class="chart-scroll">
+          <div id="chartStage" class="chart-stage">
             <canvas
               id="accessChart"
               aria-label="Australian geographic access to eyecare chart"
@@ -418,10 +419,11 @@
       jsonFallbackVersion: 8,
       jsonFetchTimeoutMs: 15000,
       appKey: 'pff-optom-practice-directory',
-      localCacheKey: 'pff-practice-access-v2',
+      localCacheKey: 'pff-practice-access-v3',
       minimumPractices: 100,
       coordinateDecimals: 5,
-      barTransitionMs: 700
+      barTransitionMs: 700,
+      reorderTransitionMs: 700
     });
 
     const STATE_ORDER = Object.freeze([
@@ -443,12 +445,6 @@
       'MM1', 'MM2', 'MM3', 'MM4', 'MM5', 'MM6', 'MM7'
     ]);
 
-    const DISTANCE_BANDS = Object.freeze([
-      { key: 'within-50', label: '≤50 km', min: -Infinity, max: 50 },
-      { key: '50-100', label: '50–100 km', min: 50, max: 100 },
-      { key: 'over-100', label: '>100 km', min: 100, max: Infinity }
-    ]);
-
     const app = document.getElementById('app');
     const statusElement = document.getElementById('status');
     const dataSourceIndicator = document.getElementById('dataSourceIndicator');
@@ -465,12 +461,13 @@
     const areaButton = document.getElementById('areaButton');
     const areaButtonValue = document.getElementById('areaButtonValue');
     const areaMenu = document.getElementById('areaMenu');
+    const areaAll = document.getElementById('areaAll');
     const areaOptions = document.getElementById('areaOptions');
     const accessControls = document.getElementById('accessControls');
-    const mmmControls = document.getElementById('mmmControls');
     const accessMetricSwitch = document.getElementById('accessMetricSwitch');
-    const thresholdSwitch = document.getElementById('thresholdSwitch');
     const chartShell = document.getElementById('chartShell');
+    const chartScroll = document.getElementById('chartScroll');
+    const chartStage = document.getElementById('chartStage');
     const chartCanvas = document.getElementById('accessChart');
     const summaryValue1 = document.getElementById('summaryValue1');
     const summaryValue2 = document.getElementById('summaryValue2');
@@ -482,9 +479,8 @@
     const nearestDistanceCache = new Map();
 
     let activeView = 'access';
-    let activeArea = 'AUS';
     let accessMetric = 'share';
-    let mmmThresholdKm = 100;
+    let selectedAreas = new Set();
     let chart = null;
     let activeModel = null;
     let tabsController = null;
@@ -493,6 +489,13 @@
     let chartInteractionController = null;
     let responsiveController = null;
     let chartSummary = null;
+
+    const reorderAnimator = PFFCharts.createAnimationController();
+    const reorderState = {
+      active: false,
+      progress: 1,
+      fromYByKey: new Map()
+    };
 
     const collator = new Intl.Collator('en-AU', {
       sensitivity: 'base',
@@ -746,6 +749,11 @@
         }
 
         return payload;
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw new Error('Timed out loading the static JSON fallback.');
+        }
+        throw error;
       } finally {
         window.clearTimeout(timeout);
       }
@@ -1026,44 +1034,56 @@
       return STATE_ORDER.filter(state => found.has(state));
     }
 
-    function filteredAccessUnits() {
-      return accessUnits.filter(unit =>
-        Number.isFinite(unit.distanceKm) &&
-        (activeArea === 'AUS' || unit.stateCode === activeArea)
-      );
+    function availableAreas() {
+      return ['AUS', ...availableStates()];
     }
 
-    function areaLabel(value = activeArea) {
-      return value === 'AUS' ? 'Australia' : value;
+    function areaShortLabel(area) {
+      return area === 'AUS' ? 'Australia' : area;
     }
 
-    function areaLongLabel(value = activeArea) {
-      return value === 'AUS' ? 'Australia' : (STATE_NAMES[value] || value);
+    function areaLongLabel(area) {
+      return area === 'AUS' ? 'Australia' : (STATE_NAMES[area] || area);
     }
 
-    function activeColourHex() {
-      return activeArea === 'AUS'
+    function areaColour(area) {
+      return area === 'AUS'
         ? '#0b5d1e'
-        : (PFF.stateColours?.[activeArea] || '#69718a');
+        : (PFF.stateColours?.[area] || '#69718a');
+    }
+
+    function unitsForArea(area) {
+      const rows = accessUnits.filter(unit => Number.isFinite(unit.distanceKm));
+      return area === 'AUS'
+        ? rows
+        : rows.filter(unit => unit.stateCode === area);
+    }
+
+    function visibleAreas() {
+      return availableAreas().filter(area => selectedAreas.has(area));
+    }
+
+    function selectedAreaSummary() {
+      const available = availableAreas();
+      const selected = available.filter(area => selectedAreas.has(area));
+
+      if (selected.length === available.length) return 'All';
+      if (selected.length === 0) return 'None';
+      if (selected.length === 1) return areaShortLabel(selected[0]);
+      return String(selected.length);
     }
 
     function buildAreaMenu() {
       areaOptions.textContent = '';
 
-      const options = [
-        { value: 'AUS', label: 'Australia' },
-        ...availableStates().map(state => ({ value: state, label: state }))
-      ];
-
-      options.forEach(option => {
+      availableAreas().forEach(area => {
         const label = document.createElement('label');
         label.className = 'state-option';
 
         const input = document.createElement('input');
-        input.type = 'radio';
-        input.name = 'practice-access-area';
-        input.value = option.value;
-        input.checked = option.value === activeArea;
+        input.type = 'checkbox';
+        input.checked = selectedAreas.has(area);
+        input.dataset.areaValue = area;
 
         const box = document.createElement('span');
         box.className = 'state-option-box';
@@ -1071,28 +1091,36 @@
 
         const name = document.createElement('span');
         name.className = 'area-option-name';
-        name.textContent = option.label;
-        name.style.color = option.value === 'AUS'
-          ? 'var(--access-australia)'
-          : (PFF.stateColours?.[option.value] || '#69718a');
+        name.textContent = areaShortLabel(area);
+        name.style.color = areaColour(area);
+        name.title = areaLongLabel(area);
 
         label.append(input, box, name);
         areaOptions.appendChild(label);
       });
+
+      syncAreaControl(false);
     }
 
     function syncAreaControl(animate = true) {
-      const next = areaLabel();
+      const available = availableAreas();
+      const selected = available.filter(area => selectedAreas.has(area));
+      const next = selectedAreaSummary();
 
-      areaButtonValue.style.color = activeArea === 'AUS'
-        ? 'var(--access-australia)'
-        : (PFF.stateColours?.[activeArea] || '#69718a');
+      areaAll.checked = selected.length === available.length;
+      areaAll.indeterminate = selected.length > 0 && selected.length < available.length;
 
       areaOptions
-        .querySelectorAll('input[name="practice-access-area"]')
+        .querySelectorAll('input[data-area-value]')
         .forEach(input => {
-          input.checked = input.value === activeArea;
+          input.checked = selectedAreas.has(input.dataset.areaValue);
         });
+
+      if (selected.length === 1) {
+        areaButtonValue.style.color = areaColour(selected[0]);
+      } else {
+        areaButtonValue.style.color = '#69718a';
+      }
 
       if (!animate || PFF.reducedMotion()) {
         areaButtonValue.textContent = next;
@@ -1131,37 +1159,56 @@
       return { max, ticks };
     }
 
-    function buildAccessModel() {
-      const units = filteredAccessUnits();
-      const total = units.length;
-      const colour = activeColourHex();
+    function accessGroupsForAreas(areas) {
+      const groups = [];
 
-      const groups = DISTANCE_BANDS.map(band => {
-        const count = units.filter(unit =>
-          unit.distanceKm > band.min && unit.distanceKm <= band.max
-        ).length;
+      areas.forEach(area => {
+        const units = unitsForArea(area);
+        const total = units.length;
+        const withinCount = units.filter(unit => unit.distanceKm <= 100).length;
+        const beyondCount = units.filter(unit => unit.distanceKm > 100).length;
+        const colour = areaColour(area);
 
-        return {
-          key: band.key,
-          label: band.label,
-          count,
-          share: total > 0 ? count / total * 100 : 0,
-          colour
-        };
+        [
+          {
+            keySuffix: 'within-100',
+            bandLabel: '≤100 km',
+            count: withinCount
+          },
+          {
+            keySuffix: 'over-100',
+            bandLabel: '>100 km',
+            count: beyondCount
+          }
+        ].forEach(item => {
+          groups.push({
+            key: `access:${area}:${item.keySuffix}`,
+            area,
+            label: `${areaShortLabel(area)} · ${item.bandLabel}`,
+            bandLabel: item.bandLabel,
+            count: item.count,
+            share: total > 0 ? item.count / total * 100 : 0,
+            total,
+            colour
+          });
+        });
       });
 
+      return groups;
+    }
+
+    function buildAccessModel() {
+      const groups = accessGroupsForAreas(visibleAreas());
+      const allGroups = accessGroupsForAreas(availableAreas());
       const values = groups.map(group =>
         accessMetric === 'share' ? group.share : group.count
       );
-
       const axis = accessMetric === 'share'
         ? { max: 100, ticks: [0, 20, 40, 60, 80, 100] }
-        : countAxisSpec(values);
+        : countAxisSpec(allGroups.map(group => group.count));
 
       return {
         view: 'access',
-        units,
-        total,
         groups,
         values,
         axis
@@ -1169,30 +1216,34 @@
     }
 
     function buildMmmModel() {
-      const units = filteredAccessUnits();
-      const colour = activeColourHex();
+      const groups = [];
 
-      const groups = MMM_ORDER
-        .map(mmm => {
-          const rows = units.filter(unit => unit.mmm === mmm);
-          const affected = rows.filter(unit => unit.distanceKm > mmmThresholdKm).length;
-          const share = rows.length ? affected / rows.length * 100 : 0;
+      visibleAreas().forEach(area => {
+        const areaUnits = unitsForArea(area);
+        const colour = areaColour(area);
 
-          return {
-            key: mmm,
-            label: mmm,
+        MMM_ORDER.forEach(mmm => {
+          const rows = areaUnits.filter(unit => unit.mmm === mmm);
+          if (!rows.length) return;
+
+          const affected = rows.filter(unit => unit.distanceKm > 100).length;
+          const share = affected / rows.length * 100;
+
+          groups.push({
+            key: `mmm:${area}:${mmm}`,
+            area,
+            mmm,
+            label: `${areaShortLabel(area)} · ${mmm}`,
             total: rows.length,
             affected,
             share,
             colour
-          };
-        })
-        .filter(group => group.total > 0);
+          });
+        });
+      });
 
       return {
         view: 'mmm',
-        units,
-        total: units.length,
         groups,
         values: groups.map(group => group.share),
         axis: { max: 100, ticks: [0, 20, 40, 60, 80, 100] }
@@ -1208,7 +1259,7 @@
     function headingText() {
       return activeView === 'mmm'
         ? 'Geographic access by rurality'
-        : 'Distance to nearest eyecare practice';
+        : 'Distance from postcode centroids to nearest eyecare practice';
     }
 
     function updateHeading(animate = true) {
@@ -1229,47 +1280,36 @@
       window.setTimeout(() => headingScroller?.update?.(), 230);
     }
 
-    function updateSummary(model) {
-      const total = model.units.length;
-      const within50 = model.units.filter(unit => unit.distanceKm <= 50).length;
-      const within100 = model.units.filter(unit => unit.distanceKm <= 100).length;
-      const share50 = total ? within50 / total * 100 : 0;
-      const share100 = total ? within100 / total * 100 : 0;
-      const colour = activeColourHex();
+    function nationalAccessSummary() {
+      const units = unitsForArea('AUS');
+      const total = units.length;
+      const within = units.filter(unit => unit.distanceKm <= 100).length;
+      const beyond = units.filter(unit => unit.distanceKm > 100).length;
 
-      summaryValue1.textContent = formatPercent(share50);
-      summaryValue2.textContent = formatPercent(share100);
-      summaryValue1.style.color = colour;
-      summaryValue2.style.color = colour;
+      return {
+        total,
+        within,
+        beyond,
+        withinShare: total ? within / total * 100 : 0,
+        beyondShare: total ? beyond / total * 100 : 0
+      };
+    }
+
+    function updateSummary() {
+      const summary = nationalAccessSummary();
+      summaryValue1.textContent = formatPercent(summary.withinShare);
+      summaryValue2.textContent = formatPercent(summary.beyondShare);
+      summaryValue1.style.color = '#0b5d1e';
+      summaryValue2.style.color = '#0b5d1e';
     }
 
     function updateControls() {
       accessControls.classList.toggle('is-hidden', activeView !== 'access');
-      mmmControls.classList.toggle('is-hidden', activeView !== 'mmm');
-    }
-
-    function tooltipCallbacks() {
-      return {
-        title(items) {
-          return activeModel?.groups?.[items?.[0]?.dataIndex]?.label || '';
-        },
-
-        label(context) {
-          const group = activeModel?.groups?.[context.dataIndex];
-          if (!group) return '';
-
-          if (activeView === 'mmm') {
-            return `More than ${mmmThresholdKm} km: ${formatPercent(group.share)} (${PFF.formatInteger(group.affected)} of ${PFF.formatInteger(group.total)})`;
-          }
-
-          return `${PFF.formatInteger(group.count)} postcode centroids (${formatPercent(group.share)})`;
-        }
-      };
     }
 
     function xAxisTitle() {
       if (activeView === 'mmm') {
-        return `Postcode centroids more than ${mmmThresholdKm} km away (%)`;
+        return 'Postcode centroids >100 km from nearest practice (%)';
       }
 
       return accessMetric === 'share'
@@ -1283,6 +1323,32 @@
       }
 
       return PFFCharts.formatAxisValue(Number(value) || 0, 0);
+    }
+
+    function tooltipCallbacks() {
+      return {
+        title(items) {
+          const group = activeModel?.groups?.[items?.[0]?.dataIndex];
+          if (!group) return '';
+
+          if (activeView === 'mmm') {
+            return `${areaLongLabel(group.area)} · ${group.mmm}`;
+          }
+
+          return `${areaLongLabel(group.area)} · ${group.bandLabel}`;
+        },
+
+        label(context) {
+          const group = activeModel?.groups?.[context.dataIndex];
+          if (!group) return '';
+
+          if (activeView === 'mmm') {
+            return `More than 100 km: ${formatPercent(group.share)} (${PFF.formatInteger(group.affected)} of ${PFF.formatInteger(group.total)})`;
+          }
+
+          return `${formatPercent(group.share)} of postcode centroids (${PFF.formatInteger(group.count)} of ${PFF.formatInteger(group.total)})`;
+        }
+      };
     }
 
     const axisPresentationPlugin = {
@@ -1409,25 +1475,102 @@
       }
     };
 
-    function chartData(model) {
-      const colour = activeColourHex();
+    const groupSeparatorsPlugin = {
+      id: 'pffPracticeAccessGroupSeparators',
 
+      beforeDatasetsDraw(chartInstance) {
+        const meta = chartInstance.getDatasetMeta(0);
+        const groups = activeModel?.groups || [];
+
+        if (!meta?.data || meta.data.length < 2 || groups.length < 2) return;
+
+        const { ctx, chartArea } = chartInstance;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(105, 113, 138, 0.10)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+
+        for (let index = 0; index < groups.length - 1; index += 1) {
+          if (groups[index]?.area === groups[index + 1]?.area) continue;
+
+          const first = meta.data[index];
+          const second = meta.data[index + 1];
+          if (!Number.isFinite(first?.y) || !Number.isFinite(second?.y)) continue;
+
+          const y = (first.y + second.y) / 2;
+          ctx.beginPath();
+          ctx.moveTo(0, Math.round(y) + 0.5);
+          ctx.lineTo(chartArea.right, Math.round(y) + 0.5);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+    };
+
+    function capturePreviousYFractions(model) {
+      const output = new Map();
+      const area = chart?.chartArea;
+      const elements = chart?.getDatasetMeta(0)?.data || [];
+
+      if (!model?.groups?.length || !area || !(area.height > 0)) return output;
+
+      model.groups.forEach((group, index) => {
+        const y = elements[index]?.y;
+        if (!group?.key || !Number.isFinite(y)) return;
+        output.set(group.key, (y - area.top) / area.height);
+      });
+
+      return output;
+    }
+
+    function animatedGroupY(chartInstance, group, index) {
+      const targetY = chartInstance?.scales?.y?.getPixelForValue(index);
+      if (!Number.isFinite(targetY) || !reorderState.active) return targetY;
+
+      const fromY = reorderState.fromYByKey.get(group?.key);
+      if (!Number.isFinite(fromY)) return targetY;
+
+      return fromY +
+        (targetY - fromY) *
+        Math.max(0, Math.min(reorderState.progress, 1));
+    }
+
+    const reorderGeometryPlugin = {
+      id: 'pffPracticeAccessReorderGeometry',
+
+      beforeDatasetsDraw(chartInstance) {
+        if (!reorderState.active || !activeModel?.groups?.length) return;
+
+        chartInstance.data.datasets.forEach((_dataset, datasetIndex) => {
+          const elements = chartInstance.getDatasetMeta(datasetIndex)?.data || [];
+
+          elements.forEach((element, index) => {
+            const group = activeModel.groups[index];
+            const y = animatedGroupY(chartInstance, group, index);
+            if (Number.isFinite(y)) element.y = y;
+          });
+        });
+      }
+    };
+
+    function chartData(model) {
       return {
         labels: model.groups.map(group => group.label),
         datasets: [{
           label: activeView === 'mmm'
-            ? `More than ${mmmThresholdKm} km`
+            ? 'More than 100 km'
             : (accessMetric === 'share' ? 'Postcode centroids (%)' : 'Postcode centroids'),
           data: model.values,
-          backgroundColor: colour,
-          hoverBackgroundColor: colour,
-          borderColor: colour,
-          hoverBorderColor: colour,
+          backgroundColor: model.groups.map(group => group.colour),
+          hoverBackgroundColor: model.groups.map(group => group.colour),
+          borderColor: model.groups.map(group => group.colour),
+          hoverBorderColor: model.groups.map(group => group.colour),
           borderWidth: 0,
           borderRadius: 2,
           borderSkipped: false,
-          categoryPercentage: 0.82,
-          barPercentage: 0.70,
+          categoryPercentage: activeView === 'mmm' ? 0.80 : 0.82,
+          barPercentage: activeView === 'mmm' ? 0.68 : 0.70,
           minBarLength: 2
         }]
       };
@@ -1518,9 +1661,7 @@
             position: 'left',
 
             afterFit(axis) {
-              axis.width = activeView === 'mmm'
-                ? (PFF.mobileLayout() ? 34 : 38)
-                : (PFF.mobileLayout() ? 64 : 72);
+              axis.width = PFF.mobileLayout() ? 112 : 132;
             },
 
             grid: {
@@ -1543,7 +1684,7 @@
               padding: 3,
               font: {
                 family: 'Lato',
-                size: PFF.mobileLayout() ? 10 : 11,
+                size: PFF.mobileLayout() ? 9.5 : 10.5,
                 weight: '400'
               }
             }
@@ -1552,35 +1693,54 @@
       });
     }
 
-    function updateAccessibleSummary(model) {
-      if (!chartSummary || !model) return;
-
-      const total = model.units.length;
-      const within50 = model.units.filter(unit => unit.distanceKm <= 50).length;
-      const within100 = model.units.filter(unit => unit.distanceKm <= 100).length;
-      const share50 = total ? within50 / total * 100 : 0;
-      const share100 = total ? within100 / total * 100 : 0;
-
-      let text = `${areaLongLabel()}. ${formatPercent(share50)} of postcode centroids are within 50 kilometres of an eyecare practice and ${formatPercent(share100)} are within 100 kilometres.`;
-
+    function rowHeightForView() {
       if (activeView === 'mmm') {
-        text += ` The rurality chart shows the share of postcode centroids in each Modified Monash category more than ${mmmThresholdKm} kilometres from the nearest practice.`;
+        return PFF.mobileLayout() ? 20 : 22;
       }
-
-      PFFCharts.updateChartSummary(text, chartSummary);
+      return PFF.mobileLayout() ? 23 : 25;
     }
 
-    function renderChart(model, animate = true) {
+    function updateStageGeometry(model, resetScroll = false) {
+      const shellHeight = Math.max(chartShell.clientHeight || 0, 1);
+      const minimum = PFF.mobileLayout() ? 310 : 340;
+      const contentHeight =
+        Math.max(
+          minimum,
+          model.groups.length * rowHeightForView() + (PFF.mobileLayout() ? 66 : 72)
+        );
+      const height = Math.max(shellHeight, contentHeight);
+      const scrollable = height > shellHeight + 4;
+
+      chartStage.style.height = `${height}px`;
+      chartStage.style.minHeight = `${height}px`;
+      chartScroll.classList.toggle('is-scrollable', scrollable);
+
+      if (resetScroll) chartScroll.scrollTop = 0;
+    }
+
+    function groupKeysChanged(previousModel, nextModel) {
+      if (!previousModel || previousModel.view !== nextModel.view) return false;
+      if (previousModel.groups.length !== nextModel.groups.length) return true;
+
+      return previousModel.groups.some(
+        (group, index) => group.key !== nextModel.groups[index]?.key
+      );
+    }
+
+    function renderChart(model, animate = true, previousModel = null) {
       const nextData = chartData(model);
       const nextOptions = chartOptions(model, animate);
 
       if (!chart) {
+        updateStageGeometry(model, true);
         chart = new Chart(chartCanvas.getContext('2d'), {
           type: 'bar',
           data: nextData,
           options: nextOptions,
           plugins: [
             axisPresentationPlugin,
+            groupSeparatorsPlugin,
+            reorderGeometryPlugin,
             valueLabelsPlugin,
             {
               id: 'pffTooltipTopLayer',
@@ -1595,32 +1755,136 @@
         return;
       }
 
-      /*
-       * Keep the same Chart.js instance and dataset so bars interpolate from
-       * their existing geometry when changing state, metric, threshold or tab.
-       * This matches the morph-style transitions used by the repository's
-       * established horizontal bar apps instead of recreating bars from zero.
-       */
+      const shouldReorder = Boolean(
+        animate &&
+        !PFF.reducedMotion() &&
+        previousModel &&
+        previousModel.view === model.view &&
+        groupKeysChanged(previousModel, model)
+      );
+
+      if (!shouldReorder) {
+        reorderAnimator.cancel();
+        reorderState.active = false;
+        reorderState.progress = 1;
+        reorderState.fromYByKey = new Map();
+
+        updateStageGeometry(model, previousModel?.view !== model.view);
+        chart.data.labels = nextData.labels;
+
+        const dataset = chart.data.datasets[0];
+        const targetDataset = nextData.datasets[0];
+        Object.keys(targetDataset).forEach(key => {
+          if (key !== 'data') dataset[key] = targetDataset[key];
+        });
+        dataset.data = targetDataset.data.slice();
+
+        chart.options = nextOptions;
+        chart.resize();
+        chart.update(animate && !PFF.reducedMotion() ? undefined : 'none');
+        return;
+      }
+
+      const previousFractions = capturePreviousYFractions(previousModel);
+      const previousIndexByKey = new Map(
+        previousModel.groups.map((group, index) => [group.key, index])
+      );
+      const previousValues = (chart.data.datasets?.[0]?.data || []).map(
+        value => Number(value) || 0
+      );
+      const startValues = model.groups.map(group => {
+        const oldIndex = previousIndexByKey.get(group.key);
+        return oldIndex === undefined ? 0 : previousValues[oldIndex] || 0;
+      });
+      const targetValues = model.values.map(value => Number(value) || 0);
+
+      reorderAnimator.cancel();
+      reorderState.active = false;
+      reorderState.progress = 1;
+      reorderState.fromYByKey = new Map();
+
+      updateStageGeometry(model, false);
       chart.data.labels = nextData.labels;
+
       const dataset = chart.data.datasets[0];
       const targetDataset = nextData.datasets[0];
-
       Object.keys(targetDataset).forEach(key => {
         if (key !== 'data') dataset[key] = targetDataset[key];
       });
-      dataset.data = targetDataset.data.slice();
-      chart.options = nextOptions;
-      chart.update(animate && !PFF.reducedMotion() ? undefined : 'none');
+      dataset.data = startValues.slice();
+
+      chart.options = chartOptions(model, false);
+      chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+      chart.resize();
+      chart.update('none');
+
+      const targetArea = chart.chartArea;
+      const fromYByKey = new Map();
+
+      if (targetArea?.height > 0) {
+        previousFractions.forEach((fraction, key) => {
+          if (!Number.isFinite(fraction)) return;
+          fromYByKey.set(
+            key,
+            targetArea.top + fraction * targetArea.height
+          );
+        });
+      }
+
+      reorderState.active = true;
+      reorderState.progress = 0;
+      reorderState.fromYByKey = fromYByKey;
+
+      reorderAnimator.run({
+        duration: CONFIG.reorderTransitionMs,
+        easing: PFFCharts.easeInOutCubic,
+
+        onFrame(progress) {
+          reorderState.progress = progress;
+          dataset.data = targetValues.map((target, index) => {
+            const start = startValues[index] || 0;
+            return start + (target - start) * progress;
+          });
+          chart.update('none');
+        },
+
+        onComplete() {
+          dataset.data = targetValues.slice();
+          reorderState.active = false;
+          reorderState.progress = 1;
+          reorderState.fromYByKey = new Map();
+          chart.options = chartOptions(model, false);
+          chart.update('none');
+        }
+      });
+    }
+
+    function updateAccessibleSummary() {
+      if (!chartSummary || !activeModel) return;
+
+      const national = nationalAccessSummary();
+      const visible = visibleAreas();
+      let text = `${formatPercent(national.withinShare)} of Australian postcode centroids are within 100 kilometres of an eyecare practice; ${formatPercent(national.beyondShare)} are more than 100 kilometres away.`;
+
+      if (activeView === 'mmm') {
+        text += ' Rurality view shows the share more than 100 kilometres from the nearest practice within each Modified Monash category.';
+      }
+
+      text += ` Visible locations: ${visible.length ? visible.map(areaShortLabel).join(', ') : 'none'}.`;
+      PFFCharts.updateChartSummary(text, chartSummary);
     }
 
     function renderView({ animate = true } = {}) {
-      activeModel = buildModel();
+      const previousModel = activeModel;
+      const nextModel = buildModel();
+      activeModel = nextModel;
+
       updateHeading(animate);
       updateControls();
-      updateSummary(activeModel);
+      updateSummary();
       syncAreaControl(animate);
-      renderChart(activeModel, animate);
-      updateAccessibleSummary(activeModel);
+      renderChart(nextModel, animate, previousModel);
+      updateAccessibleSummary();
     }
 
     function configureControls() {
@@ -1652,13 +1916,21 @@
         focusOnOpen: false
       });
 
+      areaAll.addEventListener('change', () => {
+        selectedAreas = areaAll.checked
+          ? new Set(availableAreas())
+          : new Set();
+        renderView({ animate: true });
+      });
+
       areaOptions.addEventListener('change', event => {
-        const input = event.target.closest('input[name="practice-access-area"]');
+        const input = event.target.closest('input[data-area-value]');
         if (!input) return;
 
-        activeArea = input.value;
-        buildAreaMenu();
-        areaMenuController?.closeMenu?.();
+        const area = input.dataset.areaValue;
+        if (input.checked) selectedAreas.add(area);
+        else selectedAreas.delete(area);
+
         renderView({ animate: true });
       });
 
@@ -1669,17 +1941,6 @@
         initialValue: accessMetric,
         onChange(value) {
           accessMetric = value;
-          renderView({ animate: true });
-        }
-      });
-
-      PFF.setupMetricSwitch({
-        element: thresholdSwitch,
-        buttons: thresholdSwitch.querySelectorAll('.metric-button'),
-        valueAttribute: 'threshold',
-        initialValue: String(mmmThresholdKm),
-        onChange(value) {
-          mmmThresholdKm = Number(value) || 100;
           renderView({ animate: true });
         }
       });
@@ -1695,7 +1956,16 @@
         applyResponsiveChartOptions: false,
         onRefresh() {
           if (!chart || !activeModel) return;
-          renderChart(activeModel, false);
+
+          reorderAnimator.cancel();
+          reorderState.active = false;
+          reorderState.progress = 1;
+          reorderState.fromYByKey = new Map();
+
+          updateStageGeometry(activeModel, false);
+          chart.options = chartOptions(activeModel, false);
+          chart.resize();
+          chart.update('none');
           tabsController?.update?.();
           headingScroller?.update?.();
         }
@@ -1728,6 +1998,8 @@
         if (!accessUnits.some(unit => Number.isFinite(unit.distanceKm))) {
           throw new Error('No usable postcode-centroid access distances could be calculated.');
         }
+
+        selectedAreas = new Set(availableAreas());
 
         setLoadedSourceIndicator(loaded);
         buildAreaMenu();
