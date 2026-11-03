@@ -3,7 +3,7 @@
  * Extracted from the current assets/pff_chart_core.js visual patterns.
  * Scope: scrollable tabs, segmented switches and compact binary toggle buttons.
  * Does NOT load data, cache data, alter pff_loader.js, or modify production pages.
- * Candidate module: requires visual approval before production migration.
+ * Revision candidate: tabs and compact toggles already approved; segmented-switch click behaviour revised for approval.
  */
 (function (global) {
   'use strict';
@@ -506,7 +506,15 @@
     const clickHandlers = new Map();
     const keyHandlers = new Map();
     buttons.forEach((button, index) => {
-      const clickHandler = () => apply(valueOf(button));
+      const clickHandler = () => {
+        const clickedValue = valueOf(button);
+        const clickedIsActive = clickedValue === activeValue;
+        if (clickedIsActive && buttons.length > 1) {
+          const nextIndex = (index + 1) % buttons.length;
+          return apply(valueOf(buttons[nextIndex]));
+        }
+        return apply(clickedValue);
+      };
       const keyHandler = event => {
         let nextIndex = null;
         if (event.key === 'ArrowRight') nextIndex = (index + 1) % buttons.length;
@@ -573,7 +581,7 @@
   }
 
   modules.controls = Object.freeze({
-    version: '0.1.0-candidate.1',
+    version: '0.1.0-candidate.2',
     injectStyles,
     positionTabIndicator,
     scrollByAmount,
