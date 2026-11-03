@@ -4916,7 +4916,7 @@
             <div class="eat-title-rule" aria-hidden="true"></div>
             <div class="eat-data-note">
               <!-- MAINTENANCE: When ChatGPT updates this HTML, update the "Last updated" date below to today's date (DD/MM/YYYY). -->
-              <span>Last updated 03/11/2026 <span aria-hidden="true">·</span> Anything need updating? <a id="adminEmailLink" class="eat-admin-email-link contact-email-action" href="#" data-contact-key="admin:email" data-admin-contact="email" data-action-tooltip="email" aria-label="Reveal admin email address; activate again to send email"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg><span>Email us</span></a></span>
+              <span>Last updated 04/11/2026 <span aria-hidden="true">·</span> Anything need updating? <a id="adminEmailLink" class="eat-admin-email-link contact-email-action" href="#" data-contact-key="admin:email" data-admin-contact="email" data-action-tooltip="email" aria-label="Reveal admin email address; activate again to send email"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5"></rect><path d="m4.5 7 7.5 6 7.5-6"></path></svg><span>Email us</span></a></span>
             </div>
           </div>
 
@@ -4925,7 +4925,7 @@
                  Default to a +0.01 version bump unless the user explicitly describes the revision as very big/major.
                  Set the newest entry date to today's date (DD/MM/YYYY), prepend one terse one-line change summary to data-beta-log,
                  update data-beta-version / aria-label / visible badge text to match, and preserve older log entries unless asked otherwise. -->
-            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.86" data-beta-log="0.86|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.85|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.86">E.A.T. Beta v0.86</div>
+            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.87" data-beta-log="0.87|04/11/2026|Fix mobile loader flashing&#10;0.86|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.85|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.87">E.A.T. Beta v0.87</div>
             <div
               id="dataSourceIndicator"
               class="live-data eat-live-data"
@@ -6288,7 +6288,6 @@
     let pendingLoaderHideArgs = null;
     let originalHideLoadingState = null;
     let loaderReleaseAllowed = false;
-    let loaderClassObserver = null;
     let loaderCycleDeadline = 0;
 
     function activeLoaderAnimationRemainingMs() {
@@ -6302,7 +6301,16 @@
       }
 
       let longestRemaining = 0;
-      const animations = loadingState.getAnimations({ subtree: true });
+      let animations = [];
+
+      try {
+        animations = loadingState.getAnimations({ subtree: true });
+      } catch (_) {
+        /* Some mobile/WebKit versions support getAnimations() but not the
+         * subtree option. Falling back keeps startup safe without forcing
+         * the loading state to reappear. */
+        animations = loadingState.getAnimations();
+      }
 
       animations.forEach(animation => {
         if (!['running', 'pending'].includes(animation.playState)) return;
@@ -6444,32 +6452,11 @@
         window.requestAnimationFrame(refreshLoaderCycleDeadline);
       }
 
-      if (typeof MutationObserver === 'function' && app) {
-        loaderClassObserver = new MutationObserver(() => {
-          if (
-            loaderReleaseAllowed ||
-            app.classList.contains('is-loading') ||
-            loadingState?.classList.contains('is-startup-error')
-          ) {
-            return;
-          }
 
-          const remainingMs = loaderCycleRemainingMs();
-          if (remainingMs < 24) return;
-
-          /* Mutation observers run before the next paint, so restoring the
-           * loading class here prevents a quick/warm or main-data completion
-           * from visibly cutting the animation mid-cycle. */
-          app.classList.add('is-loading');
-          app.setAttribute('aria-busy', 'true');
-          scheduleLoadingHideAfterCurrentCycle([app]);
-        });
-
-        loaderClassObserver.observe(app, {
-          attributes: true,
-          attributeFilter: ['class']
-        });
-      }
+      /* Do not restore .is-loading after another loading path removes it.
+       * Re-toggling that class can visibly flash the white loading state on
+       * mobile. Calls that pass through PFF.hideLoadingState are delayed above;
+       * any independent loader path is allowed to complete normally. */
     }
 
     installCycleAwareLoadingHide();
