@@ -6354,6 +6354,9 @@
     let radiusPercentileBusy = false;
     let immediateRenderToken = 0;
     let serviceSwitchToken = 0;
+    let serviceTransitionFrame = null;
+    const serviceTransitionAnimations = new Set();
+    const serviceTransitionClones = new Set();
     let lastPracticeHeaderCount = 0;
     let practiceHeaderAnimationToken = 0;
     let activeDistanceLocationKey = '';
@@ -6374,6 +6377,7 @@
     let lastSortSignature = '';
     let lastFilterCountSignature = '';
     let lastTableHeaderSignature = '';
+    let tableFontMetricsRefreshScheduled = false;
     let lastMobileTableWidthMode = usesMobileTableWidths();
     let activeRadiusWorker = null;
     let warmRadiusWorker = null;
@@ -7719,22 +7723,6 @@
       return '';
     }
 
-    function referralFieldsForButton(target) {
-      const record = contactRecordForButton(target);
-      const row = record?.row;
-      if (!row) {
-        return ['Practice name', 'Address', 'Email'];
-      }
-
-      const fields = [];
-      if (cleanText(row.practiceName)) fields.push('Practice name');
-      if (cleanText(row.address)) fields.push('Address');
-      const phone = normalisePhoneNumber(row.phoneNumber || row.phone);
-      if (phone && !/^x$/i.test(phone)) fields.push('Phone');
-      if (cleanText(row.emailAddress || emailAddressForRow(row))) fields.push('Email');
-      return fields;
-    }
-
     function actionTooltipHtml(target) {
       const kind = cleanText(target?.dataset?.actionTooltip || '');
       const touchPreview = window.matchMedia('(hover: none)').matches;
@@ -7791,15 +7779,6 @@
           '<strong>Phone</strong>',
           '<span class="action-tooltip-line"><em>Tap to reveal</em></span>',
           `<span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to call' : 'Double-tap to call'}</em></span>`
-        ].join('');
-      }
-
-      if (kind === 'copy-referral') {
-        const fields = referralFieldsForButton(target);
-        return [
-          '<strong>Copy referral:</strong>',
-          ...fields.map(field => `<span class="action-tooltip-line">${escapeHtml(field)}</span>`),
-          `<span class="action-tooltip-line"><em>${touchPreview ? 'Tap again to copy' : 'Tap to copy'}</em></span>`
         ].join('');
       }
 
@@ -12930,6 +12909,40 @@
       );
     }
 
+    function trackServiceTransitionAnimation(animation, cleanup = null) {
+      if (!animation) {
+        if (typeof cleanup === 'function') cleanup();
+        return;
+      }
+
+      serviceTransitionAnimations.add(animation);
+      animation.finished
+        .catch(() => null)
+        .then(() => {
+          serviceTransitionAnimations.delete(animation);
+          if (typeof cleanup === 'function') cleanup();
+        });
+    }
+
+    function cancelServiceTransitionAnimations() {
+      if (serviceTransitionFrame !== null) {
+        cancelAnimationFrame(serviceTransitionFrame);
+        serviceTransitionFrame = null;
+      }
+
+      serviceTransitionAnimations.forEach(animation => {
+        try {
+          animation.cancel();
+        } catch (_) {
+          // A finished animation may already be detached.
+        }
+      });
+      serviceTransitionAnimations.clear();
+
+      serviceTransitionClones.forEach(clone => clone.remove());
+      serviceTransitionClones.clear();
+    }
+
     function animateDepartingServiceElement(element, previous) {
       if (
         !element ||
@@ -12958,8 +12971,10 @@
       });
 
       document.body.appendChild(clone);
+      serviceTransitionClones.add(clone);
 
       if (typeof clone.animate !== 'function') {
+        serviceTransitionClones.delete(clone);
         clone.remove();
         return;
       }
@@ -12976,12 +12991,102 @@
         }
       );
 
-      animation.finished
-        .catch(() => null)
-        .then(() => clone.remove());
+      trackServiceTransitionAnimation(
+        animation,
+        () => {
+          serviceTransitionClones.delete(clone);
+          clone.remove();
+        }
+      );
     }
 
-    function animateSharedServiceLayout(previousPositions) {
+    function playSharedServiceLayout(previousPositions) {
+      const currentElements = new Set(sharedServiceTransitionElements());
+
+      previousPositions.forEach((previous, element) => {
+        const current = element.getBoundingClientRect();
+        const currentlyVisible =
+          !element.hidden &&
+          current.width > 0 &&
+          current.height > 0;
+
+        if (!currentElements.has(element) || !currentlyVisible) {
+          animateDepartingServiceElement(element, previous);
+        }
+      });
+
+      currentElements.forEach(element => {
+        if (
+          element.hidden ||
+          typeof element.animate !== 'function'
+        ) {
+          return;
+        }
+
+        const previous = previousPositions.get(element);
+        const current = element.getBoundingClientRect();
+
+        if (!(current.width > 0 && current.height > 0)) {
+          return;
+        }
+
+        if (!previous) {
+          const animation = element.animate(
+            [
+              { opacity: 0, transform: 'translateY(-2px) scale(0.98)' },
+              { opacity: 1, transform: 'translateY(0) scale(1)' }
+            ],
+            {
+              duration: 170,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+            }
+          );
+          trackServiceTransitionAnimation(animation);
+          return;
+        }
+
+        const deltaX = previous.left - current.left;
+        const deltaY = previous.top - current.top;
+        const scaleX = previous.width / current.width;
+        const scaleY = previous.height / current.height;
+
+        const moved =
+          Math.abs(deltaX) > 0.5 ||
+          Math.abs(deltaY) > 0.5;
+        const resized =
+          Math.abs(scaleX - 1) > 0.015 ||
+          Math.abs(scaleY - 1) > 0.015;
+
+        if (!moved && !resized) {
+          return;
+        }
+
+        const animation = element.animate(
+          [
+            {
+              transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`,
+              opacity: 0.92,
+              transformOrigin: 'top left'
+            },
+            {
+              transform: 'translate(0, 0) scale(1, 1)',
+              opacity: 1,
+              transformOrigin: 'top left'
+            }
+          ],
+          {
+            duration: 220,
+            easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+          }
+        );
+        trackServiceTransitionAnimation(animation);
+      });
+    }
+
+    function animateSharedServiceLayout(
+      previousPositions,
+      { defer = true } = {}
+    ) {
       if (
         !previousPositions ||
         PFF.reducedMotion()
@@ -12989,80 +13094,18 @@
         return;
       }
 
-      requestAnimationFrame(() => {
-        const currentElements = new Set(sharedServiceTransitionElements());
+      const play = () => {
+        serviceTransitionFrame = null;
+        playSharedServiceLayout(previousPositions);
+      };
 
-        previousPositions.forEach((previous, element) => {
-          if (!currentElements.has(element) || element.hidden) {
-            animateDepartingServiceElement(element, previous);
-          }
-        });
+      if (!defer) {
+        play();
+        return;
+      }
 
-        currentElements.forEach(element => {
-          if (
-            element.hidden ||
-            typeof element.animate !== 'function'
-          ) {
-            return;
-          }
-
-          const previous = previousPositions.get(element);
-          const current = element.getBoundingClientRect();
-
-          if (!(current.width > 0 && current.height > 0)) {
-            return;
-          }
-
-          if (!previous) {
-            element.animate(
-              [
-                { opacity: 0, transform: 'translateY(-2px) scale(0.98)' },
-                { opacity: 1, transform: 'translateY(0) scale(1)' }
-              ],
-              {
-                duration: 170,
-                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
-              }
-            );
-            return;
-          }
-
-          const deltaX = previous.left - current.left;
-          const deltaY = previous.top - current.top;
-          const scaleX = previous.width / current.width;
-          const scaleY = previous.height / current.height;
-
-          const moved =
-            Math.abs(deltaX) > 0.5 ||
-            Math.abs(deltaY) > 0.5;
-          const resized =
-            Math.abs(scaleX - 1) > 0.015 ||
-            Math.abs(scaleY - 1) > 0.015;
-
-          if (!moved && !resized) {
-            return;
-          }
-
-          element.animate(
-            [
-              {
-                transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`,
-                opacity: 0.92,
-                transformOrigin: 'top left'
-              },
-              {
-                transform: 'translate(0, 0) scale(1, 1)',
-                opacity: 1,
-                transformOrigin: 'top left'
-              }
-            ],
-            {
-              duration: 220,
-              easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
-            }
-          );
-        });
-      });
+      serviceTransitionFrame =
+        requestAnimationFrame(play);
     }
 
     function arrangeServiceControls() {
@@ -13371,17 +13414,23 @@
       const targetAlreadyPrepared =
         servicePreparedState.has(nextService);
 
-      /* Capture the OLD geometry before changing service state. The FLIP play
-       * step runs only after the new table/header width and all above-table UI
-       * visibility/order changes have reached their final geometry. */
+      /* Capture the currently visible geometry first. If a previous service
+       * transition is still running, getBoundingClientRect() reflects that
+       * in-flight visual position; cancelling afterwards lets the new FLIP
+       * continue smoothly from what the user actually sees. */
       const sharedLayoutBefore =
         captureSharedServiceLayout();
+      cancelServiceTransitionAnimations();
 
       activeServiceType =
         nextService;
 
       tableShell?.classList.add('is-service-switching');
       cancelProgressiveTableRender();
+
+      /* Invalidate any immediate render queued by an earlier service switch.
+       * The new switch will schedule its own render after preparation. */
+      immediateRenderToken += 1;
 
       const switchToken =
         ++serviceSwitchToken;
@@ -13393,11 +13442,16 @@
             ? 'Preparing ophthalmology...'
             : 'Preparing favourites...';
 
+      /* First FLIP: service toggle, control visibility/order and nearby-card
+       * changes are inverted before the browser's next paint. This prevents
+       * the abrupt filter/button jump while the heavier table work follows. */
       syncIntentUi();
       arrangeServiceControls();
       syncNearbyServiceCards();
       document.getElementById('ownershipControl').hidden =
         activeServiceType !== 'optometry';
+      animateSharedServiceLayout(sharedLayoutBefore);
+
       radiusPercentileBusy = false;
       cancelRadiusWorker('active');
       cancelRadiusWorker('warm');
@@ -13435,11 +13489,31 @@
               searchInput.value =
                 searchValuesByService[currentServiceKey()] || '';
 
-              applyViewUi();
+              let finalLayoutBefore = null;
+
               scheduleImmediateRender(
                 !targetAlreadyPrepared,
                 busyMessage,
-                () => animateSharedServiceLayout(sharedLayoutBefore)
+                () => {
+                  /* Second FLIP: renderHeader() has now established the final
+                   * service-specific table width. Play synchronously inside
+                   * this animation frame so Beta/search/filter geometry never
+                   * paints at its new size before the inverse transform lands. */
+                  animateSharedServiceLayout(
+                    finalLayoutBefore,
+                    { defer: false }
+                  );
+                },
+                () => {
+                  finalLayoutBefore =
+                    captureSharedServiceLayout();
+
+                  /* Stop the first-stage animations only after capturing their
+                   * current visual positions, then apply the remaining UI
+                   * changes and final table geometry in the same frame. */
+                  cancelServiceTransitionAnimations();
+                  applyViewUi();
+                }
               );
 
               requestAnimationFrame(() => {
@@ -14847,7 +14921,8 @@
       const horizontalPadding = TABLE_HEADER_LAYOUT.horizontalPadding;
       const iconWidth = 12;
       const iconLabelGap = 3;
-      const arrowGap = 1;
+      const labelArrowGap = 3;
+      const arrowMargin = 1;
       let labelWidth;
 
       if (tableHeaderMeasureContext) {
@@ -14859,17 +14934,22 @@
           iconWidth +
           iconLabelGap +
           labelWidth +
-          arrowGap +
+          labelArrowGap +
+          arrowMargin +
           arrowWidth +
           (horizontalPadding * 2)
         );
       }
 
-      labelWidth = 'Practitioners ↗'.length * (fontSize * 0.52);
+      labelWidth = 'Practitioners'.length * (fontSize * 0.52);
+      const arrowWidth = fontSize * 0.52;
       return Math.ceil(
         iconWidth +
         iconLabelGap +
         labelWidth +
+        labelArrowGap +
+        arrowMargin +
+        arrowWidth +
         (horizontalPadding * 2)
       );
     }
@@ -15273,6 +15353,37 @@
           column.widthGroup || ''
         ].join(':')).join('|')
       ].join('::');
+    }
+
+    function refreshTableWidthsWhenFontsReady() {
+      if (
+        tableFontMetricsRefreshScheduled ||
+        !document.fonts?.ready
+      ) {
+        return;
+      }
+
+      tableFontMetricsRefreshScheduled = true;
+
+      document.fonts.ready
+        .then(() => {
+          /* The initial width pass may have used a fallback font. Invalidate
+           * the cached header signature once Lato is ready so content-sized
+           * columns (especially Practitioners ↗) are measured from the actual
+           * rendered font rather than retaining fallback metrics. */
+          lastTableHeaderSignature = '';
+
+          if (!sourceRows.length) {
+            return;
+          }
+
+          requestAnimationFrame(() => {
+            renderTable();
+          });
+        })
+        .catch(() => {
+          // Font loading is an enhancement; fallback metrics remain usable.
+        });
     }
 
     function updateRenderedHeaderState() {
@@ -15801,7 +15912,8 @@
     function scheduleImmediateRender(
       showBusy = false,
       busyMessage = 'Updating results...',
-      afterRender = null
+      afterRender = null,
+      beforeRender = null
     ) {
       cancelProgressiveTableRender();
 
@@ -15821,6 +15933,10 @@
       const renderNow = () => {
         if (token !== immediateRenderToken) {
           return;
+        }
+
+        if (typeof beforeRender === 'function') {
+          beforeRender();
         }
 
         applyFilters();
@@ -17507,80 +17623,44 @@
             return;
           }
 
-          const { row } = record;
           const contactKey = cleanText(button.dataset.contactKey || '');
           const actionType = button.classList.contains('contact-email-action')
             ? 'email'
-            : button.classList.contains('contact-phone-action')
-              ? 'phone'
-              : 'referral';
+            : 'phone';
+          const value = contactValueForAction(record, actionType);
+          const actionValue = actionType === 'phone'
+            ? value.replace(/[^0-9+]/g, '')
+            : value;
 
-          if (actionType === 'email' || actionType === 'phone') {
-            const value = contactValueForAction(record, actionType);
-            const actionValue = actionType === 'phone'
-              ? value.replace(/[^0-9+]/g, '')
-              : value;
-
-            if (!actionValue) {
-              hideActionTooltip();
-              showStatusToast(
-                actionType === 'email'
-                  ? 'Email address is unavailable for this practice.'
-                  : 'Phone number is unavailable for this service.'
-              );
-              return;
-            }
-
-            if (isSecondContactTap(button, actionType, contactKey)) {
-              hideActionTooltip();
-              window.location.href = actionType === 'email'
-                ? `mailto:${actionValue}`
-                : `tel:${actionValue}`;
-              return;
-            }
-
-            if (!allowContactAction(`${actionType}:${contactKey}`)) {
-              return;
-            }
-
-            playPracticeActionAnimation(
-              button,
+          if (!actionValue) {
+            hideActionTooltip();
+            showStatusToast(
               actionType === 'email'
-                ? 'email-reveal'
-                : 'phone-reveal'
+                ? 'Email address is unavailable for this practice.'
+                : 'Phone number is unavailable for this service.'
             );
-            revealContactAction(button, actionType, contactKey, value);
             return;
           }
 
-          hideActionTooltip();
-
-          if (!allowContactAction(`referral:${contactKey}`)) {
+          if (isSecondContactTap(button, actionType, contactKey)) {
+            hideActionTooltip();
+            window.location.href = actionType === 'email'
+              ? `mailto:${actionValue}`
+              : `tel:${actionValue}`;
             return;
           }
 
-          const referralPhone =
-            normalisePhoneNumber(row.phoneNumber || row.phone);
-          const referralLines = [
-            cleanText(row.practiceName),
-            cleanText(row.address),
-            referralPhone && !/^x$/i.test(referralPhone)
-              ? referralPhone
-              : '',
-            cleanText(row.emailAddress || emailAddressForRow(row))
-          ].filter(Boolean);
+          if (!allowContactAction(`${actionType}:${contactKey}`)) {
+            return;
+          }
 
-          const copied = await copyTextToClipboard(
-            referralLines.join('\n'),
-            true
+          playPracticeActionAnimation(
+            button,
+            actionType === 'email'
+              ? 'email-reveal'
+              : 'phone-reveal'
           );
-
-          if (copied) {
-            playPracticeActionAnimation(button, 'copy');
-            showCopySuccess(button, 'Referral details copied');
-          } else {
-            showStatusToast('Unable to copy referral details. Please try again.');
-          }
+          revealContactAction(button, actionType, contactKey, value);
         }
       );
 
@@ -18019,6 +18099,7 @@
     }
 
     setupInteractions();
+    refreshTableWidthsWhenFontsReady();
 
     const browserWarmStarted = tryBrowserCacheWarmStart();
     if (!browserWarmStarted) {
