@@ -1711,8 +1711,8 @@
     }
 
     .practice-action.favourite-action svg {
-      width: 11px;
-      height: 12px;
+      width: 12px;
+      height: 14px;
       fill: transparent;
       transition: fill var(--eat-motion-fast) ease, transform var(--eat-motion-fast) ease;
     }
@@ -2603,7 +2603,7 @@
 
     .practice-favourite-wrap .favourite-action {
       width: var(--eat-action-button-width);
-      height: var(--eat-action-button-width);
+      height: var(--eat-action-button-height);
       flex: 0 0 var(--eat-action-button-width);
     }
 
@@ -4931,7 +4931,7 @@
                  Do NOT bump for audits, diff checks, renaming, re-exporting, or comment/documentation-only edits.
                  For a bump, use today's date (DD/MM/YYYY), prepend one terse change summary to data-beta-log,
                  update data-beta-version / aria-label / visible badge text to match, and preserve older log entries. -->
-            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.890" data-beta-log="0.890|04/11/2026|Polish referral actions and service transitions&#10;0.880|04/11/2026|Group Refer/correspond actions&#10;0.870|04/11/2026|Single frozen action column; compact mobile widths&#10;0.861|04/11/2026|Fix mobile loader flashing&#10;0.860|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.850|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.890">E.A.T. Beta v0.890</div>
+            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.891" data-beta-log="0.891|04/11/2026|Polish service transitions, contact card and filter scrolling&#10;0.890|04/11/2026|Polish referral actions and service transitions&#10;0.880|04/11/2026|Group Refer/correspond actions&#10;0.870|04/11/2026|Single frozen action column; compact mobile widths&#10;0.861|04/11/2026|Fix mobile loader flashing&#10;0.860|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.850|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.891">E.A.T. Beta v0.891</div>
             <div
               id="dataSourceIndicator"
               class="live-data eat-live-data"
@@ -6088,9 +6088,6 @@
     const app =
       document.getElementById('app');
 
-    const loadingState =
-      document.getElementById('loadingState');
-
     const statusElement =
       document.getElementById('status');
 
@@ -6356,6 +6353,7 @@
     let serviceSwitchToken = 0;
     let serviceTransitionFrame = null;
     const serviceTransitionAnimations = new Set();
+    const serviceTransitionCloneAnimations = new Set();
     const serviceTransitionClones = new Set();
     let lastPracticeHeaderCount = 0;
     let practiceHeaderAnimationToken = 0;
@@ -6524,24 +6522,72 @@
       stickyTableHeader
     );
 
+    const controlsScrollLeftButton =
+      document.querySelector('.controls-scroll-arrow-left');
+    const controlsScrollRightButton =
+      document.querySelector('.controls-scroll-arrow-right');
+
     const controlsScrollController =
       PFF.setupScrollableRegion({
         scroller:
           controlsScroller,
 
         leftButton:
-          document.querySelector(
-            '.controls-scroll-arrow-left'
-          ),
+          controlsScrollLeftButton,
 
         rightButton:
-          document.querySelector(
-            '.controls-scroll-arrow-right'
-          ),
+          controlsScrollRightButton,
 
         tolerance:
           2
       });
+
+    const CONTROLS_SCROLL_MEANINGFUL_OVERFLOW_PX = 6;
+
+    function syncControlsScrollArrows() {
+      const maxScrollLeft = Math.max(
+        0,
+        controlsScroller.scrollWidth - controlsScroller.clientWidth
+      );
+      const hasMeaningfulOverflow =
+        maxScrollLeft > CONTROLS_SCROLL_MEANINGFUL_OVERFLOW_PX;
+
+      if (!hasMeaningfulOverflow) {
+        if (controlsScroller.scrollLeft !== 0) {
+          controlsScroller.scrollLeft = 0;
+        }
+        controlsScrollLeftButton?.classList.add('is-hidden');
+        controlsScrollRightButton?.classList.add('is-hidden');
+        return;
+      }
+
+      const currentScrollLeft = Math.max(0, controlsScroller.scrollLeft);
+      controlsScrollLeftButton?.classList.toggle(
+        'is-hidden',
+        currentScrollLeft <= CONTROLS_SCROLL_MEANINGFUL_OVERFLOW_PX
+      );
+      controlsScrollRightButton?.classList.toggle(
+        'is-hidden',
+        currentScrollLeft >=
+          maxScrollLeft - CONTROLS_SCROLL_MEANINGFUL_OVERFLOW_PX
+      );
+    }
+
+    function updateControlsScrollUi() {
+      controlsScrollController.update();
+      requestAnimationFrame(syncControlsScrollArrows);
+    }
+
+    controlsScroller.addEventListener(
+      'scroll',
+      () => requestAnimationFrame(syncControlsScrollArrows),
+      { passive: true }
+    );
+
+    window.addEventListener(
+      'resize',
+      () => requestAnimationFrame(syncControlsScrollArrows)
+    );
 
     const tableScrollController =
       PFF.setupScrollableRegion({
@@ -7648,6 +7694,53 @@
       practiceContactCard.setAttribute('aria-hidden', 'false');
       positionPracticeContactCard(target);
       practiceContactCard.focus({ preventScroll: true });
+    }
+
+    function practiceContactCardTargetIdentity() {
+      if (
+        !practiceContactCardTarget ||
+        !practiceContactCard?.classList.contains('is-visible')
+      ) {
+        return null;
+      }
+
+      return {
+        contactKey: cleanText(practiceContactCardTarget.dataset.contactKey || ''),
+        service: cleanText(practiceContactCardTarget.dataset.contactService || '')
+      };
+    }
+
+    function restorePracticeContactCardTarget(identity) {
+      if (
+        !identity ||
+        !practiceContactCard?.classList.contains('is-visible')
+      ) {
+        return;
+      }
+
+      const replacement = Array.from(
+        tableBody.querySelectorAll('.contact-card-trigger')
+      ).find(button =>
+        cleanText(button.dataset.contactKey || '') === identity.contactKey &&
+        cleanText(button.dataset.contactService || '') === identity.service
+      );
+
+      if (!replacement) {
+        hidePracticeContactCard();
+        return;
+      }
+
+      if (practiceContactCardTarget !== replacement) {
+        practiceContactCardTarget?.setAttribute('aria-expanded', 'false');
+        practiceContactCardTarget = replacement;
+        replacement.setAttribute('aria-expanded', 'true');
+      }
+
+      requestAnimationFrame(() => {
+        if (practiceContactCardTarget === replacement) {
+          positionPracticeContactCard(replacement);
+        }
+      });
     }
 
     function recentContactActionTimes(now = Date.now()) {
@@ -12909,22 +13002,32 @@
       );
     }
 
-    function trackServiceTransitionAnimation(animation, cleanup = null) {
+    function trackServiceTransitionAnimation(
+      animation,
+      cleanup = null,
+      { departing = false } = {}
+    ) {
       if (!animation) {
         if (typeof cleanup === 'function') cleanup();
         return;
       }
 
-      serviceTransitionAnimations.add(animation);
+      const animationSet = departing
+        ? serviceTransitionCloneAnimations
+        : serviceTransitionAnimations;
+
+      animationSet.add(animation);
       animation.finished
         .catch(() => null)
         .then(() => {
-          serviceTransitionAnimations.delete(animation);
+          animationSet.delete(animation);
           if (typeof cleanup === 'function') cleanup();
         });
     }
 
-    function cancelServiceTransitionAnimations() {
+    function cancelServiceTransitionAnimations(
+      { preserveDeparting = false } = {}
+    ) {
       if (serviceTransitionFrame !== null) {
         cancelAnimationFrame(serviceTransitionFrame);
         serviceTransitionFrame = null;
@@ -12939,8 +13042,39 @@
       });
       serviceTransitionAnimations.clear();
 
+      if (preserveDeparting) {
+        return;
+      }
+
+      serviceTransitionCloneAnimations.forEach(animation => {
+        try {
+          animation.cancel();
+        } catch (_) {
+          // A finished animation may already be detached.
+        }
+      });
+      serviceTransitionCloneAnimations.clear();
+
       serviceTransitionClones.forEach(clone => clone.remove());
       serviceTransitionClones.clear();
+    }
+
+    function copyServiceTransitionAccentContext(source, clone) {
+      if (!source || !clone || typeof getComputedStyle !== 'function') {
+        return;
+      }
+
+      const computed = getComputedStyle(source);
+      [
+        '--eat-accent',
+        '--eat-accent-rgb',
+        '--eat-selected-frozen-bg'
+      ].forEach(property => {
+        const value = computed.getPropertyValue(property).trim();
+        if (value) {
+          clone.style.setProperty(property, value);
+        }
+      });
     }
 
     function animateDepartingServiceElement(element, previous) {
@@ -12954,6 +13088,7 @@
 
       const clone = element.cloneNode(true);
       scrubTransitionCloneIds(clone);
+      copyServiceTransitionAccentContext(element, clone);
       clone.hidden = false;
       clone.removeAttribute('hidden');
       clone.setAttribute('aria-hidden', 'true');
@@ -12996,7 +13131,8 @@
         () => {
           serviceTransitionClones.delete(clone);
           clone.remove();
-        }
+        },
+        { departing: true }
       );
     }
 
@@ -13146,6 +13282,8 @@
         stateControl.insertAdjacentElement('afterend', ruralityControl);
         ruralityControl.insertAdjacentElement('afterend', phnControl);
       }
+
+      requestAnimationFrame(updateControlsScrollUi);
     }
 
     function activateServiceDataset(service = activeServiceType, arrangeControls = true) {
@@ -13511,7 +13649,7 @@
                   /* Stop the first-stage animations only after capturing their
                    * current visual positions, then apply the remaining UI
                    * changes and final table geometry in the same frame. */
-                  cancelServiceTransitionAnimations();
+                  cancelServiceTransitionAnimations({ preserveDeparting: true });
                   applyViewUi();
                 }
               );
@@ -15623,10 +15761,7 @@
         ? (totalRows - end) * virtualTableRowHeight
         : 0;
       const rows = filteredRows.slice(start, end);
-
-      if (practiceContactCardTarget) {
-        hidePracticeContactCard();
-      }
+      const contactCardIdentity = practiceContactCardTargetIdentity();
 
       tableBody.innerHTML = [
         virtualSpacerRowHtml(topHeight, columns.length),
@@ -15637,6 +15772,7 @@
       ].join('');
 
       restoreVirtualSelectedRow();
+      restorePracticeContactCardTarget(contactCardIdentity);
       queueFavouriteCommunityCounts(rows);
 
       requestAnimationFrame(() => {
@@ -15832,7 +15968,7 @@
         syncStickyHeaderGeometry
       );
 
-      controlsScrollController.update();
+      updateControlsScrollUi();
       tableScrollController.update();
       stickyTableScrollController.update();
     }
@@ -17933,7 +18069,7 @@
 
       requestAnimationFrame(
         () => {
-          controlsScrollController.update();
+          updateControlsScrollUi();
           syncStickyHeaderGeometry();
           syncFrozenColumnShadow();
           syncLocationChipTooltip();
