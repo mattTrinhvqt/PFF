@@ -1076,6 +1076,37 @@
       outline-offset: 2px;
     }
 
+    .specialty-evidence-group {
+      display: flex;
+      width: 100%;
+      max-width: 54px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      margin: 0 auto;
+      white-space: normal;
+    }
+
+    .specialty-evidence-group .specialty-evidence-link {
+      display: inline-flex;
+      width: 16px;
+      height: 20px;
+      min-width: 16px;
+      flex: 0 0 16px;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+
+    .specialty-evidence-group .specialty-person-icon,
+    .specialty-evidence-group .specialty-practice-icon {
+      display: block;
+      width: 16px;
+      height: 18px;
+      flex: 0 0 16px;
+    }
+
     .specialty-no {
       color: var(--pff-muted);
     }
@@ -14918,6 +14949,7 @@
         `;
       }
 
+
       if (
         activeSpecialtyDefinitions()
           .some(definition => definition.key === column.key)
@@ -14925,23 +14957,77 @@
         const yes =
           isYes(value);
 
+        const specialtyValue =
+          cleanText(value);
+
+        const isPractitionerMapped =
+          /^yes\s*:/i.test(specialtyValue);
+
+        const practitionerNames =
+          isPractitionerMapped
+            ? specialtyValue
+                .replace(/^yes\s*:\s*/i, '')
+                .split(';')
+                .map(name => cleanText(name))
+            : [];
+
         const definition =
           activeSpecialtyDefinitions()
             .find(item => item.key === column.key);
 
-        const evidenceUrl =
-          yes && definition?.urlKey
-            ? safeExternalUrl(
-                row[definition.urlKey]
-              )
-            : '';
+        const evidenceUrls =
+          yes && isPractitionerMapped && definition?.urlKey
+            ? cleanText(row[definition.urlKey])
+                .split('§')
+                .map(url => safeExternalUrl(cleanText(url)))
+            : [];
 
         const specialtyIcon =
           serviceTypeForRow(row) === 'ophthalmology'
             ? ACTION_ICON_SVGS.specialtyPerson
             : ACTION_ICON_SVGS.specialtyPractice;
 
-        if (yes && evidenceUrl) {
+        const hasValidPractitionerEvidence =
+          isPractitionerMapped &&
+          practitionerNames.length > 0 &&
+          practitionerNames.every(Boolean) &&
+          practitionerNames.length === evidenceUrls.length &&
+          evidenceUrls.every(Boolean);
+
+        if (hasValidPractitionerEvidence) {
+          const label =
+            definition?.label || column.label || 'Specialty';
+
+          return `
+            <span
+              class="specialty-evidence-group"
+              role="group"
+              aria-label="Evidence links for ${escapeHtml(label)}"
+            >
+              ${evidenceUrls.map(
+                (evidenceUrl, index) => `
+                  <a
+                    class="specialty-yes specialty-evidence-link"
+                    href="${escapeHtml(evidenceUrl)}"
+                    target="_blank"
+                    rel="noopener"
+                    aria-label="Open evidence: practitioner #${index + 1}"
+                    title="Open evidence: practitioner #${index + 1}"
+                  >${specialtyIcon}</a>
+                `
+              ).join('')}
+            </span>
+          `;
+        }
+
+        const evidenceUrl =
+          yes && !isPractitionerMapped && definition?.urlKey
+            ? safeExternalUrl(
+                row[definition.urlKey]
+              )
+            : '';
+
+        if (yes && !isPractitionerMapped && evidenceUrl) {
           const label =
             definition?.label || column.label || 'Specialty';
 
@@ -14964,6 +15050,7 @@
           >${yes ? specialtyIcon : '—'}</span>
         `;
       }
+
 
       return escapeHtml(
         value || '—'
