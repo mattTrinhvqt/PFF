@@ -1746,6 +1746,68 @@
 
     #toggleBtn:focus-visible { outline: 2px solid rgba(102,0,255,.22); outline-offset: 2px; }
 
+
+    /* Restore original core-field validation cues. */
+    .calculator-form > .field.has-core-required-warning { position: relative; }
+    .calculator-form > .field.has-core-required-warning::after {
+      content: "⚠";
+      position: absolute;
+      right: 4px;
+      bottom: 8px;
+      z-index: 4;
+      color: var(--benchmark-red);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .calculator-form > .field.has-core-required-warning:has(select)::after { right: 24px; }
+    .calculator-form > .field.has-core-required-warning input[type="number"],
+    .calculator-form > .field.has-core-required-warning select {
+      padding-right: 22px !important;
+      padding-left: 22px !important;
+    }
+
+    /* Results uses the same segmented Salary / Hourly control as inputs. */
+    #toggleBtn { display: none !important; }
+    .results-view-mode-row {
+      position: relative;
+      z-index: 45;
+      display: flex;
+      width: 100%;
+      min-height: 22px;
+      margin: 0 auto 5px;
+      align-items: center;
+      justify-content: center;
+    }
+    .results-view-mode-row .benchmark-mode-toggle {
+      position: relative;
+      top: auto;
+      right: auto;
+      display: grid !important;
+      width: 82px;
+      flex: 0 0 82px;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+    #app:not(.is-input-collapsed) .results-view-mode-row { display: none; }
+
+    .benchmark-hours-tag {
+      display: inline-block;
+      margin-left: .25em;
+      color: inherit;
+      font: inherit;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 140ms ease;
+    }
+    .benchmark-hours-tag.is-visible { opacity: 1; }
+
+    @media (max-width: 430px) {
+      .results-view-mode-row { min-height: 21px; margin-bottom: 4px; }
+      .results-view-mode-row .benchmark-mode-toggle { width: 76px; flex-basis: 76px; }
+    }
+
     .calculator-note {
       margin: 4px auto 0;
       max-width: 500px;
@@ -1830,7 +1892,7 @@
         <div id="benchmarkField" class="field benchmark-field">
           <div id="benchmarkLabelModeRow" class="benchmark-label-mode-row">
             <div class="field-label-with-help">
-              <label id="currentSalaryLabel" for="currentSalary">Current FTE salary benchmark</label>
+              <label id="currentSalaryLabel" for="currentSalary"><span id="currentSalaryDynamicLabel">Current FTE salary benchmark</span> <span id="currentBenchmarkHoursTag" class="benchmark-hours-tag" aria-hidden="true"></span></label>
               <span class="help-tooltip-wrap">
                 <button id="salaryHelpBtn" class="help-tooltip-button" type="button" aria-label="More information about current pay benchmark" aria-expanded="false" aria-controls="salaryHelpTooltip">?</button>
                 <span id="salaryHelpTooltip" class="help-tooltip" role="tooltip">Pre-tax; excl. super and sales bonuses, incl. location and weekend/night loadings</span>
@@ -1865,7 +1927,13 @@
           <div class="results-content">
             <div class="results-primary">
               <div id="benchmarkResultsSlot" class="benchmark-results-slot"></div>
-              <div id="resultsHeading" class="results-section-label results-heading">Estimated salary</div>
+              <div class="results-view-mode-row">
+                <div id="resultsModeToggle" class="benchmark-mode-toggle" role="group" aria-label="Results display mode">
+                  <button id="resultsModeSalary" class="benchmark-mode-button is-active" type="button" aria-pressed="true">Salary</button>
+                  <button id="resultsModeHourly" class="benchmark-mode-button" type="button" aria-pressed="false">Hourly</button>
+                </div>
+              </div>
+              <div id="resultsHeading" class="results-section-label results-heading">Estimated <span id="resultsHeadingDynamicLabel">salary</span> <span id="resultsHeadingHoursTag" class="benchmark-hours-tag" aria-hidden="true"></span></div>
 
               <div id="pctScale" class="scale">
                 <div class="track"></div>
@@ -1921,7 +1989,7 @@
     const FTE_HOURS_MIN = 35;
     const FTE_HOURS_MAX = 45;
     const NUMBER_ANIMATION_MS = 1700;
-    const TOGGLE_NUMBER_ANIMATION_MS = 650;
+    const TOGGLE_NUMBER_ANIMATION_MS = 240;
     const LAYOUT_TRANSITION_MS = 920;
 
     const out = document.getElementById('out');
@@ -1937,6 +2005,8 @@
     const benchmarkResultsSlot = document.getElementById('benchmarkResultsSlot');
     const currentSalary = document.getElementById('currentSalary');
     const currentSalaryLabel = document.getElementById('currentSalaryLabel');
+    const currentSalaryDynamicLabel = document.getElementById('currentSalaryDynamicLabel');
+    const currentBenchmarkHoursTag = document.getElementById('currentBenchmarkHoursTag');
     const benchmarkFtHours = document.getElementById('benchmarkFtHours');
     const benchmarkFtHoursWarning = document.getElementById('benchmarkFtHoursWarning');
     const benchmarkModeToggle = document.getElementById('benchmarkModeToggle');
@@ -1946,12 +2016,18 @@
     const benchmarkEntryGrid = document.getElementById('benchmarkEntryGrid');
     const toggleBtn = document.getElementById('toggleBtn');
     const resultsHeading = document.getElementById('resultsHeading');
+    const resultsHeadingDynamicLabel = document.getElementById('resultsHeadingDynamicLabel');
+    const resultsHeadingHoursTag = document.getElementById('resultsHeadingHoursTag');
+    const resultsModeToggle = document.getElementById('resultsModeToggle');
+    const resultsModeSalary = document.getElementById('resultsModeSalary');
+    const resultsModeHourly = document.getElementById('resultsModeHourly');
     const modelMeta = document.getElementById('modelMeta');
     const dataSourceText = document.getElementById('dataSourceText');
 
     let viewMode = 'salary';
     let lastRes = null;
     let benchmarkSalary = null; // Always stored as annual FTE salary internally.
+    let fteHours = FTE_HOURS_DEFAULT;
     let lastKnownModel = null;
     let centralCachedSnapshotPromise = null;
     let numberAnimationToken = 0;
@@ -2004,13 +2080,21 @@
       scheduleApplyScale();
     }
 
+    function formatExperienceSummary_(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return 'Experience';
+      const rounded = Math.round(numeric * 10) / 10;
+      const display = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace(/\.0$/, '');
+      return `${display} yr${Math.abs(rounded - 1) < 0.0001 ? '' : 's'} experience`;
+    }
+
     function updateInputSummary() {
       const yearsValue = document.getElementById('years').value.trim();
       const mmmElement = document.getElementById('mmm');
       const mmmValue = mmmElement.value.trim();
       const mmmLabel = mmmElement.selectedOptions?.[0]?.textContent?.trim() || '';
       const stateValue = document.getElementById('state').value.trim();
-      summaryYears.textContent = yearsValue === '' ? 'Experience' : `${yearsValue} yr${Number(yearsValue) === 1 ? '' : 's'} experience`;
+      summaryYears.textContent = yearsValue === '' ? 'Experience' : formatExperienceSummary_(yearsValue);
       summaryMmm.textContent = mmmValue === '' ? 'MMM' : (mmmLabel || `MM${mmmValue}`);
       summaryState.textContent = stateValue || 'State';
       inputSummaryButton.setAttribute('aria-label', `Edit calculator inputs: ${summaryYears.textContent}, ${summaryMmm.textContent}, ${summaryState.textContent}`);
@@ -2057,6 +2141,7 @@
         document.documentElement.classList.remove('is-page-layout-transitioning');
         document.body.classList.remove('is-page-layout-transitioning');
       }, LAYOUT_TRANSITION_MS + 80);
+      updateBenchmarkHoursAnnotations_(false);
       scheduleApplyScale();
     }
 
@@ -2231,11 +2316,8 @@
           console.warn('Live salary model failed; using central cache', liveError?.message);
           return model;
         } catch (cacheError) {
-          if (lastKnownModel) {
-            setDataSource('cached');
-            console.warn('Live and central salary model failed; using model already loaded in this session', liveError?.message, cacheError?.message);
-            return lastKnownModel;
-          }
+          console.warn('Live salary model failed', liveError?.message);
+          console.warn('Central salary model cache failed', cacheError?.message);
           throw new Error('Salary data could not be loaded');
         }
       }
@@ -2823,7 +2905,8 @@ function sortKeysByCountDesc(counts) {
 
     function getFteWeeklyHours_() {
       const value = Number(benchmarkFtHours.value);
-      return Number.isFinite(value) && value >= FTE_HOURS_MIN && value <= FTE_HOURS_MAX ? value : FTE_HOURS_DEFAULT;
+      if (Number.isFinite(value) && value >= FTE_HOURS_MIN && value <= FTE_HOURS_MAX) return value;
+      return Number.isFinite(fteHours) && fteHours > 0 ? fteHours : FTE_HOURS_DEFAULT;
     }
 
     function getFteAnnualHours_() { return getFteWeeklyHours_() * 52; }
@@ -2859,12 +2942,13 @@ function sortKeysByCountDesc(counts) {
 
     function renderPercentileScale(res, animate = false, duration = NUMBER_ANIMATION_MS) {
       const token = ++numberAnimationToken;
-      const formatter = viewMode === 'hourly' ? fmtDollarsHourly : fmtDollarsInt;
-      animateNumber('p05v', res.p05, formatter, animate, token, duration);
-      animateNumber('p20v', res.p20, formatter, animate, token, duration);
-      animateNumber('p50v', res.p50, formatter, animate, token, duration);
-      animateNumber('p80v', res.p80, formatter, animate, token, duration);
-      animateNumber('p95v', res.p95, formatter, animate, token, duration);
+      // Match the original permanent calculator: only the median carries the
+      // currency symbol, and hourly percentile values are whole dollars.
+      animateNumber('p05v', res.p05, round0, animate, token, duration);
+      animateNumber('p20v', res.p20, round0, animate, token, duration);
+      animateNumber('p50v', res.p50, fmtDollarsInt, animate, token, duration);
+      animateNumber('p80v', res.p80, round0, animate, token, duration);
+      animateNumber('p95v', res.p95, round0, animate, token, duration);
       const positions = { t5:0, t20:(20-5)/(95-5)*100, t50:(50-5)/(95-5)*100, t80:(80-5)/(95-5)*100, t95:100 };
       Object.entries(positions).forEach(([className,left]) => {
         const tick = document.querySelector(`#pctScale .${className}`);
@@ -2940,37 +3024,97 @@ function sortKeysByCountDesc(counts) {
     }
 
     function updateFtHoursWarning_() {
-      const value=Number(benchmarkFtHours.value);
-      const valid=Number.isFinite(value)&&value>=FTE_HOURS_MIN&&value<=FTE_HOURS_MAX;
-      benchmarkFtHoursWarning.hidden=valid;
-      benchmarkFtHoursWarning.setAttribute('aria-hidden',String(valid));
-      benchmarkFtHours.setAttribute('aria-invalid',String(!valid));
+      const value = Number(benchmarkFtHours.value);
+      const valid = Number.isFinite(value) && value >= FTE_HOURS_MIN && value <= FTE_HOURS_MAX;
+      benchmarkFtHoursWarning.hidden = valid;
+      benchmarkFtHoursWarning.setAttribute('aria-hidden', String(valid));
+      benchmarkFtHours.setAttribute('aria-invalid', String(!valid));
+      if (valid) fteHours = value;
       return valid;
     }
 
     function syncBenchmarkInputDisplay_() {
       if (!benchmarkSalary) return;
       currentSalary.value = viewMode === 'hourly'
-        ? formatHourlyInput_(benchmarkSalary/getFteAnnualHours_())
+        ? formatHourlyInput_(benchmarkSalary / getFteAnnualHours_())
         : formatSalaryInput_(benchmarkSalary);
     }
 
-    function updateModeUi_() {
-      const hourly=viewMode==='hourly';
-      benchmarkModeToggle.classList.toggle('is-hourly-selected',hourly);
-      benchmarkModeSalary.classList.toggle('is-active',!hourly);
-      benchmarkModeHourly.classList.toggle('is-active',hourly);
-      benchmarkModeSalary.setAttribute('aria-pressed',String(!hourly));
-      benchmarkModeHourly.setAttribute('aria-pressed',String(hourly));
-      benchmarkLabelModeRow.classList.toggle('is-hourly-mode',hourly);
-      benchmarkEntryGrid.classList.toggle('is-hourly-mode',hourly);
-      currentSalaryLabel.textContent = hourly ? 'Current hourly rate benchmark' : 'Current FTE salary benchmark';
-      currentSalary.setAttribute('inputmode',hourly?'decimal':'numeric');
-      currentSalary.setAttribute('aria-label',hourly?'Current hourly rate benchmark in Australian dollars':'Current FTE salary benchmark in Australian dollars');
-      resultsHeading.textContent = hourly ? 'Estimated hourly rate' : 'Estimated salary';
+    function animateTextSwap_(element, nextText, animate = true) {
+      if (!element) return;
+      const target = String(nextText ?? '');
+      if (element.textContent === target) return;
+      if (!animate || prefersReducedMotion() || !element.animate) {
+        element.textContent = target;
+        return;
+      }
+      const outAnimation = element.animate(
+        [{ opacity: 1, transform: 'translateX(0)' }, { opacity: 0, transform: 'translateX(-6px)' }],
+        { duration: 80, easing: 'ease-in', fill: 'forwards' }
+      );
+      outAnimation.finished.catch(() => {}).then(() => {
+        try { outAnimation.cancel(); } catch (_) {}
+        element.textContent = target;
+        const inAnimation = element.animate(
+          [{ opacity: 0, transform: 'translateX(6px)' }, { opacity: 1, transform: 'translateX(0)' }],
+          { duration: 160, easing: 'cubic-bezier(0.16,1,0.3,1)' }
+        );
+        inAnimation.finished.catch(() => {}).finally(() => { try { inAnimation.cancel(); } catch (_) {} });
+      });
+    }
+
+    function formatHoursTagNumber_(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '';
+      return Number.isInteger(numeric) ? String(numeric) : String(Math.round(numeric * 100) / 100);
+    }
+
+    function updateBenchmarkHoursAnnotations_(animate = true) {
+      const hours = getFteWeeklyHours_();
+      const nonStandardHours = Number.isFinite(hours) && Math.abs(hours - FTE_HOURS_DEFAULT) > 0.0001;
+      const showSalaryHours = viewMode === 'salary' && nonStandardHours;
+      const isResultsView = appElement.classList.contains('is-input-collapsed');
+      const hoursText = showSalaryHours ? `(${formatHoursTagNumber_(hours)} hrs/wk)` : '';
+
+      if (currentBenchmarkHoursTag) {
+        currentBenchmarkHoursTag.textContent = showSalaryHours && isResultsView ? hoursText : '';
+        currentBenchmarkHoursTag.classList.toggle('is-visible', Boolean(currentBenchmarkHoursTag.textContent));
+      }
+      if (resultsHeadingHoursTag) {
+        resultsHeadingHoursTag.textContent = showSalaryHours ? hoursText : '';
+        resultsHeadingHoursTag.classList.toggle('is-visible', Boolean(resultsHeadingHoursTag.textContent));
+      }
+    }
+
+    function syncResultsModeToggle_() {
+      const hourly = viewMode === 'hourly';
+      resultsModeToggle?.classList.toggle('is-hourly-selected', hourly);
+      resultsModeSalary?.classList.toggle('is-active', !hourly);
+      resultsModeHourly?.classList.toggle('is-active', hourly);
+      resultsModeSalary?.setAttribute('aria-pressed', String(!hourly));
+      resultsModeHourly?.setAttribute('aria-pressed', String(hourly));
+    }
+
+    function updateModeUi_(animateLabels = false) {
+      const hourly = viewMode === 'hourly';
+      benchmarkModeToggle.classList.toggle('is-hourly-selected', hourly);
+      benchmarkModeSalary.classList.toggle('is-active', !hourly);
+      benchmarkModeHourly.classList.toggle('is-active', hourly);
+      benchmarkModeSalary.setAttribute('aria-pressed', String(!hourly));
+      benchmarkModeHourly.setAttribute('aria-pressed', String(hourly));
+      benchmarkLabelModeRow.classList.toggle('is-hourly-mode', hourly);
+      benchmarkEntryGrid.classList.toggle('is-hourly-mode', hourly);
+      animateTextSwap_(currentSalaryDynamicLabel, hourly ? 'Current hourly rate benchmark' : 'Current FTE salary benchmark', animateLabels);
+      currentSalary.setAttribute('inputmode', hourly ? 'decimal' : 'numeric');
+      currentSalary.setAttribute('enterkeyhint', hourly ? 'done' : 'next');
+      currentSalary.maxLength = hourly ? 6 : 8;
+      currentSalary.setAttribute('aria-label', hourly ? 'Current hourly rate benchmark in Australian dollars' : 'Current FTE salary benchmark in Australian dollars');
+      animateTextSwap_(resultsHeadingDynamicLabel, hourly ? 'hourly rate' : 'salary', animateLabels);
       toggleBtn.textContent = hourly ? 'Switch to salary' : 'Switch to hourly rate';
-      toggleBtn.setAttribute('aria-label',toggleBtn.textContent);
+      toggleBtn.setAttribute('aria-label', toggleBtn.textContent);
+      syncResultsModeToggle_();
       syncBenchmarkInputDisplay_();
+      updateBenchmarkHoursAnnotations_(animateLabels);
     }
 
     function updateView(animate=false,duration=NUMBER_ANIMATION_MS) {
@@ -2978,8 +3122,8 @@ function sortKeysByCountDesc(counts) {
       const displayRes=viewMode==='hourly'?toHourly(lastRes):lastRes;
       renderPercentileScale(displayRes,animate,duration);
       renderBenchmarkMarker(lastRes,benchmarkSalary);
-      updateModeUi_();
-      toggleBtn.style.display='block';
+      updateModeUi_(animate);
+      toggleBtn.style.display='none';
       scheduleApplyScale();
     }
 
@@ -2995,31 +3139,52 @@ function sortKeysByCountDesc(counts) {
 
     function setViewMode_(mode) {
       if (mode!=='salary'&&mode!=='hourly') return;
-      if (mode===viewMode) return;
-      // Capture the current value before changing interpretation.
+      // Original permanent-calculator interaction: pressing the already
+      // selected half flips to the alternate mode.
+      if (mode===viewMode) mode = viewMode==='salary' ? 'hourly' : 'salary';
+
       const entered=readBenchmarkFromInput_();
       if (entered!==null) benchmarkSalary=entered;
       else if (!currentSalary.value.trim()) benchmarkSalary=null;
+
       viewMode=mode;
-      updateModeUi_();
+      updateModeUi_(true);
       if (lastRes) updateView(true,TOGGLE_NUMBER_ANIMATION_MS);
     }
 
     benchmarkModeSalary.addEventListener('click',()=>setViewMode_('salary'));
     benchmarkModeHourly.addEventListener('click',()=>setViewMode_('hourly'));
+    resultsModeSalary.addEventListener('click',()=>setViewMode_('salary'));
+    resultsModeHourly.addEventListener('click',()=>setViewMode_('hourly'));
     toggleBtn.addEventListener('click',()=>setViewMode_(viewMode==='salary'?'hourly':'salary'));
+
+    function sanitizeBenchmarkTyping_(raw) {
+      const text = String(raw ?? '').replace(/[$,\s]/g, '').trim();
+      if (viewMode === 'hourly') {
+        let cleaned = text.replace(/[^0-9.]/g, '');
+        const firstDot = cleaned.indexOf('.');
+        if (firstDot >= 0) {
+          cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+        }
+        const parts = cleaned.split('.');
+        const integerPart = (parts[0] || '').slice(0, 3);
+        const decimalPart = (parts[1] || '').slice(0, 2);
+        return parts.length > 1 ? integerPart + '.' + decimalPart : integerPart;
+      }
+      return text.replace(/\D/g, '').slice(0, 6);
+    }
 
     currentSalary.addEventListener('input',event=>{
       const input=event.target;
+      const sanitized = sanitizeBenchmarkTyping_(input.value);
       if (viewMode==='hourly') {
-        const normalised=normaliseHourlyText_(input.value);
-        input.value=normalised?('$'+normalised):'';
+        input.value = sanitized ? ('$' + sanitized) : '';
         const hourly=parseHourlyInput_(input.value);
         benchmarkSalary=hourly===null?null:hourly*getFteAnnualHours_();
       } else {
-        const salary=parseSalaryInput_(input.value);
-        benchmarkSalary=salary;
-        input.value=salary===null?'':formatSalaryInput_(salary);
+        const salary=sanitized ? Number(sanitized) : null;
+        benchmarkSalary=Number.isFinite(salary)&&salary>0 ? salary : null;
+        input.value=benchmarkSalary===null?'':formatSalaryInput_(benchmarkSalary);
       }
       if (lastRes) renderBenchmarkMarker(lastRes,benchmarkSalary);
       else if (!benchmarkSalary) document.getElementById('userMarker').hidden=true;
@@ -3028,6 +3193,23 @@ function sortKeysByCountDesc(counts) {
     currentSalary.addEventListener('focus',()=>requestAnimationFrame(()=>{try{currentSalary.select();}catch(_){}}));
     currentSalary.addEventListener('click',()=>requestAnimationFrame(()=>{try{currentSalary.select();}catch(_){}}));
     currentSalary.addEventListener('blur',()=>syncBenchmarkInputDisplay_());
+    currentSalary.addEventListener('keydown',event=>{
+      if(event.key!=='Enter') return;
+      event.preventDefault();
+      currentSalary.blur();
+      if(viewMode==='salary') {
+        benchmarkFtHours.focus();
+      } else {
+        estimateBtn.focus();
+      }
+    });
+
+    function selectAllFtHours_() {
+      requestAnimationFrame(()=>{try{benchmarkFtHours.select();}catch(_){}});
+    }
+    benchmarkFtHours.setAttribute('enterkeyhint','done');
+    benchmarkFtHours.addEventListener('focus',selectAllFtHours_);
+    benchmarkFtHours.addEventListener('click',selectAllFtHours_);
 
     benchmarkFtHours.addEventListener('input',()=>{
       const valid=updateFtHoursWarning_();
@@ -3036,12 +3218,21 @@ function sortKeysByCountDesc(counts) {
         const hourly=parseHourlyInput_(currentSalary.value);
         benchmarkSalary=hourly===null?null:hourly*getFteAnnualHours_();
       }
+      updateBenchmarkHoursAnnotations_(true);
       if (lastRes) updateView(false);
     });
     benchmarkFtHours.addEventListener('blur',()=>{
       if (!updateFtHoursWarning_()) return;
       const value=Number(benchmarkFtHours.value);
       benchmarkFtHours.value=Number.isInteger(value)?String(value):String(Math.round(value*100)/100);
+      updateBenchmarkHoursAnnotations_(false);
+    });
+    benchmarkFtHours.addEventListener('keydown',event=>{
+      if(event.key!=='Enter') return;
+      event.preventDefault();
+      benchmarkFtHours.blur();
+      if(updateFtHoursWarning_()) estimateBtn.focus();
+      else benchmarkFtHours.focus();
     });
 
     let salaryHelpPinned=false;
@@ -3063,12 +3254,44 @@ function sortKeysByCountDesc(counts) {
     }
     function closeSalaryHelp(returnFocus=false) { salaryHelpPinned=false; setSalaryHelpOpen(false); if(returnFocus) salaryHelpBtn.focus(); }
     salaryHelpBtn.addEventListener('click',event=>{event.preventDefault(); salaryHelpPinned=!salaryHelpPinned; setSalaryHelpOpen(salaryHelpPinned);});
-    salaryHelpBtn.addEventListener('mouseenter',()=>{if(!salaryHelpPinned)setSalaryHelpOpen(true);});
+    salaryHelpBtn.addEventListener('mouseenter',()=>{setSalaryHelpOpen(true);});
     salaryHelpBtn.addEventListener('mouseleave',()=>{if(!salaryHelpPinned)setSalaryHelpOpen(false);});
+    salaryHelpBtn.addEventListener('focus',()=>{setSalaryHelpOpen(true);});
+    salaryHelpBtn.addEventListener('blur',()=>{if(!salaryHelpPinned)setSalaryHelpOpen(false);});
     document.addEventListener('pointerdown',event=>{if(salaryHelpPinned&&!salaryHelpBtn.contains(event.target)&&!salaryHelpTooltip.contains(event.target))closeSalaryHelp(false);});
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&salaryHelpTooltip.classList.contains('is-visible'))closeSalaryHelp(true);});
     window.addEventListener('resize',()=>{if(salaryHelpTooltip.classList.contains('is-visible'))positionSalaryHelp();});
     window.addEventListener('scroll',()=>{if(salaryHelpTooltip.classList.contains('is-visible'))positionSalaryHelp();},{passive:true});
+
+    function setCoreRequiredFieldWarning_(elementId, show) {
+      const element=document.getElementById(elementId);
+      const field=element?.closest('.field');
+      if(!element||!field) return;
+      field.classList.toggle('has-core-required-warning',Boolean(show));
+      element.setAttribute('aria-invalid',String(Boolean(show)));
+    }
+
+    function getCoreRequiredFieldValidity_() {
+      const yearsValue=parseFloat(document.getElementById('years').value);
+      const mmmValue=parseInt(document.getElementById('mmm').value,10);
+      const stateValue=document.getElementById('state').value.trim();
+      return {
+        years:Number.isFinite(yearsValue)&&yearsValue>=0&&yearsValue<=50,
+        mmm:Number.isFinite(mmmValue)&&mmmValue>=1&&mmmValue<=7,
+        state:Boolean(stateValue)
+      };
+    }
+
+    function updateCoreRequiredFieldWarnings_() {
+      const validity=getCoreRequiredFieldValidity_();
+      Object.entries(validity).forEach(([id,isValid])=>setCoreRequiredFieldWarning_(id,!isValid));
+      return Object.values(validity).every(Boolean);
+    }
+
+    function clearResolvedCoreFieldWarnings_() {
+      const validity=getCoreRequiredFieldValidity_();
+      Object.entries(validity).forEach(([id,isValid])=>{if(isValid)setCoreRequiredFieldWarning_(id,false);});
+    }
 
     async function estimate() {
       const years=parseFloat(document.getElementById('years').value);
@@ -3085,9 +3308,11 @@ function sortKeysByCountDesc(counts) {
       }
 
       if (!Number.isFinite(years)||years<0||years>50||!Number.isFinite(mmm)||mmm<1||mmm>7||!state) {
+        updateCoreRequiredFieldWarnings_();
         showInputError('⚠ Please complete all fields'); return;
       }
-      if (!updateFtHoursWarning_()) {
+      updateCoreRequiredFieldWarnings_();
+      if (viewMode==='salary' && !updateFtHoursWarning_()) {
         showInputError(`⚠ Paid FT hours must be ${FTE_HOURS_MIN}–${FTE_HOURS_MAX} hrs/wk`); return;
       }
       if (benchmarkText!=='' && (enteredBenchmark===null||!Number.isFinite(enteredBenchmark)||enteredBenchmark<=0)) {
@@ -3119,9 +3344,14 @@ function sortKeysByCountDesc(counts) {
     }
 
     estimateBtn.addEventListener('click',estimate);
-    ['years','mmm','state'].forEach(id=>document.getElementById(id).addEventListener('keydown',event=>{
-      if(event.key==='Enter'){event.preventDefault(); estimate();}
-    }));
+    ['years','mmm','state'].forEach(id=>{
+      const element=document.getElementById(id);
+      element.addEventListener('input',clearResolvedCoreFieldWarnings_);
+      element.addEventListener('change',clearResolvedCoreFieldWarnings_);
+      element.addEventListener('keydown',event=>{
+        if(event.key==='Enter'){event.preventDefault(); estimate();}
+      });
+    });
 
     updateModeUi_();
     updateFtHoursWarning_();
