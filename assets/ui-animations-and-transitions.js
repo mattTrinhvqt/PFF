@@ -1,8 +1,8 @@
 /*
- * ui-animations-and-transitions.js — PFF visual motion primitives (v2 review)
+ * ui-animations-and-transitions.js — PFF visual motion primitives (v3 count revision)
  * Revision based on existing PFF patterns:
  * - Matched/keyed values MORPH in place, with persistent visual framing.
- * - Numbers COUNT from their visible values; no default text crossfade.
+ * - One fast count speed; integer/decimal digit-budget protection.
  * - Entry and micro-feedback methods retained from approved v1.
  *
  * Chart.js-specific axis/spine/scale transitions remain in the existing apps/core;
@@ -37,12 +37,8 @@
       hover: safeMs(d.hoverAnimationMs, 170),
       tab: safeMs(d.tabTransitionMs, 300),
       micro: safeMs(d.microTransitionMs, 180),
-      textFadeOut: 170,  // legacy reference; no longer standard for numeric changes
-      textFadeIn: 260,
       enter: 220,
-      trackerCounter: 520, // job_tracker_1.html, job_tracker_2.html
-      calculatorCount: 1700, // permanent_calculator.html, locum_calculator.html
-      fastNumberToggle: 240 // permanent_calculator.html
+      count: 400 // one approved-candidate counter speed across contexts
     });
   }
 
@@ -195,38 +191,119 @@
     return 1 - Math.pow(1 - p, 3);
   }
 
+  /* Counter values use the same quick timing, regardless of calling app. */
+  const COUNT_MS = 400;
+  const FRACTIONS_FROM = 0.85; // new decimal digits appear in the final 15%
+  const numberFormatter = new Intl.NumberFormat('en-AU', {maximumFractionDigits: 0});
+  const compactFormatter = new Intl.NumberFormat('en-AU', {
+    notation: 'compact', maximumFractionDigits: 0
+  });
+
+  function numberFromText(text) {
+    const raw = String(text ?? '');
+    if (!raw.trim()) return NaN;
+    const numeric = Number(raw.replace(/[^0-9.\-]/g, ''));
+    return Number.isFinite(numeric) ? numeric : NaN;
+  }
+
+  function decimalDigits(target, options) {
+    if (options.decimals !== undefined) {
+      return Math.max(0, Math.min(6, Math.floor(Number(options.decimals) || 0)));
+    }
+    const written = String(target);
+    return Math.min(6, (written.split('.')[1] || '').length);
+  }
+
+  function formatParts(formatted) {
+    // An Australian number with optional prefix/suffix (e.g. '$', ' / hr').
+    const text = String(formatted);
+    const match = text.match(/^(.*?)(-?(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?)([^\d]*)$/);
+    if (!match) return null;
+    return {prefix: match[1], suffix: match[3]};
+  }
+
+  function textWidth(element, text) {
+    // Real glyph widths matter too: a seven-character string can be narrower
+    // than a six-character string in proportional fonts.
+    const doc = element.ownerDocument;
+    const ctx = doc?.createElement('canvas')?.getContext('2d');
+    if (!ctx || typeof global.getComputedStyle !== 'function') return text.length;
+    const style = global.getComputedStyle(element);
+    ctx.font = style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    if ('letterSpacing' in ctx) ctx.letterSpacing = style.letterSpacing;
+    return ctx.measureText(text).width;
+  }
+
   /**
-   * Count between the CURRENT visible number and a numeric target.
-   * Mirrors the existing PFF numericValue+easeOutCubic pattern.
-   * Existing applications can retain their own durations/formatters.
+   * Fast counting number animation (400 ms), designed for narrow dashboards.
+   * - Intermediate integer formatting is used until the LAST 15% when adding
+   *   decimal places. When removing decimals they disappear on the first tick.
+   * - No intermediate display is wider (in characters OR font pixels) than the
+   *   final formatted display. Oversized source values use compact Australian
+   *   notation (e.g. '$95K') while travelling to a smaller target ('$48.75').
+   * - If even compact notation cannot fit the final string, display that final
+   *   string rather than overflowing the allotted digits.
+   * - Already-rendered source text may initially be wider than the destination;
+   *   this function can only constrain frames from the FIRST animation update.
+   * - Consecutive calls continue from the live numeric value; old frames stop.
+   *
+   * Options: decimals (0..6), prefix/suffix, format(value),
+   *   formatInteger(value), formatCompact(value), reducedMotion, duration.
+   * A `duration:0` override is for tests/instant transitions; all PFF apps
+   * should otherwise use the 400 ms default.
    */
   function animateNumber(element, targetValue, options = {}) {
     assertElement(element);
     const target = Number(targetValue);
     if (!Number.isFinite(target)) throw new TypeError('[PFF motion] Target must be a finite number.');
-    const format = typeof options.format === 'function'
+    const digits = decimalDigits(target, options);
+    const prefix = String(options.prefix ?? '');
+    const suffix = String(options.suffix ?? '');
+    const exact = typeof options.format === 'function'
       ? options.format
-      : value => new Intl.NumberFormat('en-AU', {
-          minimumFractionDigits: Math.max(0, Math.min(6, Number(options.decimals) || 0)),
-          maximumFractionDigits: Math.max(0, Math.min(6, Number(options.decimals) || 0))
-        }).format(value);
-    const read = value => {
-      const candidate = Number(String(value ?? '').replace(/[^0-9.\-]/g, ''));
-      return Number.isFinite(candidate) && String(value ?? '').trim() !== '' ? candidate : NaN;
-    };
-    const startStored = read(element.dataset.numericValue);
-    const startDisplay = read(element.textContent);
-    const start = Number.isFinite(startStored) ? startStored : Number.isFinite(startDisplay)
-      ? startDisplay : (Number.isFinite(Number(options.initialValue)) ? Number(options.initialValue) : 0);
+      : value => prefix + new Intl.NumberFormat('en-AU', {
+          minimumFractionDigits: digits, maximumFractionDigits: digits
+        }).format(value) + suffix;
+    const finalText = String(exact(target));
+    const parts = formatParts(finalText);
+    const integer = typeof options.formatInteger === 'function'
+      ? options.formatInteger
+      : value => parts
+        ? parts.prefix + numberFormatter.format(Math.round(value)) + parts.suffix
+        : String(exact(Math.round(value))).replace(/\.\d+(?=[^\d]*$)/, '');
+    const compact = typeof options.formatCompact === 'function'
+      ? options.formatCompact
+      : value => parts
+        ? parts.prefix + compactFormatter.format(value) + parts.suffix
+        : String(integer(value));
+    const maxWidth = textWidth(element, finalText) + 0.1;
+    const fits = label => label.length <= finalText.length &&
+      textWidth(element, label) <= maxWidth;
+    const stored = numberFromText(element.dataset.numericValue);
+    const visible = numberFromText(element.textContent);
+    const initial = Number(options.initialValue);
+    const from = Number.isFinite(stored) ? stored : Number.isFinite(visible) ? visible
+      : (options.initialValue != null && Number.isFinite(initial) ? initial : 0);
     const session = begin(element);
-    const duration = durationMs(options.duration, getTimings().trackerCounter, options);
+    // One speed for every app; only 0 ms (tests/instant) can override it.
+    const ms = durationMs(options.duration === 0 ? 0 : COUNT_MS, COUNT_MS, options);
     const easing = typeof options.easing === 'function' ? options.easing : easeOutCubic;
-    const draw = value => {
-      element.textContent = String(format(value));
+    const expandingDigits = digits > 0 && !/\.\d+/.test(String(element.textContent));
+    // Strictly reserve the target's display width on every animated frame.
+    // The exact ending string always wins; custom formatters must be stable.
+    const draw = (value, progress) => {
+      let label;
+      if (progress >= 1) label = finalText;
+      else if (expandingDigits && progress >= FRACTIONS_FROM) label = String(exact(value));
+      else label = String(integer(value));
+      if (!fits(label)) label = String(compact(value));
+      if (!fits(label)) label = finalText;
+      element.textContent = label;
       element.dataset.numericValue = String(value);
+      if (typeof options.onFrame === 'function') options.onFrame({progress, value, label});
     };
-    if (duration <= 0 || start === target || typeof global.requestAnimationFrame !== 'function') {
-      draw(target);
+    if (ms <= 0 || from === target || typeof global.requestAnimationFrame !== 'function') {
+      draw(target, 1);
       settle(element, session);
       return Promise.resolve(true);
     }
@@ -235,21 +312,23 @@
       const startTime = global.performance.now();
       const tick = now => {
         if (!current(element, session)) return;
-        const t = Math.min(1, Math.max(0, (now - startTime) / duration));
-        try { draw(start + (target - start) * easing(t)); }
-        catch (error) { settle(element, session); resolve(false); global.console?.error(error); return; }
-        if (t < 1) session.raf = global.requestAnimationFrame(tick);
-        else { draw(target); settle(element, session); resolve(true); }
+        const progress = Math.min(1, Math.max(0, (now - startTime) / ms));
+        try { draw(from + (target - from) * easing(progress), progress); }
+        catch (error) {
+          settle(element, session);
+          resolve(false);
+          global.console?.error(error);
+          return;
+        }
+        if (progress < 1) session.raf = global.requestAnimationFrame(tick);
+        else { settle(element, session); resolve(true); }
       };
       session.raf = global.requestAnimationFrame(tick);
     });
   }
 
-  /** Integer counter convenience wrapper; 520ms is the job-tracker reference. */
   function animateCount(element, targetValue, options = {}) {
-    const formatter = options.format || (value =>
-      new Intl.NumberFormat('en-AU', { maximumFractionDigits: 0 }).format(Math.round(value)));
-    return animateNumber(element, targetValue, {...options, format: formatter});
+    return animateNumber(element, targetValue, {...options, decimals: 0});
   }
 
   /**
@@ -311,7 +390,7 @@
     console.warn('[PFF Modules] motion namespace already exists; replacing it.');
   }
   modules.motion = Object.freeze({
-    version: '0.2.0-candidate.2',
+    version: '0.3.0-candidate.3',
     getTimings,
     reducedMotion,
     morphSeries,
