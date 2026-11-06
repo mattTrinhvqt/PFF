@@ -276,8 +276,8 @@
 
       aggregateOpacity: 0.91,
       aggregateHoverOpacity: 0.98,
-      dimmedAggregateOpacity: 0.48,
-      dimmedAggregateHoverOpacity: 0.60,
+      dimmedAggregateOpacity: 0.10,
+      dimmedAggregateHoverOpacity: 0.20,
       rawPointRadius: 4,
 
       bubbleYAxisMinimumSpan: 40000,
@@ -818,6 +818,141 @@
       return `${lower}–<${upper} years`;
     }
 
+
+    function employerOverlayExperienceBand(value) {
+      if (
+        !Number.isFinite(value) ||
+        value < 0
+      ) {
+        return {
+          key: 'unspecified',
+          sort: Number.POSITIVE_INFINITY,
+          label: 'Unspecified',
+          lower: null,
+          upper: null,
+          midpoint: null
+        };
+      }
+
+      if (value < 3) {
+        return {
+          key: '0-3',
+          sort: 0,
+          label: '0–<3',
+          lower: 0,
+          upper: 3,
+          midpoint: 1.5
+        };
+      }
+
+      if (value < 6) {
+        return {
+          key: '3-6',
+          sort: 3,
+          label: '3–<6',
+          lower: 3,
+          upper: 6,
+          midpoint: 4.5
+        };
+      }
+
+      if (value < 10) {
+        return {
+          key: '6-10',
+          sort: 6,
+          label: '6–<10',
+          lower: 6,
+          upper: 10,
+          midpoint: 8
+        };
+      }
+
+      const lower =
+        Math.floor(value / 10) * 10;
+
+      const upper =
+        lower + 10;
+
+      return {
+        key: `${lower}-${upper}`,
+        sort: lower,
+        label: `${lower}–<${upper}`,
+        lower,
+        upper,
+        midpoint:
+          (lower + upper) / 2
+      };
+    }
+
+    function employerOverlayExperienceBands() {
+      const bands = new Map();
+
+      [
+        0,
+        3,
+        6,
+        10,
+        20,
+        30,
+        40
+      ].forEach(value => {
+        const band =
+          employerOverlayExperienceBand(
+            value
+          );
+
+        bands.set(
+          band.key,
+          band
+        );
+      });
+
+      rows.forEach(row => {
+        const band =
+          employerOverlayExperienceBand(
+            row.experience
+          );
+
+        bands.set(
+          band.key,
+          band
+        );
+      });
+
+      const ordered =
+        [...bands.values()].sort(
+          (
+            first,
+            second
+          ) =>
+            first.sort -
+              second.sort ||
+            first.label.localeCompare(
+              second.label
+            )
+        );
+
+      const left = 8;
+      const right = 92;
+
+      return ordered.map(
+        (
+          band,
+          index
+        ) => ({
+          ...band,
+
+          x:
+            ordered.length === 1
+              ? 50
+              : left +
+                index /
+                (ordered.length - 1) *
+                (right - left)
+        })
+      );
+    }
+
     function buildIndividualDetailLines(raw) {
       if (activeView === 'experience') {
         return [
@@ -956,6 +1091,110 @@
           scale.height = 46;
         }
       };
+    }
+
+
+    function bubbleHiddenXAxis() {
+      return fixedXAxis({
+        type: 'linear',
+        pffTickView: 'hidden',
+        min: 0,
+        max: 100,
+
+        title: {
+          display: false
+        },
+
+        ticks: {
+          display: false
+        },
+
+        grid: {
+          drawOnChartArea: false,
+          drawTicks: false
+        },
+
+        border: {
+          display: false
+        }
+      });
+    }
+
+    function employerOverlayExperienceXAxis() {
+      const bands =
+        employerOverlayExperienceBands();
+
+      return fixedXAxis({
+        type: 'linear',
+        pffTickView:
+          'employerExperienceBands',
+        min: 0,
+        max: 100,
+
+        afterBuildTicks(scale) {
+          scale.ticks = bands.map(
+            band => ({
+              value: band.x
+            })
+          );
+        },
+
+        title: {
+          display: true,
+          text: 'Experience (years)',
+          color: '#151515',
+
+          font: {
+            family: 'Lato',
+            size: 13,
+            weight: '700'
+          }
+        },
+
+        ticks: {
+          color: '#151515',
+          autoSkip: false,
+          maxRotation: 0,
+          minRotation: 0,
+
+          font: {
+            family: 'Lato',
+            size: 10,
+            weight: '400'
+          },
+
+          callback(value) {
+            const numericValue =
+              Number(value);
+
+            return (
+              bands.find(
+                band =>
+                  Math.abs(
+                    band.x -
+                    numericValue
+                  ) < 0.001
+              )?.label ||
+              ''
+            );
+          }
+        },
+
+        grid: {
+          drawOnChartArea: false,
+          drawTicks: true,
+          tickLength: 6,
+          tickColor:
+            'rgba(21, 21, 21, 0)',
+          tickWidth: 0
+        },
+
+        border: {
+          display: true,
+          color: '#151515',
+          width: 1.1
+        }
+      });
     }
 
     function getXAxisChangeMap(
@@ -1783,6 +2022,93 @@
       };
     }
 
+
+    function beginXAxisOptionTransition(
+      nextOptions
+    ) {
+      if (
+        !chart ||
+        !nextOptions
+      ) {
+        return false;
+      }
+
+      const previousOptions =
+        currentXAxisOptions ||
+        chart.options.scales.x;
+
+      const previousScale =
+        chart.scales.x;
+
+      xAxisFade.active = true;
+      xAxisFade.progress = 0;
+      xAxisFade.from =
+        safeCaptureXAxisSnapshot(
+          previousScale,
+          previousOptions
+        );
+
+      xAxisFade.changes =
+        getXAxisChangeMap(
+          previousOptions,
+          nextOptions
+        );
+
+      chart.options.scales.x =
+        createFadingXAxisOptions(
+          nextOptions
+        );
+
+      currentXAxisOptions =
+        nextOptions;
+
+      chart.update('none');
+      return true;
+    }
+
+    function setXAxisOptionTransitionProgress(
+      progress
+    ) {
+      if (!xAxisFade.active) {
+        return;
+      }
+
+      xAxisFade.progress = clamp(
+        progress,
+        0,
+        1
+      );
+    }
+
+    function completeXAxisOptionTransition(
+      finalOptions
+    ) {
+      if (
+        !chart ||
+        !finalOptions
+      ) {
+        return;
+      }
+
+      xAxisFade.active = false;
+      xAxisFade.progress = 1;
+      xAxisFade.from = null;
+      xAxisFade.changes = {
+        ticks: false,
+        labels: false,
+        title: false,
+        border: false
+      };
+
+      chart.options.scales.x =
+        finalOptions;
+
+      currentXAxisOptions =
+        finalOptions;
+
+      chart.update('none');
+    }
+
     const xAxisFadePlugin = {
       id: 'xAxisFadePlugin',
 
@@ -1860,6 +2186,13 @@
 
       if (view === 'experience') {
         return value % 5 === 0;
+      }
+
+      if (
+        view ===
+        'employerExperienceBands'
+      ) {
+        return true;
       }
 
       if (view === 'date') {
@@ -1975,18 +2308,27 @@
       id: 'variableAxisTickPlugin',
 
       afterDatasetsDraw(activeChart) {
+        const tickView =
+          activeChart
+            .scales
+            .x
+            ?.options
+            ?.pffTickView ||
+          activeView;
+
         if (
           [
             'experience',
             'date',
-            'rurality'
-          ].includes(activeView)
+            'rurality',
+            'employerExperienceBands'
+          ].includes(tickView)
         ) {
           drawVariableAxisTicks(
             activeChart.ctx,
             activeChart.scales.x,
             'x',
-            activeView
+            tickView
           );
         }
       }
@@ -3791,29 +4133,7 @@
           }
         ],
 
-        xScale: fixedXAxis({
-          type: 'linear',
-          pffTickView: 'hidden',
-          min: 0,
-          max: 100,
-
-          title: {
-            display: false
-          },
-
-          ticks: {
-            display: false
-          },
-
-          grid: {
-            drawOnChartArea: false,
-            drawTicks: false
-          },
-
-          border: {
-            display: false
-          }
-        }),
+        xScale: bubbleHiddenXAxis(),
 
         legendItems:
           store.categories.map(
@@ -3908,7 +4228,7 @@
                 bubbleStores[
                   raw.bubbleView
                 ].dimProgress *
-                0.43
+                0.90
               );
 
             context.textAlign = 'center';
@@ -6134,6 +6454,135 @@
         return [];
       }
 
+      if (view === 'employer') {
+        const bands =
+          employerOverlayExperienceBands();
+
+        const bandByKey =
+          new Map(
+            bands.map(
+              band => [
+                band.key,
+                band
+              ]
+            )
+          );
+
+        const groupedByBandAndSalary =
+          new Map();
+
+        categoryRows.forEach(row => {
+          const band =
+            employerOverlayExperienceBand(
+              row.experience
+            );
+
+          const groupKey =
+            `${band.key}|${row.fteSalary}`;
+
+          if (
+            !groupedByBandAndSalary.has(
+              groupKey
+            )
+          ) {
+            groupedByBandAndSalary.set(
+              groupKey,
+              {
+                bandKey: band.key,
+                rows: []
+              }
+            );
+          }
+
+          groupedByBandAndSalary
+            .get(groupKey)
+            .rows
+            .push(row);
+        });
+
+        const points = [];
+
+        groupedByBandAndSalary.forEach(
+          group => {
+            const band =
+              bandByKey.get(
+                group.bandKey
+              );
+
+            if (!band) {
+              return;
+            }
+
+            const groupRows =
+              group.rows
+                .slice()
+                .sort(
+                  (
+                    first,
+                    second
+                  ) =>
+                    first.sourceIndex -
+                    second.sourceIndex
+                );
+
+            const count =
+              groupRows.length;
+
+            const halfSpan = Math.min(
+              17,
+
+              Math.max(
+                0,
+                (count - 1) *
+                  1.5
+              ),
+
+              Math.max(
+                0,
+
+                Math.min(
+                  band.x - 5,
+                  95 - band.x
+                )
+              )
+            );
+
+            groupRows.forEach(
+              (
+                row,
+                index
+              ) => {
+                const targetX =
+                  count === 1
+                    ? band.x
+                    : band.x -
+                      halfSpan +
+                      index /
+                      (count - 1) *
+                      halfSpan *
+                      2;
+
+                points.push({
+                  x: aggregate.x,
+                  y: aggregate.y,
+                  targetX,
+                  targetY: row.fteSalary,
+                  bubbleView: view,
+                  categoryKey,
+                  label: aggregate.label,
+                  fullName: aggregate.fullName,
+                  colour: aggregate.colour,
+                  statistics: aggregate.statistics,
+                  ...row
+                });
+              }
+            );
+          }
+        );
+
+        return points;
+      }
+
       const grouped =
         new Map();
 
@@ -6245,6 +6694,15 @@
         store.splitKeys.size ===
         0;
 
+      const shouldSwitchEmployerXAxis =
+        view === 'employer' &&
+        shouldDim;
+
+      const employerOverlayXAxis =
+        shouldSwitchEmployerXAxis
+          ? employerOverlayExperienceXAxis()
+          : null;
+
       const startYAxisRange =
         copyDisplayedYAxisRange();
 
@@ -6274,6 +6732,13 @@
 
       chart.data.datasets[1].data =
         store.rawPoints;
+
+      const xAxisTransitionActive =
+        employerOverlayXAxis
+          ? beginXAxisOptionTransition(
+              employerOverlayXAxis
+            )
+          : false;
 
       chart.update('none');
       updateReaggregateButton();
@@ -6310,6 +6775,12 @@
           if (shouldDim) {
             store.dimProgress =
               progress;
+          }
+
+          if (xAxisTransitionActive) {
+            setXAxisOptionTransitionProgress(
+              progress
+            );
           }
 
           points.forEach(point => {
@@ -6356,6 +6827,12 @@
             store.dimProgress = 1;
           }
 
+          if (xAxisTransitionActive) {
+            completeXAxisOptionTransition(
+              employerOverlayXAxis
+            );
+          }
+
           interactionLocked = false;
           chart.update('none');
           updateReaggregateButton();
@@ -6383,6 +6860,11 @@
 
       const view =
         activeView;
+
+      const employerBaseXAxis =
+        view === 'employer'
+          ? bubbleHiddenXAxis()
+          : null;
 
       const startYAxisRange =
         copyDisplayedYAxisRange();
@@ -6422,6 +6904,13 @@
           point.x;
       });
 
+      const xAxisTransitionActive =
+        employerBaseXAxis
+          ? beginXAxisOptionTransition(
+              employerBaseXAxis
+            )
+          : false;
+
       chart.update('none');
       updateReaggregateButton();
 
@@ -6454,6 +6943,12 @@
 
           store.dimProgress =
             1 - progress;
+
+          if (xAxisTransitionActive) {
+            setXAxisOptionTransitionProgress(
+              progress
+            );
+          }
 
           store.rawPoints.forEach(point => {
             const aggregate =
@@ -6507,6 +7002,12 @@
           store.mergingKeys.clear();
           store.mergeProgress = 0;
           store.dimProgress = 0;
+
+          if (xAxisTransitionActive) {
+            completeXAxisOptionTransition(
+              employerBaseXAxis
+            );
+          }
 
           interactionLocked = false;
           chart.update('none');
