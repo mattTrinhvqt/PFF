@@ -1719,7 +1719,32 @@
     .benchmark-ft-hours-line input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
     .benchmark-ft-hours-suffix { color: var(--muted); font-size: 9px; line-height: 1; white-space: nowrap; }
-    .benchmark-ft-hours-warning { position: absolute; top: 14px; right: 0; color: var(--error-red); font-size: 10px; font-weight: 700; }
+
+    .benchmark-ft-hours-warning {
+      position: absolute;
+      top: 14px;
+      right: 0;
+      color: var(--benchmark-red);
+      font-size: 0;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .benchmark-ft-hours-warning::before {
+      content: "!";
+      display: inline-flex;
+      width: 13px;
+      height: 13px;
+      align-items: center;
+      justify-content: center;
+      color: var(--benchmark-red);
+      border: 1.5px solid var(--benchmark-red);
+      border-radius: 50%;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
     .benchmark-ft-hours-warning[hidden] { display: none; }
 
     .benchmark-results-slot .benchmark-mode-toggle,
@@ -1747,20 +1772,29 @@
     #toggleBtn:focus-visible { outline: 2px solid rgba(102,0,255,.22); outline-offset: 2px; }
 
 
-    /* Restore original core-field validation cues. */
+    /* Restore original controlled core-field validation cues. */
     .calculator-form > .field.has-core-required-warning { position: relative; }
+
     .calculator-form > .field.has-core-required-warning::after {
-      content: "⚠";
+      content: "!";
       position: absolute;
       right: 4px;
       bottom: 8px;
       z-index: 4;
+      display: inline-flex;
+      width: 13px;
+      height: 13px;
+      align-items: center;
+      justify-content: center;
       color: var(--benchmark-red);
-      font-size: 11px;
+      border: 1.5px solid var(--benchmark-red);
+      border-radius: 50%;
+      font-size: 9px;
       font-weight: 700;
       line-height: 1;
       pointer-events: none;
     }
+
     .calculator-form > .field.has-core-required-warning:has(select)::after { right: 24px; }
     .calculator-form > .field.has-core-required-warning input[type="number"],
     .calculator-form > .field.has-core-required-warning select {
@@ -1959,8 +1993,8 @@
     }
 
     /* Once the benchmark field moves into results, its input-only hours
-       header is hidden and the Salary/Hourly toggle occupies the same
-       middle header position used by the full permanent calculator. */
+       header and input Salary/Hourly toggle are hidden. The separate
+       results Salary/Hourly toggle sits above the Estimated heading. */
     .benchmark-results-slot .benchmark-label-mode-row {
       display: block;
       min-height: 16px;
@@ -1990,9 +2024,9 @@
       display: none !important;
     }
 
-    /* Fixed result-header geometry from the full permanent calculator:
-       16px descriptor row + 30px value row, with the middle toggle aligned
-       to the bottom of the same 48px header. */
+    /* Fixed benchmark result-header geometry from the full permanent
+       calculator: a 16px descriptor row plus a 30px value row. The
+       results Salary/Hourly toggle is positioned separately below. */
 
     #benchmarkResultsSlot .benchmark-label-mode-row,
     #benchmarkResultsSlot .benchmark-main-label-control,
@@ -2590,47 +2624,54 @@
 
     function renderDataSourceStatus_() {
       const modelSource = dataSourceParts.model;
-      const rosterSource = dataSourceParts.roster;
 
       modelMeta.classList.remove('is-live', 'is-cached');
 
       if (modelSource === 'error' || modelSource === 'none') {
         dataSourceText.textContent = 'Data unavailable';
-        modelMeta.setAttribute('aria-label', 'Salary model data unavailable');
+        modelMeta.setAttribute(
+          'aria-label',
+          'Salary model data unavailable'
+        );
         scheduleApplyScale();
         return;
       }
 
       if (modelSource === 'loading') {
         dataSourceText.textContent = 'Loading model…';
-        modelMeta.setAttribute('aria-label', 'Loading salary model');
+        modelMeta.setAttribute(
+          'aria-label',
+          'Loading salary model'
+        );
         scheduleApplyScale();
         return;
       }
 
-      const modelLabel = modelSource === 'cached' ? 'CACHED MLR (OLS)' : 'LIVE MLR (OLS)';
-      let rosterLabel = 'ROSTER LOADING';
-      let rosterAria = 'roster medians loading';
+      const cached =
+        modelSource === 'cached';
 
-      if (rosterSource === 'live') {
-        rosterLabel = 'LIVE ROSTER';
-        rosterAria = 'live roster medians';
-      } else if (rosterSource === 'cached') {
-        rosterLabel = 'CACHED ROSTER';
-        rosterAria = 'cached roster medians';
-      } else if (rosterSource === 'error' || rosterSource === 'none') {
-        rosterLabel = 'ROSTER UNAVAILABLE';
-        rosterAria = 'roster medians unavailable';
-      }
+      modelMeta.classList.toggle(
+        'is-cached',
+        cached
+      );
 
-      const anyCached = modelSource === 'cached' || rosterSource === 'cached';
-      modelMeta.classList.toggle('is-cached', anyCached);
-      modelMeta.classList.toggle('is-live', !anyCached);
-      dataSourceText.textContent = `${modelLabel} · ${rosterLabel}`;
+      modelMeta.classList.toggle(
+        'is-live',
+        !cached
+      );
+
+      dataSourceText.textContent =
+        cached
+          ? 'CACHED MLR (OLS) model loaded'
+          : 'LIVE MLR (OLS) model loaded';
+
       modelMeta.setAttribute(
         'aria-label',
-        `${modelSource === 'cached' ? 'Cached' : 'Live'} MLR OLS salary model; ${rosterAria}`
+        cached
+          ? 'Cached MLR OLS model loaded'
+          : 'Live MLR OLS model loaded'
       );
+
       scheduleApplyScale();
     }
 
@@ -3971,19 +4012,90 @@ function sortKeysByCountDesc(counts) {
     let salaryHelpPinned=false;
     const salaryHelpBtn=document.getElementById('salaryHelpBtn');
     const salaryHelpTooltip=document.getElementById('salaryHelpTooltip');
+
+    /*
+     * Move the tooltip outside #app so fixed positioning remains
+     * relative to the browser or iframe viewport.
+     */
+    document.body.appendChild(
+      salaryHelpTooltip
+    );
+
     function positionSalaryHelp() {
-      const rect=salaryHelpBtn.getBoundingClientRect();
-      const tip=salaryHelpTooltip.getBoundingClientRect();
-      let left=rect.left+rect.width/2-tip.width/2;
-      left=Math.max(12,Math.min(window.innerWidth-tip.width-12,left));
-      let top=rect.bottom+8;
-      if (top+tip.height>window.innerHeight-12) top=Math.max(12,rect.top-tip.height-8);
-      salaryHelpTooltip.style.left=`${left}px`; salaryHelpTooltip.style.top=`${top}px`;
+      const viewportMargin=12;
+      const buttonGap=8;
+
+      const rect=
+        salaryHelpBtn.getBoundingClientRect();
+
+      salaryHelpTooltip.style.left='0px';
+      salaryHelpTooltip.style.top='0px';
+
+      const tip=
+        salaryHelpTooltip.getBoundingClientRect();
+
+      let left=
+        rect.left+
+        rect.width/2-
+        tip.width/2;
+
+      left=Math.max(
+        viewportMargin,
+        Math.min(
+          left,
+          window.innerWidth-
+          tip.width-
+          viewportMargin
+        )
+      );
+
+      let top=
+        rect.bottom+
+        buttonGap;
+
+      if (
+        top+tip.height>
+        window.innerHeight-viewportMargin
+      ) {
+        top=
+          rect.top-
+          buttonGap-
+          tip.height;
+      }
+
+      top=Math.max(
+        viewportMargin,
+        Math.min(
+          top,
+          window.innerHeight-
+          tip.height-
+          viewportMargin
+        )
+      );
+
+      salaryHelpTooltip.style.left=
+        `${Math.round(left)}px`;
+
+      salaryHelpTooltip.style.top=
+        `${Math.round(top)}px`;
     }
+
     function setSalaryHelpOpen(open) {
-      salaryHelpTooltip.classList.toggle('is-visible',open);
-      salaryHelpBtn.setAttribute('aria-expanded',String(open));
-      if (open) requestAnimationFrame(positionSalaryHelp);
+      if (open) {
+        positionSalaryHelp();
+        salaryHelpTooltip.classList.add(
+          'is-visible'
+        );
+      } else {
+        salaryHelpTooltip.classList.remove(
+          'is-visible'
+        );
+      }
+
+      salaryHelpBtn.setAttribute(
+        'aria-expanded',
+        String(open)
+      );
     }
     function closeSalaryHelp(returnFocus=false) { salaryHelpPinned=false; setSalaryHelpOpen(false); if(returnFocus) salaryHelpBtn.focus(); }
     salaryHelpBtn.addEventListener('click',event=>{event.preventDefault(); salaryHelpPinned=!salaryHelpPinned; setSalaryHelpOpen(salaryHelpPinned);});
