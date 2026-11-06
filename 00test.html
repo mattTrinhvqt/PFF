@@ -276,8 +276,8 @@
 
       aggregateOpacity: 0.91,
       aggregateHoverOpacity: 0.98,
-      dimmedAggregateOpacity: 0.20,
-      dimmedAggregateHoverOpacity: 0.20,
+      dimmedAggregateOpacity: 0.10,
+      dimmedAggregateHoverOpacity: 0.10,
       rawPointRadius: 4,
 
       bubbleYAxisMinimumSpan: 40000,
@@ -827,7 +827,10 @@
         return {
           key: 'unspecified',
           sort: Number.POSITIVE_INFINITY,
-          label: 'Unspecified'
+          label: 'Unspecified',
+          lower: null,
+          upper: null,
+          midpoint: null
         };
       }
 
@@ -835,7 +838,10 @@
         return {
           key: '0-3',
           sort: 0,
-          label: '0–<3'
+          label: '0–<3',
+          lower: 0,
+          upper: 3,
+          midpoint: 1.5
         };
       }
 
@@ -843,7 +849,10 @@
         return {
           key: '3-6',
           sort: 3,
-          label: '3–<6'
+          label: '3–<6',
+          lower: 3,
+          upper: 6,
+          midpoint: 4.5
         };
       }
 
@@ -851,17 +860,27 @@
         return {
           key: '6-10',
           sort: 6,
-          label: '6–<10'
+          label: '6–<10',
+          lower: 6,
+          upper: 10,
+          midpoint: 8
         };
       }
 
       const lower =
         Math.floor(value / 10) * 10;
 
+      const upper =
+        lower + 10;
+
       return {
-        key: `${lower}-${lower + 10}`,
+        key: `${lower}-${upper}`,
         sort: lower,
-        label: `${lower}–<${lower + 10}`
+        label: `${lower}–<${upper}`,
+        lower,
+        upper,
+        midpoint:
+          (lower + upper) / 2
       };
     }
 
@@ -913,25 +932,50 @@
             )
         );
 
-      const left = 8;
-      const right = 92;
+      const numericBands =
+        ordered.filter(
+          band =>
+            Number.isFinite(
+              band.midpoint
+            )
+        );
 
-      return ordered.map(
-        (
-          band,
-          index
-        ) => ({
-          ...band,
+      const hasUnspecified =
+        ordered.some(
+          band =>
+            band.key ===
+            'unspecified'
+        );
 
-          x:
-            ordered.length === 1
-              ? 50
-              : left +
-                index /
-                (ordered.length - 1) *
-                (right - left)
-        })
-      );
+      const maximumUpper =
+        Math.max(
+          10,
+          ...numericBands.map(
+            band => band.upper
+          )
+        );
+
+      const left = 5;
+      const numericRight =
+        hasUnspecified
+          ? 88
+          : 95;
+
+      const unspecifiedX = 96;
+
+      return ordered.map(band => ({
+        ...band,
+
+        x:
+          Number.isFinite(
+            band.midpoint
+          )
+            ? left +
+              band.midpoint /
+              maximumUpper *
+              (numericRight - left)
+            : unspecifiedX
+      }));
     }
 
     function buildIndividualDetailLines(raw) {
@@ -4209,7 +4253,7 @@
                 bubbleStores[
                   raw.bubbleView
                 ].dimProgress *
-                0.80
+                0.90
               );
 
             context.textAlign = 'center';
@@ -6449,7 +6493,7 @@
             )
           );
 
-        const groupedByBand =
+        const groupedByBandAndSalary =
           new Map();
 
         categoryRows.forEach(row => {
@@ -6458,66 +6502,77 @@
               row.experience
             );
 
+          const groupKey =
+            `${band.key}|${row.fteSalary}`;
+
           if (
-            !groupedByBand.has(
-              band.key
+            !groupedByBandAndSalary.has(
+              groupKey
             )
           ) {
-            groupedByBand.set(
-              band.key,
-              []
+            groupedByBandAndSalary.set(
+              groupKey,
+              {
+                bandKey: band.key,
+                rows: []
+              }
             );
           }
 
-          groupedByBand
-            .get(band.key)
+          groupedByBandAndSalary
+            .get(groupKey)
+            .rows
             .push(row);
         });
 
         const points = [];
 
-        groupedByBand.forEach(
-          (
-            groupRows,
-            bandKey
-          ) => {
+        groupedByBandAndSalary.forEach(
+          group => {
             const band =
               bandByKey.get(
-                bandKey
+                group.bandKey
               );
 
             if (!band) {
               return;
             }
 
-            const orderedRows =
-              groupRows
+            const groupRows =
+              group.rows
                 .slice()
                 .sort(
                   (
                     first,
                     second
                   ) =>
-                    first.fteSalary -
-                      second.fteSalary ||
                     first.sourceIndex -
-                      second.sourceIndex
+                    second.sourceIndex
                 );
 
             const count =
-              orderedRows.length;
+              groupRows.length;
 
-            const halfSpan =
-              Math.min(
-                3.3,
-                Math.max(
-                  0,
-                  (count - 1) *
-                    0.55
+            const halfSpan = Math.min(
+              17,
+
+              Math.max(
+                0,
+                (count - 1) *
+                  1.5
+              ),
+
+              Math.max(
+                0,
+
+                Math.min(
+                  band.x - 5,
+                  95 - band.x
                 )
-              );
+              )
+            );
 
-            orderedRows.forEach(
+            groupRows.forEach(
               (
                 row,
                 index
