@@ -1,4 +1,4 @@
-/* PFF charts: tooltips and hover, candidate v1, 2026-11-07.
+/* PFF charts: tooltips and hover, candidate v2, 2026-11-08.
  * Derived from the existing PFFCharts.tooltipOptions() / lineInteractionOptions()
  * and current graph-specific manual tooltip activation patterns.
  * Opt-in Chart.js configuration and interaction helpers. No global mutation,
@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
   const modules = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '1.0.0-candidate.1';
+  const VERSION = '1.0.0-candidate.2';
   const TOKENS = Object.freeze({
     surface: '#ffffff', ink: '#151515', muted: '#69718a', border: '#e8eaf0',
     font: 'Lato', titleSize: 12, bodySize: 11, padding: 9, radius: 4
@@ -57,12 +57,17 @@
     if (!base) throw new Error(`Unknown PFF chart interaction profile: ${profile}`);
     return merge(base, overrides);
   }
+  // Opt-in Chart.js element defaults: no dark bar outline, and only a
+  // fine 1px point border on hover. App-specific dataset styles can override.
+  function subtleEmphasisOptions(overrides = {}) {
+    return merge({point: {hoverBorderWidth: 1}, bar: {hoverBorderWidth: 0}}, overrides);
+  }
   function chartOptions(profile = 'point', options = {}) {
     const interaction = interactionOptions(profile, options.interaction || {});
     const tooltip = tooltipOptions({mode: interaction.mode, intersect: interaction.intersect,
       axis: interaction.axis, ...(options.tooltip || {})});
     if (profile === 'manual' && !Object.hasOwn(options.tooltip || {}, 'events')) tooltip.events = [];
-    return {interaction, plugins: {tooltip}};
+    return {interaction, elements: subtleEmphasisOptions(options.elements || {}), plugins: {tooltip}};
   }
   function normaliseElements(elements) {
     return (Array.isArray(elements) ? elements : []).filter(item =>
@@ -98,8 +103,9 @@
       const position = (Number.isFinite(at?.x) && Number.isFinite(at?.y))
         ? {x: at.x, y: at.y} : (next.length ? metaPosition(current, next[0]) : {x: 0, y: 0});
       current.tooltip.setActiveElements(next, position);
-      // Sync chart hover highlights with tooltip, without animation.
-      current.setActiveElements?.(next);
+      // A pinned tooltip should not automatically create a heavy mark outline.
+      // Individual apps can opt into mark highlighting if appropriate.
+      current.setActiveElements?.(options.highlightMarks === true ? next : []);
       if (shouldUpdate) current.update?.('none');
       elements = next;
       options.onChange?.({elements: getElements(), pinned, position});
@@ -138,6 +144,6 @@
   }
   modules.chartTooltips = Object.freeze({
     version: VERSION, tokens: TOKENS, tooltipOptions, interactionOptions,
-    chartOptions, createHoverController
+    chartOptions, subtleEmphasisOptions, createHoverController
   });
 })(typeof window !== 'undefined' ? window : globalThis);
