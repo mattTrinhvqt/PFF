@@ -1,5 +1,5 @@
 /*
- * PFF chart animations & transitions — v1.0.0-candidate.1
+ * PFF chart animations & transitions — v2.0.0-candidate.1
  * An opt-in coordinator for chart DATA, value-axis limits, and moving ticks.
  * Based on the existing PFF keyed morph / practice_landscape tick handoff.
  * Approved foundations remain unchanged: chart styling, chart axes, UI counters.
@@ -12,7 +12,8 @@
  *   animate(target, model, {initial, render(frame, meta), reducedMotion})
  *   sample(fromModel, toModel, rawProgress)
  *   withChartJsTiming(chartOptions)
- *   handoff(target, render({phase, opacity, progress}), options)
+ *   morphTypes(target, toTypeModel, {initial, plot, render, reducedMotion})
+ *   sampleTypeMorph(fromTypeModel, toTypeModel, progress, plot)
  *   cancel(target)
  *
  * Model: {axes:{x?:{min,max,step?},y?:{min,max,step?}},
@@ -23,9 +24,9 @@
 (function(global) {
   'use strict';
   const root = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '1.0.0-candidate.1';
+  const VERSION = '2.0.0-candidate.1';
   const DEFAULTS = Object.freeze({
-    chartMs: 600, typeHandoffMs: 190, hoverMs: 170,
+    chartMs: 600, hoverMs: 170,
     chartEasing: 'easeInOutCubic', majorTickPx: 6, minorTickPx: 2
   });
   const running = new WeakMap();
@@ -227,21 +228,92 @@
       }}
     }};
   }
-  function handoff(target, render, options = {}) {
-    assertTarget(target);
-    if (typeof render !== 'function') throw new TypeError('handoff requires render callback.');
-    const duration = isReducedMotion(options) ? 0 : DEFAULTS.typeHandoffMs;
-    // Only marks should crossfade. The spine and axis DOM never fade.
-    return drive(target, duration, raw => render({
-      phase: raw < 0.5 ? 'out' : 'in',
-      opacity: raw < 0.5 ? 1 - easeInOutCubic(raw * 2)
-        : easeInOutCubic((raw - 0.5) * 2),
-      progress: raw
+  // Optional categorical COLUMN ↔ LINE morph. This represents each bar and
+  // point as one rounded rectangle, so shape and value change continuously.
+  // Connecting segments draw/undraw between the matched point anchors.
+  // The chart renderer owns spines/grid/ticks; this never animates those.
+  const typeDisplayed = new WeakMap();
+  function morphPlot(raw = {}) {
+    const plot = {left: 48, right: 335, top: 18, bottom: 178,
+      min: 0, max: 80, columnWidth: 20, pointRadius: 4, ...raw};
+    for (const [key, value] of Object.entries(plot)) {
+      if (!Number.isFinite(value)) throw new TypeError('[PFF chartAnimations] Invalid morph plot: ' + key);
+    }
+    if (plot.left >= plot.right || plot.top >= plot.bottom ||
+        plot.min >= plot.max || plot.columnWidth <= 0 || plot.pointRadius <= 0) {
+      throw new TypeError('[PFF chartAnimations] Invalid morph plot bounds.');
+    }
+    return plot;
+  }
+  function typeShapes(spec, plot) {
+    if (!spec || !['columns', 'line'].includes(spec.type) ||
+        !Array.isArray(spec.points) || spec.points.length < 2) {
+      throw new TypeError('[PFF chartAnimations] Type model needs columns/line and 2+ keyed points.');
+    }
+    const points = spec.points.map(point), keys = points.map(p => p.id);
+    if (new Set(keys).size !== keys.length) {
+      throw new TypeError('[PFF chartAnimations] Duplicate type-morph point ids.');
+    }
+    const width = plot.right - plot.left;
+    const marks = points.map((p, i) => {
+      const cx = plot.left + (i + .5) * width / points.length;
+      const cy = plot.bottom - (p.value - plot.min) / (plot.max - plot.min) * (plot.bottom - plot.top);
+      const column = spec.type === 'columns';
+      const w = column ? plot.columnWidth : 2 * plot.pointRadius;
+      const h = column ? Math.max(0, plot.bottom - cy) : 2 * plot.pointRadius;
+      return {id: p.id, x: cx - w / 2, y: cy - (column ? 0 : plot.pointRadius),
+        width: w, height: h, radius: column ? 2 : plot.pointRadius,
+        anchorX: cx, anchorY: cy};
+    });
+    return {marks, connect: spec.type === 'line' ? 1 : 0};
+  }
+  function morphShapes(from, to, rawProgress) {
+    const p = easeInOutCubic(rawProgress);
+    const source = new Map(from.marks.map(m => [m.id, m]));
+    if (from.marks.length !== to.marks.length ||
+        to.marks.some(m => !source.has(m.id))) {
+      throw new TypeError('[PFF chartAnimations] Type morph requires matching point IDs.');
+    }
+    const fields = ['x', 'y', 'width', 'height', 'radius', 'anchorX', 'anchorY'];
+    const marks = to.marks.map(dest => {
+      const initial = source.get(dest.id), mark = {id: dest.id};
+      for (const field of fields) mark[field] = lerp(initial[field], dest[field], p);
+      return mark;
+    });
+    const connect = lerp(from.connect, to.connect, p);
+    const segments = marks.slice(1).map((mark, i) => ({
+      from: marks[i].id, to: mark.id,
+      x1: marks[i].anchorX, y1: marks[i].anchorY,
+      x2: lerp(marks[i].anchorX, mark.anchorX, connect),
+      y2: lerp(marks[i].anchorY, mark.anchorY, connect)
     }));
+    return {marks, segments, connect, progress: p};
+  }
+  function sampleTypeMorph(fromSpec, toSpec, rawProgress, plotOptions) {
+    const plot = morphPlot(plotOptions);
+    return morphShapes(typeShapes(fromSpec, plot), typeShapes(toSpec, plot), rawProgress);
+  }
+  function morphTypes(target, toSpec, options = {}) {
+    assertTarget(target);
+    if (typeof options.render !== 'function') {
+      throw new TypeError('[PFF chartAnimations] morphTypes requires render(frame, meta).');
+    }
+    const plot = morphPlot(options.plot);
+    const to = typeShapes(toSpec, plot);
+    const from = typeDisplayed.get(target) || typeShapes(options.initial || toSpec, plot);
+    // Validate matching keys before interrupting an existing animation.
+    morphShapes(from, to, 0);
+    const duration = isReducedMotion(options) ? 0 : DEFAULTS.chartMs;
+    return drive(target, duration, raw => {
+      const frame = morphShapes(from, to, raw);
+      typeDisplayed.set(target, raw >= 1 ? to : {marks: frame.marks, connect: frame.connect});
+      options.render(frame, {duration, complete: raw >= 1});
+    });
   }
   root.chartAnimations = Object.freeze({
     version: VERSION, defaults: DEFAULTS, easeInOutCubic,
-    sample, normalize, animate, cancel, handoff, withChartJsTiming,
+    sample, normalize, animate, cancel,
+    sampleTypeMorph, morphTypes, withChartJsTiming,
     isReducedMotion
   });
 })(typeof window !== 'undefined' ? window : globalThis);
