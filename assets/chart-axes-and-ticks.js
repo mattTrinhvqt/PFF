@@ -1,5 +1,5 @@
 /*
- * PFF chart axes and ticks — v1.0.0-candidate.1
+ * PFF chart axes and ticks — v2.0.0-candidate.1
  * Shared opt-in presentation helpers. No automatic global Chart.js changes.
  * Extracted from PFF core's stable axis fitting, year cadence and tick ratios.
  * Leaves data bounds, Chart.js built-in ticks, custom axis-drawing plugins,
@@ -10,7 +10,7 @@
 (function (global) {
   'use strict';
   const root = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '1.0.0-candidate.1';
+  const VERSION = '2.0.0-candidate.1';
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
     seriesGutterDesktop: 69,
@@ -24,7 +24,10 @@
     yearTitleDesktop: 13,
     yearTitleMobile: 12,
     majorIntervals: 4,
-    tickLength: 5,
+    tickLength: 6,
+    minorTickLength: 2,
+    tickWidth: 1,
+    minorTickWidth: 0.7,
     tickTextGap: 8,
     ink: '#151515',
     muted: '#69718a',
@@ -153,6 +156,9 @@
       kind: horizontal ? 'category' : 'series',
       mobile: options.mobile
     });
+    if (options.xTicks === true) {
+      scales.x = withXAxisTickMarks(scales.x, {yearMode: options.yearMode || 'even', isMajor: options.isMajor});
+    }
     if (options.addYearLabels && !horizontal) {
       const x = scales[categoryId];
       const original = x.ticks?.callback;
@@ -178,6 +184,133 @@
     }
     return scales;
   }
+  // Real PFF precedent: practice_landscape.html (numeric X axis),
+  // permanent_uncompensated_graph.html and job-tracker graphs use visible
+  // major/minor tick marks. A 6 px / 2 px convention also appears repeatedly.
+  function tickMarkStyle(major = true) {
+    return {
+      length: major ? DEFAULTS.tickLength : DEFAULTS.minorTickLength,
+      width: major ? DEFAULTS.tickWidth : DEFAULTS.minorTickWidth,
+      color: DEFAULTS.ink
+    };
+  }
+  function yearTickDefinitions(years = [], options = {}) {
+    const mode = options.mode || 'even';
+    const labels = yearLabels(years, {mode});
+    return years.map((raw, index) => {
+      const year = Number(raw);
+      const major = Boolean(labels[index]);
+      return {
+        year, index, major, label: labels[index] || '',
+        ratio: years.length > 1 ? index / (years.length - 1) : 0,
+        ...tickMarkStyle(major)
+      };
+    });
+  }
+  // An opt-in Chart.js scale helper. Does not alter data, tick callback,
+  // chart-area gridlines or a custom-axis plugin. Do not apply when the
+  // application is already drawing its own tick marks.
+  function withXAxisTickMarks(scale = {}, options = {}) {
+    const next = clone(plain(scale) ? scale : {});
+    const previousGrid = next.grid || {};
+    const customIsMajor = options.isMajor;
+    function majorFor(context) {
+      if (typeof customIsMajor === 'function') return customIsMajor(context) !== false;
+      const tick = context?.tick;
+      if (options.yearMode === 'even') {
+        const label = typeof context?.scale?.getLabelForValue === 'function'
+          ? context.scale.getLabelForValue(tick?.value)
+          : String(tick?.label ?? tick?.value ?? '');
+        const year = Number(label);
+        if (/^\d{4}$/.test(String(label)) && Number.isInteger(year)) return year % 2 === 0;
+      }
+      if (typeof tick?.minor === 'boolean') return !tick.minor;
+      if (typeof tick?.major === 'boolean') return tick.major;
+      return true;
+    }
+    next.grid = {...previousGrid, drawTicks: true,
+      tickLength: (context) => tickMarkStyle(majorFor(context)).length,
+      tickWidth: (context) => tickMarkStyle(majorFor(context)).width,
+      tickColor: DEFAULTS.ink
+    };
+    return next;
+  }
+  function easeInOutCubic(progress) {
+    const t = clamp(finite(progress, 0), 0, 1);
+    return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+  function niceMajorStep(roughStep) {
+    const value = Math.max(finite(roughStep, 1), 1e-9);
+    const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+    const candidates = [1, 2, 5, 10].map(factor => factor * magnitude);
+    return candidates.reduce((best, candidate) =>
+      Math.abs(Math.log(candidate / value)) < Math.abs(Math.log(best / value))
+        ? candidate : best, candidates[0]);
+  }
+  function adaptiveMajorStep(maximum) {
+    return niceMajorStep(Math.max(finite(maximum, 1), 1e-9) / 5);
+  }
+  function majorStepWithHysteresis(maximum, currentStep) {
+    const max = Math.max(finite(maximum, 1), 1e-9);
+    const step = Math.max(finite(currentStep, adaptiveMajorStep(max)), 1e-9);
+    const divisions = max / step;
+    return divisions >= 3.5 && divisions <= 6.5 ? step : adaptiveMajorStep(max);
+  }
+  function tickStepHandoffProgress(progress, expanding) {
+    const p = clamp(finite(progress, 0), 0, 1);
+    // practice_landscape.html brings the coarser labels in earlier when
+    // expanding, and retains them longer when contracting.
+    const local = expanding ? clamp(p / .34, 0, 1)
+      : clamp((p - .58) / .42, 0, 1);
+    return easeInOutCubic(local);
+  }
+  // Axis-frame coordinates stay fixed. Numeric X ticks can translate as the
+  // displayed maximum interpolates; when the major step changes, old and
+  // new tick paths overlap with alpha handoff so the X axis never blanks.
+  // Return data only: renderer decides whether to draw SVG/Canvas/Chart.js.
+  function animatedNumericTicks(fromMaximum, toMaximum, progress, options = {}) {
+    const fromMax = Math.max(finite(fromMaximum, 1), 1e-9);
+    const toMax = Math.max(finite(toMaximum, 1), 1e-9);
+    const p = clamp(finite(progress, 0), 0, 1);
+    const displayedMaximum = fromMax + (toMax - fromMax) * easeInOutCubic(p);
+    const fromStep = Math.max(finite(options.fromStep, adaptiveMajorStep(fromMax)), 1e-9);
+    const toStep = Math.max(finite(options.toStep, majorStepWithHysteresis(toMax, fromStep)), 1e-9);
+    const stepsDiffer = Math.abs(fromStep - toStep) > Math.max(fromStep, toStep) * 1e-9;
+    const overlap = stepsDiffer ? tickStepHandoffProgress(p, toMax > fromMax) : 1;
+    const layers = stepsDiffer ? [
+      {step: fromStep, maximum: fromMax, alpha: 1 - overlap},
+      {step: toStep, maximum: toMax, alpha: overlap}
+    ] : [{step: fromStep, maximum: Math.max(fromMax, toMax), alpha: 1}];
+    const marks = new Map();
+    for (const layer of layers) {
+      if (layer.alpha <= 1e-4) continue;
+      const step = layer.step / 2;
+      const last = Math.min(layer.maximum, displayedMaximum);
+      const count = Math.min(200, Math.floor((last + step * 1e-7) / step));
+      for (let index = 0; index <= count; index++) {
+        const value = Number((index * step).toPrecision(12));
+        const major = index % 2 === 0;
+        const key = value.toPrecision(12);
+        const prior = marks.get(key) || {value, alpha: 0, majorAlpha: 0, minorAlpha: 0, labelAlpha: 0};
+        prior.alpha = Math.min(1, prior.alpha + layer.alpha);
+        if (major) {
+          prior.majorAlpha += layer.alpha;
+          prior.labelAlpha = Math.min(1, prior.labelAlpha + layer.alpha);
+        } else prior.minorAlpha += layer.alpha;
+        marks.set(key, prior);
+      }
+    }
+    const ticks = [...marks.values()].sort((a, b) => a.value - b.value).map(tick => {
+      const strength = tick.majorAlpha / Math.max(1e-9, tick.majorAlpha + tick.minorAlpha);
+      return {...tick, ratio: tick.value / displayedMaximum,
+        majorStrength: strength,
+        length: DEFAULTS.minorTickLength +
+          (DEFAULTS.tickLength - DEFAULTS.minorTickLength) * strength,
+        width: DEFAULTS.minorTickWidth +
+          (DEFAULTS.tickWidth - DEFAULTS.minorTickWidth) * strength};
+    });
+    return {displayedMaximum, fromStep, toStep, overlap, ticks};
+  }
   function isGridFromCustomAxis(config) {
     return config?.customAxisDrawsGrid === true;
   }
@@ -199,6 +332,8 @@
     defaults: DEFAULTS,
     mobileLayout, font, gutter, lockAxisWidth, withStableAxis,
     normaliseScale, tickDefinitions, ratio, formatValue, yearLabels,
-    axisOptions, avoidDuplicateGrid
+    axisOptions, avoidDuplicateGrid, tickMarkStyle, yearTickDefinitions,
+    withXAxisTickMarks, easeInOutCubic, niceMajorStep, adaptiveMajorStep,
+    majorStepWithHysteresis, tickStepHandoffProgress, animatedNumericTicks
   });
 })(typeof window !== 'undefined' ? window : globalThis);
