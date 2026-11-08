@@ -1,4 +1,4 @@
-/* PFF charts: tooltips and hover, candidate v2, 2026-11-08.
+/* PFF charts: tooltips and hover, candidate v3, 2026-11-08.
  * Derived from the existing PFFCharts.tooltipOptions() / lineInteractionOptions()
  * and current graph-specific manual tooltip activation patterns.
  * Opt-in Chart.js configuration and interaction helpers. No global mutation,
@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
   const modules = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '1.0.0-candidate.2';
+  const VERSION = '1.0.0-candidate.3';
   const TOKENS = Object.freeze({
     surface: '#ffffff', ink: '#151515', muted: '#69718a', border: '#e8eaf0',
     font: 'Lato', titleSize: 12, bodySize: 11, padding: 9, radius: 4
@@ -61,6 +61,21 @@
   // fine 1px point border on hover. App-specific dataset styles can override.
   function subtleEmphasisOptions(overrides = {}) {
     return merge({point: {hoverBorderWidth: 1}, bar: {hoverBorderWidth: 0}}, overrides);
+  }
+  // Opt-in dataset adapter. Reuse the mark's current fill/border on hover,
+  // rather than introducing a temporary darker/lighter highlight colour.
+  // This deliberately preserves any existing fine border instead of adding one.
+  function preserveBarHoverAppearance(dataset = {}) {
+    const next = clone(dataset);
+    if (Object.hasOwn(next, 'backgroundColor'))
+      next.hoverBackgroundColor = clone(next.backgroundColor);
+    if (Object.hasOwn(next, 'borderColor'))
+      next.hoverBorderColor = clone(next.borderColor);
+    if (Object.hasOwn(next, 'borderWidth'))
+      next.hoverBorderWidth = clone(next.borderWidth);
+    else
+      next.hoverBorderWidth = 0;
+    return next;
   }
   function chartOptions(profile = 'point', options = {}) {
     const interaction = interactionOptions(profile, options.interaction || {});
@@ -144,6 +159,6 @@
   }
   modules.chartTooltips = Object.freeze({
     version: VERSION, tokens: TOKENS, tooltipOptions, interactionOptions,
-    chartOptions, subtleEmphasisOptions, createHoverController
+    chartOptions, subtleEmphasisOptions, preserveBarHoverAppearance, createHoverController
   });
 })(typeof window !== 'undefined' ? window : globalThis);
