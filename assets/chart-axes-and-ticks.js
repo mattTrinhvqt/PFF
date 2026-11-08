@@ -1,5 +1,5 @@
 /*
- * PFF chart axes and ticks — v2.2.0-candidate.1
+ * PFF chart axes and ticks — v2.2.1-candidate.1
  * Shared opt-in presentation helpers. No automatic global Chart.js changes.
  * Extracted from PFF core's stable axis fitting, year cadence and tick ratios.
  * Leaves data bounds, Chart.js built-in ticks, custom axis-drawing plugins,
@@ -10,7 +10,7 @@
 (function (global) {
   'use strict';
   const root = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '2.2.0-candidate.1';
+  const VERSION = '2.2.1-candidate.1';
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
     seriesGutterDesktop: 69,
@@ -258,7 +258,19 @@
     return withLabelDrivenTickMarks(scale, options);
   }
   function withYAxisTickMarks(scale = {}, options = {}) {
-    return withLabelDrivenTickMarks(scale, options);
+    const next = withLabelDrivenTickMarks(scale, options);
+    // Chart.js positions Y-axis labels using ticks.padding, measured inward
+    // from the outside end of the tick area. Our custom major ticks extend
+    // 6 px left of the spine, so the old 3 px padding let numbers touch them.
+    // Reserve at least 4 px of clear space beyond the longest (major) tick.
+    // Respect any larger padding already specified by the calling chart.
+    if (next.ticks?.display !== false) {
+      const current = finite(next.ticks?.padding, 0);
+      const clearance = Math.max(0, finite(options.labelClearance, 4));
+      next.ticks = {...(next.ticks || {}),
+        padding: Math.max(current, DEFAULTS.tickLength + clearance)};
+    }
+    return next;
   }
   function tickDrawPlan(scale, chartArea, options = {}) {
     if (!scale || !Array.isArray(scale.ticks) || !chartArea) return [];
