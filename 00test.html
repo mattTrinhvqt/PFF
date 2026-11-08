@@ -4,35 +4,102 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>PFF Australian Population Trends — Shared-assets pilot</title>
+  <title>PFF Corporate mobility — shared-assets pilot</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
-  <!-- PFF chart migration pilot: approved visual helpers, no changes to core/data/loader. -->
-  <script src="./assets/colours-and-settings.js"></script>
   <script src="./assets/chart-styling-and-defaults.js"></script>
   <script src="./assets/chart-axes-and-ticks.js"></script>
   <script src="./assets/chart-animations-and-transitions.js"></script>
-  <script src="./assets/chart-legends-and-interactions.js"></script>
   <script src="./assets/chart-tooltips-and-hover.js"></script>
-  <script src="./assets/chart-trends-and-labels.js"></script>
   <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+  <script src="./assets/chart-value-and-category-labels.js"></script>
 
   <style>
+
+    :root {
+      --corporate-colour: #00b26f;
+      --noncorporate-colour: #5a3be7;
+    }
+
+    .single-tab-shell .tab-list { min-width: 0; }
+    .single-tab-shell .chart-tab { cursor: default; }
+    .single-tab-shell .tab-list::after { display: none; }
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-heading-row { align-items: flex-start; }
+    .chart-heading {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
     .chart-options-row {
       display: flex;
       width: 100%;
       min-width: 0;
-      min-height: 28px;
+      min-height: 24px;
       flex: 0 0 auto;
       align-items: center;
       padding: 0 0 2px;
     }
-    /* The shared, borderless legend occupies the existing 28px legend row. */
-    #chartLegend.pff-shared-legend { height: 28px; min-height: 0; }
-    #chartLegend .pff-shared-legend__viewport { height: 28px; padding-bottom: 2px; }
+
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: left;
+    }
+
+    .method-note-line { display: block; }
+    .method-note-line + .method-note-line { margin-top: 2px; }
+
+    .chart-shell { margin-top: -2px; }
+
+    .transition-summary {
+      display: flex;
+      min-height: 42px;
+      margin: 2px 3px 0;
+      padding: 6px 8px 4px;
+      flex-wrap: nowrap;
+      align-items: baseline;
+      justify-content: center;
+      column-gap: 6px;
+      row-gap: 1px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .transition-label,
+    .transition-context {
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.3;
+    }
+
+    .transition-value {
+      color: var(--pff-purple);
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.15;
+      white-space: nowrap;
+    }
+
+
+    @media (max-width: 430px) {
+      .method-note,
+      .transition-label,
+      .transition-context { font-size: 10.5px; }
+
+      .transition-summary { column-gap: 5px; }
+      .transition-value { font-size: 14.5px; }
+    }
   </style>
 </head>
 
@@ -43,1077 +110,822 @@
         id="loadingState"
         class="app-loading"
         role="status"
-        aria-label="Loading Australian population data"
+        aria-live="polite"
+        aria-label="Loading corporate mobility job data"
       >
         <div class="cone-loader" aria-hidden="true">
           <span class="cone blue"></span>
           <span class="cone green"></span>
           <span class="cone red"></span>
         </div>
-        <p class="loader-text">Loading Australian population data…</p>
+        <p id="loaderText" class="loader-text">Loading job and workforce data…</p>
       </div>
 
-      <div class="module-top">
+      <div class="module-top single-tab-shell">
         <div class="tab-scroll-shell">
-          <div
-            id="tabList"
-            class="tab-list"
-            role="tablist"
-            aria-label="Australian population chart"
-          >
+          <div class="tab-list" role="tablist" aria-label="Corporate mobility chart">
             <button
-              id="populationTab"
               class="chart-tab is-active"
               type="button"
               role="tab"
               aria-selected="true"
-              data-view="population"
-            >Population</button>
+              tabindex="0"
+            >Corporate mobility</button>
           </div>
         </div>
 
-        <div
-          id="dataSourceIndicator"
-          class="live-data"
-          aria-label="Live data"
-          aria-live="polite"
-        >
+        <div id="liveData" class="live-data" aria-label="Live data" aria-live="polite">
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span id="dataSourceText">LIVE data</span>
+          <span id="liveDataText">LIVE data</span>
         </div>
       </div>
 
       <div id="status" role="status" aria-live="polite"></div>
 
       <div class="chart-heading-row">
-        <div id="headingScrollShell" class="heading-scroll-shell">
-          <button
-            id="headingScrollLeft"
-            class="heading-scroll-button heading-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll graph title left"
-          >‹</button>
-
-          <div id="headingScrollViewport" class="heading-scroll-viewport">
-            <h2 id="chartHeading" class="chart-heading">Australian population</h2>
-          </div>
-
-          <button
-            id="headingScrollRight"
-            class="heading-scroll-button heading-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll graph title right"
-          >›</button>
-        </div>
-
-        <div class="heading-controls">
-          <button
-            id="yoyTrendToggle"
-            class="yoy-trend-toggle is-on"
-            type="button"
-            aria-pressed="true"
-            aria-label="3-year trend. Press to switch to 10-year trend."
-          >
-            <span class="yoy-binary-indicator" aria-hidden="true"></span>
-            <span class="yoy-toggle-label">3yr Trend</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="chart-options-row">
-        <div class="legend-nav">
-          <div class="legend-viewport">
-            <div
-              id="chartLegend"
-              class="pff-population-legend-host"
-              aria-label="Chart legend"
-            ></div>
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">How many jobs are available outside corporate practice?</h2>
           </div>
         </div>
       </div>
+
+      <div class="chart-options-row" aria-hidden="true"></div>
 
       <div id="chartShell" class="chart-shell">
         <canvas
-          id="trendChart"
-          aria-label="Australian population trend chart"
+          id="chartCanvas"
+          aria-label="Corporate and non-corporate optometry job availability in the latest 12 months"
           role="img"
         ></canvas>
       </div>
+
+      <div id="transitionSummary" class="transition-summary" aria-live="polite">
+        <span class="transition-label">Estimated transition time</span>
+        <span id="transitionValue" class="transition-value">—</span>
+        <span class="transition-context">at current job availability</span>
+      </div>
+
+      <p class="method-note">
+        <span id="rateNote" class="method-note-line"><strong>Rate:</strong> loading…</span>
+        <span id="transitionNote" class="method-note-line"><strong>Transition:</strong> loading…</span>
+      </p>
+
     </main>
   </div>
 
   <script>
     'use strict';
 
-    const CONFIG = {
-      sheetId:
-        '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+    // ============================================================
+    // DATA SOURCE
+    // ============================================================
 
-      sheetName:
-        'Auspopnbystate',
-
-      // Row 30 = headers; row 31 onward = raw data.
-      // A = Year; J = Australia.
-      range:
-        'A30:J',
-
-      localCacheKey:
-        'pff-australian-population-trends-v1',
-
-      scaleTargetIntervals:
-        7
-    };
+    const CONFIG = Object.freeze({
+      jobSheetId: '1ZcZrPHvux_ckk2cJqRYu1oz9uT4brcRmcJ80bP-v--4',
+      jobSheetName: 'Mirror table',
+      jobRange: 'B3:V',
+      workforceSheetId: '1kJlbLXHmBqBWmZ2H9RgU-R3LNE0BDeDIqCbhuAOMjZU',
+      workforceSheet: 'Optomsbystate',
+      workforceRange: 'L30:T',
+      localCacheKey: 'pff-workforce-corporate-mobility-v1',
+      fetchTimeoutMs: 20000
+    });
 
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+    const CACHE_APP_KEY = 'pff-job-ads-data';
 
-    const CACHE_APP_KEY =
-      'pff-australian-population-trends';
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const YEAR_MS = 365.2425 * DAY_MS;
+    const CHART_TRANSITION_MS = PFFModules.chartAnimations.defaults.chartMs;
+    const X_AXIS_MAJOR_INTERVALS = 6;
+    const X_AXIS_MAJOR_TICK_COUNT = X_AXIS_MAJOR_INTERVALS + 1;
 
-    const AUSTRALIA_COLOUR =
-      '#0b5d1e';
+    const CORPORATE_COLOUR = '#00b26f';
+    const NONCORPORATE_COLOUR = '#5a3be7';
+    const STATE_ORDER = ['NSW', 'QLD', 'VIC', 'ACT', 'SA', 'NT', 'WA', 'TAS'];
 
-    // Approved modules are explicit dependencies of this pilot. Fail visibly
-    // instead of silently replacing approved behaviour with older defaults.
-    const shared = window.PFFModules || {};
-    const requiredChartModules = {
-      settings: 'colours-and-settings.js',
-      chartStyling: 'chart-styling-and-defaults.js',
-      chartAxes: 'chart-axes-and-ticks.js',
-      chartAnimations: 'chart-animations-and-transitions.js',
-      chartLegends: 'chart-legends-and-interactions.js',
-      chartTooltips: 'chart-tooltips-and-hover.js',
-      chartTrends: 'chart-trends-and-labels.js',
-      chartResponsive: 'chart-responsive-layouts-and-touch.js'
-    };
-    const missingChartModules = Object.entries(requiredChartModules)
-      .filter(([key]) => !shared[key])
-      .map(([, filename]) => filename);
+    const JOB_COLUMNS = Object.freeze({
+      repeatFlag: 0,
+      date: 2,
+      employerType: 5,
+      fteDays: 11
+    });
 
-    const app =
-      document.getElementById('app');
+    // ============================================================
+    // DOM + STATE
+    // ============================================================
 
-    const statusElement =
-      document.getElementById('status');
+    const app = document.getElementById('app');
+    const loaderText = document.getElementById('loaderText');
+    const statusEl = document.getElementById('status');
+    const liveData = document.getElementById('liveData');
+    const liveDataText = document.getElementById('liveDataText');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('chartCanvas');
+    const rateNote = document.getElementById('rateNote');
+    const transitionNote = document.getElementById('transitionNote');
+    const transitionValue = document.getElementById('transitionValue');
 
-    const tabList =
-      document.getElementById('tabList');
-
-    const populationTab =
-      document.getElementById('populationTab');
-
-    const dataSourceIndicator =
-      document.getElementById('dataSourceIndicator');
-
-    const dataSourceText =
-      document.getElementById('dataSourceText');
-
-    const headingScrollViewport =
-      document.getElementById('headingScrollViewport');
-
-    const headingScrollLeft =
-      document.getElementById('headingScrollLeft');
-
-    const headingScrollRight =
-      document.getElementById('headingScrollRight');
-
-    const yoyTrendToggle =
-      document.getElementById('yoyTrendToggle');
-
-    const chartLegend =
-      document.getElementById('chartLegend');
-
-    const chartShell =
-      document.getElementById('chartShell');
-
-    const chartCanvas =
-      document.getElementById('trendChart');
-
-    let rows = [];
     let chart = null;
     let chartSummary = null;
-    let seriesHidden = false;
-    let tabsController = null;
-    let headingScroller = null;
-    let trendController = null;
-    let legendController = null;
     let interactionsController = null;
     let responsiveController = null;
-    let restoreTapAppearance = null;
+    let displayRow = null;
+    let currentScale = null;
 
-    function populationNumber(cell) {
-      if (
-        !cell ||
-        cell.v === null ||
-        cell.v === undefined ||
-        cell.v === ''
-      ) {
-        return NaN;
-      }
+    // ============================================================
+    // GENERIC HELPERS
+    // ============================================================
 
-      const direct =
-        PFFCharts.numericCell(
-          cell
-        );
-
-      if (
-        Number.isFinite(
-          direct
-        )
-      ) {
-        return direct;
-      }
-
-      const cleaned =
-        PFF.cleanText(
-          cell.f ??
-          cell.v
-        )
-          .replace(/,/g, '')
-          .replace(/[^\d.-]/g, '');
-
-      if (
-        !cleaned ||
-        !/\d/.test(
-          cleaned
-        )
-      ) {
-        return NaN;
-      }
-
-      const number =
-        Number(
-          cleaned
-        );
-
-      return Number.isFinite(
-        number
-      )
-        ? number
-        : NaN;
+    function cleanText(value) {
+      return String(value ?? '').replace(/\s+/g, ' ').trim();
     }
 
-    function normalisePopulationRows(sourceRows) {
-      return (
-        Array.isArray(sourceRows)
-          ? sourceRows
-          : []
-      )
-        .map(row => {
-          const rawYear =
-            Array.isArray(row)
-              ? row?.[0]
-              : row?.year;
-
-          const rawValue =
-            Array.isArray(row)
-              ? row?.[1]
-              : row?.value;
-
-          const yearText =
-            PFF.cleanText(
-              rawYear
-            );
-
-          const valueText =
-            PFF.cleanText(
-              rawValue
-            );
-
-          return {
-            year:
-              yearText
-                ? Number(
-                    yearText.replace(
-                      /,/g,
-                      ''
-                    )
-                  )
-                : NaN,
-
-            value:
-              valueText
-                ? Number(
-                    valueText.replace(
-                      /,/g,
-                      ''
-                    )
-                  )
-                : NaN
-          };
-        })
-        .filter(
-          row =>
-            Number.isFinite(
-              row.year
-            ) &&
-            row.year >= 1900 &&
-            row.year <= 2200 &&
-            Number.isFinite(
-              row.value
-            ) &&
-            row.value >= 0
-        )
-        .map(row => ({
-          year:
-            Math.round(
-              row.year
-            ),
-
-          value:
-            row.value
-        }))
-        .sort(
-          (
-            first,
-            second
-          ) =>
-            first.year -
-            second.year
-        );
+    function normaliseText(value) {
+      return cleanText(value).toLowerCase();
     }
 
-    function parsePopulationTable(table) {
-      const parsed = [];
+    function clamp(value, minimum, maximum) {
+      return Math.min(maximum, Math.max(minimum, value));
+    }
 
-      (
-        table?.rows ||
-        []
-      ).forEach(sourceRow => {
-        const cells =
-          sourceRow?.c ||
-          [];
+    function getCellText(cell) {
+      return cleanText(cell?.f ?? cell?.v ?? '');
+    }
 
-        const year =
-          populationNumber(
-            cells[0]
-          );
+    function parseDateCell(cell) {
+      const timestamp =
+        PFF.parseDateUtc(cell?.v) ??
+        PFF.parseDateUtc(cell?.f);
+      return Number.isFinite(timestamp) ? timestamp : null;
+    }
 
-        const australia =
-          populationNumber(
-            cells[9]
-          );
+    function parseEstimatedDaysPerWeek(value) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return clamp(value, 0, 5);
+      }
 
-        if (
-          !Number.isFinite(
-            year
-          ) ||
-          year < 1900 ||
-          year > 2200 ||
-          !Number.isFinite(
-            australia
-          )
-        ) {
-          return;
-        }
+      const text = cleanText(value);
+      if (!text || normaliseText(text) === 'xxx') return 5;
 
-        parsed.push({
-          year:
-            Math.round(
-              year
-            ),
-          value:
-            australia
+      const values = [...text.matchAll(/\d+(?:\.\d+)?/g)]
+        .map(match => Number(match[0]))
+        .filter(number => Number.isFinite(number) && number >= 0 && number <= 7);
+
+      if (!values.length) return 5;
+
+      const estimate = values.reduce((total, number) => total + number, 0) /
+        values.length;
+      return clamp(estimate, 0, 5);
+    }
+
+    function getEmployerTypeGroup(value) {
+      const text = normaliseText(value);
+      if (!text || text === 'xxx') return null;
+
+      if (
+        text === 'corporate' ||
+        text.startsWith('corporate ') ||
+        text.startsWith('corporate(')
+      ) return 'Corporate';
+
+      if (
+        text === 'independent' ||
+        text.startsWith('independent ') ||
+        text.startsWith('independent(')
+      ) return 'Independent';
+
+      if (text.includes('ophthal') || text.includes('opthal')) return 'Ophthal';
+      return 'Other';
+    }
+
+    function normaliseJobRows(sourceRows) {
+      const result = [];
+
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const repeatFlag = normaliseText(getCellText(cells[JOB_COLUMNS.repeatFlag]));
+        const validFlag = repeatFlag === 'no' || ['yes', 'repeat', 'true', '1'].includes(repeatFlag);
+        if (!validFlag) return;
+
+        const x = parseDateCell(cells[JOB_COLUMNS.date]);
+        if (!Number.isFinite(x)) return;
+
+        const employerType = getEmployerTypeGroup(
+          getCellText(cells[JOB_COLUMNS.employerType])
+        );
+        if (!employerType) return;
+
+        const fteCell = cells[JOB_COLUMNS.fteDays];
+        const fteDays = parseEstimatedDaysPerWeek(fteCell?.v ?? fteCell?.f ?? '');
+
+        result.push({
+          x,
+          employerType,
+          fteWeight: fteDays / 5
         });
       });
 
-      return normalisePopulationRows(
-        parsed
-      );
+      return result.sort((first, second) => first.x - second.x);
     }
 
-    function parseRemoteRows(snapshot) {
-      return normalisePopulationRows(
-        snapshot?.data?.rows
-      );
+    function makeCachedCell(pair) {
+      return { v: pair?.[0] ?? '', f: pair?.[1] ?? '' };
     }
 
-    function migrateLegacyLocalCache() {
-      try {
-        const raw =
-          localStorage.getItem(
-            CONFIG.localCacheKey
-          );
-
-        if (!raw) {
-          return;
-        }
-
-        const parsed =
-          JSON.parse(
-            raw
-          );
-
-        if (
-          Array.isArray(
-            parsed?.data
-          ) &&
-          parsed.data.length
-        ) {
-          PFFCharts.saveLocalCache(
-            CONFIG.localCacheKey,
-            normalisePopulationRows(
-              parsed.data
-            )
-          );
-        }
-      } catch (_) {
-      }
+    function restoreCachedJobRows(cachedRows) {
+      const sourceIndexes = [0, 2, 4, 5, 6, 7, 9, 11, 20];
+      return (Array.isArray(cachedRows) ? cachedRows : []).map(row => {
+        const cells = Array.from({ length: 21 }, () => null);
+        sourceIndexes.forEach((sourceIndex, cachedIndex) => {
+          cells[sourceIndex] = makeCachedCell(row?.[cachedIndex]);
+        });
+        return { c: cells };
+      });
     }
 
-    function formatMillions(value) {
-      const number =
-        Number(
-          value
-        );
-
-      if (
-        !Number.isFinite(
-          number
-        )
-      ) {
-        return '—';
-      }
-
-      if (
-        Math.abs(
-          number
-        ) < 0.5
-      ) {
-        return '0';
-      }
-
-      return `${
-        PFF.formatOneDecimal(
-          number /
-          1000000
-        )
-      }m`;
-    }
-
-    function niceStep(value) {
-      if (
-        !Number.isFinite(
-          value
-        ) ||
-        value <= 0
-      ) {
-        return 1000000;
-      }
-
-      const exponent =
-        Math.floor(
-          Math.log10(
-            value
-          )
-        );
-
-      const magnitude =
-        Math.pow(
-          10,
-          exponent
-        );
-
-      const fraction =
-        value /
-        magnitude;
-
-      const multipliers =
-        [
-          1,
-          2,
-          2.5,
-          5,
-          10
-        ];
-
-      const multiplier =
-        multipliers.find(
-          candidate =>
-            fraction <=
-            candidate
-        ) ??
-        10;
-
-      return multiplier *
-        magnitude;
-    }
-
-    function populationScale() {
-      const maximumObserved =
-        rows.reduce(
-          (
-            maximum,
-            row
-          ) =>
-            Number.isFinite(
-              row?.value
-            )
-              ? Math.max(
-                  maximum,
-                  row.value
-                )
-              : maximum,
-          0
-        );
-
-      const paddedMaximum =
-        maximumObserved > 0
-          ? maximumObserved *
-            1.06
-          : 30000000;
-
-      const step =
-        niceStep(
-          paddedMaximum /
-          CONFIG.scaleTargetIntervals
-        );
-
-      const max =
-        Math.max(
-          step,
-          Math.ceil(
-            paddedMaximum /
-            step
-          ) *
-          step
-        );
-
+    function restoreCachedWorkforceTable(table) {
+      const labels = Array.isArray(table?.labels) ? table.labels : [];
+      const sourceRows = Array.isArray(table?.rows) ? table.rows : [];
       return {
-        min:
-          0,
-        max,
-        step,
-        intervals:
-          Math.max(
-            1,
-            Math.round(
-              max /
-              step
-            )
-          )
+        cols: labels.map(label => ({ label: cleanText(label) })),
+        rows: sourceRows.map(row => ({
+          c: (Array.isArray(row) ? row : []).map(makeCachedCell)
+        }))
       };
     }
 
-    function trendGrowth() {
-      if (
-        !trendController ||
-        trendController.mode ===
-          'off'
-      ) {
-        return NaN;
+    function parseYearValue(value) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        const rounded = Math.round(value);
+        return rounded >= 1900 && rounded <= 2200 ? rounded : null;
+      }
+      const match = cleanText(value).match(/(?:19|20|21)\d{2}/);
+      return match ? Number(match[0]) : null;
+    }
+
+    function parseWorkforceNumber(value) {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      const number = Number(cleanText(value).replace(/[^\d.-]/g, ''));
+      return Number.isFinite(number) && number > 0 ? number : NaN;
+    }
+
+    function normaliseHeader(value) {
+      return cleanText(value).toUpperCase().replace(/[^A-Z0-9]+/g, '');
+    }
+
+    function getTableCellValue(cell) {
+      return cell?.v ?? cell?.f ?? '';
+    }
+
+    function parseStateWorkforceTable(table) {
+      let dataRows = table?.rows || [];
+      let labels = (table?.cols || []).map(column => normaliseHeader(column?.label));
+      let matchedStates = STATE_ORDER.filter(state => labels.includes(state));
+
+      if (matchedStates.length < 2 && dataRows.length) {
+        const firstRowLabels = (dataRows[0]?.c || []).map(cell =>
+          normaliseHeader(getTableCellValue(cell))
+        );
+        const firstRowMatches = STATE_ORDER.filter(state => firstRowLabels.includes(state));
+        if (firstRowMatches.length >= 2) {
+          labels = firstRowLabels;
+          dataRows = dataRows.slice(1);
+          matchedStates = firstRowMatches;
+        }
       }
 
-      return PFFCharts.latestConsecutiveTrend(
-        rows,
-        row =>
-          row.value,
-        trendController.windowSize
+      const stateIndexes = {};
+      STATE_ORDER.forEach(state => {
+        const index = labels.findIndex(label => label === state);
+        if (index >= 0) stateIndexes[state] = index;
+      });
+
+      const result = {};
+      dataRows.forEach(row => {
+        const cells = row?.c || [];
+        const year = parseYearValue(getTableCellValue(cells[0]));
+        if (!year) return;
+
+        const values = {};
+        STATE_ORDER.forEach(state => {
+          const index = stateIndexes[state];
+          if (!Number.isInteger(index)) return;
+          const value = parseWorkforceNumber(getTableCellValue(cells[index]));
+          if (Number.isFinite(value)) values[state] = value;
+        });
+
+        if (Object.keys(values).length) result[year] = values;
+      });
+
+      return result;
+    }
+
+    function getNationalWorkforceSnapshot(workforceByYear, targetYear) {
+      const years = Object.keys(workforceByYear || {})
+        .map(Number)
+        .filter(Number.isFinite)
+        .sort((first, second) => first - second);
+      if (!years.length) return null;
+
+      const earlierOrEqual = years.filter(year => year <= targetYear);
+      const year = earlierOrEqual.length
+        ? earlierOrEqual[earlierOrEqual.length - 1]
+        : years[0];
+
+      const values = workforceByYear[year] || workforceByYear[String(year)] || {};
+      const total = STATE_ORDER.reduce((sum, state) => {
+        const value = Number(values[state]);
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0);
+
+      return total > 0 ? { year, total } : null;
+    }
+
+    function buildSnapshot(jobRows, workforceByYear) {
+      if (!Array.isArray(jobRows) || !jobRows.length) {
+        throw new Error('No classified job ads were available');
+      }
+
+      const latestTimestamp = Math.max(...jobRows.map(row => Number(row.x)).filter(Number.isFinite));
+      if (!Number.isFinite(latestTimestamp)) throw new Error('No valid job-ad dates were available');
+
+      // Include the full latest observed day in the rolling 12-month window.
+      const windowEnd = latestTimestamp + DAY_MS;
+      const windowStart = windowEnd - YEAR_MS;
+      const referenceYear = new Date(windowEnd - 1).getUTCFullYear();
+      const workforce = getNationalWorkforceSnapshot(workforceByYear, referenceYear);
+      if (!workforce) throw new Error('Active optometrist workforce data were unavailable');
+
+      const rows = jobRows.filter(row => row.x >= windowStart && row.x < windowEnd);
+      if (!rows.length) throw new Error('No job ads were found in the latest 12 months');
+
+      let corporateFte = 0;
+      let nonCorporateFte = 0;
+
+      rows.forEach(row => {
+        const weight = Number.isFinite(row?.fteWeight) ? row.fteWeight : 1;
+        if (row.employerType === 'Corporate') corporateFte += weight;
+        else if (['Independent', 'Ophthal', 'Other'].includes(row.employerType)) {
+          nonCorporateFte += weight;
+        }
+      });
+
+      const totalFte = corporateFte + nonCorporateFte;
+      if (!(totalFte > 0)) throw new Error('No classified FTE job ads were available');
+
+      return {
+        windowStart,
+        windowEnd,
+        workforceYear: workforce.year,
+        activeOptometrists: workforce.total,
+        corporateFte,
+        nonCorporateFte,
+        totalFte,
+        corporateRate: corporateFte / workforce.total * 100,
+        nonCorporateRate: nonCorporateFte / workforce.total * 100,
+        corporateShare: corporateFte / totalFte * 100,
+        nonCorporateShare: nonCorporateFte / totalFte * 100
+      };
+    }
+
+    function validateRows(sourceRows) {
+      const row = Array.isArray(sourceRows) ? sourceRows[0] : null;
+      if (!row) throw new Error('Corporate mobility data were unavailable');
+
+      const numericFields = [
+        'windowStart', 'windowEnd', 'workforceYear', 'activeOptometrists',
+        'corporateFte', 'nonCorporateFte', 'totalFte',
+        'corporateRate', 'nonCorporateRate', 'corporateShare', 'nonCorporateShare'
+      ];
+
+      if (!numericFields.every(key => Number.isFinite(Number(row[key])))) {
+        throw new Error('Corporate mobility data were incomplete');
+      }
+
+      return [{ ...row }];
+    }
+
+    function parseLiveData(raw) {
+      const jobs = normaliseJobRows(raw?.jobTable?.rows || []);
+      const workforce = parseStateWorkforceTable(raw?.workforceTable);
+      return validateRows([buildSnapshot(jobs, workforce)]);
+    }
+
+    function parseRemoteCache(raw) {
+      const data = raw?.data || raw;
+      const jobs = normaliseJobRows(restoreCachedJobRows(data?.jobRows));
+      const workforce = parseStateWorkforceTable(
+        restoreCachedWorkforceTable(data?.stateWorkforceTable)
       );
+      return validateRows([buildSnapshot(jobs, workforce)]);
+    }
+
+    // ============================================================
+    // CHART HELPERS
+    // ============================================================
+
+    function transitionEstimate(row = displayRow) {
+      const activeClinicians = Number(row?.activeOptometrists);
+      const corporateShare = Number(row?.corporateShare) / 100;
+      const annualNonCorporateFte = Number(row?.nonCorporateFte);
+
+      if (
+        !Number.isFinite(activeClinicians) || activeClinicians <= 0 ||
+        !Number.isFinite(corporateShare) || corporateShare < 0 || corporateShare > 1 ||
+        !Number.isFinite(annualNonCorporateFte) || annualNonCorporateFte <= 0
+      ) return null;
+
+      const estimatedCorporateClinicians = activeClinicians * corporateShare;
+      return {
+        estimatedCorporateClinicians,
+        years: estimatedCorporateClinicians / annualNonCorporateFte
+      };
+    }
+
+    function scenarioRows() {
+      if (!displayRow) return [];
+      return [
+        {
+          key: 'corporate',
+          label: 'Corporate jobs',
+          colour: CORPORATE_COLOUR,
+          value: displayRow.corporateRate,
+          share: displayRow.corporateShare,
+          fteAds: displayRow.corporateFte,
+          method: 'Job ads classified as Corporate'
+        },
+        {
+          key: 'nonCorporate',
+          label: 'Non-corporate jobs',
+          colour: NONCORPORATE_COLOUR,
+          value: displayRow.nonCorporateRate,
+          share: displayRow.nonCorporateShare,
+          fteAds: displayRow.nonCorporateFte,
+          method: 'Independent + Ophthal + Other job ads'
+        }
+      ];
+    }
+
+    function niceStep(rawStep) {
+      if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+      const exponent = Math.floor(Math.log10(rawStep));
+      const magnitude = 10 ** exponent;
+      const fraction = rawStep / magnitude;
+      const niceFraction = fraction <= 1 ? 1
+        : fraction <= 2 ? 2
+          : fraction <= 2.5 ? 2.5
+            : fraction <= 5 ? 5 : 10;
+      return niceFraction * magnitude;
+    }
+
+    function scaleForRow(row) {
+      const highest = Math.max(
+        0.1,
+        Number(row?.corporateRate) || 0,
+        Number(row?.nonCorporateRate) || 0
+      );
+      const step = niceStep((highest * 1.28) / X_AXIS_MAJOR_INTERVALS);
+      const max = Math.max(step * X_AXIS_MAJOR_INTERVALS, step);
+      return { min: 0, max, step: max / X_AXIS_MAJOR_INTERVALS };
+    }
+
+    function formatRate(value, decimals = 1) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '—';
+      return number.toFixed(decimals).replace(/\.0$/, '');
+    }
+
+    function formatAxisTick(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '';
+      const step = Number(currentScale?.step);
+      const decimals = step < 0.1 ? 2
+        : step < 1 || Math.abs(step - Math.round(step)) > 1e-9 ? 1
+          : 0;
+      return number.toFixed(decimals).replace(/\.0$/, '');
+    }
+
+    function formatDate(timestamp) {
+      const date = new Date(timestamp);
+      if (!Number.isFinite(date.getTime())) return '';
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const year = date.getUTCFullYear();
+      return `${day}/${month}/${year}`;
+    }
+
+    // ============================================================
+    // SHARED AXIS + VALUE LABELS
+    // ------------------------------------------------------------
+    // Both X numeric ticks and Y category ticks use the approved label-driven
+    // 6px major / 2px minor mark drawing. The native Chart.js spine, grid and
+    // labels stay in the same plot geometry; no duplicate axis renderer.
+    // This chart has no data-switch control, so the special old tick-animation
+    // state is unnecessary. Chart.js manages the initial 600ms bar entrance.
+    // ------------------------------------------------------------
+    function xTickDefinitions(scale = currentScale) {
+      if (!scale) return [];
+      return Array.from({length: X_AXIS_MAJOR_INTERVALS * 2 + 1}, (_, index) => ({
+        value: scale.min + scale.step * (index / 2),
+        major: index % 2 === 0,
+        minor: index % 2 !== 0
+      }));
+    }
+
+    const sharedValueLabels = PFFModules.chartValueLabels.createBarValueLabelsPlugin({
+      id: 'pffCorporateMobilitySharedBarLabels',
+      orientation: 'horizontal',
+      showFor: () => true,
+      formatValue(_animatedValue, {index}) {
+        const row = scenarioRows()[index];
+        if (!row) return '';
+        // Preserve the original result and percentage text. The shared
+        // helper positions it inside/outside and slides it when space changes.
+        return `${formatRate(row.value, 1)} = ${row.share.toFixed(0)}% of ads`;
+      }
+    });
+
+    const sharedAxisTickMarks = PFFModules.chartAxes.createLabelDrivenTicksPlugin({
+      axes: ['x', 'y'], id: 'pffCorporateMobilitySharedAxisMarks'
+    });
+
+    // ============================================================
+    // CHART
+    // ============================================================
+
+    function tooltipOptions() {
+      // Keep all original data-specific tooltip callbacks and wording.
+      return PFFModules.chartTooltips.tooltipOptions({
+        mode: 'nearest',
+        intersect: true,
+        callbacks: {
+          title(items) {
+            const index = items?.[0]?.dataIndex;
+            return scenarioRows()[index]?.label || '';
+          },
+          label(context) {
+            const row = scenarioRows()[context.dataIndex];
+            if (!row) return '';
+            return [
+              `Rate: ${formatRate(row.value, 1)} FTE ads per 100 clinicians`,
+              `Share of classified ads: ${row.share.toFixed(1)}%`,
+              `FTE ads: ${formatRate(row.fteAds, 1)}`,
+              row.method
+            ];
+          }
+        }
+      });
+    }
+
+    function chartOptions(animate = false) {
+      const motion = PFFModules.chartAnimations;
+      const axes = PFFModules.chartAxes;
+      const styling = PFFModules.chartStyling;
+      const responsive = PFFModules.chartResponsive;
+      const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
+      const mobile = PFF.mobileLayout();
+      const geometry = responsive.getLayout({containerWidth: chartShell.clientWidth});
+
+      // Approved per-tick lengths require the tick-drawing plugin registered
+      // in createChart(). Do not use grid.tickLength for per-tick variations:
+      // Chart.js 4 supports only one native length per axis.
+      const x = axes.withXAxisTickMarks({
+        type: 'linear', min: currentScale.min, max: currentScale.max,
+        afterFit(axis) { axis.height = mobile ? 48 : 50; },
+        afterBuildTicks(axis) { axis.ticks = xTickDefinitions(currentScale); },
+        grid: {drawTicks: false},
+        border: {display: true, color: '#151515', width: 1},
+        ticks: {
+          display: true, autoSkip: false, maxRotation: 0, minRotation: 0, align: 'inner',
+          color: '#151515', padding: 9,
+          font: {family: 'Lato', size: mobile ? 9 : 10},
+          callback(value, index) { return index % 2 === 0 ? formatAxisTick(value) : ''; }
+        },
+        title: {display: true, text: 'FTE job ads per 100 clinicians',
+          color: '#151515', padding: {top: 8, bottom: 0},
+          font: {family: 'Lato', size: mobile ? 11 : 12, weight: '700'}}
+      });
+      const y = axes.withYAxisTickMarks({
+        position: 'left',
+        afterFit(axis) { axis.width = mobile ? 126 : 150; },
+        grid: {drawOnChartArea: false, drawTicks: false},
+        border: {display: true, color: '#151515', width: 1},
+        ticks: {autoSkip: false, color: '#151515', padding: 10,
+          font: {family: 'Lato', size: mobile ? 9.5 : 10.5, weight: '400'}}
+      });
+
+      // Unified major/minor gridlines on the numeric X axis only. Keep
+      // special Y-axis category spacing and the original 2-bar arrangement.
+      const scales = styling.withUnifiedCartesianGrid({x, y}, {horizontal: true});
+      const base = PFFCharts.baseChartOptions({
+        devicePixelRatio: geometry.devicePixelRatio,
+        indexAxis: 'y', normalized: true,
+        interaction: PFFModules.chartTooltips.interactionOptions('point', {
+          includeInvisible: false
+        }),
+        animation: {duration, easing: 'easeInOutCubic'},
+        animations: {
+          x: {duration, easing: 'easeInOutCubic'},
+          y: {duration, easing: 'easeInOutCubic'},
+          base: {duration: 0}, colors: {duration: 0}
+        },
+        layout: {autoPadding: false, padding: {
+          top: 1, right: 1, bottom: 0, left: 3
+        }},
+        plugins: {legend: {display: false}, tooltip: tooltipOptions()},
+        scales
+      });
+      // The shared coordinator owns the main 600ms chart transition,
+      // preserving the existing short hover and zero-duration resize paths.
+      const coordinated = motion.withChartJsTiming(base);
+      if (duration === 0) coordinated.animation = {...coordinated.animation, duration: 0};
+      return coordinated;
+    }
+
+    function buildDataset() {
+      const rows = scenarioRows();
+      const sharedBarStyle = PFFModules.chartStyling.getBarStyle({
+        borderRadius: 2, borderSkipped: false,
+        categoryPercentage: 0.78, barPercentage: 0.80
+      });
+      return PFFModules.chartTooltips.preserveBarHoverAppearance({
+        label: 'Job availability',
+        data: rows.map(row => row.value),
+        backgroundColor: rows.map(row => row.colour),
+        borderColor: rows.map(row => row.colour),
+        ...sharedBarStyle
+      });
+    }
+
+    function updateFootnotes() {
+      if (!displayRow) return;
+      const transition = transitionEstimate();
+      const endDate = formatDate(displayRow.windowEnd - 1);
+
+      rateNote.innerHTML =
+        `<strong>Rate (12 months to ${endDate}):</strong> FTE job ads ÷ ${PFFCharts.formatInteger(Math.round(displayRow.activeOptometrists))} active clinicians (${displayRow.workforceYear}) × 100`;
+
+      transitionNote.innerHTML =
+        '<strong>Transition:</strong> estimated corporate clinicians ÷ annual non-corporate FTE job ads; corporate employment share estimated from current classified FTE job-ad share';
+
+      const transitionText = Number.isFinite(transition?.years)
+        ? `≈${Math.round(transition.years)} years`
+        : '—';
+
+      PFF.animateHeading({
+        fixed: transitionValue,
+        fixedText: transitionText,
+        duration: CHART_TRANSITION_MS
+      });
     }
 
     function updateAccessibleSummary() {
-      if (!chartSummary) {
-        return;
-      }
+      if (!chartSummary || !displayRow) return;
+      const transition = transitionEstimate();
+      const message = [
+        `Australian optometry job availability in the 12 months to ${formatDate(displayRow.windowEnd - 1)}.`,
+        `Corporate jobs accounted for ${displayRow.corporateShare.toFixed(1)} percent of FTE classified job ads, equivalent to ${formatRate(displayRow.corporateRate, 1)} ads per 100 clinicians.`,
+        `Non-corporate jobs accounted for ${displayRow.nonCorporateShare.toFixed(1)} percent, equivalent to ${formatRate(displayRow.nonCorporateRate, 1)} ads per 100 clinicians.`,
+        Number.isFinite(transition?.years)
+          ? `At current non-corporate job availability, the estimated transition time is about ${Math.round(transition.years)} years, assuming the corporate share of active clinicians matches the corporate share of classified FTE job ads`
+          : ''
+      ].filter(Boolean).join(' ');
 
-      const latest =
-        rows.at(-1);
-
-      const growth =
-        trendGrowth();
-
-      const trendText =
-        Number.isFinite(
-          growth
-        )
-          ? ` ${trendController.windowSize}-year trend ${growth >= 0 ? '+' : '−'}${Math.abs(growth).toFixed(1)}% per year.`
-          : '';
-
-      PFFCharts.updateChartSummary(
-        latest
-          ? `Australian population. Latest value ${PFF.formatInteger(latest.value)} in ${latest.year}.${trendText}`
-          : 'Australian population chart.',
-        chartSummary
-      );
-    }
-
-    function yScaleOptions() {
-      const scale =
-        populationScale();
-
-      const halfStep =
-        scale.step /
-        2;
-
-      return PFFCharts.yScaleOptions(
-        scale,
-        {
-          border: {
-            display:
-              false
-          },
-
-          grid: {
-            display:
-              true,
-            drawOnChartArea:
-              true,
-            drawTicks:
-              true,
-            tickColor:
-              '#151515',
-            tickWidth:
-              1,
-            // Tick marks are drawn by the shared axis plugin, not Chart.js grid.
-            tickLength: 0,
-            color(context) {
-              const index =
-                context.index ??
-                0;
-
-              return index % 2 === 0
-                ? shared.chartStyling.palette.gridMajor
-                : shared.chartStyling.palette.gridMinor;
-            },
-            lineWidth(context) {
-              const index =
-                context.index ??
-                0;
-
-              return index % 2 === 0
-                ? shared.chartAxes.defaults.tickWidth
-                : shared.chartAxes.defaults.minorTickWidth;
-            }
-          },
-
-          ticks: {
-            display:
-              true,
-            autoSkip:
-              false,
-            stepSize:
-              halfStep,
-            color:
-              '#151515',
-            padding:
-              3,
-            font: {
-              family:
-                'Lato',
-              size:
-                12,
-              weight:
-                '400'
-            },
-            callback(
-              value,
-              index
-            ) {
-              return index % 2 === 0
-                ? formatMillions(
-                    value
-                  )
-                : '';
-            }
-          },
-
-          title: {
-            display:
-              true,
-            text:
-              'Population',
-            color:
-              '#151515',
-            padding: {
-              bottom:
-                4
-            },
-            font: {
-              family:
-                'Lato',
-              size:
-                PFF.mobileLayout()
-                  ? 12
-                  : 13,
-              weight:
-                '700'
-            }
-          }
-        }
-      );
-    }
-
-    // Keep the existing custom spines; use native 6px/2px X-axis ticks
-    // rather than also installing the legacy manual year-tick painter.
-    const axisSpinesPlugin =
-      PFFCharts.createAxisSpinesPlugin({
-        id: 'populationAxisSpines'
-      });
-
-    // The approved shared 22%-backed annual-trend pills replace the old
-    // trend-label plugin; the original 3yr/10yr/off calculations are retained.
-    const trendLabelsPlugin = shared.chartTrends.createTrendPillsPlugin({
-      id: 'populationTrendLabels',
-      enabled() { return trendController?.mode !== 'off'; },
-      getTrendValue() { return trendGrowth(); },
-      getSeriesColour() { return AUSTRALIA_COLOUR; }
-    });
-
-    function buildDataset() {
-      // Opt into the common line style but retain this graph's pre-existing
-      // 3px stroke, hidden resting points and monotone interpolation.
-      return PFFCharts.lineDataset({
-        ...shared.chartStyling.getLineStyle({
-          borderWidth: 3, pointRadius: 0, pointHoverRadius: 4,
-          tension: 0.28
-        }),
-        label:
-          'Australia',
-
-        _seriesLabel:
-          'Australia',
-
-        _activeSeries:
-          !seriesHidden,
-
-        data:
-          rows.map(
-            row =>
-              row.value
-          ),
-
-        colour:
-          AUSTRALIA_COLOUR,
-
-        pointBorderColor:
-          '#ffffff',
-
-        pointBorderWidth:
-          1,
-
-        pointHitRadius:
-          shared.chartResponsive.getPointHitRadius(),
-
-        borderCapStyle:
-          'round',
-
-        borderJoinStyle:
-          'round',
-
-        cubicInterpolationMode:
-          'monotone',
-
-        hidden:
-          seriesHidden
-      });
+      PFFCharts.updateChartSummary(message, chartSummary);
     }
 
     function createChart() {
-      // Keep all PFFCharts data/scale functions. Apply the new modules only
-      // to chart appearance, interactions and animation configuration.
-      const xScale = shared.chartAxes.withXAxisTickMarks(
-        PFFCharts.xYearScaleOptions(),
-        { yearMode: 'even' }
-      );
-      const yScale = shared.chartAxes.withYAxisTickMarks(
-        shared.chartAxes.withStableAxis(yScaleOptions())
-      );
-
-      const tooltip = shared.chartTooltips.tooltipOptions({
-          callbacks: {
-                title(items) {
-                  const index =
-                    items?.[0]?.dataIndex;
-
-                  return Number.isInteger(
-                    index
-                  )
-                    ? String(
-                        rows?.[index]?.year ??
-                        ''
-                      )
-                    : '';
-                },
-
-                label(context) {
-                  const value =
-                    Number(
-                      context.raw
-                    );
-
-                  const valueText =
-                    `Australia: ${PFF.formatInteger(value)}`;
-
-                  const growth =
-                    trendGrowth();
-
-                  if (
-                    !Number.isFinite(
-                      growth
-                    )
-                  ) {
-                    return valueText;
-                  }
-
-                  const sign =
-                    growth > 0
-                      ? '+'
-                      : growth < 0
-                        ? '−'
-                        : '';
-
-                  return `${valueText} · ${sign}${Math.abs(growth).toFixed(1)}% p.a.`;
-                }
-              }
-      });
-
-      let options = PFFCharts.baseChartOptions({
-        interaction: shared.chartTooltips.interactionOptions('line'),
-        elements: shared.chartTooltips.subtleEmphasisOptions(),
-        plugins: { tooltip },
-        scales: { x: xScale, y: yScale }
-      });
-
-      // Both the Chart.js animation and the inherited x/y property animations
-      // must use 600ms; otherwise the old core's 900ms properties win.
-      options = shared.chartAnimations.withChartJsTiming(options);
-      const duration = shared.chartAnimations.defaults.chartMs;
-      options.animations = {
-        ...options.animations,
-        x: { ...(options.animations?.x || {}), duration, easing: 'easeInOutCubic' },
-        y: { ...(options.animations?.y || {}), duration, easing: 'easeInOutCubic' }
-      };
-      options.devicePixelRatio = shared.chartResponsive.getLayout().devicePixelRatio;
-
-      // This graph uses a single value-axis grid (no custom grid painter).
-      // Retain its established alternating faint major/minor levels.
-      const chartConfig = shared.chartStyling.styleChartConfig({
-        type: 'line',
+      currentScale = scaleForRow(displayRow);
+      chart = new Chart(chartCanvas.getContext('2d'), {
+        type: 'bar',
         data: {
-          labels: rows.map(row => String(row.year)),
+          labels: scenarioRows().map(row => row.label),
           datasets: [buildDataset()]
         },
-        options,
+        options: chartOptions(true),
         plugins: [
-          trendLabelsPlugin,
-          axisSpinesPlugin,
-          // Draw actual per-tick 6 px major / 2 px minor marks on both axes.
-          // Chart.js 4 does not support grid.tickLength as a callback.
-          shared.chartAxes.createLabelDrivenTicksPlugin({ force: true }),
+          sharedAxisTickMarks,
+          sharedValueLabels,
           {
             id: 'pffTooltipTopLayer',
             afterDraw(chartInstance) {
-              const tip = chartInstance?.tooltip;
-              if (tip && Number(tip.opacity) > 0) tip.draw(chartInstance.ctx);
+              const tooltip = chartInstance?.tooltip;
+              if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
+              tooltip.draw(chartInstance.ctx);
             }
           }
         ]
       });
 
-      chartConfig.options.scales.y.grid = {
-        ...chartConfig.options.scales.y.grid,
-        color(context) {
-          return (context.index ?? 0) % 2 === 0
-            ? shared.chartStyling.palette.gridMajor
-            : shared.chartStyling.palette.gridMinor;
-        },
-        lineWidth(context) {
-          return (context.index ?? 0) % 2 === 0
-            ? shared.chartAxes.defaults.tickWidth
-            : shared.chartAxes.defaults.minorTickWidth;
-        }
-      };
-
-      chart = new Chart(chartCanvas.getContext('2d'), chartConfig);
+      updateFootnotes();
       updateAccessibleSummary();
     }
 
-    function setupControls() {
-      tabsController =
-        PFF.setupTabs({
-          tabList,
-          tabs: [
-            populationTab
-          ],
-          valueAttribute:
-            'view',
-          initialValue:
-            'population'
-        });
+    // ============================================================
+    // APP STARTUP
+    // ============================================================
 
-      headingScroller =
-        PFF.setupScrollableRegion({
-          scroller:
-            headingScrollViewport,
-          leftButton:
-            headingScrollLeft,
-          rightButton:
-            headingScrollRight
-        });
+    function startApp() {
+      PFF.initialiseApp({
+        app,
+        status: statusEl,
 
-      trendController =
-        PFFCharts.setupTrendToggle({
-          button:
-            yoyTrendToggle,
-          initialMode:
-            '3yr',
-          onChange() {
-            chart?.draw();
-            updateAccessibleSummary();
-          }
-        });
+        async loadLive() {
+          loaderText.textContent = 'Loading live job and workforce data…';
+          const [jobTable, workforceTable] = await Promise.all([
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.jobSheetId,
+              sheetName: CONFIG.jobSheetName,
+              range: CONFIG.jobRange,
+              headers: '0',
+              query: 'select *',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.workforceSheetId,
+              sheetName: CONFIG.workforceSheet,
+              range: CONFIG.workforceRange,
+              headers: '1',
+              query: 'select *',
+              timeoutMs: CONFIG.fetchTimeoutMs
+            })
+          ]);
 
-      // Mount exactly one legend controller. Do not retain the old
-      // PFFCharts.setupLegend handler on the same DOM element.
-      legendController = shared.chartLegends.mount({
-        root: chartLegend,
-        getChart() { return chart; },
-        items: [{
-          id: 'Australia', datasetIndex: 0,
-          label: 'Australia', colour: AUSTRALIA_COLOUR,
-          markerType: 'line', visible: !seriesHidden
-        }],
-        onToggle({ visible }) {
-          seriesHidden = !visible;
-          updateAccessibleSummary();
-        }
-      });
+          return { jobTable, workforceTable };
+        },
 
-      interactionsController =
-        PFFCharts.setupChartInteractions({
-          canvas:
-            chartCanvas,
-          getChart() {
-            return chart;
-          }
-        });
-    }
+        parseLive: parseLiveData,
 
-    if (missingChartModules.length) {
-      const message = `Shared chart assets missing: ${missingChartModules.join(', ')}`;
-      console.error('[PFF population pilot]', message);
-      const loaderMessage = document.querySelector('#loadingState .loader-text');
-      if (loaderMessage) loaderMessage.textContent = message;
-      throw new Error(message);
-    }
+        async loadRemoteCache() {
+          loaderText.textContent = 'Loading cached PFF data…';
+          return PFFCharts.loadAppsScriptCache({
+            url: CACHE_WEB_APP_URL,
+            appKey: CACHE_APP_KEY
+          });
+        },
 
-    restoreTapAppearance = shared.chartResponsive.suppressTapFlash(chartCanvas);
-    migrateLegacyLocalCache();
-    setupControls();
+        parseRemoteCache,
+        cacheKey: CONFIG.localCacheKey,
+        minRows: 1,
 
-    PFF.initialiseApp({
-      app,
-      status:
-        statusElement,
-
-      loadLive() {
-        return PFFCharts.loadGVizSheet({
-          sheetId:
-            CONFIG.sheetId,
-          sheetName:
-            CONFIG.sheetName,
-          range:
-            CONFIG.range,
-          headers:
-            '1'
-        });
-      },
-
-      parseLive:
-        parsePopulationTable,
-
-      loadRemoteCache() {
-        return PFFCharts.loadAppsScriptCache({
-          url:
-            CACHE_WEB_APP_URL,
-          appKey:
-            CACHE_APP_KEY
-        });
-      },
-
-      parseRemoteCache:
-        parseRemoteRows,
-
-      cacheKey:
-        CONFIG.localCacheKey,
-
-      minRows:
-        3,
-
-      onLiveError(error) {
-        console.warn(
-          'Live Australian population data unavailable; trying Apps Script cache.',
-          error
-        );
-      },
-
-      onRemoteCacheError(error) {
-        console.warn(
-          'Apps Script Australian population cache unavailable; trying browser cache.',
-          error
-        );
-      },
-
-      dataSourceOptions: {
-        indicator:
-          dataSourceIndicator,
-        text:
-          dataSourceText
-      },
-
-      render(loaded) {
-        rows =
-          normalisePopulationRows(
-            loaded.rows
+        onLiveError(error) {
+          console.warn(
+            'Live corporate mobility data unavailable; trying Apps Script cache',
+            error
           );
+        },
 
-        chartSummary =
-          PFFCharts.ensureChartSummary({
-            canvas:
-              chartCanvas,
-            id:
-              'populationChartSummary'
+        onRemoteCacheError(error) {
+          console.warn(
+            'Apps Script corporate mobility cache unavailable; trying browser cache',
+            error
+          );
+        },
+
+        dataSourceOptions: { indicator: liveData, text: liveDataText },
+
+        render(loaded) {
+          const rows = validateRows(loaded.rows);
+          displayRow = rows[0];
+          createChart();
+
+          chartSummary = PFFCharts.ensureChartSummary({ parent: app });
+          chartCanvas.setAttribute('aria-describedby', chartSummary.id);
+          updateAccessibleSummary();
+
+          // Remove mobile tap flash without changing original bar colours.
+          PFFModules.chartResponsive.suppressTapFlash(chartCanvas);
+
+          // All chart-data tap tooltips dismiss when clicking a blank part of
+          // this chart or anywhere outside it; works on mouse and touch.
+          interactionsController = PFFModules.chartTooltips.bindDismissOnOutside({
+            canvas: chartCanvas,
+            getChart() { return chart; }
           });
 
-        createChart();
-        legendController.refresh();
-        tabsController.update();
-        headingScroller.update();
-
-        // Reuse the original lifecycle/resize observer (no duplicate observer)
-        // while applying the approved responsive geometry on every refresh.
-        responsiveController = PFFCharts.createResponsiveController({
-          getChart() { return chart; },
-          observe: [app, chartShell],
-          applyResponsiveChartOptions: false,
-          beforeResize(chartInstance) {
-            const layout = shared.chartResponsive.getLayout();
-            chartInstance.options.interaction =
-              shared.chartTooltips.interactionOptions('line');
-            chartInstance.options.layout.padding.top = layout.topPadding;
-            chartInstance.options.scales.x.ticks.font.size = layout.tickFontSize;
-            chartInstance.options.scales.x.title.font.size = layout.titleFontSize;
-            chartInstance.options.scales.y.afterFit =
-              shared.chartAxes.lockAxisWidth(null);
-            if (chartInstance.data.datasets[0]) {
-              chartInstance.data.datasets[0].pointHitRadius =
-                layout.pointHitRadius;
+          responsiveController = PFFCharts.createResponsiveController({
+            getChart() { return chart; },
+            observe: [app, chartShell],
+            applyResponsiveChartOptions: false,
+            onRefresh() {
+              if (!chart) return;
+              chart.resize();
+              chart.update('none');
             }
-          },
-          onRefresh() {
-            tabsController?.update();
-            headingScroller?.update();
-            legendController?.updateArrows();
-          }
-        });
+          });
 
-        return chart;
-      },
+          return chart;
+        },
 
-      errorMessage:
-        'Australian population data unavailable.'
-    });
+        onError() { liveData.style.visibility = 'hidden'; },
+        errorMessage: 'Corporate mobility job data unavailable'
+      });
+    }
+
+    startApp();
   </script>
 </body>
 </html>
