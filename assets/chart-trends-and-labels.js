@@ -1,4 +1,4 @@
-/* PFF Chart Trends & Labels v2 — visual-only helpers.
+/* PFF Chart Trends & Labels v3 — visual-only helpers.
  * Source patterns: existing PFF trend pills + 3.6px regression/trend lines.
  * No regression calculations, data transforms, loaders or global Chart defaults.
  */
@@ -12,7 +12,7 @@
     mobileTrendLabelFont: '700 8.2px Lato, sans-serif',
     labelHeight: 15, mobileLabelHeight: 14,
     labelGap: 5, labelBorderWidth: 0.65, connectorWidth: 0.8,
-    pillBackdropOpacity: 0.96, endpointBackdropOpacity: 0.97,
+    pillBackdropOpacity: 0.18, endpointBackdropOpacity: 0.22,
     endpointLabelFont: '700 10px Lato, sans-serif',
     mobileEndpointLabelFont: '700 9px Lato, sans-serif',
     trendThreshold: 0.05
@@ -106,7 +106,7 @@
       ctx.beginPath();
       if (typeof ctx.roundRect==='function') ctx.roundRect(p.left,p.y-h/2,p.right-p.left,h,3);
       else ctx.rect(p.left,p.y-h/2,p.right-p.left,h);
-      // Opaque white foundation + the same light series tint prevents dark series lines from bleeding through.
+      // Very light backing preserves visibility of data lines underneath, close to the original v1 tint.
       ctx.fillStyle=`rgba(255,255,255,${defaults.pillBackdropOpacity})`;ctx.fill();
       ctx.fillStyle=rgba(ink,0.15);ctx.fill();ctx.strokeStyle=rgba(ink,0.42);
       ctx.lineWidth=defaults.labelBorderWidth;ctx.stroke();
@@ -180,7 +180,7 @@
         ctx.textBaseline='middle';ctx.textAlign='left';
         const h=mobile?17:18, pad=mobile?5:6;
         placed.forEach(p=>{
-          // Small near-opaque badge: clear text even where the trend line crosses behind it.
+          // Light, translucent badge keeps the original line visible while dark text improves legibility.
           ctx.beginPath();
           if (typeof ctx.roundRect==='function') ctx.roundRect(p.left,p.y-h/2,p.right-p.left,h,3);
           else ctx.rect(p.left,p.y-h/2,p.right-p.left,h);
@@ -197,6 +197,6 @@
     };
   }
 
-  root.chartTrends = Object.freeze({version:'2.0.0-review',defaults,lineStyle,trendLabel,rgba,
+  root.chartTrends = Object.freeze({version:'3.0.0-review',defaults,lineStyle,trendLabel,rgba,
     placeLabels,drawPills,createTrendPillsPlugin,createEndpointLabelsPlugin});
 })(typeof window !== 'undefined' ? window : globalThis);
