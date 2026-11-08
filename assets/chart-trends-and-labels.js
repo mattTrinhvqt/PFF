@@ -1,4 +1,4 @@
-/* PFF Chart Trends & Labels v1 — visual-only helpers.
+/* PFF Chart Trends & Labels v2 — visual-only helpers.
  * Source patterns: existing PFF trend pills + 3.6px regression/trend lines.
  * No regression calculations, data transforms, loaders or global Chart defaults.
  */
@@ -12,6 +12,9 @@
     mobileTrendLabelFont: '700 8.2px Lato, sans-serif',
     labelHeight: 15, mobileLabelHeight: 14,
     labelGap: 5, labelBorderWidth: 0.65, connectorWidth: 0.8,
+    pillBackdropOpacity: 0.96, endpointBackdropOpacity: 0.97,
+    endpointLabelFont: '700 10px Lato, sans-serif',
+    mobileEndpointLabelFont: '700 9px Lato, sans-serif',
     trendThreshold: 0.05
   });
   const finite = n => n !== null && n !== undefined && n !== '' && Number.isFinite(Number(n));
@@ -57,7 +60,7 @@
   // Use only enough rows to fit, and omit excess labels instead of placing them on top of one another.
   function placeLabels(items, area, options = {}) {
     if (!Array.isArray(items) || !area || !finite(area.left) || !finite(area.right)) return [];
-    const mobile = !!options.mobile, height = mobile ? 14 : 15;
+    const mobile = !!options.mobile, height = options.endpoint ? (mobile ? 17 : 18) : (mobile ? 14 : 15);
     const spacing = Math.max(1, Number(options.gap ?? 5));
     const widthMax = Math.max(0, area.right-area.left-8);
     const existing = Array.isArray(options.blockers) ? options.blockers.slice() : [];
@@ -103,6 +106,8 @@
       ctx.beginPath();
       if (typeof ctx.roundRect==='function') ctx.roundRect(p.left,p.y-h/2,p.right-p.left,h,3);
       else ctx.rect(p.left,p.y-h/2,p.right-p.left,h);
+      // Opaque white foundation + the same light series tint prevents dark series lines from bleeding through.
+      ctx.fillStyle=`rgba(255,255,255,${defaults.pillBackdropOpacity})`;ctx.fill();
       ctx.fillStyle=rgba(ink,0.15);ctx.fill();ctx.strokeStyle=rgba(ink,0.42);
       ctx.lineWidth=defaults.labelBorderWidth;ctx.stroke();
       ctx.textAlign='left'; ctx.fillStyle=arrowColour;
@@ -156,7 +161,7 @@
       afterDatasetsDraw(chart) {
         if(!chart?.chartArea || (options.enabled && !options.enabled(chart)))return;
         const ctx=chart.ctx, mobile=chart.width<440;const items=[];
-        ctx.save();ctx.font=`600 ${mobile?9:10}px Lato, sans-serif`;
+        ctx.save();ctx.font=mobile ? defaults.mobileEndpointLabelFont : defaults.endpointLabelFont;
         (chart.data?.datasets||[]).forEach((dataset,i)=>{
           if (!(options.showFor?.({chart,dataset,datasetIndex:i}) ?? dataset._pffShowEndpointLabel)) return;
           const meta=chart.getDatasetMeta(i);if(!meta ||meta.hidden) return;
@@ -164,18 +169,34 @@
             const point=meta.data[j], raw=dataset.data?.[j],v=raw?.y??raw;
             if(!finite(v)||!finite(point?.x)||!finite(point?.y))continue;
             const text=options.formatValue ? String(options.formatValue(v,{chart,dataset,datasetIndex:i,index:j})) : String(v);
-            items.push({anchorX:point.x,anchorY:point.y,width:ctx.measureText(text).width+10,
+            items.push({anchorX:point.x,anchorY:point.y,width:ctx.measureText(text).width+(mobile?24:26),
               amount:text,colour:colourOf(dataset.borderColor,INK)});break;
           }
         });
         ctx.restore();
         const placed=placeLabels(items,chart.chartArea,{mobile,endpoint:true,blockers:chart.$pffSharedTrendPillRects||[]});
-        ctx.save();ctx.font=`600 ${mobile?9:10}px Lato, sans-serif`;ctx.textBaseline='middle';ctx.textAlign='left';
-        placed.forEach(p=>{ctx.fillStyle=p.colour;ctx.fillText(p.amount,p.left+5,p.y);});ctx.restore();
+        ctx.save();
+        ctx.font=mobile ? defaults.mobileEndpointLabelFont : defaults.endpointLabelFont;
+        ctx.textBaseline='middle';ctx.textAlign='left';
+        const h=mobile?17:18, pad=mobile?5:6;
+        placed.forEach(p=>{
+          // Small near-opaque badge: clear text even where the trend line crosses behind it.
+          ctx.beginPath();
+          if (typeof ctx.roundRect==='function') ctx.roundRect(p.left,p.y-h/2,p.right-p.left,h,3);
+          else ctx.rect(p.left,p.y-h/2,p.right-p.left,h);
+          ctx.fillStyle=`rgba(255,255,255,${defaults.endpointBackdropOpacity})`;ctx.fill();
+          ctx.lineWidth=0.7;ctx.strokeStyle=rgba(p.colour,0.65);ctx.stroke();
+          // The compact series marker preserves identity without tinting the number itself.
+          ctx.beginPath();ctx.arc(p.left+pad+2.1,p.y,2.1,0,Math.PI*2);
+          ctx.fillStyle=p.colour;ctx.fill();
+          ctx.fillStyle=INK;ctx.fillText(p.amount,p.left+pad+9,p.y);
+        });
+        chart.$pffSharedEndpointLabelRects=placed.map(p=>({left:p.left,right:p.right,top:p.top,bottom:p.bottom}));
+        ctx.restore();
       }
     };
   }
 
-  root.chartTrends = Object.freeze({version:'1.0.0-review',defaults,lineStyle,trendLabel,rgba,
+  root.chartTrends = Object.freeze({version:'2.0.0-review',defaults,lineStyle,trendLabel,rgba,
     placeLabels,drawPills,createTrendPillsPlugin,createEndpointLabelsPlugin});
 })(typeof window !== 'undefined' ? window : globalThis);
