@@ -1,5 +1,5 @@
 /*
- * PFF chart animations & transitions — v2.0.0-candidate.1
+ * PFF chart animations & transitions — v2.1.0-candidate.1
  * An opt-in coordinator for chart DATA, value-axis limits, and moving ticks.
  * Based on the existing PFF keyed morph / practice_landscape tick handoff.
  * Approved foundations remain unchanged: chart styling, chart axes, UI counters.
@@ -14,6 +14,8 @@
  *   withChartJsTiming(chartOptions)
  *   morphTypes(target, toTypeModel, {initial, plot, render, reducedMotion})
  *   sampleTypeMorph(fromTypeModel, toTypeModel, progress, plot)
+ *   sampleCategories(fromEntries, toEntries, rawProgress, {zeroBase?})
+ *   animateCategories(target, toEntries, {initial?, zeroBase?, render(items, meta), reducedMotion?})
  *   cancel(target)
  *
  * Model: {axes:{x?:{min,max,step?},y?:{min,max,step?}},
@@ -24,7 +26,7 @@
 (function(global) {
   'use strict';
   const root = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '2.0.0-candidate.1';
+  const VERSION = '2.1.0-candidate.1';
   const DEFAULTS = Object.freeze({
     chartMs: 600, hoverMs: 170,
     chartEasing: 'easeInOutCubic', majorTickPx: 6, minorTickPx: 2
@@ -310,10 +312,106 @@
       options.render(frame, {duration, complete: raw >= 1});
     });
   }
+  // Keyed categorical transitions (approved Clinician Balance MM1–MM7 behaviour).
+  // Only coordinates, geometry, value and opacity are interpolated. The caller
+  // keeps chart spines/grid fixed and renders bars, labels and ticks together.
+  // IDs survive filtering/reordering; names, colours and calculations belong
+  // to the application. No Chart.js internals are required by this helper.
+  const categoryDisplayed = new WeakMap();
+  function normalizeCategories(entries) {
+    if (!Array.isArray(entries)) {
+      throw new TypeError('[PFF chartAnimations] Categories must be an array.');
+    }
+    const seen = new Set();
+    return entries.map((raw, index) => {
+      const id = String(raw?.id ?? raw?.key ?? raw?.mmm ?? '').trim();
+      const x = Number(raw?.x), base = Number(raw?.base), y = Number(raw?.y);
+      const height = Number(raw?.height), value = Number(raw?.value ?? 0);
+      const opacity = Number(raw?.opacity ?? raw?.alpha ?? 1);
+      const parsedMM = /^MM(\d+)$/i.exec(id);
+      const order = Number(raw?.order ?? raw?.mmm ?? (parsedMM ? parsedMM[1] : index));
+      if (!id || seen.has(id) || ![x, base, y, height, value, opacity, order]
+        .every(Number.isFinite) || height < 0) {
+        throw new TypeError('[PFF chartAnimations] Categories require unique ids and finite geometry.');
+      }
+      seen.add(id);
+      return {
+        id, x, base, y, height, value, order, opacity: clamp(opacity),
+        label: String(raw.label ?? id),
+        colour: String(raw.colour ?? raw.color ?? '#69718a')
+      };
+    });
+  }
+  function nearestCategoryY(item, candidates, fallback) {
+    if (!candidates.length) return fallback;
+    return candidates.reduce((best, row) =>
+      Math.abs(row.order - item.order) < Math.abs(best.order - item.order) ? row : best
+    ).y;
+  }
+  function sampledCategories(start, finish, rawProgress, options = {}) {
+    const raw = clamp(Number(rawProgress) || 0);
+    const p = easeInOutCubic(raw);
+    const before = new Map(start.map(item => [item.id, item]));
+    const after = new Map(finish.map(item => [item.id, item]));
+    const keys = [...new Set([...finish.map(item => item.id), ...start.map(item => item.id)])];
+    const zero = options.zeroBase == null ? null : Number(options.zeroBase);
+    if (zero != null && !Number.isFinite(zero)) {
+      throw new TypeError('[PFF chartAnimations] zeroBase must be finite.');
+    }
+    const items = keys.map(id => {
+      const current = before.get(id), dest = after.get(id);
+      const guide = dest || current;
+      const baseline = zero ?? guide.base;
+      const initial = current || {
+        ...guide, x: baseline, base: baseline,
+        y: nearestCategoryY(guide, start, guide.y),
+        height: Math.max(1, guide.height * 0.65), value: 0, opacity: 0
+      };
+      const final = dest || {
+        ...guide, x: baseline, base: baseline,
+        y: nearestCategoryY(guide, finish, guide.y),
+        height: Math.max(1, guide.height * 0.65), value: 0, opacity: 0
+      };
+      const opacity = lerp(initial.opacity, final.opacity, p);
+      return {
+        id, label: guide.label, colour: guide.colour, order: guide.order,
+        x: lerp(initial.x, final.x, p), base: lerp(initial.base, final.base, p),
+        y: lerp(initial.y, final.y, p), height: lerp(initial.height, final.height, p),
+        value: lerp(initial.value, final.value, p), opacity, alpha: opacity,
+        entering: !current, exiting: !dest
+      };
+    }).sort((a, b) => a.order - b.order);
+    return {items, progress: p, rawProgress: raw};
+  }
+  function sampleCategories(fromEntries, toEntries, rawProgress, options = {}) {
+    return sampledCategories(normalizeCategories(fromEntries),
+      normalizeCategories(toEntries), rawProgress, options);
+  }
+  function animateCategories(target, toEntries, options = {}) {
+    assertTarget(target);
+    if (typeof options.render !== 'function') {
+      throw new TypeError('[PFF chartAnimations] animateCategories requires render(items, meta).');
+    }
+    const to = normalizeCategories(toEntries);
+    const from = categoryDisplayed.get(target) || normalizeCategories(options.initial ?? toEntries);
+    const duration = isReducedMotion(options) || options.instant === true ? 0 : DEFAULTS.chartMs;
+    // The existing coordinator cancels an in-flight animation for the same target.
+    // Its last rendered coordinates are retained, so rapid state changes retarget
+    // smoothly instead of snapping back to a stale dataset.
+    return drive(target, duration, raw => {
+      const frame = sampledCategories(from, to, raw, options);
+      categoryDisplayed.set(target, raw >= 1 ? to : normalizeCategories(frame.items));
+      options.render(frame.items, {
+        duration, complete: raw >= 1, progress: frame.progress,
+        rawProgress: frame.rawProgress
+      });
+    });
+  }
   root.chartAnimations = Object.freeze({
     version: VERSION, defaults: DEFAULTS, easeInOutCubic,
     sample, normalize, animate, cancel,
     sampleTypeMorph, morphTypes, withChartJsTiming,
+    normalizeCategories, sampleCategories, animateCategories,
     isReducedMotion
   });
 })(typeof window !== 'undefined' ? window : globalThis);
