@@ -1,5 +1,5 @@
 /*
- * PFF chart axes and ticks — v2.0.0-candidate.1
+ * PFF chart axes and ticks — v2.1.0-candidate.1
  * Shared opt-in presentation helpers. No automatic global Chart.js changes.
  * Extracted from PFF core's stable axis fitting, year cadence and tick ratios.
  * Leaves data bounds, Chart.js built-in ticks, custom axis-drawing plugins,
@@ -10,7 +10,7 @@
 (function (global) {
   'use strict';
   const root = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '2.0.0-candidate.1';
+  const VERSION = '2.1.0-candidate.1';
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
     seriesGutterDesktop: 69,
@@ -159,6 +159,9 @@
     if (options.xTicks === true) {
       scales.x = withXAxisTickMarks(scales.x, {yearMode: options.yearMode || 'even', isMajor: options.isMajor});
     }
+    if (options.yTicks === true) {
+      scales.y = withYAxisTickMarks(scales.y, {isMajor: options.yIsMajor});
+    }
     if (options.addYearLabels && !horizontal) {
       const x = scales[categoryId];
       const original = x.ticks?.callback;
@@ -207,33 +210,62 @@
       };
     });
   }
-  // An opt-in Chart.js scale helper. Does not alter data, tick callback,
-  // chart-area gridlines or a custom-axis plugin. Do not apply when the
-  // application is already drawing its own tick marks.
-  function withXAxisTickMarks(scale = {}, options = {}) {
-    const next = clone(plain(scale) ? scale : {});
-    const previousGrid = next.grid || {};
-    const customIsMajor = options.isMajor;
-    function majorFor(context) {
-      if (typeof customIsMajor === 'function') return customIsMajor(context) !== false;
-      const tick = context?.tick;
-      if (options.yearMode === 'even') {
-        const label = typeof context?.scale?.getLabelForValue === 'function'
-          ? context.scale.getLabelForValue(tick?.value)
-          : String(tick?.label ?? tick?.value ?? '');
-        const year = Number(label);
-        if (/^\d{4}$/.test(String(label)) && Number.isInteger(year)) return year % 2 === 0;
-      }
-      if (typeof tick?.minor === 'boolean') return !tick.minor;
-      if (typeof tick?.major === 'boolean') return tick.major;
-      return true;
+  // A labelled tick is a major tick, regardless of its index, year parity
+  // or the tick-generation cadence. Blank/missing labels are minor ticks.
+  // Chart.js supplies the final rendered label at context.tick.label.
+  function hasVisibleLabel(label) {
+    if (Array.isArray(label)) return label.some(hasVisibleLabel);
+    return label != null && String(label).trim().length > 0;
+  }
+  function isMajorTick(context, options = {}, sourceScale = {}) {
+    if (typeof options.isMajor === 'function') return options.isMajor(context) !== false;
+    const tick = context?.tick;
+    if (context?.scale?.options?.ticks?.display === false) return false;
+    if (tick && Object.prototype.hasOwnProperty.call(tick, 'label')) {
+      return hasVisibleLabel(tick.label);
     }
-    next.grid = {...previousGrid, drawTicks: true,
-      tickLength: (context) => tickMarkStyle(majorFor(context)).length,
-      tickWidth: (context) => tickMarkStyle(majorFor(context)).width,
+    // Fallback for pre-render Chart.js contexts, tests or custom scale
+    // integrations that have not yet populated tick.label.
+    const scale = context?.scale;
+    const callback = scale?.options?.ticks?.callback || sourceScale?.ticks?.callback;
+    if (typeof callback === 'function') {
+      try {
+        return hasVisibleLabel(callback.call(scale || sourceScale,
+          tick?.value, context?.index ?? 0, scale?.ticks || []));
+      } catch (_) { /* Defer to explicit tick metadata or legacy fallback. */ }
+    }
+    if (typeof tick?.minor === 'boolean') return !tick.minor;
+    if (typeof tick?.major === 'boolean') return tick.major;
+    // Retain the existing year fallback only when the actual display label
+    // and callback are unavailable; never override an explicit blank label.
+    if (options.yearMode === 'even') {
+      const raw = typeof scale?.getLabelForValue === 'function'
+        ? scale.getLabelForValue(tick?.value) : tick?.value;
+      if (/^\d{4}$/.test(String(raw))) return Number(raw) % 2 === 0;
+    }
+    return true;
+  }
+  // Opt-in tick-mark helper for either axis. Does not alter displayed labels,
+  // callbacks, scale limits, gridline colours or chart animation timing.
+  // Avoid applying it alongside a plugin that already draws axis tick marks.
+  function withLabelDrivenTickMarks(scale = {}, options = {}) {
+    const next = clone(plain(scale) ? scale : {});
+    const priorGrid = next.grid || {};
+    function markStyle(context) {
+      return tickMarkStyle(isMajorTick(context, options, scale));
+    }
+    next.grid = {...priorGrid, drawTicks: true,
+      tickLength(context) { return markStyle(context).length; },
+      tickWidth(context) { return markStyle(context).width; },
       tickColor: DEFAULTS.ink
     };
     return next;
+  }
+  function withXAxisTickMarks(scale = {}, options = {}) {
+    return withLabelDrivenTickMarks(scale, options);
+  }
+  function withYAxisTickMarks(scale = {}, options = {}) {
+    return withLabelDrivenTickMarks(scale, options);
   }
   function easeInOutCubic(progress) {
     const t = clamp(finite(progress, 0), 0, 1);
@@ -333,7 +365,8 @@
     mobileLayout, font, gutter, lockAxisWidth, withStableAxis,
     normaliseScale, tickDefinitions, ratio, formatValue, yearLabels,
     axisOptions, avoidDuplicateGrid, tickMarkStyle, yearTickDefinitions,
-    withXAxisTickMarks, easeInOutCubic, niceMajorStep, adaptiveMajorStep,
+    hasVisibleLabel, isMajorTick, withLabelDrivenTickMarks,
+    withXAxisTickMarks, withYAxisTickMarks, easeInOutCubic, niceMajorStep, adaptiveMajorStep,
     majorStepWithHysteresis, tickStepHandoffProgress, animatedNumericTicks
   });
 })(typeof window !== 'undefined' ? window : globalThis);
