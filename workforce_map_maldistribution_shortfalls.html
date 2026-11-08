@@ -4,11 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>PFF Clinician balance</title>
+  <title>PFF Clinician balance — Smooth Categories Pilot v2</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Approved shared presentation helpers. Existing PFF loader and calculations remain intact. -->
+  <script src="./assets/colours-and-settings.js"></script>
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-reference-lines-and-annotations.js"></script>
+  <script src="./assets/chart-value-and-category-labels.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
 
   <style>
 
@@ -163,6 +172,8 @@
 
   <script>
     'use strict';
+    // Pilot v2: keyed MM category morph and wider Y gutter. Data loading and calculations unchanged.
+    // State/MMM colour mapping and static legend remain unchanged.
 
     const CONFIG = Object.freeze({
       sheetId: '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
@@ -225,7 +236,8 @@
     });
     const AUSTRALIA_COLOUR = '#0b5d1e';
     const BENCHMARK_POPULATION = 10000;
-    const CHART_TRANSITION_MS = 500;
+    // Previously 500 ms. Approved PFF chart data/tick transition is 600 ms.
+    const CHART_TRANSITION_MS = PFFModules.chartAnimations.defaults.chartMs;
     const X_AXIS_MAJOR_INTERVALS = 6;
     const X_AXIS_MAJOR_TICK_COUNT = X_AXIS_MAJOR_INTERVALS + 1;
 
@@ -252,7 +264,7 @@
     let chart = null;
     let chartSummary = null;
     let stateMenuController = null;
-    let interactionsController = null;
+    let interactionsController = null; // shared dismissal + touch cleanup
     let responsiveController = null;
     let displayRows = [];
     let displayYear = null;
@@ -680,6 +692,195 @@
       return PFFCharts.formatInteger(Math.round(number));
     }
 
+    // The horizontal axis has specialist symmetric values and animated tick labels.
+    // Keep its app-specific positioning, but use the approved shared tokens.
+    const PFF_AXIS_TOKENS = PFFModules.chartStyling.getTokens().palette;
+    const PFF_TICK_LENGTHS = PFFModules.chartAxes.defaults;
+    const majorTickLength = PFF_TICK_LENGTHS.tickLength;
+    const minorTickLength = PFF_TICK_LENGTHS.minorTickLength;
+
+    const zeroBalancePlugin = PFFModules.chartAnnotations.createPlugin({
+      id: 'pffMaldistributionSharedZeroReference',
+      getItems: () => [{ axis: 'x', value: 0, preset: 'zero', opacity: 1 }]
+    });
+    // MM categories retain their own identity across state changes. This pilot
+    // draws their axis labels and ticks so they can travel with the moving bars.
+    // This is deliberately isolated here until the animation is approved.
+    const categoryMotion = { active: false, raf: null, started: 0, items: [], token: 0 };
+    const CATEGORY_MOTION_MS = CHART_TRANSITION_MS;
+    const categoryEase = t => {
+      const p = Math.max(0, Math.min(1, t));
+      return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+    };
+    const categoryLerp = (a, b, t) => a + (b - a) * t;
+    function categoryProgress(now = performance.now()) {
+      if (!categoryMotion.active) return 1;
+      return categoryEase((now - categoryMotion.started) / CATEGORY_MOTION_MS);
+    }
+    function categoryFrame(now = performance.now()) {
+      const progress = categoryProgress(now);
+      return categoryMotion.items.map(item => ({
+        mmm: item.mmm,
+        colour: item.colour,
+        x: categoryLerp(item.start.x, item.end.x, progress),
+        base: categoryLerp(item.start.base, item.end.base, progress),
+        y: categoryLerp(item.start.y, item.end.y, progress),
+        height: categoryLerp(item.start.height, item.end.height, progress),
+        value: categoryLerp(item.start.value, item.end.value, progress),
+        alpha: categoryLerp(item.start.alpha, item.end.alpha, progress)
+      })).filter(item => item.alpha > 0.001);
+    }
+    function chartCategoryEntries(rows, chartInstance = chart) {
+      if (!chartInstance) return [];
+      return rows.map(row => {
+        const meta = chartInstance.getDatasetMeta(row.mmm - 1);
+        const elem = meta?.data?.[0];
+        const p = elem?.getProps?.(['x', 'y', 'base', 'height'], false) || elem || {};
+        const y = Number(p.y);
+        const base = Number(p.base);
+        const x = Number(p.x);
+        const height = Number(p.height);
+        if (![y, base, x].every(Number.isFinite)) return null;
+        return {
+          mmm: row.mmm,
+          colour: MMM_COLOURS[row.mmm] || '#69718a',
+          x, base, y, height: Number.isFinite(height) ? height : 12,
+          value: row.balance, alpha: 1
+        };
+      }).filter(Boolean);
+    }
+    function visibleCategoryEntries() {
+      return categoryMotion.active ? categoryFrame() : chartCategoryEntries(displayRows);
+    }
+    function nearestCategoryY(mmm, entries, fallback) {
+      if (!entries.length) return fallback;
+      const closest = [...entries].sort((a, b) => Math.abs(a.mmm - mmm) - Math.abs(b.mmm - mmm))[0];
+      return closest?.y ?? fallback;
+    }
+    function beginCategoryTransition(from, to, duration = CATEGORY_MOTION_MS) {
+      if (categoryMotion.raf !== null) cancelAnimationFrame(categoryMotion.raf);
+      const current = new Map(from.map(item => [item.mmm, item]));
+      const target = new Map(to.map(item => [item.mmm, item]));
+      const xZero = chart?.scales?.x?.getPixelForValue(0) ?? chart?.chartArea?.left ?? 0;
+      const allMM = [...new Set([...current.keys(), ...target.keys()])].sort((a, b) => a - b);
+      categoryMotion.items = allMM.map(mmm => {
+        const previous = current.get(mmm);
+        const next = target.get(mmm);
+        const colour = MMM_COLOURS[mmm] || '#69718a';
+        const start = previous ? {...previous} : {
+          mmm, colour, base: xZero, x: xZero, value: 0, alpha: 0,
+          height: Math.max(1, (next?.height || 12) * 0.65),
+          y: nearestCategoryY(mmm, from, next?.y || 0)
+        };
+        const end = next ? {...next} : {
+          mmm, colour, base: xZero, x: xZero, value: 0, alpha: 0,
+          height: Math.max(1, (previous?.height || 12) * 0.65),
+          y: nearestCategoryY(mmm, to, previous?.y || 0)
+        };
+        return { mmm, colour, start, end };
+      });
+      categoryMotion.active = duration > 0;
+      categoryMotion.started = performance.now();
+      const token = ++categoryMotion.token;
+      if (!categoryMotion.active) { categoryMotion.items = []; chart?.draw(); return; }
+      // A single timeline drives bars, MM labels and tick marks; interrupted
+      // updates sample the current visual positions before retargeting.
+      const step = now => {
+        if (token !== categoryMotion.token || !chart || chart._destroyed) return;
+        chart.draw();
+        if (now - categoryMotion.started < duration) {
+          categoryMotion.raf = requestAnimationFrame(step);
+        } else {
+          categoryMotion.active = false;
+          categoryMotion.items = [];
+          categoryMotion.raf = null;
+          chart.draw();
+        }
+      };
+      categoryMotion.raf = requestAnimationFrame(step);
+      chart?.draw();
+    }
+    const animatedCategoryPlugin = {
+      id: 'pffClinicianBalanceAnimatedCategories',
+      beforeDatasetsDraw(chartInstance) {
+        if (!categoryMotion.active) return;
+        const area = chartInstance.chartArea;
+        if (!area) return false;
+        const ctx = chartInstance.ctx;
+        const rows = categoryFrame();
+        // Draw the transitional bars in place of the final bar geometry.
+        ctx.save();
+        ctx.beginPath(); ctx.rect(area.left, area.top, area.width, area.height); ctx.clip();
+        rows.forEach(row => {
+          const left = Math.min(row.x, row.base);
+          const width = Math.abs(row.x - row.base);
+          const height = Math.max(0.5, row.height);
+          ctx.globalAlpha = row.alpha;
+          ctx.fillStyle = row.colour;
+          if (width > 0.1) {
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') ctx.roundRect(left, row.y - height / 2, width, height, Math.min(2, width / 2, height / 2));
+            else ctx.rect(left, row.y - height / 2, width, height);
+            ctx.fill();
+          }
+        });
+        ctx.restore();
+        // Draw moving values while Chart.js's final-state label plugin is held.
+        ctx.save();
+        ctx.font = `700 ${chartInstance.width <= 430 ? 9 : 10}px Lato, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        rows.forEach(row => {
+          if (row.alpha < 0.14) return;
+          const label = signedValue(row.value, 1);
+          const w = ctx.measureText(label).width;
+          const sign = row.value < 0 ? -1 : 1;
+          const gap = 5;
+          let tx = row.x + sign * (gap + w / 2);
+          let textColour = '#151515';
+          if (tx - w / 2 < area.left + 2 || tx + w / 2 > area.right - 2) {
+            tx = row.x - sign * (gap + w / 2);
+            textColour = '#ffffff';
+          }
+          ctx.globalAlpha = row.alpha;
+          ctx.fillStyle = textColour;
+          ctx.fillText(label, tx, row.y);
+        });
+        ctx.restore();
+        return false; // prevents static final bars and their labels from jumping
+      },
+      afterDraw(chartInstance) {
+        const area = chartInstance.chartArea;
+        if (!area) return;
+        const ctx = chartInstance.ctx;
+        const rows = categoryMotion.active ? categoryFrame() : chartCategoryEntries(displayRows, chartInstance);
+        const mobile = chartInstance.width <= 430;
+        ctx.save();
+        ctx.font = `${mobile ? 10 : 11}px Lato, sans-serif`;
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        for (const row of rows) {
+          if (!Number.isFinite(row.y) || row.alpha < 0.01) continue;
+          ctx.globalAlpha = Math.min(1, Math.max(0, row.alpha));
+          ctx.strokeStyle = '#151515'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(area.left - 6, row.y); ctx.lineTo(area.left, row.y); ctx.stroke();
+          ctx.fillStyle = '#151515';
+          ctx.fillText(`MM${row.mmm}`, area.left - 12, row.y);
+        }
+        ctx.restore();
+      },
+      beforeDestroy() {
+        categoryMotion.token += 1;
+        if (categoryMotion.raf !== null) cancelAnimationFrame(categoryMotion.raf);
+        categoryMotion.active = false;
+        categoryMotion.items = [];
+      }
+    };
+    const sharedBarLabelsPlugin = PFFModules.chartValueLabels.createBarValueLabelsPlugin({
+      id: 'pffMaldistributionSharedBarValues',
+      showFor: () => true,
+      formatValue: value => signedValue(value, 1),
+      getTextColour: () => '#151515'
+    });
+
     const balanceAxisPlugin = {
       id: 'pffMaldistributionBalanceAxis',
 
@@ -690,7 +891,7 @@
 
         ctx.save();
 
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.035)';
+        ctx.strokeStyle = PFF_AXIS_TOKENS.gridMinor;
         ctx.lineWidth = 0.7;
         for (let index = 0; index < intervals; index += 1) {
           const ratio = (index + 0.5) / intervals;
@@ -701,7 +902,7 @@
           ctx.stroke();
         }
 
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.075)';
+        ctx.strokeStyle = PFF_AXIS_TOKENS.gridMajor;
         ctx.lineWidth = 1;
         for (let index = 0; index <= intervals; index += 1) {
           if (index === intervals / 2) continue;
@@ -713,14 +914,8 @@
           ctx.stroke();
         }
 
-        const zeroX = chartArea.left + chartArea.width / 2;
-        ctx.strokeStyle = '#151515';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(Math.round(zeroX) + 0.5, chartArea.top);
-        ctx.lineTo(Math.round(zeroX) + 0.5, chartArea.bottom);
-        ctx.stroke();
-
+        // Zero baseline is now drawn by the approved chartAnnotations helper,
+        // rather than twice here and in an additional shared plugin.
         ctx.restore();
       },
 
@@ -744,7 +939,7 @@
           const x = chartArea.left + chartArea.width * ratio;
           ctx.beginPath();
           ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 5);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + majorTickLength);
           ctx.stroke();
         }
 
@@ -756,12 +951,12 @@
           const x = chartArea.left + chartArea.width * ratio;
           ctx.beginPath();
           ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 2);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + minorTickLength);
           ctx.stroke();
         }
 
         ctx.globalAlpha = 1;
-        ctx.fillStyle = '#151515';
+        ctx.fillStyle = PFF_AXIS_TOKENS.ink;
         ctx.textBaseline = 'top';
         ctx.font = `${mobile ? 9 : 10}px Lato, sans-serif`;
         const values = axisTickAnimation.values.length === X_AXIS_MAJOR_TICK_COUNT
@@ -794,57 +989,11 @@
       }
     };
 
-    const valueLabelsPlugin = {
-      id: 'pffMaldistributionBalanceValueLabels',
-      afterDatasetsDraw(chartInstance) {
-        const { ctx, chartArea } = chartInstance;
-        const xScale = chartInstance.scales?.x;
-        if (!chartArea || !xScale) return;
-
-        const mobile = PFF.mobileLayout();
-        ctx.save();
-        ctx.font = `${mobile ? 8.8 : 9.8}px Lato, sans-serif`;
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#151515';
-
-        chartInstance.data.datasets.forEach((dataset, datasetIndex) => {
-          const meta = chartInstance.getDatasetMeta(datasetIndex);
-          const raw = dataset.data?.[0];
-          const targetValue = Number(raw?.x);
-          const bar = meta?.data?.[0];
-          if (!Number.isFinite(targetValue) || !bar) return;
-
-          const props = bar.getProps(['x', 'base', 'y'], false);
-          if (![props.x, props.base, props.y].every(Number.isFinite)) return;
-
-          let currentValue = xScale.getValueForPixel(props.x);
-          if (!Number.isFinite(currentValue)) currentValue = targetValue;
-          if (Math.abs(currentValue) < 1e-7) currentValue = 0;
-
-          const text = signedValue(currentValue, 1);
-          const positive = currentValue >= 0;
-          const gap = mobile ? 4 : 5;
-          let x = props.x + (positive ? gap : -gap);
-          ctx.textAlign = positive ? 'left' : 'right';
-          const width = ctx.measureText(text).width;
-
-          if (positive && x + width > chartArea.right - 1) {
-            x = chartArea.right - 1;
-            ctx.textAlign = 'right';
-          } else if (!positive && x - width < chartArea.left + 1) {
-            x = chartArea.left + 1;
-            ctx.textAlign = 'left';
-          }
-
-          ctx.fillText(text, x, props.y);
-        });
-
-        ctx.restore();
-      }
-    };
+    // Bar value positioning (including smooth inside/outside moves) is handled
+    // by the approved chartValueLabels module above.
 
     function tooltipOptions(rows) {
-      return PFFCharts.tooltipOptions({
+      return PFFModules.chartTooltips.tooltipOptions({
         mode: 'nearest',
         intersect: true,
         callbacks: {
@@ -872,7 +1021,7 @@
       const scale = symmetricScale(rows);
       const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
 
-      return PFFCharts.baseChartOptions({
+      const sharedOptions = PFFModules.chartStyling.getChartBaseOptions({
         animation: {
           duration,
           easing: 'easeInOutCubic'
@@ -887,12 +1036,9 @@
         },
         indexAxis: 'y',
         normalized: true,
-        interaction: {
-          mode: 'nearest',
-          axis: 'xy',
-          intersect: true,
+        interaction: PFFModules.chartTooltips.interactionOptions('point', {
           includeInvisible: false
-        },
+        }),
         layout: {
           autoPadding: false,
           padding: {
@@ -931,35 +1077,20 @@
             title: { display: false }
           },
           y: {
-            position: 'left',
-            afterFit(axis) {
-              axis.width = PFF.mobileLayout() ? 31 : 33;
-            },
-            grid: {
-              display: false,
-              drawTicks: true,
-              tickLength: 3,
-              tickWidth: 1,
-              tickColor: '#151515'
-            },
-            border: {
-              display: true,
-              color: '#151515',
-              width: 1
-            },
-            ticks: {
-              autoSkip: false,
-              color: '#151515',
-              padding: 3,
-              font: {
-                family: 'Lato',
-                size: PFF.mobileLayout() ? 10 : 11,
-                weight: '400'
-              }
-            }
+            type: 'category', position: 'left',
+            // Stable, generous gutter: MM labels, 6 px ticks and a 6 px gap.
+            afterFit(axis) { axis.width = PFF.mobileLayout() ? 57 : 61; },
+            grid: { display: false, drawTicks: false },
+            border: { display: true, color: '#151515', width: 1 },
+            // Draw labels and major ticks using the keyed transition plugin.
+            ticks: { display: false, autoSkip: false }
           }
         }
       });
+      const withTiming = PFFModules.chartAnimations.withChartJsTiming(sharedOptions);
+      // Preserve no-animation initial draw and reduced-motion handling.
+      withTiming.animation.duration = duration;
+      return PFFCharts.baseChartOptions(withTiming);
     }
 
     function datasetsFor(rows) {
@@ -970,7 +1101,7 @@
         const row = byMmm.get(mmm);
         const colour = MMM_COLOURS[mmm] || '#69718a';
 
-        return {
+        return PFFModules.chartTooltips.preserveBarHoverAppearance({
           label: `MM${mmm}`,
           _mmm: mmm,
           data: row ? [{ x: row.balance, y: row.label }] : [],
@@ -981,8 +1112,9 @@
           borderSkipped: false,
           categoryPercentage: 0.78,
           barPercentage: 0.80,
-          grouped: false
-        };
+          grouped: false,
+          _pffShowBarValueLabels: true
+        });
       });
     }
 
@@ -1022,6 +1154,9 @@
       const rows = rowsForYear(year);
       if (!rows.length) throw new Error(`No usable MMM balance data for ${scopeLabel()}.`);
 
+      // Sample what is actually visible before changing the Chart.js categories.
+      // This also makes mid-transition state changes start from current positions.
+      const visibleBefore = chart ? visibleCategoryEntries() : [];
       displayYear = year;
       displayRows = rows;
       updateFootnote();
@@ -1043,7 +1178,9 @@
           options: chartOptions(rows, false),
           plugins: [
             balanceAxisPlugin,
-            valueLabelsPlugin,
+            zeroBalancePlugin,
+            animatedCategoryPlugin,
+            sharedBarLabelsPlugin,
             {
               id: 'pffTooltipTopLayer',
               afterDraw(chartInstance) {
@@ -1072,7 +1209,16 @@
         chart.options.animations.width.duration = 0;
         chart.options.animations.height.duration = 0;
         chart.options.animations.colors.duration = 0;
-        chart.update();
+        // Hold the visual categories while Chart.js establishes its new
+        // category positions. The overlay then morphs keyed MM rows smoothly.
+        categoryMotion.active = duration > 0;
+        categoryMotion.started = performance.now();
+        categoryMotion.items = visibleBefore.map(item => ({
+          mmm: item.mmm, colour: item.colour, start: {...item}, end: {...item}
+        }));
+        chart.update('none');
+        const finalEntries = chartCategoryEntries(rows);
+        beginCategoryTransition(visibleBefore, finalEntries, duration);
         animateAxisTickValues(nextScale, duration);
       }
 
@@ -1080,6 +1226,23 @@
     }
 
     function startApp() {
+      const checks = [
+        ['Chart styling', PFFModules.chartStyling?.getTokens],
+        ['Chart axes v6', PFFModules.chartAxes?.withYAxisTickMarks],
+        ['Chart tick marks', PFFModules.chartAxes?.createLabelDrivenTicksPlugin],
+        ['Chart animations', PFFModules.chartAnimations?.withChartJsTiming],
+        ['Chart reference lines', PFFModules.chartAnnotations?.createPlugin],
+        ['Chart value labels', PFFModules.chartValueLabels?.createBarValueLabelsPlugin],
+        ['Chart tooltips v4', PFFModules.chartTooltips?.bindDismissOnOutside],
+        ['Chart responsive touch', PFFModules.chartResponsive?.suppressTapFlash]
+      ];
+      const missing = checks.filter(([,fn]) => typeof fn !== 'function').map(([name]) => name);
+      if (missing.length) {
+        loaderText.textContent = 'Missing shared chart assets: ' + missing.join(', ');
+        statusEl.textContent = loaderText.textContent;
+        console.error('[PFF Shortfalls Pilot]', loaderText.textContent);
+        return;
+      }
       setupStateFilter(() => renderLoaded(true));
 
       PFF.initialiseApp({
@@ -1137,10 +1300,15 @@
           chartCanvas.setAttribute('aria-describedby', chartSummary.id);
           updateAccessibleSummary();
 
-          interactionsController = PFFCharts.setupChartInteractions({
-            canvas: chartCanvas,
-            getChart() { return chart; }
+          // Reuse the approved no-flash, tap-outside/Escape tooltip dismissal.
+          // Do not install the old core's second, competing tap handler.
+          const outsideDismissal = PFFModules.chartTooltips.bindDismissOnOutside({
+            canvas: chartCanvas, getChart() { return chart; }
           });
+          const restoreTapStyles = PFFModules.chartResponsive.suppressTapFlash(chartCanvas);
+          interactionsController = {
+            destroy() { outsideDismissal.destroy(); restoreTapStyles(); }
+          };
 
           responsiveController = PFFCharts.createResponsiveController({
             getChart() { return chart; },
