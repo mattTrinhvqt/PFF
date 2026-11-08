@@ -1,4 +1,4 @@
-/* PFF charts: tooltips and hover, candidate v3, 2026-11-08.
+/* PFF charts: tooltips and hover, candidate v4, 2026-11-08.
  * Derived from the existing PFFCharts.tooltipOptions() / lineInteractionOptions()
  * and current graph-specific manual tooltip activation patterns.
  * Opt-in Chart.js configuration and interaction helpers. No global mutation,
@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
   const modules = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '1.0.0-candidate.3';
+  const VERSION = '1.0.0-candidate.4';
   const TOKENS = Object.freeze({
     surface: '#ffffff', ink: '#151515', muted: '#69718a', border: '#e8eaf0',
     font: 'Lato', titleSize: 12, bodySize: 11, padding: 9, radius: 4
@@ -157,8 +157,118 @@
     };
     return api;
   }
+
+  // Opt-in, reusable dismissal for Chart.js canvas tooltips, including pinned
+  // tooltips. The next press on blank plot area OR outside the canvas closes
+  // the tip. Pressing a different mark is left to Chart.js / the app's onClick.
+  // Binding is per canvas, not global: unrelated charts are not modified.
+  const dismissalBindings = new WeakMap();
+  function bindDismissOnOutside(options = {}) {
+    const canvas = options.canvas;
+    const doc = options.document || global.document;
+    if (!canvas?.addEventListener || !doc?.addEventListener)
+      throw new Error('PFF chart tooltip dismissal requires a canvas and document');
+    dismissalBindings.get(canvas)?.destroy();
+    const getChart = () => typeof options.getChart === 'function'
+      ? options.getChart() : options.chart;
+    const controller = options.hoverController;
+    let destroyed = false;
+    const prevent = event => event.preventDefault();
+    function eventPosition(event, chart) {
+      const source = event?.touches?.[0] || event?.changedTouches?.[0] || event;
+      const x = Number(source?.clientX), y = Number(source?.clientY);
+      const rect = canvas.getBoundingClientRect?.();
+      if (!rect?.width || !rect?.height || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return {x: (x - rect.left) * ((chart?.width || rect.width) / rect.width),
+        y: (y - rect.top) * ((chart?.height || rect.height) / rect.height)};
+    }
+    function insideTooltip(event, chart) {
+      const tooltip = chart?.tooltip;
+      if (!tooltip || !(Number(tooltip.opacity) > 0)) return false;
+      const at = eventPosition(event, chart);
+      return Boolean(at && [tooltip.x, tooltip.y, tooltip.width, tooltip.height]
+        .every(Number.isFinite) && at.x >= tooltip.x && at.x <= tooltip.x + tooltip.width &&
+        at.y >= tooltip.y && at.y <= tooltip.y + tooltip.height);
+    }
+    function isDataPress(event, chart) {
+      // Specialist charts can supply a custom hit test (e.g. a trend line).
+      if (typeof options.isDataPress === 'function')
+        return Boolean(options.isDataPress(event, chart));
+      if (typeof chart?.getElementsAtEventForMode !== 'function') return false;
+      try {
+        return chart.getElementsAtEventForMode(event, 'nearest',
+          {intersect: true, axis: 'xy', includeInvisible: false}, false).length > 0;
+      } catch (_) { return false; }
+    }
+    function hasTooltip(chart) {
+      if (controller?.isPinned?.()) return true;
+      if (controller?.getElements?.().length) return true;
+      const tip = chart?.tooltip;
+      if (!tip) return false;
+      return Boolean(tip.getActiveElements?.().length || tip._active?.length || tip.opacity > 0);
+    }
+    function clear() {
+      if (destroyed) return false;
+      const chart = getChart();
+      if (!chart) return false;
+      if (!hasTooltip(chart)) return false;
+      // force=true dismisses an explicitly pinned tip as well.
+      controller?.clear?.(true);
+      chart.setActiveElements?.([]);
+      chart.tooltip?.setActiveElements?.([], {x: 0, y: 0});
+      chart.update?.('none');
+      if (!chart.update) chart.draw?.();
+      options.onDismiss?.(chart);
+      return true;
+    }
+    function handlePress(event) {
+      if (destroyed) return;
+      const chart = getChart();
+      if (!chart) return;
+      const onCanvas = event.target === canvas || canvas.contains?.(event.target);
+      // Keep tooltip-text taps working as in the existing PFF core.
+      if (onCanvas && options.keepTooltipPress !== false && insideTooltip(event, chart)) return;
+      if (onCanvas && isDataPress(event, chart)) return;
+      clear();
+    }
+    function preserveTooltipPress(event) {
+      const chart = getChart();
+      if (!chart || options.keepTooltipPress === false ||
+          typeof chart.options?.onClick === 'function' || !insideTooltip(event, chart)) return;
+      if (event.cancelable) event.preventDefault();
+      event.stopImmediatePropagation?.();
+    }
+    const handleEscape = event => { if (event.key === 'Escape') clear(); };
+    // pointerdown covers mouse, pen, and touch. The click fallback also covers
+    // keyboard/assistive-technology activation and late Chart.js click updates.
+    doc.addEventListener('pointerdown', handlePress, true);
+    doc.addEventListener('click', handlePress, false);
+    doc.addEventListener('keydown', handleEscape, true);
+    canvas.addEventListener('click', preserveTooltipPress, true);
+    canvas.addEventListener('touchstart', preserveTooltipPress, {capture: true, passive: false});
+    canvas.addEventListener('contextmenu', prevent);
+    canvas.addEventListener('selectstart', prevent);
+    const api = {
+      clear,
+      destroy() {
+        if (destroyed) return;
+        destroyed = true;
+        doc.removeEventListener('pointerdown', handlePress, true);
+        doc.removeEventListener('click', handlePress, false);
+        doc.removeEventListener('keydown', handleEscape, true);
+        canvas.removeEventListener('click', preserveTooltipPress, true);
+        canvas.removeEventListener('touchstart', preserveTooltipPress, true);
+        canvas.removeEventListener('contextmenu', prevent);
+        canvas.removeEventListener('selectstart', prevent);
+        if (dismissalBindings.get(canvas) === api) dismissalBindings.delete(canvas);
+      }
+    };
+    dismissalBindings.set(canvas, api);
+    return api;
+  }
+
   modules.chartTooltips = Object.freeze({
     version: VERSION, tokens: TOKENS, tooltipOptions, interactionOptions,
-    chartOptions, subtleEmphasisOptions, preserveBarHoverAppearance, createHoverController
+    chartOptions, subtleEmphasisOptions, preserveBarHoverAppearance, createHoverController, bindDismissOnOutside
   });
 })(typeof window !== 'undefined' ? window : globalThis);
