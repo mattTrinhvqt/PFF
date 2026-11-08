@@ -1,115 +1,1174 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PFF Tooltip — Tap Outside Approval v4</title>
-<style>
-:root{font-family:Lato,Arial,sans-serif;color:#1e2431;background:#f7f8fb}*{box-sizing:border-box}
-body{margin:0 auto;padding:22px 16px;max-width:1080px}
-h1{font-size:24px;margin:0 0 7px}p{line-height:1.48;margin:7px 0 12px;color:#5a6070}
-.panel{background:white;border:1px solid #dce2eb;border-radius:12px;padding:17px;margin:14px 0}
-.status{padding:10px 12px;background:#f4f4f4;border-radius:8px;font-size:13px;font-weight:700}
-.status.good{background:#eaf7ef;color:#116e3b}.status.bad{background:#fff0ed;color:#a52014}
-.examples{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-.examples > section{min-width:0;border:1px solid #e8eaf2;border-radius:9px;padding:12px}
-small{font-size:12px;color:#69718a}h2{font-size:16px;margin:0 0 8px}
-canvas{display:block;max-width:100%;height:auto;width:100%;touch-action:pan-y;-webkit-tap-highlight-color:transparent;cursor:pointer}
-.control{border:1px solid #c8cdd8;border-radius:8px;padding:9px 13px;font:inherit;background:white;cursor:pointer}
-.control:hover{border-color:#7246c7}.choice{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
-.choice button[aria-pressed=true]{background:#5b338e;color:white;border-color:#5b338e}
-pre{white-space:pre-wrap;overflow-wrap:break-word;font:12px/1.6 ui-monospace,SFMono-Regular,monospace;background:#f5f6f9;border-radius:7px;padding:10px}
-button:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:660px){.examples{grid-template-columns:1fr}h1{font-size:20px}}
-</style>
-<script src="./assets/chart-tooltips-and-hover.js?approval-v4-20261108"></script></head><body>
-<h1>Chart tooltips — tap outside to close</h1>
-<p>Only this dismissal rule needs approval. The already-approved white tooltip, no-flash bar hover, and optional pinning remain unchanged.</p>
-<div id="status" class="status">Checking shared module…</div>
-<div class="panel"><div class="examples">
-<section><h2>1. Bar chart</h2><small>Tap a purple bar to show its tooltip. Then tap empty graph space or anywhere outside the graph to close it.</small>
-<canvas id="bar" width="500" height="265" aria-label="Sample interactive bar chart"></canvas><small id="barState">No tooltip showing</small></section>
-<section><h2>2. Line points</h2><small>Tap a green point to open its tooltip. Tap the white area or elsewhere on this page to dismiss it.</small>
-<canvas id="line" width="500" height="265" aria-label="Sample interactive line chart"></canvas><small id="lineState">No tooltip showing</small></section>
-</div></div>
-<div class="panel"><h2>Automatic checks</h2><p>These confirm the existing module API is preserved and empty-space, outside-chart, pinned, keyboard and repeated-binding dismissal work.</p>
-<div id="tests" class="status">Running checks…</div></div>
-<div class="panel"><h2>Approval — one decision</h2>
-<p>Does tapping away reliably close the tooltip without changing the bar or point appearance?</p>
-<div class="choice"><button class="control" data-decision="APPROVE" aria-pressed="false">Approve</button><button class="control" data-decision="DO NOT APPROVE" aria-pressed="false">Do not approve</button></div>
-<p id="result">No decision selected.</p><button id="copy" class="control" disabled>Copy decision summary</button><pre id="summary" hidden></pre>
-</div>
-<script>
-(() => {
-'use strict';
-const status=document.getElementById('status'), tests=document.getElementById('tests');
-const mod=window.PFFModules?.chartTooltips;
-if (!mod || typeof mod.bindDismissOnOutside !== 'function') {
- status.className='status bad'; status.textContent='MODULE MISSING OR OUTDATED — upload v4 of assets/chart-tooltips-and-hover.js';
- tests.className='status bad'; tests.textContent='Cannot run checks.';
- document.querySelectorAll('[data-decision]').forEach(x=>x.disabled=true);
- return;
-}
-status.className='status good';status.textContent='MODULE LOADED — outside-tap dismissal v4 available';
-function makeDemo(canvas,type) {
- const ctx=canvas.getContext('2d'), state=document.getElementById(type+'State');
- const data=type==='bar'?[0.35,0.6,0.83]:[0.33,0.75,0.55];
- let chosen=null;
- const positions=type==='bar' ? [{x:70,y:0,width:70},{x:205,y:0,width:70},{x:340,y:0,width:70}]
-   : [{x:80,y:0,r:15},{x:250,y:0,r:15},{x:417,y:0,r:15}];
- const mock={width:canvas.width,height:canvas.height,options:{},data:{datasets:[{data}]},
-  tooltip:{opacity:0,x:0,y:0,width:125,height:46,_active:[],
-    setActiveElements(items,pos){this._active=items.slice();this.opacity=items.length?1:0;this.x=Math.min(355,pos.x+9);this.y=Math.max(12,pos.y-52);draw();},
-    getActiveElements(){return this._active;}},
-  setActiveElements(){},
-  getDatasetMeta(){return {data:positions.map(p=>({x:p.x+30,y:125}))}},
-  isDatasetVisible(){return true;},
-  getElementsAtEventForMode(e){const rect=canvas.getBoundingClientRect();const src=e.touches?.[0]||e;
-    const x=(src.clientX-rect.left)*canvas.width/rect.width,y=(src.clientY-rect.top)*canvas.height/rect.height;
-    return positions.map((p,i)=>({p,i})).filter(({p})=> type==='bar' ? (x>=p.x&&x<=p.x+p.width&&y>=226-data[positions.indexOf(p)]*164&&y<=226) : Math.hypot(x-p.x,y-p.y)<23).map(({i})=>({datasetIndex:0,index:i}));},
-  update(){draw();},draw
- };
- function draw(){ctx.clearRect(0,0,500,265);ctx.fillStyle='#fff';ctx.fillRect(0,0,500,265);
-  ctx.strokeStyle='#e2e6ed';ctx.lineWidth=1;for(const y of [65,105,145,185,225]) {ctx.beginPath();ctx.moveTo(40,y);ctx.lineTo(470,y);ctx.stroke();}
-  ctx.strokeStyle='#505563';ctx.beginPath();ctx.moveTo(40,25);ctx.lineTo(40,226);ctx.lineTo(470,226);ctx.stroke();
-  if(type==='bar'){positions.forEach((p,i)=>{ctx.fillStyle='#5B338E';const h=data[i]*164;ctx.fillRect(p.x,226-h,p.width,h);});}
-  else{positions.forEach((p,i)=>{p.y=226-data[i]*164;});ctx.strokeStyle='#1f8b5b';ctx.lineWidth=3;ctx.beginPath();positions.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();positions.forEach(p=>{ctx.fillStyle='#1f8b5b';ctx.beginPath();ctx.arc(p.x,p.y,6,0,Math.PI*2);ctx.fill();});}
-  if(mock.tooltip.opacity>0){const t=mock.tooltip;ctx.fillStyle='white';ctx.strokeStyle='#e8eaf0';ctx.lineWidth=1;
-    ctx.fillRect(t.x,t.y,t.width,t.height);ctx.strokeRect(t.x,t.y,t.width,t.height);
-    ctx.font='bold 13px Lato,Arial';ctx.fillStyle='#151515';ctx.fillText(type==='bar'?'Selected bar':'Selected point',t.x+9,t.y+19);
-    ctx.font='12px Lato,Arial';ctx.fillText('Tap elsewhere to close',t.x+9,t.y+36);}
-  state.textContent=mock.tooltip.opacity>0?'Tooltip visible — tap outside to close':'No tooltip showing';
- }
- canvas.addEventListener('click',e=>{const hits=mock.getElementsAtEventForMode(e);if(!hits.length) return;
-  const rect=canvas.getBoundingClientRect(),x=(e.clientX-rect.left)*500/rect.width,y=(e.clientY-rect.top)*265/rect.height;
-  chosen=hits[0];mock.tooltip.setActiveElements([chosen],{x,y});
- });
- const ctrl=mod.bindDismissOnOutside({canvas,getChart:()=>mock}); draw(); return {mock,canvas,ctrl};
-}
-const a=makeDemo(document.getElementById('bar'),'bar'),b=makeDemo(document.getElementById('line'),'line');
-const checks=[]; const test=(name,fn)=>{try{checks.push({name,pass:!!fn()})}catch(e){checks.push({name,pass:false,error:String(e)})}};
-test('Approved tooltip styling unchanged',()=>mod.tooltipOptions().backgroundColor==='#ffffff');
-test('Approved bar hover remains borderless',()=>mod.preserveBarHoverAppearance({backgroundColor:'#123456'}).hoverBorderWidth===0);
-test('Shared press dismissal exists',()=>typeof mod.bindDismissOnOutside==='function');
-const x={datasetIndex:0,index:0};
-function activate(d){d.mock.tooltip.setActiveElements([x],{x:90,y:95});}
-function pressOn(node){node.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,clientX:5,clientY:5}));node.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:5,clientY:5}));}
-activate(a);pressOn(document.querySelector('h1'));test('Tap elsewhere closes bar tooltip',()=>a.mock.tooltip.opacity===0);
-activate(a);pressOn(a.canvas);test('Tap blank chart space closes tooltip',()=>a.mock.tooltip.opacity===0);
-activate(b);pressOn(document.querySelector('h1'));test('Tap elsewhere closes point tooltip',()=>b.mock.tooltip.opacity===0);
-activate(a);document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));test('Escape dismisses tooltip',()=>a.mock.tooltip.opacity===0);
-const first=a.ctrl;const second=mod.bindDismissOnOutside({canvas:a.canvas,getChart:()=>a.mock});
-activate(a);pressOn(document.querySelector('h1'));test('Re-binding to same canvas is safe',()=>a.mock.tooltip.opacity===0);
-first.destroy();second.destroy();a.ctrl=mod.bindDismissOnOutside({canvas:a.canvas,getChart:()=>a.mock});
-const pin={pinned:true,isPinned(){return this.pinned;},clear(force){if(force)this.pinned=false;}};
-const pinCtrl=mod.bindDismissOnOutside({canvas:a.canvas,getChart:()=>a.mock,hoverController:pin});
-activate(a);pressOn(document.querySelector('h1'));test('Tap away clears pinned selection',()=>pin.pinned===false && a.mock.tooltip.opacity===0);
-pinCtrl.destroy();a.ctrl=mod.bindDismissOnOutside({canvas:a.canvas,getChart:()=>a.mock});
-const n=checks.filter(z=>z.pass).length;tests.textContent=`${n}/${checks.length} automatic checks passed`+(n!==checks.length?' — '+checks.filter(z=>!z.pass).map(z=>z.name+': '+z.error).join('; '):'');
-tests.className='status '+(n===checks.length?'good':'bad');
-const result=document.getElementById('result'),btn=document.getElementById('copy'),sum=document.getElementById('summary');
-document.querySelectorAll('[data-decision]').forEach(button=>button.addEventListener('click',()=>{
- document.querySelectorAll('[data-decision]').forEach(x=>x.setAttribute('aria-pressed',String(x===button)));
- const answer=button.dataset.decision;result.textContent='Decision: '+answer;sum.hidden=false;
- sum.textContent='PFF Chart Tooltips & Hover revision v4 approval results:\n- Tooltip appearance: APPROVED (unchanged)\n- No-flash hover: APPROVED (unchanged)\n- Optional pinned tooltip: APPROVED (unchanged)\n- Tap outside / blank chart to dismiss: '+answer+'\n- Overall: '+(answer==='APPROVE'?'TOOLTIP DISMISSAL APPROVED':'CHANGES REQUIRED');btn.disabled=false;
-}));
-btn.addEventListener('click',()=>navigator.clipboard?.writeText(sum.textContent).catch(()=>{const r=document.createRange();r.selectNodeContents(sum);getSelection().removeAllRanges();getSelection().addRange(r)}));
-})();
-</script></body></html>
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>PFF Clinician balance — Shared Assets Pilot</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="./assets/pff_loader.js"></script>
+  <script src="./assets/pff_chart_core.js"></script>
+  <!-- Approved shared presentation helpers. Existing PFF loader and calculations remain intact. -->
+  <script src="./assets/colours-and-settings.js"></script>
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-reference-lines-and-annotations.js"></script>
+  <script src="./assets/chart-value-and-category-labels.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+
+  <style>
+
+    :root {
+      --mmm1-colour: #2c3e50;
+      --mmm2-colour: #4f1500;
+      --mmm3-colour: #7e2800;
+      --mmm4-colour: #a14216;
+      --mmm5-colour: #c87452;
+      --mmm6-colour: #e1b69a;
+      --mmm7-colour: #f3e0d3;
+    }
+
+    .single-tab-shell .tab-list { min-width: 0; }
+    .single-tab-shell .chart-tab { cursor: default; }
+    .single-tab-shell .tab-list::after { display: none; }
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-heading-row { align-items: flex-start; }
+    .chart-heading {
+      min-width: 0;
+      max-width: calc(100% - 92px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .heading-controls {
+      margin-left: auto;
+      padding-top: 2px;
+    }
+
+    .chart-options-row {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      padding: 0 0 2px;
+    }
+
+    .chart-legend .legend-item {
+      color: var(--pff-muted);
+      cursor: default;
+      pointer-events: none;
+    }
+    .chart-legend .legend-item:hover { color: var(--pff-muted); }
+
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: left;
+    }
+    .method-note-line { display: block; }
+    .method-note-line + .method-note-line { margin-top: 2px; }
+
+    .state-button { min-width: 84px; }
+    .state-menu { min-width: 128px; }
+    .state-option-code { font-weight: 700; }
+
+    @media (max-width: 430px) {
+      .chart-heading { max-width: calc(100% - 86px); }
+      .method-note { font-size: 10.5px; }
+      .state-button { min-width: 80px; }
+      .state-menu { min-width: 118px; }
+    }
+  </style>
+  <style>
+    .chart-shell { margin-top: -2px; }
+  </style>
+</head>
+<body class="pff-chart-app">
+  <div id="fit">
+    <main id="app" class="is-loading" aria-busy="true">
+      <div id="loadingState" class="app-loading" role="status" aria-live="polite" aria-label="Loading clinician balance by rurality">
+        <div class="cone-loader" aria-hidden="true">
+          <span class="cone blue"></span>
+          <span class="cone green"></span>
+          <span class="cone red"></span>
+        </div>
+        <p id="loaderText" class="loader-text">Loading rurality balance…</p>
+      </div>
+
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div class="tab-list" role="tablist" aria-label="Remaining shortfalls chart">
+            <button class="chart-tab is-active" type="button" role="tab" aria-selected="true" tabindex="0">Remaining shortfalls</button>
+          </div>
+        </div>
+
+        <div id="liveData" class="live-data" aria-label="Live data" aria-live="polite">
+          <span class="live-data-dot" aria-hidden="true"></span>
+          <span id="liveDataText">LIVE data</span>
+        </div>
+      </div>
+
+      <div id="status" role="status" aria-live="polite"></div>
+
+      <div class="chart-heading-row">
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">Clinician balance by rurality</h2>
+          </div>
+        </div>
+
+        <div class="heading-controls">
+          <div id="stateControl" class="state-control">
+            <button id="stateButton" class="state-button" type="button" aria-expanded="false" aria-controls="stateMenu">
+              <span>State</span>
+              <span id="stateButtonValue" class="state-button-value">AUS</span>
+              <span class="menu-arrow" aria-hidden="true"></span>
+            </button>
+            <div id="stateMenu" class="state-menu" role="menu">
+              <div class="state-menu-title">Show state</div>
+              <div id="stateOptions"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-options-row">
+        <div class="legend-nav">
+          <div class="legend-viewport">
+            <div class="chart-legend" aria-label="Modified Monash colour legend">
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm1-colour)"></span><span>MM1</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm2-colour)"></span><span>MM2</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm3-colour)"></span><span>MM3</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm4-colour)"></span><span>MM4</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm5-colour)"></span><span>MM5</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm6-colour)"></span><span>MM6</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--mmm7-colour)"></span><span>MM7</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="chartShell" class="chart-shell">
+        <canvas id="chartCanvas" aria-label="Clinician balance by Modified Monash category against a one active clinician per ten thousand population benchmark; left indicates shortfall and right indicates excess" role="img"></canvas>
+      </div>
+
+      <p class="method-note">
+        <span id="balanceNote" class="method-note-line"><strong>Balance:</strong> loading…</span>
+        <span class="method-note-line"><strong>Benchmark:</strong> active clinicians − population ÷ 10,000; left = shortfall, right = excess</span>
+      </p>
+    </main>
+  </div>
+
+  <script>
+    'use strict';
+    // Pilot integration only. Original PFF data sources, calculation functions,
+    // State/MMM colour mapping and static legend remain unchanged.
+
+    const CONFIG = Object.freeze({
+      sheetId: '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+      clinicianSheet: 'OptomsbystatebyMMM',
+      clinicianRange: 'A29:AO',
+      populationSheet: 'AuspopnbystatebyMMM',
+      populationRange: 'A29:AO',
+      localCacheKey: 'pff-workforce-maldistribution-shortfalls-v1'
+    });
+
+    const CACHE_WEB_APP_URL =
+      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
+
+    const CACHE_APP_KEY = 'pff-state-mmm-workforce-v1';
+    const COUNT_FIRST_INDEX = 1;
+    const POPULATION_FIRST_INDEX = 1;
+
+    const SERIES_SCHEMA = [
+      { state: 'NSW', mmm: 1 }, { state: 'NSW', mmm: 2 },
+      { state: 'NSW', mmm: 3 }, { state: 'NSW', mmm: 4 },
+      { state: 'NSW', mmm: 5 }, { state: 'NSW', mmm: 6 },
+      { state: 'NSW', mmm: 7 },
+      { state: 'VIC', mmm: 1 }, { state: 'VIC', mmm: 2 },
+      { state: 'VIC', mmm: 3 }, { state: 'VIC', mmm: 4 },
+      { state: 'VIC', mmm: 5 },
+      { state: 'QLD', mmm: 1 }, { state: 'QLD', mmm: 2 },
+      { state: 'QLD', mmm: 3 }, { state: 'QLD', mmm: 4 },
+      { state: 'QLD', mmm: 5 }, { state: 'QLD', mmm: 6 },
+      { state: 'QLD', mmm: 7 },
+      { state: 'SA', mmm: 1 }, { state: 'SA', mmm: 2 },
+      { state: 'SA', mmm: 3 }, { state: 'SA', mmm: 4 },
+      { state: 'SA', mmm: 5 }, { state: 'SA', mmm: 6 },
+      { state: 'SA', mmm: 7 },
+      { state: 'WA', mmm: 1 }, { state: 'WA', mmm: 2 },
+      { state: 'WA', mmm: 3 }, { state: 'WA', mmm: 4 },
+      { state: 'WA', mmm: 5 }, { state: 'WA', mmm: 6 },
+      { state: 'WA', mmm: 7 },
+      { state: 'TAS', mmm: 2 }, { state: 'TAS', mmm: 3 },
+      { state: 'TAS', mmm: 5 },
+      { state: 'NT', mmm: 2 }, { state: 'NT', mmm: 6 },
+      { state: 'NT', mmm: 7 },
+      { state: 'ACT', mmm: 1 }
+    ];
+
+    const ALL_STATES = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'];
+    const STATE_NAMES = {
+      NSW: 'New South Wales', VIC: 'Victoria', QLD: 'Queensland',
+      SA: 'South Australia', WA: 'Western Australia', TAS: 'Tasmania',
+      NT: 'Northern Territory', ACT: 'Australian Capital Territory'
+    };
+
+    const MMM_COLOURS = Object.freeze({
+      1: '#2c3e50',
+      2: '#4f1500',
+      3: '#7e2800',
+      4: '#a14216',
+      5: '#c87452',
+      6: '#e1b69a',
+      7: '#f3e0d3'
+    });
+    const AUSTRALIA_COLOUR = '#0b5d1e';
+    const BENCHMARK_POPULATION = 10000;
+    // Previously 500 ms. Approved PFF chart data/tick transition is 600 ms.
+    const CHART_TRANSITION_MS = PFFModules.chartAnimations.defaults.chartMs;
+    const X_AXIS_MAJOR_INTERVALS = 6;
+    const X_AXIS_MAJOR_TICK_COUNT = X_AXIS_MAJOR_INTERVALS + 1;
+
+    const app = document.getElementById('app');
+    const loaderText = document.getElementById('loaderText');
+    const statusEl = document.getElementById('status');
+    const liveData = document.getElementById('liveData');
+    const liveDataText = document.getElementById('liveDataText');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('chartCanvas');
+    const stateControl = document.getElementById('stateControl');
+    const stateButton = document.getElementById('stateButton');
+    const stateButtonValue = document.getElementById('stateButtonValue');
+    const stateMenu = document.getElementById('stateMenu');
+    const stateOptions = document.getElementById('stateOptions');
+    const balanceNote = document.getElementById('balanceNote');
+
+    const state = {
+      scope: 'AUS',
+      clinicianByYear: {},
+      populationByYear: {}
+    };
+
+    let chart = null;
+    let chartSummary = null;
+    let stateMenuController = null;
+    let interactionsController = null; // shared dismissal + touch cleanup
+    let responsiveController = null;
+    let displayRows = [];
+    let displayYear = null;
+    let currentScale = null;
+
+    const axisTickAnimation = {
+      values: [],
+      token: 0,
+      raf: null
+    };
+
+    function dataNumber(value) {
+      if (
+        value && typeof value === 'object' &&
+        (Object.prototype.hasOwnProperty.call(value, 'v') ||
+         Object.prototype.hasOwnProperty.call(value, 'f'))
+      ) {
+        const direct = PFFCharts.numericCell(value);
+        return Number.isFinite(direct) ? direct : null;
+      }
+
+      if (value === null || value === undefined || value === '') return null;
+      const cleaned = PFF.cleanText(value)
+        .replace(/,/g, '')
+        .replace(/[^0-9.+-]/g, '');
+      if (!cleaned || !/\d/.test(cleaned)) return null;
+      const number = Number(cleaned);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function yearValue(value) {
+      const numeric = dataNumber(value);
+      if (!Number.isFinite(numeric)) return null;
+      const year = Math.round(numeric);
+      return year >= 1900 && year <= 2200 ? year : null;
+    }
+
+    function clinicianValues(getValue) {
+      return SERIES_SCHEMA.map((_, index) => {
+        const count = dataNumber(getValue(COUNT_FIRST_INDEX + index));
+        if (count === 0) return 0;
+        return Number.isFinite(count) && count >= 0 ? count : null;
+      });
+    }
+
+    function populationValues(getValue) {
+      return SERIES_SCHEMA.map((_, index) => {
+        const population = dataNumber(getValue(POPULATION_FIRST_INDEX + index));
+        return Number.isFinite(population) && population >= 0 ? population : null;
+      });
+    }
+
+    function parseClinicianTable(table) {
+      const result = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = clinicianValues(index => cells[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parsePopulationTable(table) {
+      const result = {};
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = populationValues(index => cells[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parseRemoteClinicianRows(sourceRows) {
+      const result = {};
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = clinicianValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function parseRemotePopulationRows(sourceRows) {
+      const result = {};
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = populationValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
+      return result;
+    }
+
+    function normaliseSeries(values) {
+      if (!Array.isArray(values) || values.length < SERIES_SCHEMA.length) return null;
+      const normalised = values.slice(0, SERIES_SCHEMA.length).map(value => {
+        if (value === null || value === undefined || value === '') return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      });
+      return normalised.some(Number.isFinite) ? normalised : null;
+    }
+
+    function combineYearMaps(clinicianByYear, populationByYear) {
+      const years = Array.from(new Set([
+        ...Object.keys(clinicianByYear || {}).map(Number),
+        ...Object.keys(populationByYear || {}).map(Number)
+      ])).filter(Number.isFinite).sort((a, b) => a - b);
+
+      return years.map(year => ({
+        year,
+        clinician: normaliseSeries(clinicianByYear?.[year]),
+        population: normaliseSeries(populationByYear?.[year])
+      }));
+    }
+
+    function validateCombinedRows(sourceRows) {
+      const rows = (Array.isArray(sourceRows) ? sourceRows : [])
+        .map(row => {
+          const year = Number(row?.year);
+          if (!Number.isFinite(year) || year < 1900 || year > 2200) return null;
+          const clinician = normaliseSeries(row?.clinician);
+          const population = normaliseSeries(row?.population);
+          if (!clinician && !population) return null;
+          return { year: Math.round(year), clinician, population };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.year - b.year);
+
+      if (
+        !rows.some(row => row.clinician) ||
+        !rows.some(row => row.population) ||
+        !rows.some(row => row.clinician && row.population)
+      ) {
+        throw new Error('State × MMM workforce data were incomplete.');
+      }
+      return rows;
+    }
+
+    function parseLiveData(raw) {
+      return validateCombinedRows(combineYearMaps(
+        parseClinicianTable(raw?.clinicianTable),
+        parsePopulationTable(raw?.populationTable)
+      ));
+    }
+
+    function parseRemoteCache(snapshot) {
+      return validateCombinedRows(combineYearMaps(
+        parseRemoteClinicianRows(snapshot?.data?.clinicianRows),
+        parseRemotePopulationRows(snapshot?.data?.populationRows)
+      ));
+    }
+
+    function applyLoadedRows(sourceRows) {
+      const rows = validateCombinedRows(sourceRows);
+      state.clinicianByYear = {};
+      state.populationByYear = {};
+      rows.forEach(row => {
+        if (row.clinician) state.clinicianByYear[row.year] = [...row.clinician];
+        if (row.population) state.populationByYear[row.year] = [...row.population];
+      });
+    }
+
+    function commonYears() {
+      const clinicianYears = new Set(
+        Object.keys(state.clinicianByYear).map(Number).filter(Number.isFinite)
+      );
+      return Object.keys(state.populationByYear)
+        .map(Number)
+        .filter(year => Number.isFinite(year) && clinicianYears.has(year))
+        .sort((a, b) => a - b);
+    }
+
+    function scopeIndices(scope = state.scope) {
+      return SERIES_SCHEMA
+        .map((item, index) => ({ ...item, index }))
+        .filter(item => scope === 'AUS' || item.state === scope)
+        .map(item => item.index);
+    }
+
+    function scopeLabel(scope = state.scope) {
+      return scope === 'AUS' ? 'Australia' : (STATE_NAMES[scope] || scope);
+    }
+
+    function rowsForYear(year, scope = state.scope) {
+      const clinician = state.clinicianByYear[year] || [];
+      const population = state.populationByYear[year] || [];
+      const indices = scopeIndices(scope);
+      const rows = [];
+
+      for (let mmm = 1; mmm <= 7; mmm += 1) {
+        const relevant = indices.filter(index => SERIES_SCHEMA[index].mmm === mmm);
+        if (!relevant.length) continue;
+
+        let activeClinicians = 0;
+        let people = 0;
+        let hasClinicians = false;
+        let hasPopulation = false;
+        let incompleteClinicians = false;
+        let incompletePopulation = false;
+
+        relevant.forEach(index => {
+          const count = clinician[index];
+          const p = population[index];
+
+          if (Number.isFinite(count)) {
+            activeClinicians += count;
+            hasClinicians = true;
+          } else if (Number.isFinite(p) && p > 0) {
+            incompleteClinicians = true;
+          }
+
+          if (Number.isFinite(p)) {
+            people += p;
+            hasPopulation = true;
+          } else if (Number.isFinite(count) && count > 0) {
+            incompletePopulation = true;
+          }
+        });
+
+        if (
+          !hasClinicians || !hasPopulation ||
+          incompleteClinicians || incompletePopulation ||
+          people <= 0
+        ) continue;
+
+        const required = people / BENCHMARK_POPULATION;
+        rows.push({
+          mmm,
+          label: `MM${mmm}`,
+          activeClinicians,
+          population: people,
+          required,
+          balance: activeClinicians - required
+        });
+      }
+
+      return rows;
+    }
+
+    function latestUsableYear(scope = state.scope) {
+      const years = commonYears();
+      for (let index = years.length - 1; index >= 0; index -= 1) {
+        const year = years[index];
+        if (rowsForYear(year, scope).length) return year;
+      }
+      return null;
+    }
+
+    function buildStateOptions() {
+      stateOptions.textContent = '';
+      ['AUS', ...ALL_STATES].forEach(code => {
+        const option = document.createElement('label');
+        option.className = 'state-option';
+
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'stateScope';
+        input.value = code;
+        input.checked = code === state.scope;
+
+        const box = document.createElement('span');
+        box.className = 'state-option-box';
+        box.setAttribute('aria-hidden', 'true');
+
+        const text = document.createElement('span');
+        text.className = 'state-option-code';
+        text.textContent = code;
+        text.style.color = code === 'AUS'
+          ? AUSTRALIA_COLOUR
+          : PFF.stateColours?.[code] || '#151515';
+
+        option.append(input, box, text);
+        stateOptions.appendChild(option);
+      });
+    }
+
+    function syncStateFilterUi(animate = true) {
+      stateOptions.querySelectorAll('input[name="stateScope"]').forEach(input => {
+        input.checked = input.value === state.scope;
+      });
+
+      const colour = state.scope === 'AUS'
+        ? AUSTRALIA_COLOUR
+        : PFF.stateColours?.[state.scope] || '#151515';
+      stateButtonValue.style.color = colour;
+
+      if (!animate) {
+        stateButtonValue.textContent = state.scope;
+        return;
+      }
+
+      PFF.animateHeading({
+        fixed: stateButtonValue,
+        fixedText: state.scope,
+        duration: 180
+      });
+    }
+
+    function setupStateFilter(onChange) {
+      buildStateOptions();
+      syncStateFilterUi(false);
+
+      stateMenuController = PFF.setupMenu({
+        menu: stateControl,
+        button: stateButton,
+        panel: stateMenu,
+        focusOnOpen: false
+      });
+
+      stateOptions.addEventListener('change', event => {
+        const input = event.target.closest('input[name="stateScope"]');
+        if (!input || !input.checked || input.value === state.scope) return;
+        state.scope = input.value;
+        syncStateFilterUi(true);
+        stateMenuController?.closeMenu();
+        onChange?.();
+      });
+    }
+
+    function niceStep(rawStep) {
+      if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+      const exponent = Math.floor(Math.log10(rawStep));
+      const magnitude = 10 ** exponent;
+      const fraction = rawStep / magnitude;
+      const niceFraction = fraction <= 1 ? 1
+        : fraction <= 2 ? 2
+          : fraction <= 2.5 ? 2.5
+            : fraction <= 5 ? 5 : 10;
+      return niceFraction * magnitude;
+    }
+
+    function symmetricScale(rows) {
+      const maxAbs = Math.max(
+        1,
+        ...rows.map(row => Math.abs(Number(row.balance))).filter(Number.isFinite)
+      );
+      const step = niceStep((maxAbs * 1.16) / 3);
+      const limit = step * 3;
+      return {
+        min: -limit,
+        max: limit,
+        step,
+        intervals: X_AXIS_MAJOR_INTERVALS
+      };
+    }
+
+    function axisTickTargets(scale = currentScale) {
+      if (!scale) return Array.from({ length: X_AXIS_MAJOR_TICK_COUNT }, (_, index) => index - 3);
+      return Array.from(
+        { length: X_AXIS_MAJOR_TICK_COUNT },
+        (_, index) => scale.min + scale.step * index
+      );
+    }
+
+    function setAxisTickValuesImmediately(scale = currentScale) {
+      axisTickAnimation.values = axisTickTargets(scale);
+    }
+
+    function animateAxisTickValues(scale, duration = CHART_TRANSITION_MS) {
+      const targetValues = axisTickTargets(scale);
+      if (!targetValues.length) return;
+
+      if (axisTickAnimation.raf) {
+        cancelAnimationFrame(axisTickAnimation.raf);
+        axisTickAnimation.raf = null;
+      }
+
+      const token = ++axisTickAnimation.token;
+      const startValues = axisTickAnimation.values.length === targetValues.length
+        ? [...axisTickAnimation.values]
+        : [...targetValues];
+
+      if (PFF.reducedMotion() || duration <= 0) {
+        axisTickAnimation.values = [...targetValues];
+        chart?.draw();
+        return;
+      }
+
+      const startedAt = performance.now();
+      function frame(now) {
+        if (token !== axisTickAnimation.token) return;
+        const progress = Math.min((now - startedAt) / duration, 1);
+        const eased = PFFCharts.easeInOutCubic(progress);
+        axisTickAnimation.values = targetValues.map((target, index) => {
+          const start = Number(startValues[index]);
+          return Number.isFinite(start) ? start + (target - start) * eased : target;
+        });
+        chart?.draw();
+        if (progress < 1) {
+          axisTickAnimation.raf = requestAnimationFrame(frame);
+        } else {
+          axisTickAnimation.raf = null;
+          axisTickAnimation.values = [...targetValues];
+          chart?.draw();
+        }
+      }
+      axisTickAnimation.raf = requestAnimationFrame(frame);
+    }
+
+    function formatAxisTick(value, step = currentScale?.step) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '';
+      if (Math.abs(number) < 1e-7) return '0';
+      const decimals = Number(step) < 10 ? 1 : 0;
+      return `${number > 0 ? '+' : '−'}${PFFCharts.formatAxisValue(Math.abs(number), decimals)}`;
+    }
+
+    function signedValue(value, decimals = 1) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '—';
+      if (Math.abs(number) < 0.05) return '0';
+      return `${number > 0 ? '+' : '−'}${Math.abs(number).toFixed(decimals)}`;
+    }
+
+    function populationLabel(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '—';
+      if (number >= 1000000) return `${(number / 1000000).toFixed(2)} million`;
+      return PFFCharts.formatInteger(Math.round(number));
+    }
+
+    // The horizontal axis has specialist symmetric values and animated tick labels.
+    // Keep its app-specific positioning, but use the approved shared tokens.
+    const PFF_AXIS_TOKENS = PFFModules.chartStyling.getTokens().palette;
+    const PFF_TICK_LENGTHS = PFFModules.chartAxes.defaults;
+    const majorTickLength = PFF_TICK_LENGTHS.tickLength;
+    const minorTickLength = PFF_TICK_LENGTHS.minorTickLength;
+
+    const zeroBalancePlugin = PFFModules.chartAnnotations.createPlugin({
+      id: 'pffMaldistributionSharedZeroReference',
+      getItems: () => [{ axis: 'x', value: 0, preset: 'zero', opacity: 1 }]
+    });
+    const categoryTickMarksPlugin = PFFModules.chartAxes.createLabelDrivenTicksPlugin({
+      id: 'pffMaldistributionSharedCategoryTicks', axes: ['y']
+    });
+    const sharedBarLabelsPlugin = PFFModules.chartValueLabels.createBarValueLabelsPlugin({
+      id: 'pffMaldistributionSharedBarValues',
+      showFor: () => true,
+      formatValue: value => signedValue(value, 1),
+      getTextColour: () => '#151515'
+    });
+
+    const balanceAxisPlugin = {
+      id: 'pffMaldistributionBalanceAxis',
+
+      beforeDatasetsDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const intervals = X_AXIS_MAJOR_INTERVALS;
+
+        ctx.save();
+
+        ctx.strokeStyle = PFF_AXIS_TOKENS.gridMinor;
+        ctx.lineWidth = 0.7;
+        for (let index = 0; index < intervals; index += 1) {
+          const ratio = (index + 0.5) / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = PFF_AXIS_TOKENS.gridMajor;
+        ctx.lineWidth = 1;
+        for (let index = 0; index <= intervals; index += 1) {
+          if (index === intervals / 2) continue;
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.stroke();
+        }
+
+        // Zero baseline is now drawn by the approved chartAnnotations helper,
+        // rather than twice here and in an additional shared plugin.
+        ctx.restore();
+      },
+
+      afterDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const intervals = X_AXIS_MAJOR_INTERVALS;
+        const mobile = PFF.mobileLayout();
+
+        ctx.save();
+        ctx.strokeStyle = '#151515';
+        ctx.lineWidth = 1;
+
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left, Math.round(chartArea.bottom) + 0.5);
+        ctx.lineTo(chartArea.right, Math.round(chartArea.bottom) + 0.5);
+        ctx.stroke();
+
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + majorTickLength);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = '#69718a';
+        ctx.globalAlpha = 0.60;
+        ctx.lineWidth = 0.7;
+        for (let index = 0; index < intervals; index += 1) {
+          const ratio = (index + 0.5) / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + minorTickLength);
+          ctx.stroke();
+        }
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = PFF_AXIS_TOKENS.ink;
+        ctx.textBaseline = 'top';
+        ctx.font = `${mobile ? 9 : 10}px Lato, sans-serif`;
+        const values = axisTickAnimation.values.length === X_AXIS_MAJOR_TICK_COUNT
+          ? axisTickAnimation.values
+          : axisTickTargets();
+
+        for (let index = 0; index <= intervals; index += 1) {
+          const ratio = index / intervals;
+          const x = chartArea.left + chartArea.width * ratio;
+          if (index === 0) ctx.textAlign = 'left';
+          else if (index === intervals) ctx.textAlign = 'right';
+          else ctx.textAlign = 'center';
+          ctx.fillText(formatAxisTick(values[index]), x, chartArea.bottom + 8);
+        }
+
+        const directionY = chartArea.bottom + (mobile ? 23 : 24);
+        ctx.font = `700 ${mobile ? 9 : 10}px Lato, sans-serif`;
+        ctx.fillStyle = '#69718a';
+        ctx.textAlign = 'left';
+        ctx.fillText('← Shortfall', chartArea.left, directionY);
+        ctx.textAlign = 'right';
+        ctx.fillText('Excess →', chartArea.right, directionY);
+
+        ctx.fillStyle = '#151515';
+        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('Clinician balance', chartArea.left + chartArea.width / 2, chartArea.bottom + (mobile ? 39 : 40));
+
+        ctx.restore();
+      }
+    };
+
+    // Bar value positioning (including smooth inside/outside moves) is handled
+    // by the approved chartValueLabels module above.
+
+    function tooltipOptions(rows) {
+      return PFFModules.chartTooltips.tooltipOptions({
+        mode: 'nearest',
+        intersect: true,
+        callbacks: {
+          title(items) {
+            const mmm = Number(items?.[0]?.dataset?._mmm);
+            return Number.isFinite(mmm) ? `MM${mmm}` : '';
+          },
+          label(context) {
+            const mmm = Number(context.dataset?._mmm);
+            const row = rows.find(item => item.mmm === mmm);
+            if (!row) return '';
+            const balanceLabel = row.balance >= 0 ? 'Excess' : 'Shortfall';
+            return [
+              `Clinician balance: ${signedValue(row.balance, 1)} active clinicians · ${balanceLabel.toLowerCase()}`,
+              `Active clinicians: ${PFFCharts.formatInteger(Math.round(row.activeClinicians))}`,
+              `1 / 10k benchmark: ${row.required.toFixed(1)} clinicians`,
+              `Population: ${populationLabel(row.population)}`
+            ];
+          }
+        }
+      });
+    }
+
+    function chartOptions(rows, animate = false) {
+      const scale = symmetricScale(rows);
+      const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
+
+      const sharedOptions = PFFModules.chartStyling.getChartBaseOptions({
+        animation: {
+          duration,
+          easing: 'easeInOutCubic'
+        },
+        animations: {
+          x: { duration, easing: 'easeInOutCubic' },
+          y: { duration, easing: 'easeInOutCubic' },
+          base: { duration: 0 },
+          width: { duration: 0 },
+          height: { duration: 0 },
+          colors: { duration: 0 }
+        },
+        indexAxis: 'y',
+        normalized: true,
+        interaction: PFFModules.chartTooltips.interactionOptions('point', {
+          includeInvisible: false
+        }),
+        layout: {
+          autoPadding: false,
+          padding: {
+            top: 1,
+            right: 1,
+            bottom: 0,
+            left: 0
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: tooltipOptions(rows)
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min: scale.min,
+            max: scale.max,
+            afterFit(axis) {
+              axis.height = PFF.mobileLayout() ? 59 : 61;
+            },
+            afterBuildTicks(axis) {
+              axis.ticks = axisTickTargets(scale).map(value => ({ value }));
+            },
+            border: { display: false },
+            grid: {
+              drawOnChartArea: false,
+              drawTicks: false
+            },
+            ticks: {
+              display: false,
+              autoSkip: false,
+              maxRotation: 0,
+              minRotation: 0
+            },
+            title: { display: false }
+          },
+          y: PFFModules.chartAxes.withYAxisTickMarks({
+            position: 'left',
+            afterFit(axis) {
+              axis.width = PFF.mobileLayout() ? 31 : 33;
+            },
+            grid: {
+              display: false,
+              drawTicks: true,
+              tickLength: 3,
+              tickWidth: 1,
+              tickColor: '#151515'
+            },
+            border: {
+              display: true,
+              color: '#151515',
+              width: 1
+            },
+            ticks: {
+              autoSkip: false,
+              color: '#151515',
+              padding: 3,
+              font: {
+                family: 'Lato',
+                size: PFF.mobileLayout() ? 10 : 11,
+                weight: '400'
+              }
+            }
+          }, { labelClearance: 4 })
+        }
+      });
+      const withTiming = PFFModules.chartAnimations.withChartJsTiming(sharedOptions);
+      // Preserve no-animation initial draw and reduced-motion handling.
+      withTiming.animation.duration = duration;
+      return PFFCharts.baseChartOptions(withTiming);
+    }
+
+    function datasetsFor(rows) {
+      const byMmm = new Map(rows.map(row => [row.mmm, row]));
+
+      return Array.from({ length: 7 }, (_, offset) => {
+        const mmm = offset + 1;
+        const row = byMmm.get(mmm);
+        const colour = MMM_COLOURS[mmm] || '#69718a';
+
+        return PFFModules.chartTooltips.preserveBarHoverAppearance({
+          label: `MM${mmm}`,
+          _mmm: mmm,
+          data: row ? [{ x: row.balance, y: row.label }] : [],
+          backgroundColor: colour,
+          borderColor: colour,
+          borderWidth: 0,
+          borderRadius: 2,
+          borderSkipped: false,
+          categoryPercentage: 0.78,
+          barPercentage: 0.80,
+          grouped: false,
+          _pffShowBarValueLabels: true
+        });
+      });
+    }
+
+    function syncDatasets(rows) {
+      const byMmm = new Map(rows.map(row => [row.mmm, row]));
+
+      chart.data.datasets.forEach(dataset => {
+        const row = byMmm.get(Number(dataset?._mmm));
+        dataset.data = row ? [{ x: row.balance, y: row.label }] : [];
+      });
+    }
+
+    function updateFootnote() {
+      if (!displayRows.length || !Number.isFinite(displayYear)) return;
+      const shortfalls = displayRows.filter(row => row.balance < -0.05);
+      const total = shortfalls.reduce((sum, row) => sum + Math.abs(row.balance), 0);
+
+      balanceNote.innerHTML = shortfalls.length
+        ? `<strong>Balance (${displayYear}):</strong> ${total.toFixed(1)} clinician shortfall across ${shortfalls.map(row => row.label).join(', ')} using a 1 / 10k benchmark`
+        : `<strong>Balance (${displayYear}):</strong> no MMM shortfalls using a 1 / 10k benchmark`;
+    }
+
+    function updateAccessibleSummary() {
+      if (!chartSummary || !displayRows.length || !Number.isFinite(displayYear)) return;
+      const shortfalls = displayRows.filter(row => row.balance < -0.05);
+      const total = shortfalls.reduce((sum, row) => sum + Math.abs(row.balance), 0);
+      const message = shortfalls.length
+        ? `${scopeLabel()} in ${displayYear}. Using a benchmark of one active clinician per 10,000 population, the combined shortfall was ${total.toFixed(1)} clinicians across ${shortfalls.map(row => row.label).join(', ')}; categories to the right of zero indicate excess.`
+        : `${scopeLabel()} in ${displayYear}. No Modified Monash category had a shortfall using a benchmark of one active clinician per 10,000 population; categories to the right of zero indicate excess.`;
+      PFFCharts.updateChartSummary(message, chartSummary);
+    }
+
+    function renderLoaded(animate = true) {
+      if (!Object.keys(state.clinicianByYear).length) return;
+      const year = latestUsableYear();
+      if (!Number.isFinite(year)) throw new Error(`No usable MMM balance data for ${scopeLabel()}.`);
+      const rows = rowsForYear(year);
+      if (!rows.length) throw new Error(`No usable MMM balance data for ${scopeLabel()}.`);
+
+      displayYear = year;
+      displayRows = rows;
+      updateFootnote();
+
+      const options = chartOptions(rows, animate);
+      const datasets = datasetsFor(rows);
+      const nextScale = symmetricScale(rows);
+      const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
+
+      if (!chart) {
+        currentScale = nextScale;
+        setAxisTickValuesImmediately(nextScale);
+        chart = new Chart(chartCanvas.getContext('2d'), {
+          type: 'bar',
+          data: {
+            labels: rows.map(row => row.label),
+            datasets
+          },
+          options: chartOptions(rows, false),
+          plugins: [
+            balanceAxisPlugin,
+            zeroBalancePlugin,
+            sharedBarLabelsPlugin,
+            categoryTickMarksPlugin,
+            {
+              id: 'pffTooltipTopLayer',
+              afterDraw(chartInstance) {
+                const tooltip = chartInstance?.tooltip;
+                if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
+                tooltip.draw(chartInstance.ctx);
+              }
+            }
+          ]
+        });
+      } else {
+        currentScale = nextScale;
+        chart.data.labels = rows.map(row => row.label);
+        syncDatasets(rows);
+        chart.options.scales.x.min = options.scales.x.min;
+        chart.options.scales.x.max = options.scales.x.max;
+        chart.options.scales.x.afterBuildTicks = options.scales.x.afterBuildTicks;
+        chart.options.plugins.tooltip = tooltipOptions(rows);
+        chart.options.animation.duration = duration;
+        chart.options.animation.easing = 'easeInOutCubic';
+        chart.options.animations.x.duration = duration;
+        chart.options.animations.x.easing = 'easeInOutCubic';
+        chart.options.animations.y.duration = duration;
+        chart.options.animations.y.easing = 'easeInOutCubic';
+        chart.options.animations.base.duration = 0;
+        chart.options.animations.width.duration = 0;
+        chart.options.animations.height.duration = 0;
+        chart.options.animations.colors.duration = 0;
+        chart.update();
+        animateAxisTickValues(nextScale, duration);
+      }
+
+      updateAccessibleSummary();
+    }
+
+    function startApp() {
+      const checks = [
+        ['Chart styling', PFFModules.chartStyling?.getTokens],
+        ['Chart axes v6', PFFModules.chartAxes?.withYAxisTickMarks],
+        ['Chart tick marks', PFFModules.chartAxes?.createLabelDrivenTicksPlugin],
+        ['Chart animations', PFFModules.chartAnimations?.withChartJsTiming],
+        ['Chart reference lines', PFFModules.chartAnnotations?.createPlugin],
+        ['Chart value labels', PFFModules.chartValueLabels?.createBarValueLabelsPlugin],
+        ['Chart tooltips v4', PFFModules.chartTooltips?.bindDismissOnOutside],
+        ['Chart responsive touch', PFFModules.chartResponsive?.suppressTapFlash]
+      ];
+      const missing = checks.filter(([,fn]) => typeof fn !== 'function').map(([name]) => name);
+      if (missing.length) {
+        loaderText.textContent = 'Missing shared chart assets: ' + missing.join(', ');
+        statusEl.textContent = loaderText.textContent;
+        console.error('[PFF Shortfalls Pilot]', loaderText.textContent);
+        return;
+      }
+      setupStateFilter(() => renderLoaded(true));
+
+      PFF.initialiseApp({
+        app,
+        status: statusEl,
+
+        async loadLive() {
+          loaderText.textContent = 'Loading live State × MMM data…';
+          const [clinicianTable, populationTable] = await Promise.all([
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.clinicianSheet,
+              range: CONFIG.clinicianRange,
+              headers: '2'
+            }),
+            PFFCharts.loadGVizSheet({
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.populationSheet,
+              range: CONFIG.populationRange,
+              headers: '2'
+            })
+          ]);
+          return { clinicianTable, populationTable };
+        },
+
+        parseLive: parseLiveData,
+
+        loadRemoteCache() {
+          loaderText.textContent = 'Loading cached PFF data…';
+          return PFFCharts.loadAppsScriptCache({
+            url: CACHE_WEB_APP_URL,
+            appKey: CACHE_APP_KEY
+          });
+        },
+
+        parseRemoteCache,
+        cacheKey: CONFIG.localCacheKey,
+        minRows: 1,
+
+        onLiveError(error) {
+          console.warn('Live State × MMM data unavailable; trying Apps Script cache.', error);
+        },
+
+        onRemoteCacheError(error) {
+          console.warn('Apps Script State × MMM cache unavailable; trying browser cache.', error);
+        },
+
+        dataSourceOptions: { indicator: liveData, text: liveDataText },
+
+        render(loaded) {
+          applyLoadedRows(loaded.rows);
+          renderLoaded(false);
+
+          chartSummary = PFFCharts.ensureChartSummary({ parent: app });
+          chartCanvas.setAttribute('aria-describedby', chartSummary.id);
+          updateAccessibleSummary();
+
+          // Reuse the approved no-flash, tap-outside/Escape tooltip dismissal.
+          // Do not install the old core's second, competing tap handler.
+          const outsideDismissal = PFFModules.chartTooltips.bindDismissOnOutside({
+            canvas: chartCanvas, getChart() { return chart; }
+          });
+          const restoreTapStyles = PFFModules.chartResponsive.suppressTapFlash(chartCanvas);
+          interactionsController = {
+            destroy() { outsideDismissal.destroy(); restoreTapStyles(); }
+          };
+
+          responsiveController = PFFCharts.createResponsiveController({
+            getChart() { return chart; },
+            observe: [app, chartShell],
+            applyResponsiveChartOptions: false,
+            onRefresh() {
+              if (!chart) return;
+              chart.resize();
+              chart.update('none');
+            }
+          });
+
+          return chart;
+        },
+
+        onError() { liveData.style.visibility = 'hidden'; },
+        errorMessage: 'Maldistribution balance data unavailable.'
+      });
+    }
+
+    startApp();
+  </script>
+</body>
+</html>
