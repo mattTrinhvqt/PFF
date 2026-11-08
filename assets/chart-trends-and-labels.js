@@ -1,4 +1,4 @@
-/* PFF Chart Trends & Labels v3 — visual-only helpers.
+/* PFF Chart Trends & Labels v4 — visual-only helpers.
  * Source patterns: existing PFF trend pills + 3.6px regression/trend lines.
  * No regression calculations, data transforms, loaders or global Chart defaults.
  */
@@ -12,7 +12,7 @@
     mobileTrendLabelFont: '700 8.2px Lato, sans-serif',
     labelHeight: 15, mobileLabelHeight: 14,
     labelGap: 5, labelBorderWidth: 0.65, connectorWidth: 0.8,
-    pillBackdropOpacity: 0.18, endpointBackdropOpacity: 0.22,
+    pillBackdropOpacity: 0.22, endpointBackdropOpacity: 0.26,
     endpointLabelFont: '700 10px Lato, sans-serif',
     mobileEndpointLabelFont: '700 9px Lato, sans-serif',
     trendThreshold: 0.05
@@ -169,7 +169,7 @@
             const point=meta.data[j], raw=dataset.data?.[j],v=raw?.y??raw;
             if(!finite(v)||!finite(point?.x)||!finite(point?.y))continue;
             const text=options.formatValue ? String(options.formatValue(v,{chart,dataset,datasetIndex:i,index:j})) : String(v);
-            items.push({anchorX:point.x,anchorY:point.y,width:ctx.measureText(text).width+(mobile?24:26),
+            items.push({anchorX:point.x,anchorY:point.y,width:ctx.measureText(text).width+(mobile?10:12),
               amount:text,colour:colourOf(dataset.borderColor,INK)});break;
           }
         });
@@ -186,10 +186,8 @@
           else ctx.rect(p.left,p.y-h/2,p.right-p.left,h);
           ctx.fillStyle=`rgba(255,255,255,${defaults.endpointBackdropOpacity})`;ctx.fill();
           ctx.lineWidth=0.7;ctx.strokeStyle=rgba(p.colour,0.65);ctx.stroke();
-          // The compact series marker preserves identity without tinting the number itself.
-          ctx.beginPath();ctx.arc(p.left+pad+2.1,p.y,2.1,0,Math.PI*2);
-          ctx.fillStyle=p.colour;ctx.fill();
-          ctx.fillStyle=INK;ctx.fillText(p.amount,p.left+pad+9,p.y);
+          // Colour-coded pill outline identifies the series; no separate dot is needed.
+          ctx.fillStyle=INK;ctx.fillText(p.amount,p.left+pad,p.y);
         });
         chart.$pffSharedEndpointLabelRects=placed.map(p=>({left:p.left,right:p.right,top:p.top,bottom:p.bottom}));
         ctx.restore();
@@ -197,6 +195,6 @@
     };
   }
 
-  root.chartTrends = Object.freeze({version:'3.0.0-review',defaults,lineStyle,trendLabel,rgba,
+  root.chartTrends = Object.freeze({version:'4.0.0-review',defaults,lineStyle,trendLabel,rgba,
     placeLabels,drawPills,createTrendPillsPlugin,createEndpointLabelsPlugin});
 })(typeof window !== 'undefined' ? window : globalThis);
