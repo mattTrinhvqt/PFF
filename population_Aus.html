@@ -4,11 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>PFF Australian Population Trends</title>
+  <title>PFF Australian Population Trends — Shared-assets pilot</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- PFF chart migration pilot: approved visual helpers, no changes to core/data/loader. -->
+  <script src="./assets/colours-and-settings.js"></script>
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-legends-and-interactions.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-trends-and-labels.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
 
   <style>
 
@@ -21,6 +30,9 @@
       align-items: center;
       padding: 0 0 2px;
     }
+    /* The shared, borderless legend occupies the existing 28px legend row. */
+    #chartLegend.pff-shared-legend { height: 28px; min-height: 0; }
+    #chartLegend .pff-shared-legend__viewport { height: 28px; padding-bottom: 2px; }
   </style>
 </head>
 
@@ -113,7 +125,7 @@
           <div class="legend-viewport">
             <div
               id="chartLegend"
-              class="chart-legend"
+              class="pff-population-legend-host"
               aria-label="Chart legend"
             ></div>
           </div>
@@ -160,6 +172,23 @@
 
     const AUSTRALIA_COLOUR =
       '#0b5d1e';
+
+    // Approved modules are explicit dependencies of this pilot. Fail visibly
+    // instead of silently replacing approved behaviour with older defaults.
+    const shared = window.PFFModules || {};
+    const requiredChartModules = {
+      settings: 'colours-and-settings.js',
+      chartStyling: 'chart-styling-and-defaults.js',
+      chartAxes: 'chart-axes-and-ticks.js',
+      chartAnimations: 'chart-animations-and-transitions.js',
+      chartLegends: 'chart-legends-and-interactions.js',
+      chartTooltips: 'chart-tooltips-and-hover.js',
+      chartTrends: 'chart-trends-and-labels.js',
+      chartResponsive: 'chart-responsive-layouts-and-touch.js'
+    };
+    const missingChartModules = Object.entries(requiredChartModules)
+      .filter(([key]) => !shared[key])
+      .map(([, filename]) => filename);
 
     const app =
       document.getElementById('app');
@@ -210,6 +239,7 @@
     let legendController = null;
     let interactionsController = null;
     let responsiveController = null;
+    let restoreTapAppearance = null;
 
     function populationNumber(cell) {
       if (
@@ -635,23 +665,16 @@
               '#151515',
             tickWidth:
               1,
-            tickLength(context) {
-              const index =
-                context.index ??
-                0;
-
-              return index % 2 === 0
-                ? 5
-                : 2;
-            },
+            // Tick marks are drawn by the shared axis plugin, not Chart.js grid.
+            tickLength: 0,
             color(context) {
               const index =
                 context.index ??
                 0;
 
               return index % 2 === 0
-                ? 'rgba(105, 113, 138, 0.075)'
-                : 'rgba(105, 113, 138, 0.035)';
+                ? shared.chartStyling.palette.gridMajor
+                : shared.chartStyling.palette.gridMinor;
             },
             lineWidth(context) {
               const index =
@@ -659,8 +682,8 @@
                 0;
 
               return index % 2 === 0
-                ? 1
-                : 0.7;
+                ? shared.chartAxes.defaults.tickWidth
+                : shared.chartAxes.defaults.minorTickWidth;
             }
           },
 
@@ -721,37 +744,30 @@
       );
     }
 
-    const yearTickPlugin =
-      PFFCharts.createYearTickMarksPlugin({
-        id:
-          'populationYearTicks'
-      });
-
+    // Keep the existing custom spines; use native 6px/2px X-axis ticks
+    // rather than also installing the legacy manual year-tick painter.
     const axisSpinesPlugin =
       PFFCharts.createAxisSpinesPlugin({
-        id:
-          'populationAxisSpines'
+        id: 'populationAxisSpines'
       });
 
-    const trendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
-        id:
-          'populationTrendLabels',
-
-        enabled() {
-          return (
-            trendController?.mode !==
-            'off'
-          );
-        },
-
-        getTrendValue() {
-          return trendGrowth();
-        }
-      });
+    // The approved shared 22%-backed annual-trend pills replace the old
+    // trend-label plugin; the original 3yr/10yr/off calculations are retained.
+    const trendLabelsPlugin = shared.chartTrends.createTrendPillsPlugin({
+      id: 'populationTrendLabels',
+      enabled() { return trendController?.mode !== 'off'; },
+      getTrendValue() { return trendGrowth(); },
+      getSeriesColour() { return AUSTRALIA_COLOUR; }
+    });
 
     function buildDataset() {
+      // Opt into the common line style but retain this graph's pre-existing
+      // 3px stroke, hidden resting points and monotone interpolation.
       return PFFCharts.lineDataset({
+        ...shared.chartStyling.getLineStyle({
+          borderWidth: 3, pointRadius: 0, pointHoverRadius: 4,
+          tension: 0.28
+        }),
         label:
           'Australia',
 
@@ -776,6 +792,9 @@
         pointBorderWidth:
           1,
 
+        pointHitRadius:
+          shared.chartResponsive.getPointHitRadius(),
+
         borderCapStyle:
           'round',
 
@@ -791,11 +810,18 @@
     }
 
     function createChart() {
-      const options =
-        PFFCharts.baseChartOptions({
-          plugins: {
-            tooltip: {
-              callbacks: {
+      // Keep all PFFCharts data/scale functions. Apply the new modules only
+      // to chart appearance, interactions and animation configuration.
+      const xScale = shared.chartAxes.withXAxisTickMarks(
+        PFFCharts.xYearScaleOptions(),
+        { yearMode: 'even' }
+      );
+      const yScale = shared.chartAxes.withYAxisTickMarks(
+        shared.chartAxes.withStableAxis(yScaleOptions())
+      );
+
+      const tooltip = shared.chartTooltips.tooltipOptions({
+          callbacks: {
                 title(items) {
                   const index =
                     items?.[0]?.dataIndex;
@@ -840,53 +866,66 @@
                   return `${valueText} · ${sign}${Math.abs(growth).toFixed(1)}% p.a.`;
                 }
               }
-            }
-          },
+      });
 
-          scales: {
-            x:
-              PFFCharts.xYearScaleOptions(),
+      let options = PFFCharts.baseChartOptions({
+        interaction: shared.chartTooltips.interactionOptions('line'),
+        elements: shared.chartTooltips.subtleEmphasisOptions(),
+        plugins: { tooltip },
+        scales: { x: xScale, y: yScale }
+      });
 
-            y:
-              yScaleOptions()
-          }
-        });
+      // Both the Chart.js animation and the inherited x/y property animations
+      // must use 600ms; otherwise the old core's 900ms properties win.
+      options = shared.chartAnimations.withChartJsTiming(options);
+      const duration = shared.chartAnimations.defaults.chartMs;
+      options.animations = {
+        ...options.animations,
+        x: { ...(options.animations?.x || {}), duration, easing: 'easeInOutCubic' },
+        y: { ...(options.animations?.y || {}), duration, easing: 'easeInOutCubic' }
+      };
+      options.devicePixelRatio = shared.chartResponsive.getLayout().devicePixelRatio;
 
-      chart =
-        new Chart(
-          chartCanvas.getContext('2d'),
+      // This graph uses a single value-axis grid (no custom grid painter).
+      // Retain its established alternating faint major/minor levels.
+      const chartConfig = shared.chartStyling.styleChartConfig({
+        type: 'line',
+        data: {
+          labels: rows.map(row => String(row.year)),
+          datasets: [buildDataset()]
+        },
+        options,
+        plugins: [
+          trendLabelsPlugin,
+          axisSpinesPlugin,
+          // Draw actual per-tick 6 px major / 2 px minor marks on both axes.
+          // Chart.js 4 does not support grid.tickLength as a callback.
+          shared.chartAxes.createLabelDrivenTicksPlugin({ force: true }),
           {
-            type:
-              'line',
-            data: {
-              labels:
-                rows.map(
-                  row =>
-                    String(
-                      row.year
-                    )
-                ),
-              datasets: [
-                buildDataset()
-              ]
-            },
-            options,
-            plugins: [
-              trendLabelsPlugin,
-              yearTickPlugin,
-              axisSpinesPlugin,
-              {
-                id: 'pffTooltipTopLayer',
-                afterDraw(chartInstance) {
-                  const tooltip = chartInstance?.tooltip;
-                  if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
-                  tooltip.draw(chartInstance.ctx);
-                }
-              }
-            ]
+            id: 'pffTooltipTopLayer',
+            afterDraw(chartInstance) {
+              const tip = chartInstance?.tooltip;
+              if (tip && Number(tip.opacity) > 0) tip.draw(chartInstance.ctx);
+            }
           }
-        );
+        ]
+      });
 
+      chartConfig.options.scales.y.grid = {
+        ...chartConfig.options.scales.y.grid,
+        color(context) {
+          return (context.index ?? 0) % 2 === 0
+            ? shared.chartStyling.palette.gridMajor
+            : shared.chartStyling.palette.gridMinor;
+        },
+        lineWidth(context) {
+          return (context.index ?? 0) % 2 === 0
+            ? shared.chartAxes.defaults.tickWidth
+            : shared.chartAxes.defaults.minorTickWidth;
+        }
+      };
+
+      chart = new Chart(chartCanvas.getContext('2d'), chartConfig);
       updateAccessibleSummary();
     }
 
@@ -925,43 +964,21 @@
           }
         });
 
-      legendController =
-        PFFCharts.setupLegend({
-          legend:
-            chartLegend,
-          getChart() {
-            return chart;
-          },
-          getItems() {
-            return [
-              {
-                datasetIndex:
-                  0,
-                label:
-                  'Australia',
-                colour:
-                  AUSTRALIA_COLOUR,
-                active:
-                  !seriesHidden
-              }
-            ];
-          },
-          onToggle({
-            visible
-          }) {
-            seriesHidden =
-              !visible;
-
-            if (
-              chart?.data?.datasets?.[0]
-            ) {
-              chart.data.datasets[0]._activeSeries =
-                visible;
-            }
-
-            updateAccessibleSummary();
-          }
-        });
+      // Mount exactly one legend controller. Do not retain the old
+      // PFFCharts.setupLegend handler on the same DOM element.
+      legendController = shared.chartLegends.mount({
+        root: chartLegend,
+        getChart() { return chart; },
+        items: [{
+          id: 'Australia', datasetIndex: 0,
+          label: 'Australia', colour: AUSTRALIA_COLOUR,
+          markerType: 'line', visible: !seriesHidden
+        }],
+        onToggle({ visible }) {
+          seriesHidden = !visible;
+          updateAccessibleSummary();
+        }
+      });
 
       interactionsController =
         PFFCharts.setupChartInteractions({
@@ -973,6 +990,15 @@
         });
     }
 
+    if (missingChartModules.length) {
+      const message = `Shared chart assets missing: ${missingChartModules.join(', ')}`;
+      console.error('[PFF population pilot]', message);
+      const loaderMessage = document.querySelector('#loadingState .loader-text');
+      if (loaderMessage) loaderMessage.textContent = message;
+      throw new Error(message);
+    }
+
+    restoreTapAppearance = shared.chartResponsive.suppressTapFlash(chartCanvas);
     migrateLegacyLocalCache();
     setupControls();
 
@@ -1051,24 +1077,36 @@
           });
 
         createChart();
-        legendController.render();
+        legendController.refresh();
         tabsController.update();
         headingScroller.update();
 
-        responsiveController =
-          PFFCharts.createResponsiveController({
-            getChart() {
-              return chart;
-            },
-            observe: [
-              app,
-              chartShell
-            ],
-            onRefresh() {
-              tabsController?.update();
-              headingScroller?.update();
+        // Reuse the original lifecycle/resize observer (no duplicate observer)
+        // while applying the approved responsive geometry on every refresh.
+        responsiveController = PFFCharts.createResponsiveController({
+          getChart() { return chart; },
+          observe: [app, chartShell],
+          applyResponsiveChartOptions: false,
+          beforeResize(chartInstance) {
+            const layout = shared.chartResponsive.getLayout();
+            chartInstance.options.interaction =
+              shared.chartTooltips.interactionOptions('line');
+            chartInstance.options.layout.padding.top = layout.topPadding;
+            chartInstance.options.scales.x.ticks.font.size = layout.tickFontSize;
+            chartInstance.options.scales.x.title.font.size = layout.titleFontSize;
+            chartInstance.options.scales.y.afterFit =
+              shared.chartAxes.lockAxisWidth(null);
+            if (chartInstance.data.datasets[0]) {
+              chartInstance.data.datasets[0].pointHitRadius =
+                layout.pointHitRadius;
             }
-          });
+          },
+          onRefresh() {
+            tabsController?.update();
+            headingScroller?.update();
+            legendController?.updateArrows();
+          }
+        });
 
         return chart;
       },
