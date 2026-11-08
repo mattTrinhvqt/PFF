@@ -4,11 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>PFF Corporate mobility</title>
+  <title>PFF Corporate mobility — shared-assets pilot</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+  <script src="./assets/chart-value-and-category-labels.js"></script>
 
   <style>
 
@@ -192,7 +198,7 @@
 
     const DAY_MS = 24 * 60 * 60 * 1000;
     const YEAR_MS = 365.2425 * DAY_MS;
-    const CHART_TRANSITION_MS = 500;
+    const CHART_TRANSITION_MS = PFFModules.chartAnimations.defaults.chartMs;
     const X_AXIS_MAJOR_INTERVALS = 6;
     const X_AXIS_MAJOR_TICK_COUNT = X_AXIS_MAJOR_INTERVALS + 1;
 
@@ -228,12 +234,6 @@
     let responsiveController = null;
     let displayRow = null;
     let currentScale = null;
-
-    const axisTickAnimation = {
-      values: [],
-      token: 0,
-      raf: null
-    };
 
     // ============================================================
     // GENERIC HELPERS
@@ -592,18 +592,6 @@
       return { min: 0, max, step: max / X_AXIS_MAJOR_INTERVALS };
     }
 
-    function axisTickTargets(scale = currentScale) {
-      if (!scale) return Array.from({ length: X_AXIS_MAJOR_TICK_COUNT }, (_, index) => index);
-      return Array.from(
-        { length: X_AXIS_MAJOR_TICK_COUNT },
-        (_, index) => scale.min + scale.step * index
-      );
-    }
-
-    function setAxisTickValuesImmediately(scale = currentScale) {
-      axisTickAnimation.values = axisTickTargets(scale);
-    }
-
     function formatRate(value, decimals = 1) {
       const number = Number(value);
       if (!Number.isFinite(number)) return '—';
@@ -630,150 +618,47 @@
     }
 
     // ============================================================
-    // CUSTOM AXIS + VALUE LABELS
-    // ============================================================
+    // SHARED AXIS + VALUE LABELS
+    // ------------------------------------------------------------
+    // Both X numeric ticks and Y category ticks use the approved label-driven
+    // 6px major / 2px minor mark drawing. The native Chart.js spine, grid and
+    // labels stay in the same plot geometry; no duplicate axis renderer.
+    // This chart has no data-switch control, so the special old tick-animation
+    // state is unnecessary. Chart.js manages the initial 600ms bar entrance.
+    // ------------------------------------------------------------
+    function xTickDefinitions(scale = currentScale) {
+      if (!scale) return [];
+      return Array.from({length: X_AXIS_MAJOR_INTERVALS * 2 + 1}, (_, index) => ({
+        value: scale.min + scale.step * (index / 2),
+        major: index % 2 === 0,
+        minor: index % 2 !== 0
+      }));
+    }
 
-    const xAxisPresentationPlugin = {
-      id: 'pffCorporateMobilityAxis',
-
-      beforeDatasetsDraw(chartInstance) {
-        const { ctx, chartArea } = chartInstance;
-        if (!chartArea) return;
-        const intervals = X_AXIS_MAJOR_INTERVALS;
-
-        ctx.save();
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.035)';
-        ctx.lineWidth = 0.7;
-        for (let index = 0; index < intervals; index += 1) {
-          const ratio = (index + 0.5) / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.stroke();
-        }
-
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.075)';
-        ctx.lineWidth = 1;
-        for (let index = 0; index <= intervals; index += 1) {
-          const ratio = index / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.stroke();
-        }
-        ctx.restore();
-      },
-
-      afterDraw(chartInstance) {
-        const { ctx, chartArea } = chartInstance;
-        if (!chartArea) return;
-        const intervals = X_AXIS_MAJOR_INTERVALS;
-        const mobile = PFF.mobileLayout();
-
-        ctx.save();
-        ctx.strokeStyle = '#151515';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(chartArea.left, Math.round(chartArea.bottom) + 0.5);
-        ctx.lineTo(chartArea.right, Math.round(chartArea.bottom) + 0.5);
-        ctx.stroke();
-
-        for (let index = 0; index <= intervals; index += 1) {
-          const ratio = index / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 4);
-          ctx.stroke();
-        }
-
-        ctx.strokeStyle = '#69718a';
-        ctx.globalAlpha = 0.60;
-        ctx.lineWidth = 0.7;
-        for (let index = 0; index < intervals; index += 1) {
-          const ratio = (index + 0.5) / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 2);
-          ctx.stroke();
-        }
-
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = '#151515';
-        ctx.textBaseline = 'top';
-        ctx.font = `${mobile ? 9 : 10}px Lato, sans-serif`;
-        const values = axisTickAnimation.values.length === X_AXIS_MAJOR_TICK_COUNT
-          ? axisTickAnimation.values
-          : axisTickTargets();
-
-        for (let index = 0; index <= intervals; index += 1) {
-          const ratio = index / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          if (index === 0) ctx.textAlign = 'left';
-          else if (index === intervals) ctx.textAlign = 'right';
-          else ctx.textAlign = 'center';
-          ctx.fillText(formatAxisTick(values[index]), x, chartArea.bottom + 8);
-        }
-
-        ctx.fillStyle = '#151515';
-        ctx.font = `700 ${mobile ? 11 : 12}px Lato, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(
-          'FTE job ads per 100 clinicians',
-          chartArea.left + chartArea.width / 2,
-          chartArea.bottom + (mobile ? 28 : 29)
-        );
-
-        ctx.restore();
+    const sharedValueLabels = PFFModules.chartValueLabels.createBarValueLabelsPlugin({
+      id: 'pffCorporateMobilitySharedBarLabels',
+      orientation: 'horizontal',
+      showFor: () => true,
+      formatValue(_animatedValue, {index}) {
+        const row = scenarioRows()[index];
+        if (!row) return '';
+        // Preserve the original result and percentage text. The shared
+        // helper positions it inside/outside and slides it when space changes.
+        return `${formatRate(row.value, 1)} = ${row.share.toFixed(0)}% of ads`;
       }
-    };
+    });
 
-    const valueLabelsPlugin = {
-      id: 'pffCorporateMobilityValueLabels',
-      afterDatasetsDraw(chartInstance) {
-        const { ctx, chartArea } = chartInstance;
-        if (!chartArea) return;
-        const meta = chartInstance.getDatasetMeta(0);
-        if (!meta?.data?.length) return;
-
-        const mobile = PFF.mobileLayout();
-        ctx.save();
-        ctx.font = `${mobile ? 8.8 : 9.8}px Lato, sans-serif`;
-        ctx.fillStyle = '#151515';
-        ctx.textBaseline = 'middle';
-
-        meta.data.forEach((bar, index) => {
-          const props = bar?.getProps?.(['x', 'y'], false);
-          const row = scenarioRows()[index];
-          if (!row || !props || !Number.isFinite(props.x) || !Number.isFinite(props.y)) return;
-
-          const text = `${formatRate(row.value, 1)} = ${row.share.toFixed(0)}% of ads`;
-          const gap = mobile ? 4 : 5;
-          let x = props.x + gap;
-          ctx.textAlign = 'left';
-          const width = ctx.measureText(text).width;
-
-          if (x + width > chartArea.right - 1) {
-            x = chartArea.right - 1;
-            ctx.textAlign = 'right';
-          }
-
-          ctx.fillText(text, x, props.y);
-        });
-
-        ctx.restore();
-      }
-    };
+    const sharedAxisTickMarks = PFFModules.chartAxes.createLabelDrivenTicksPlugin({
+      axes: ['x', 'y'], id: 'pffCorporateMobilitySharedAxisMarks'
+    });
 
     // ============================================================
     // CHART
     // ============================================================
 
     function tooltipOptions() {
-      return PFFCharts.tooltipOptions({
+      // Keep all original data-specific tooltip callbacks and wording.
+      return PFFModules.chartTooltips.tooltipOptions({
         mode: 'nearest',
         intersect: true,
         callbacks: {
@@ -796,110 +681,83 @@
     }
 
     function chartOptions(animate = false) {
+      const motion = PFFModules.chartAnimations;
+      const axes = PFFModules.chartAxes;
+      const styling = PFFModules.chartStyling;
+      const responsive = PFFModules.chartResponsive;
       const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
+      const mobile = PFF.mobileLayout();
+      const geometry = responsive.getLayout({containerWidth: chartShell.clientWidth});
 
-      return PFFCharts.baseChartOptions({
-        devicePixelRatio: Math.max(2, Math.min(window.devicePixelRatio || 1, 3)),
-        animation: {
-          duration,
-          easing: 'easeInOutCubic'
+      // Approved per-tick lengths require the tick-drawing plugin registered
+      // in createChart(). Do not use grid.tickLength for per-tick variations:
+      // Chart.js 4 supports only one native length per axis.
+      const x = axes.withXAxisTickMarks({
+        type: 'linear', min: currentScale.min, max: currentScale.max,
+        afterFit(axis) { axis.height = mobile ? 48 : 50; },
+        afterBuildTicks(axis) { axis.ticks = xTickDefinitions(currentScale); },
+        grid: {drawTicks: false},
+        border: {display: true, color: '#151515', width: 1},
+        ticks: {
+          display: true, autoSkip: false, maxRotation: 0, minRotation: 0, align: 'inner',
+          color: '#151515', padding: 9,
+          font: {family: 'Lato', size: mobile ? 9 : 10},
+          callback(value, index) { return index % 2 === 0 ? formatAxisTick(value) : ''; }
         },
-        animations: {
-          x: { duration, easing: 'easeInOutCubic' },
-          y: { duration, easing: 'easeInOutCubic' },
-          base: { duration: 0 },
-          colors: { duration: 0 }
-        },
-        indexAxis: 'y',
-        normalized: true,
-        interaction: {
-          mode: 'nearest',
-          axis: 'xy',
-          intersect: true,
-          includeInvisible: false
-        },
-        layout: {
-          autoPadding: false,
-          padding: {
-            top: 1,
-            right: 1,
-            bottom: 0,
-            left: 3
-          }
-        },
-        plugins: {
-          legend: { display: false },
-          tooltip: tooltipOptions()
-        },
-        scales: {
-          x: {
-            type: 'linear',
-            min: currentScale.min,
-            max: currentScale.max,
-            afterFit(axis) {
-              axis.height = PFF.mobileLayout() ? 48 : 50;
-            },
-            afterBuildTicks(axis) {
-              axis.ticks = axisTickTargets(currentScale).map(value => ({ value }));
-            },
-            border: { display: false },
-            grid: {
-              drawOnChartArea: false,
-              drawTicks: false
-            },
-            ticks: {
-              display: false,
-              autoSkip: false,
-              maxRotation: 0,
-              minRotation: 0
-            },
-            title: { display: false }
-          },
-          y: {
-            position: 'left',
-            afterFit(axis) {
-              axis.width = PFF.mobileLayout() ? 126 : 150;
-            },
-            grid: {
-              display: false,
-              drawTicks: true,
-              tickLength: 3,
-              tickWidth: 1,
-              tickColor: '#151515'
-            },
-            border: {
-              display: true,
-              color: '#151515',
-              width: 1
-            },
-            ticks: {
-              autoSkip: false,
-              color: '#151515',
-              padding: 3,
-              font: {
-                family: 'Lato',
-                size: PFF.mobileLayout() ? 9.5 : 10.5,
-                weight: '400'
-              }
-            }
-          }
-        }
+        title: {display: true, text: 'FTE job ads per 100 clinicians',
+          color: '#151515', padding: {top: 8, bottom: 0},
+          font: {family: 'Lato', size: mobile ? 11 : 12, weight: '700'}}
       });
+      const y = axes.withYAxisTickMarks({
+        position: 'left',
+        afterFit(axis) { axis.width = mobile ? 126 : 150; },
+        grid: {drawOnChartArea: false, drawTicks: false},
+        border: {display: true, color: '#151515', width: 1},
+        ticks: {autoSkip: false, color: '#151515', padding: 10,
+          font: {family: 'Lato', size: mobile ? 9.5 : 10.5, weight: '400'}}
+      });
+
+      // Unified major/minor gridlines on the numeric X axis only. Keep
+      // special Y-axis category spacing and the original 2-bar arrangement.
+      const scales = styling.withUnifiedCartesianGrid({x, y}, {horizontal: true});
+      const base = PFFCharts.baseChartOptions({
+        devicePixelRatio: geometry.devicePixelRatio,
+        indexAxis: 'y', normalized: true,
+        interaction: PFFModules.chartTooltips.interactionOptions('point', {
+          includeInvisible: false
+        }),
+        animation: {duration, easing: 'easeInOutCubic'},
+        animations: {
+          x: {duration, easing: 'easeInOutCubic'},
+          y: {duration, easing: 'easeInOutCubic'},
+          base: {duration: 0}, colors: {duration: 0}
+        },
+        layout: {autoPadding: false, padding: {
+          top: 1, right: 1, bottom: 0, left: 3
+        }},
+        plugins: {legend: {display: false}, tooltip: tooltipOptions()},
+        scales
+      });
+      // The shared coordinator owns the main 600ms chart transition,
+      // preserving the existing short hover and zero-duration resize paths.
+      const coordinated = motion.withChartJsTiming(base);
+      if (duration === 0) coordinated.animation = {...coordinated.animation, duration: 0};
+      return coordinated;
     }
 
     function buildDataset() {
       const rows = scenarioRows();
-      return {
+      const sharedBarStyle = PFFModules.chartStyling.getBarStyle({
+        borderRadius: 2, borderSkipped: false,
+        categoryPercentage: 0.78, barPercentage: 0.80
+      });
+      return PFFModules.chartTooltips.preserveBarHoverAppearance({
         label: 'Job availability',
         data: rows.map(row => row.value),
         backgroundColor: rows.map(row => row.colour),
         borderColor: rows.map(row => row.colour),
-        borderWidth: 0,
-        borderRadius: 2,
-        borderSkipped: false,
-        categoryPercentage: 0.78,
-        barPercentage: 0.80
-      };
+        ...sharedBarStyle
+      });
     }
 
     function updateFootnotes() {
@@ -941,8 +799,6 @@
 
     function createChart() {
       currentScale = scaleForRow(displayRow);
-      setAxisTickValuesImmediately(currentScale);
-
       chart = new Chart(chartCanvas.getContext('2d'), {
         type: 'bar',
         data: {
@@ -951,8 +807,8 @@
         },
         options: chartOptions(true),
         plugins: [
-          xAxisPresentationPlugin,
-          valueLabelsPlugin,
+          sharedAxisTickMarks,
+          sharedValueLabels,
           {
             id: 'pffTooltipTopLayer',
             afterDraw(chartInstance) {
@@ -1040,7 +896,12 @@
           chartCanvas.setAttribute('aria-describedby', chartSummary.id);
           updateAccessibleSummary();
 
-          interactionsController = PFFCharts.setupChartInteractions({
+          // Remove mobile tap flash without changing original bar colours.
+          PFFModules.chartResponsive.suppressTapFlash(chartCanvas);
+
+          // All chart-data tap tooltips dismiss when clicking a blank part of
+          // this chart or anywhere outside it; works on mouse and touch.
+          interactionsController = PFFModules.chartTooltips.bindDismissOnOutside({
             canvas: chartCanvas,
             getChart() { return chart; }
           });
