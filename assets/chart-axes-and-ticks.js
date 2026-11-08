@@ -1,5 +1,5 @@
 /*
- * PFF chart axes and ticks — v2.1.0-candidate.1
+ * PFF chart axes and ticks — v2.2.0-candidate.1
  * Shared opt-in presentation helpers. No automatic global Chart.js changes.
  * Extracted from PFF core's stable axis fitting, year cadence and tick ratios.
  * Leaves data bounds, Chart.js built-in ticks, custom axis-drawing plugins,
@@ -10,7 +10,7 @@
 (function (global) {
   'use strict';
   const root = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '2.1.0-candidate.1';
+  const VERSION = '2.2.0-candidate.1';
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
     seriesGutterDesktop: 69,
@@ -210,34 +210,30 @@
       };
     });
   }
-  // A labelled tick is a major tick, regardless of its index, year parity
-  // or the tick-generation cadence. Blank/missing labels are minor ticks.
-  // Chart.js supplies the final rendered label at context.tick.label.
+  // A tick carrying a displayed numeric/category label is major. A blank
+  // callback result is minor. The check works for both numeric and category
+  // scales, regardless of which specific ticks are labelled.
   function hasVisibleLabel(label) {
     if (Array.isArray(label)) return label.some(hasVisibleLabel);
     return label != null && String(label).trim().length > 0;
   }
   function isMajorTick(context, options = {}, sourceScale = {}) {
     if (typeof options.isMajor === 'function') return options.isMajor(context) !== false;
+    const scale = context?.scale;
+    if (scale?.options?.ticks?.display === false || sourceScale?.ticks?.display === false) return false;
     const tick = context?.tick;
-    if (context?.scale?.options?.ticks?.display === false) return false;
     if (tick && Object.prototype.hasOwnProperty.call(tick, 'label')) {
       return hasVisibleLabel(tick.label);
     }
-    // Fallback for pre-render Chart.js contexts, tests or custom scale
-    // integrations that have not yet populated tick.label.
-    const scale = context?.scale;
     const callback = scale?.options?.ticks?.callback || sourceScale?.ticks?.callback;
     if (typeof callback === 'function') {
       try {
         return hasVisibleLabel(callback.call(scale || sourceScale,
           tick?.value, context?.index ?? 0, scale?.ticks || []));
-      } catch (_) { /* Defer to explicit tick metadata or legacy fallback. */ }
+      } catch (_) { /* A renderer may supply the resolved label later. */ }
     }
-    if (typeof tick?.minor === 'boolean') return !tick.minor;
     if (typeof tick?.major === 'boolean') return tick.major;
-    // Retain the existing year fallback only when the actual display label
-    // and callback are unavailable; never override an explicit blank label.
+    if (typeof tick?.minor === 'boolean') return !tick.minor;
     if (options.yearMode === 'even') {
       const raw = typeof scale?.getLabelForValue === 'function'
         ? scale.getLabelForValue(tick?.value) : tick?.value;
@@ -245,20 +241,17 @@
     }
     return true;
   }
-  // Opt-in tick-mark helper for either axis. Does not alter displayed labels,
-  // callbacks, scale limits, gridline colours or chart animation timing.
-  // Avoid applying it alongside a plugin that already draws axis tick marks.
+  // Chart.js 4's grid.tickLength is NOT scriptable (it accepts only one
+  // number for an entire axis). A per-tick function here silently fails,
+  // making labelled X ticks tiny and leaving Y ticks the same length.
+  // Disable ONLY the native tick strokes, retaining all gridlines and labels;
+  // createLabelDrivenTicksPlugin draws genuine 6/2 px marks on both axes.
+  // The helper and plugin must be installed TOGETHER in a Chart.js chart.
   function withLabelDrivenTickMarks(scale = {}, options = {}) {
     const next = clone(plain(scale) ? scale : {});
-    const priorGrid = next.grid || {};
-    function markStyle(context) {
-      return tickMarkStyle(isMajorTick(context, options, scale));
-    }
-    next.grid = {...priorGrid, drawTicks: true,
-      tickLength(context) { return markStyle(context).length; },
-      tickWidth(context) { return markStyle(context).width; },
-      tickColor: DEFAULTS.ink
-    };
+    next.grid = {...(next.grid || {}), drawTicks: false, tickLength: 0};
+    next.pffLabelDrivenTicks = {enabled: true, yearMode: options.yearMode || 'even',
+      isMajor: options.isMajor};
     return next;
   }
   function withXAxisTickMarks(scale = {}, options = {}) {
@@ -266,6 +259,72 @@
   }
   function withYAxisTickMarks(scale = {}, options = {}) {
     return withLabelDrivenTickMarks(scale, options);
+  }
+  function tickDrawPlan(scale, chartArea, options = {}) {
+    if (!scale || !Array.isArray(scale.ticks) || !chartArea) return [];
+    const opts = scale.options || {};
+    if (opts.display === false || opts.ticks?.display === false) return [];
+    const horizontal = typeof scale.isHorizontal === 'function'
+      ? scale.isHorizontal() : (scale.axis === 'x' || scale.id === 'x');
+    const position = opts.position || (horizontal ? 'bottom' : 'left');
+    if (!['bottom', 'top', 'left', 'right'].includes(position)) return [];
+    // Keep the marks attached to the existing spine, not a second axis line.
+    // Charts which animate their scales provide moving getPixelForTick values.
+    const base = position === 'bottom' ? chartArea.bottom
+      : position === 'top' ? chartArea.top
+      : position === 'left' ? chartArea.left : chartArea.right;
+    const direction = position === 'bottom' || position === 'right' ? 1 : -1;
+    const marks = [];
+    for (let index = 0; index < scale.ticks.length; index++) {
+      const tick = scale.ticks[index];
+      const pixel = typeof scale.getPixelForTick === 'function'
+        ? scale.getPixelForTick(index) : NaN;
+      if (!Number.isFinite(pixel)) continue;
+      const major = isMajorTick({tick, index, scale}, options);
+      const style = tickMarkStyle(major);
+      const start = [chartArea.left, chartArea.right];
+      const end = [chartArea.top, chartArea.bottom];
+      if (horizontal && (pixel < start[0] - 1 || pixel > start[1] + 1)) continue;
+      if (!horizontal && (pixel < end[0] - 1 || pixel > end[1] + 1)) continue;
+      marks.push({index, value: tick.value, label: tick.label || '', major,
+        x1: horizontal ? pixel : base, y1: horizontal ? base : pixel,
+        x2: horizontal ? pixel : base + direction * style.length,
+        y2: horizontal ? base + direction * style.length : pixel,
+        ...style});
+    }
+    return marks;
+  }
+  function createLabelDrivenTicksPlugin(options = {}) {
+    const axes = Array.isArray(options.axes) ? options.axes.slice() : ['x','y'];
+    const id = options.id || 'pffLabelDrivenAxisTicks';
+    return {
+      id,
+      afterDraw(chart) {
+        if (!chart?.ctx || !chart.chartArea) return;
+        const ctx = chart.ctx;
+        ctx.save();
+        try {
+          for (const axisId of axes) {
+            const scale = chart.scales?.[axisId];
+            if (!scale) continue;
+            const source = scale.options?.pffLabelDrivenTicks || {};
+            if (!source.enabled && options.force !== true) continue;
+            const marks = tickDrawPlan(scale, chart.chartArea, {
+              yearMode: source.yearMode || 'even',
+              isMajor: options.isMajor?.[axisId] || source.isMajor
+            });
+            for (const mark of marks) {
+              ctx.strokeStyle = options.color || DEFAULTS.ink;
+              ctx.lineWidth = mark.width;
+              ctx.beginPath();
+              ctx.moveTo(mark.x1, mark.y1);
+              ctx.lineTo(mark.x2, mark.y2);
+              ctx.stroke();
+            }
+          }
+        } finally { ctx.restore(); }
+      }
+    };
   }
   function easeInOutCubic(progress) {
     const t = clamp(finite(progress, 0), 0, 1);
@@ -366,7 +425,8 @@
     normaliseScale, tickDefinitions, ratio, formatValue, yearLabels,
     axisOptions, avoidDuplicateGrid, tickMarkStyle, yearTickDefinitions,
     hasVisibleLabel, isMajorTick, withLabelDrivenTickMarks,
-    withXAxisTickMarks, withYAxisTickMarks, easeInOutCubic, niceMajorStep, adaptiveMajorStep,
+    withXAxisTickMarks, withYAxisTickMarks, tickDrawPlan,
+    createLabelDrivenTicksPlugin, easeInOutCubic, niceMajorStep, adaptiveMajorStep,
     majorStepWithHysteresis, tickStepHandoffProgress, animatedNumericTicks
   });
 })(typeof window !== 'undefined' ? window : globalThis);
