@@ -9,6 +9,13 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Approved opt-in chart assets; original loader and chart core are unchanged. -->
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-value-and-category-labels.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
 
   <style>
 
@@ -247,6 +254,9 @@
   <script>
     'use strict';
 
+    // Explicit opt-in: no changes to global Chart defaults or data workflows.
+    const Shared = window.PFFModules || {};
+
     // ============================================================
     // DATA SOURCE
     // ============================================================
@@ -276,7 +286,7 @@
         'pff-workforce-rurality-proportions-v1',
 
       barTransitionMs:
-        500
+        Shared.chartAnimations?.defaults?.chartMs ?? 600
     });
 
     const CACHE_WEB_APP_URL =
@@ -1440,8 +1450,8 @@
 
           context.strokeStyle =
             major
-              ? 'rgba(105, 113, 138, 0.075)'
-              : 'rgba(105, 113, 138, 0.035)';
+              ? Shared.chartStyling.palette.gridMajor
+              : Shared.chartStyling.palette.gridMinor;
 
           context.lineWidth =
             major
@@ -1478,14 +1488,10 @@
           PFF.mobileLayout();
 
         const tickFontSize =
-          mobile
-            ? 9
-            : 10;
+          Shared.chartStyling.getAxisTypography().size;
 
         const titleFontSize =
-          mobile
-            ? 12
-            : 13;
+          Shared.chartStyling.getAxisTypography(true).size;
 
         context.save();
         context.lineCap = 'butt';
@@ -1554,16 +1560,12 @@
           const major =
             value % 20 === 0;
 
-          const tickLength =
-            major
-              ? 6
-              : 2;
+          // Same major/minor dimensions as the approved shared axis asset.
+          const tick = Shared.chartAxes.tickMarkStyle(major);
+          const tickLength = tick.length;
 
           context.beginPath();
-          context.lineWidth =
-            major
-              ? 1
-              : 0.7;
+          context.lineWidth = tick.width;
 
           context.moveTo(
             Math.round(x) + 0.5,
@@ -1890,74 +1892,18 @@
       }
     };
 
-    const segmentLabelsPlugin = {
+    // Shared stacked-segment labels. The app retains its one-decimal percent
+    // formatting and 6% visibility cutoff, while narrow segments avoid overflow.
+    const segmentLabelsPlugin = Shared.chartValueLabels.createSegmentLabelsPlugin({
       id: 'pffRuralitySegmentLabels',
-
-      afterDatasetsDraw(chartInstance) {
-        const context =
-          chartInstance.ctx;
-
-        context.save();
-        context.font =
-          `700 ${PFF.mobileLayout() ? 9 : 10}px Lato, sans-serif`;
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-        context.fillStyle = '#ffffff';
-
-        chartInstance.data.datasets
-          .forEach((dataset, datasetIndex) => {
-            const meta =
-              chartInstance.getDatasetMeta(
-                datasetIndex
-              );
-
-            meta.data.forEach((bar, index) => {
-              const properties =
-                bar.getProps(
-                  ['x', 'base', 'y'],
-                  false
-                );
-
-              const left =
-                Math.min(
-                  properties.x,
-                  properties.base
-                );
-
-              const right =
-                Math.max(
-                  properties.x,
-                  properties.base
-                );
-
-              const plotWidth =
-                chartInstance.chartArea.right -
-                chartInstance.chartArea.left;
-
-              const renderedValue =
-                plotWidth > 0
-                  ? ((right - left) / plotWidth) * 100
-                  : Number(dataset.data[index]);
-
-              if (
-                !Number.isFinite(renderedValue) ||
-                renderedValue < 6 ||
-                right - left < 30
-              ) {
-                return;
-              }
-
-              context.fillText(
-                formatPercent(renderedValue),
-                (left + right) / 2,
-                properties.y
-              );
-            });
-          });
-
-        context.restore();
+      minimumWidth: 30,
+      showFor: () => true,
+      formatValue(value) {
+        return Number.isFinite(value) && value >= 6
+          ? formatPercent(value)
+          : '';
       }
-    };
+    });
 
     const tooltipTopLayerPlugin = {
       id: 'pffRuralityTooltipTopLayer',
@@ -1980,7 +1926,7 @@
     };
 
     function tooltipOptions() {
-      return PFFCharts.tooltipOptions({
+      return Shared.chartTooltips.tooltipOptions({
         callbacks: {
           title(items) {
             return items?.[0]?.label || '';
@@ -2049,7 +1995,8 @@
           ? 0
           : CONFIG.barTransitionMs;
 
-      return PFFCharts.baseChartOptions({
+      const originalOptions = PFFCharts.baseChartOptions({
+        devicePixelRatio: Shared.chartResponsive.getLayout().devicePixelRatio,
         animation: {
           duration,
           easing: 'easeInOutCubic'
@@ -2072,12 +2019,14 @@
 
         indexAxis: 'y',
 
-        interaction: {
+        interaction: Shared.chartTooltips.interactionOptions('point', {
           mode: 'index',
           axis: 'y',
           intersect: true,
           includeInvisible: false
-        },
+        }),
+
+        elements: Shared.chartTooltips.subtleEmphasisOptions(),
 
         layout: {
           autoPadding: false,
@@ -2165,6 +2114,18 @@
           }
         }
       });
+
+      // The custom canvas axis already owns gridlines, ticks and spines:
+      // do not add a second Chart.js Cartesian grid on top.
+      const styled = Shared.chartStyling.getChartBaseOptions(originalOptions);
+      const timed = Shared.chartAnimations.withChartJsTiming(styled);
+      if (PFF.reducedMotion()) {
+        timed.animation.duration = 0;
+        for (const key of ['x', 'base', 'y']) {
+          if (timed.animations?.[key]) timed.animations[key].duration = 0;
+        }
+      }
+      return timed;
     }
 
     function datasetsFor(distribution) {
@@ -2211,7 +2172,7 @@
           barPercentage: 0.78,
           categoryPercentage: 0.82
         }
-      ];
+      ].map(dataset => Shared.chartTooltips.preserveBarHoverAppearance(dataset));
     }
 
     function morphDatasetsTo(distribution) {
@@ -2365,6 +2326,24 @@
     // ============================================================
 
     function startApp() {
+      const requiredAssets = [
+        ['Chart styling', Shared.chartStyling?.getChartBaseOptions],
+        ['Chart axes', Shared.chartAxes?.tickMarkStyle],
+        ['Chart animations', Shared.chartAnimations?.withChartJsTiming],
+        ['Chart value labels', Shared.chartValueLabels?.createSegmentLabelsPlugin],
+        ['Chart tooltips v4', Shared.chartTooltips?.bindDismissOnOutside],
+        ['Responsive touch', Shared.chartResponsive?.suppressTapFlash]
+      ];
+      const missing = requiredAssets
+        .filter(([, method]) => typeof method !== 'function')
+        .map(([name]) => name);
+      if (missing.length) {
+        loaderText.textContent = 'Missing shared chart assets: ' + missing.join(', ');
+        statusEl.textContent = loaderText.textContent;
+        console.error('[PFF Distribution Gap Pilot]', loaderText.textContent);
+        return;
+      }
+
       setupStateFilter(
         () => renderLoaded(true)
       );
@@ -2462,13 +2441,17 @@
 
           updateAccessibleSummary();
 
-          interactionsController =
-            PFFCharts.setupChartInteractions({
-              canvas: chartCanvas,
-              getChart() {
-                return chart;
-              }
-            });
+          const outsideDismissal = Shared.chartTooltips.bindDismissOnOutside({
+            canvas: chartCanvas,
+            getChart() { return chart; }
+          });
+          const restoreTapStyle = Shared.chartResponsive.suppressTapFlash(chartCanvas);
+          interactionsController = {
+            destroy() {
+              outsideDismissal.destroy();
+              restoreTapStyle();
+            }
+          };
 
           responsiveController =
             PFFCharts.createResponsiveController({
