@@ -4,11 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>PFF Excess Clinicians</title>
+  <title>PFF Excess Clinicians — Shared Assets Pilot</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Approved shared visual helpers; core remains responsible for loading and calculations. -->
+  <script src="./assets/colours-and-settings.js"></script>
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-trends-and-labels.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
 
   <style>
 
@@ -184,6 +192,31 @@
   <script>
     'use strict';
 
+    // Fail visibly instead of showing a blank graph when a shared asset is missing.
+    (function checkVisualPilotDependencies() {
+      const modules = window.PFFModules || {};
+      const checks = [
+        ['Chart.js', window.Chart],
+        ['PFF loader', window.PFF],
+        ['PFF core', window.PFFCharts],
+        ['chart styling', modules.chartStyling?.getChartBaseOptions],
+        ['chart axes', modules.chartAxes?.createLabelDrivenTicksPlugin],
+        ['chart animations', modules.chartAnimations?.withChartJsTiming],
+        ['chart trends', modules.chartTrends?.trendLabel],
+        ['chart tooltips', modules.chartTooltips?.bindDismissOnOutside],
+        ['chart responsive', modules.chartResponsive?.suppressTapFlash]
+      ];
+      const missing = checks.filter(([, exportValue]) => !exportValue).map(([name]) => name);
+      if (!missing.length) return;
+      const loader = document.getElementById('loadingState');
+      if (loader) {
+        loader.textContent = 'Supply/Demand pilot missing: ' + missing.join(', ') + '. Check assets/ and hard-refresh.';
+        loader.style.color = '#b42318';
+        loader.style.padding = '12px';
+      }
+      throw new Error('Supply/Demand pilot missing required scripts: ' + missing.join(', '));
+    })();
+
     // ============================================================
     // DATA SOURCE
     // ============================================================
@@ -271,6 +304,7 @@
     let leftAxisController = null;
     let pinnedGapIndex = null;
     let gapInteractionCleanup = null;
+    const CHART_TRANSITION_MS = PFFModules.chartAnimations.defaults.chartMs;
 
     // ============================================================
     // DATA HELPERS
@@ -664,11 +698,12 @@
     // CHART PLUGINS
     // ============================================================
 
-    const yearTicksPlugin = PFFCharts.createYearTickMarksPlugin({
-      id: 'pffExcessCliniciansYearTicks',
-      getValue({ index }) {
-        return displayRows[index]?.year;
-      }
+    // Shared labelled ticks: visible year labels get 6 px major ticks;
+    // the intervening unlabelled years receive 2 px minor ticks.
+    // The custom core Y-axis owns its own ticks; do not draw a second Y axis.
+    const labelledXAxisTicksPlugin = PFFModules.chartAxes.createLabelDrivenTicksPlugin({
+      id: 'pffSupplyDemandLabelledXAxis',
+      axes: ['x']
     });
 
     // The custom unified y-axis draws in afterDraw, so redraw the tooltip last
@@ -1009,24 +1044,16 @@
         const arrowGap = mobile ? 2.5 : 3;
         const placed = [];
 
-        function rgbaFromHex(hex, alpha) {
-          const value = String(hex || '').replace('#', '');
-          if (!/^[0-9a-f]{6}$/i.test(value)) return `rgba(105, 113, 138, ${alpha})`;
-          const red = parseInt(value.slice(0, 2), 16);
-          const green = parseInt(value.slice(2, 4), 16);
-          const blue = parseInt(value.slice(4, 6), 16);
-          return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-        }
-
         ctx.save();
         ctx.font = `700 ${fontSize}px Lato, sans-serif`;
         ctx.textBaseline = 'middle';
 
         trendItems.forEach(item => {
-          const isIncrease = item.trend > 0.05;
-          const isDecrease = item.trend < -0.05;
-          const arrow = isIncrease ? '↑' : isDecrease ? '↓' : '';
-          const valueText = `${Math.abs(item.trend).toFixed(1)}% p.a.`;
+          const trendLabel = PFFModules.chartTrends.trendLabel(item.trend);
+          const isIncrease = trendLabel.direction === 'up';
+          const isDecrease = trendLabel.direction === 'down';
+          const arrow = trendLabel.arrow;
+          const valueText = trendLabel.amount;
           const arrowWidth = arrow ? ctx.measureText(arrow).width : 0;
           const valueWidth = ctx.measureText(valueText).width;
           const labelWidth = paddingX * 2 + arrowWidth + (arrow ? arrowGap : 0) + valueWidth;
@@ -1085,9 +1112,12 @@
           ctx.lineTo(chosen.left, top + radius);
           ctx.quadraticCurveTo(chosen.left, top, chosen.left + radius, top);
           ctx.closePath();
-          ctx.fillStyle = rgbaFromHex(item.colour, 0.16);
+          // Approved 22% white backing over the chart, with the existing series tint.
+          ctx.fillStyle = `rgba(255, 255, 255, ${PFFModules.chartTrends.defaults.pillBackdropOpacity})`;
           ctx.fill();
-          ctx.strokeStyle = rgbaFromHex(item.colour, 0.42);
+          ctx.fillStyle = PFFModules.chartTrends.rgba(item.colour, 0.16);
+          ctx.fill();
+          ctx.strokeStyle = PFFModules.chartTrends.rgba(item.colour, 0.42);
           ctx.lineWidth = 0.65;
           ctx.stroke();
 
@@ -1354,9 +1384,7 @@
           return;
         }
 
-        requestAnimationFrame(
-          clearGapSelection
-        );
+        // Shared dismissal helper clears blank-canvas presses and Escape.
       };
 
       const handlePointerLeave = () => {
@@ -1365,30 +1393,34 @@
         requestAnimationFrame(clearGapSelection);
       };
 
-      const handleOutsidePress = event => {
-        if (event.target === chartCanvas || chartCanvas.contains(event.target)) return;
-        requestAnimationFrame(clearGapSelection);
-      };
+      const dismissal = PFFModules.chartTooltips.bindDismissOnOutside({
+        canvas: chartCanvas,
+        getChart() { return chart; },
+        isDataPress(event) {
+          const point = eventPointInChart(event);
+          return Number.isInteger(gapHitAtPoint(point, pressTolerance()));
+        },
+        onDismiss() {
+          // The gap measurement and pinned year are application-specific.
+          // The shared handler clears Chart.js active elements and tooltip.
+          pinnedGapIndex = null;
+          hoveredGapIndex = null;
+          if (hoverRafId !== null) cancelAnimationFrame(hoverRafId);
+          hoverRafId = null;
+        }
+      });
+      const restoreTapStyle = PFFModules.chartResponsive.suppressTapFlash(chartCanvas);
 
       chartCanvas.addEventListener('pointermove', handleGapHover, { passive: true });
       chartCanvas.addEventListener('pointerdown', handleGapPress, { passive: false });
       chartCanvas.addEventListener('pointerleave', handlePointerLeave, { passive: true });
-      document.addEventListener(
-        'pointerdown',
-        handleOutsidePress,
-        true
-      );
-
       gapInteractionCleanup = () => {
-        if (hoverRafId) cancelAnimationFrame(hoverRafId);
+        if (hoverRafId !== null) cancelAnimationFrame(hoverRafId);
         chartCanvas.removeEventListener('pointermove', handleGapHover);
         chartCanvas.removeEventListener('pointerdown', handleGapPress);
         chartCanvas.removeEventListener('pointerleave', handlePointerLeave);
-        document.removeEventListener(
-          'pointerdown',
-          handleOutsidePress,
-          true
-        );
+        dismissal.destroy();
+        restoreTapStyle();
       };
     }
 
@@ -1399,7 +1431,7 @@
     function leftScaleOptions() {
       return PFFCharts.yScaleOptions(hoursScale, {
         afterFit(axis) {
-          axis.width = PFFCharts.mobileLayout() ? 61 : 69;
+          axis.width = PFFModules.chartAxes.gutter({kind: 'series'});
         }
       });
     }
@@ -1418,6 +1450,7 @@
           pointBorderColor: '#ffffff',
           borderWidth: 2.9,
           pointBorderWidth: 1,
+          pointHitRadius: PFFModules.chartResponsive.getPointHitRadius(),
           fill: {
             target: 1,
             above: 'rgba(102, 0, 255, 0.065)',
@@ -1439,6 +1472,7 @@
           pointBorderColor: '#ffffff',
           borderWidth: 2.65,
           pointBorderWidth: 1,
+          pointHitRadius: PFFModules.chartResponsive.getPointHitRadius(),
           cubicInterpolationMode: 'monotone',
           order: 3
         })
@@ -1446,7 +1480,7 @@
     }
 
     function tooltipOptions() {
-      return PFFCharts.tooltipOptions({
+      return PFFModules.chartTooltips.tooltipOptions({
         mode: 'index',
         intersect: true,
         filter(item) {
@@ -1480,33 +1514,45 @@
     }
 
     function chartOptions() {
-      return PFFCharts.baseChartOptions({
+      const duration = PFFCharts.reducedMotion() ? 0 : CHART_TRANSITION_MS;
+      const base = PFFModules.chartStyling.getChartBaseOptions({
+        animation: {duration, easing: PFFModules.chartAnimations.defaults.chartEasing},
+        animations: {
+          x: {duration, easing: PFFModules.chartAnimations.defaults.chartEasing},
+          y: {duration, easing: PFFModules.chartAnimations.defaults.chartEasing}
+        },
         layout: {
           padding: {
-            top: PFFCharts.mobileLayout() ? 8 : 9,
-            right: 0,
-            bottom: 0,
-            left: 0
+            top: PFFModules.chartResponsive.getLayout().topPadding,
+            right: 0, bottom: 0, left: 0
           }
         },
-        events: [
-          'mousemove',
-          'mouseout'
-        ],
-
-        interaction: {
-          mode: 'index',
-          intersect: true,
-          axis: 'xy'
-        },
+        // Gap hit testing is deliberately manual. Do not switch to nearest-
+        // point selection, which would lose selection of the shaded gap.
+        events: ['mousemove', 'mouseout'],
+        interaction: PFFModules.chartTooltips.interactionOptions('manual', {
+          mode: 'index', intersect: true, axis: 'xy'
+        }),
+        elements: PFFModules.chartTooltips.subtleEmphasisOptions(),
         plugins: {
           tooltip: tooltipOptions()
         },
         scales: {
-          x: PFFCharts.xYearScaleOptions(),
+          x: PFFModules.chartAxes.withXAxisTickMarks(
+            PFFCharts.xYearScaleOptions(), {yearMode: 'even'}
+          ),
+          // The custom PFF unified Y-axis draws its own ticks and grid.
           y: leftScaleOptions()
         }
       });
+      // Core baseChartOptions() still provides loader-compatible and
+      // accessibility-friendly Chart.js defaults. Explicitly override its
+      // 900ms animations with the approved, chart-only 600ms standard.
+      const timed = PFFModules.chartAnimations.withChartJsTiming(base);
+      timed.animation.duration = duration;
+      timed.animations.x.duration = duration;
+      timed.animations.y.duration = duration;
+      return PFFCharts.baseChartOptions(timed);
     }
 
     function createChart() {
@@ -1542,7 +1588,7 @@
         options: chartOptions(),
         plugins: [
           leftAxisController.plugin,
-          yearTicksPlugin,
+          labelledXAxisTicksPlugin,
           fixedTrendPillsPlugin,
           gapMeasurementPlugin,
           tooltipTopLayerPlugin
