@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>PFF Clinician balance — Smooth Categories Pilot v2</title>
+  <title>PFF Clinician balance — Shared Category Morph Pilot v3</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
@@ -172,7 +172,7 @@
 
   <script>
     'use strict';
-    // Pilot v2: keyed MM category morph and wider Y gutter. Data loading and calculations unchanged.
+    // Pilot v3: shared keyed-category morph and wider Y gutter. Data loading and calculations unchanged.
     // State/MMM colour mapping and static legend remain unchanged.
 
     const CONFIG = Object.freeze({
@@ -703,33 +703,11 @@
       id: 'pffMaldistributionSharedZeroReference',
       getItems: () => [{ axis: 'x', value: 0, preset: 'zero', opacity: 1 }]
     });
-    // MM categories retain their own identity across state changes. This pilot
-    // draws their axis labels and ticks so they can travel with the moving bars.
-    // This is deliberately isolated here until the animation is approved.
-    const categoryMotion = { active: false, raf: null, started: 0, items: [], token: 0 };
-    const CATEGORY_MOTION_MS = CHART_TRANSITION_MS;
-    const categoryEase = t => {
-      const p = Math.max(0, Math.min(1, t));
-      return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-    };
-    const categoryLerp = (a, b, t) => a + (b - a) * t;
-    function categoryProgress(now = performance.now()) {
-      if (!categoryMotion.active) return 1;
-      return categoryEase((now - categoryMotion.started) / CATEGORY_MOTION_MS);
-    }
-    function categoryFrame(now = performance.now()) {
-      const progress = categoryProgress(now);
-      return categoryMotion.items.map(item => ({
-        mmm: item.mmm,
-        colour: item.colour,
-        x: categoryLerp(item.start.x, item.end.x, progress),
-        base: categoryLerp(item.start.base, item.end.base, progress),
-        y: categoryLerp(item.start.y, item.end.y, progress),
-        height: categoryLerp(item.start.height, item.end.height, progress),
-        value: categoryLerp(item.start.value, item.end.value, progress),
-        alpha: categoryLerp(item.start.alpha, item.end.alpha, progress)
-      })).filter(item => item.alpha > 0.001);
-    }
+    // Shared keyed-category morph: MM labels, ticks, values and bars now use the
+    // approved chart-animations-and-transitions.js helper, not a local RAF/tween.
+    // The renderer below still owns Chart.js drawing, colours and axis geometry.
+    const categoryMotion = {active: false, items: []};
+    function categoryFrame() { return categoryMotion.items.filter(item => item.alpha > 0.001); }
     function chartCategoryEntries(rows, chartInstance = chart) {
       if (!chartInstance) return [];
       return rows.map(row => {
@@ -752,53 +730,35 @@
     function visibleCategoryEntries() {
       return categoryMotion.active ? categoryFrame() : chartCategoryEntries(displayRows);
     }
-    function nearestCategoryY(mmm, entries, fallback) {
-      if (!entries.length) return fallback;
-      const closest = [...entries].sort((a, b) => Math.abs(a.mmm - mmm) - Math.abs(b.mmm - mmm))[0];
-      return closest?.y ?? fallback;
+    function categoryModel(entries) {
+      return entries.map(item => ({
+        id: `MM${item.mmm}`, order: item.mmm, label: `MM${item.mmm}`,
+        colour: item.colour, x: item.x, base: item.base,
+        y: item.y, height: item.height, value: item.value,
+        opacity: item.alpha
+      }));
     }
-    function beginCategoryTransition(from, to, duration = CATEGORY_MOTION_MS) {
-      if (categoryMotion.raf !== null) cancelAnimationFrame(categoryMotion.raf);
-      const current = new Map(from.map(item => [item.mmm, item]));
-      const target = new Map(to.map(item => [item.mmm, item]));
-      const xZero = chart?.scales?.x?.getPixelForValue(0) ?? chart?.chartArea?.left ?? 0;
-      const allMM = [...new Set([...current.keys(), ...target.keys()])].sort((a, b) => a - b);
-      categoryMotion.items = allMM.map(mmm => {
-        const previous = current.get(mmm);
-        const next = target.get(mmm);
-        const colour = MMM_COLOURS[mmm] || '#69718a';
-        const start = previous ? {...previous} : {
-          mmm, colour, base: xZero, x: xZero, value: 0, alpha: 0,
-          height: Math.max(1, (next?.height || 12) * 0.65),
-          y: nearestCategoryY(mmm, from, next?.y || 0)
-        };
-        const end = next ? {...next} : {
-          mmm, colour, base: xZero, x: xZero, value: 0, alpha: 0,
-          height: Math.max(1, (previous?.height || 12) * 0.65),
-          y: nearestCategoryY(mmm, to, previous?.y || 0)
-        };
-        return { mmm, colour, start, end };
-      });
+    function beginCategoryTransition(from, to, duration = CHART_TRANSITION_MS) {
+      if (!chart) return;
+      const source = categoryModel(from);
+      const dest = categoryModel(to);
+      const zero = chart.scales?.x?.getPixelForValue(0) ?? chart.chartArea?.left ?? 0;
+      const currentChart = chart;
       categoryMotion.active = duration > 0;
-      categoryMotion.started = performance.now();
-      const token = ++categoryMotion.token;
-      if (!categoryMotion.active) { categoryMotion.items = []; chart?.draw(); return; }
-      // A single timeline drives bars, MM labels and tick marks; interrupted
-      // updates sample the current visual positions before retargeting.
-      const step = now => {
-        if (token !== categoryMotion.token || !chart || chart._destroyed) return;
-        chart.draw();
-        if (now - categoryMotion.started < duration) {
-          categoryMotion.raf = requestAnimationFrame(step);
-        } else {
-          categoryMotion.active = false;
-          categoryMotion.items = [];
-          categoryMotion.raf = null;
+      categoryMotion.items = from;
+      return PFFModules.chartAnimations.animateCategories(chart, dest, {
+        initial: source,
+        zeroBase: zero,
+        reducedMotion: duration <= 0,
+        render(items, meta) {
+          if (currentChart !== chart || chart._destroyed) return;
+          categoryMotion.items = items.map(item => ({
+            ...item, mmm: Number(item.id.replace(/^MM/, '')), alpha: item.opacity
+          }));
+          categoryMotion.active = !meta.complete;
           chart.draw();
         }
-      };
-      categoryMotion.raf = requestAnimationFrame(step);
-      chart?.draw();
+      });
     }
     const animatedCategoryPlugin = {
       id: 'pffClinicianBalanceAnimatedCategories',
@@ -867,9 +827,8 @@
         }
         ctx.restore();
       },
-      beforeDestroy() {
-        categoryMotion.token += 1;
-        if (categoryMotion.raf !== null) cancelAnimationFrame(categoryMotion.raf);
+      beforeDestroy(chartInstance) {
+        PFFModules.chartAnimations.cancel(chartInstance);
         categoryMotion.active = false;
         categoryMotion.items = [];
       }
@@ -1212,10 +1171,7 @@
         // Hold the visual categories while Chart.js establishes its new
         // category positions. The overlay then morphs keyed MM rows smoothly.
         categoryMotion.active = duration > 0;
-        categoryMotion.started = performance.now();
-        categoryMotion.items = visibleBefore.map(item => ({
-          mmm: item.mmm, colour: item.colour, start: {...item}, end: {...item}
-        }));
+        categoryMotion.items = visibleBefore;
         chart.update('none');
         const finalEntries = chartCategoryEntries(rows);
         beginCategoryTransition(visibleBefore, finalEntries, duration);
