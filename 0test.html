@@ -4,43 +4,27 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>PFF Distribution gap</title>
+  <title>PFF Practice Ownership</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
-  <script src="./assets/pff_chart_core.js"></script>
-  <!-- Approved opt-in chart assets; original loader and chart core are unchanged. -->
+  <script src="./assets/pff_chart_core.js?v=1.2.11-20260917"></script>
+  <!-- Existing loader/core are unchanged. These approved helpers are scoped to this pilot. -->
   <script src="./assets/chart-styling-and-defaults.js"></script>
   <script src="./assets/chart-axes-and-ticks.js"></script>
   <script src="./assets/chart-animations-and-transitions.js"></script>
-  <script src="./assets/chart-value-and-category-labels.js"></script>
   <script src="./assets/chart-tooltips-and-hover.js"></script>
   <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+  <script src="./assets/chart-value-and-category-labels.js"></script>
 
   <style>
 
-    /* App-specific styling only. Shared PFF chart styling lives in pff_chart_core.js. */
+    /* Practice-ownership-specific components only. Shared PFF chart styling lives in pff_chart_core.js. */
 
     :root {
-      --rurality-metro: #30475d;
-      --rurality-nonmetro: #b54a0a;
-    }
-
-    .single-tab-shell .tab-list {
-      min-width: 0;
-    }
-
-    .single-tab-shell .chart-tab {
-      cursor: default;
-    }
-
-    .single-tab-shell .tab-list::after {
-      display: none;
-    }
-
-    .single-tab-shell .chart-tab.is-active,
-    .single-tab-shell .chart-tab[aria-selected='true'] {
-      border-bottom-color: var(--pff-purple);
+      --practice-corporate: #00b26f;
+      --practice-independent: #5a3be7;
+      --practice-other: #8b9099;
     }
 
     .chart-heading-row {
@@ -52,7 +36,19 @@
       max-width: calc(100% - 92px);
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+    }
+
+    .chart-heading-fixed,
+    .chart-heading-detail {
+      display: inline-block;
+    }
+
+    .chart-heading-detail {
+      margin-left: 0.28em;
+    }
+
+    .chart-heading-detail:empty {
+      margin-left: 0;
     }
 
     .heading-controls {
@@ -60,16 +56,43 @@
       padding-top: 2px;
     }
 
-    .state-button {
-      min-width: 84px;
+    .heading-controls.is-hidden {
+      display: none;
     }
 
-    .state-menu {
-      min-width: 128px;
+    .dimension-button {
+      min-width: 98px;
+      grid-template-columns: max-content minmax(30px, 1fr) 8px;
     }
 
-    .state-option-code {
+    .dimension-menu {
+      min-width: 176px;
+    }
+
+    .dimension-menu.is-phn {
+      width: min(310px, calc(100vw - 24px));
+      max-height: min(430px, calc(100vh - 92px));
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(105, 113, 138, 0.34) transparent;
+    }
+
+    .dimension-option-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dimension-option-state {
+      min-width: 28px;
+      margin-left: auto;
+      font-size: 9px;
       font-weight: 700;
+      text-align: right;
+      white-space: nowrap;
     }
 
     .chart-options-row {
@@ -87,36 +110,27 @@
       flex: 1 1 auto;
     }
 
-    .chart-legend .legend-item {
-      color: var(--pff-muted);
-      cursor: default;
-      pointer-events: none;
+    .chart-scroll {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
     }
 
-    .chart-legend .legend-item:hover {
-      color: var(--pff-muted);
+    .chart-stage {
+      position: relative;
+      width: 100%;
+      min-width: 0;
+      min-height: 100%;
     }
 
-    .legend-line.is-gap {
-      height: 7px;
-      border: 1px solid rgba(102, 0, 255, 0.22);
-      background: rgba(102, 0, 255, 0.08) !important;
-    }
-
-    .method-note {
-      margin: 5px 3px 0;
-      color: var(--pff-muted);
-      font-size: 11.5px;
-      line-height: 1.34;
-      text-align: left;
-    }
-
-    .method-note-line {
+    .chart-shell canvas {
+      position: absolute;
+      inset: 0;
       display: block;
-    }
-
-    .method-note-line + .method-note-line {
-      margin-top: 2px;
+      width: 100% !important;
+      height: 100% !important;
+      opacity: 1;
+      will-change: opacity;
     }
 
     @media (max-width: 430px) {
@@ -124,16 +138,13 @@
         max-width: calc(100% - 86px);
       }
 
-      .state-button {
-        min-width: 80px;
+      .dimension-button {
+        min-width: 84px;
       }
 
-      .state-menu {
-        min-width: 118px;
-      }
-
-      .method-note {
-        font-size: 10.5px;
+      .dimension-menu.is-phn {
+        width: min(282px, calc(100vw - 14px));
+        max-height: min(390px, calc(100vh - 82px));
       }
     }
   </style>
@@ -146,1062 +157,932 @@
         id="loadingState"
         class="app-loading"
         role="status"
-        aria-live="polite"
-        aria-label="Loading rurality proportions"
+        aria-label="Loading practice ownership data"
       >
-        <div class="cone-loader" aria-hidden="true">
-          <span class="cone blue"></span>
-          <span class="cone green"></span>
-          <span class="cone red"></span>
+        <div class="cone-loader">
+          <div class="cone blue" aria-hidden="true"></div>
+          <div class="cone green" aria-hidden="true"></div>
+          <div class="cone red" aria-hidden="true"></div>
         </div>
-        <p id="loaderText" class="loader-text">Loading rurality data…</p>
+
+        <div class="loader-text">Loading practice ownership data…</div>
       </div>
 
-      <div class="module-top single-tab-shell">
+      <div class="module-top">
         <div class="tab-scroll-shell">
+          <button
+            id="tabScrollLeft"
+            class="tab-scroll-button tab-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll practice ownership tabs left"
+          >‹</button>
+
           <div
+            id="tabList"
             class="tab-list"
             role="tablist"
-            aria-label="Distribution gap chart"
+            aria-label="Practice ownership views"
           >
             <button
               class="chart-tab is-active"
               type="button"
               role="tab"
+              data-view="all"
               aria-selected="true"
-              tabindex="0"
-            >Distribution gap</button>
+            >All</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              data-view="state"
+              aria-selected="false"
+            >State</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              data-view="rurality"
+              aria-selected="false"
+            >Rurality</button>
+
+            <button
+              class="chart-tab"
+              type="button"
+              role="tab"
+              data-view="phn"
+              aria-selected="false"
+            >PHN</button>
           </div>
+
+          <button
+            id="tabScrollRight"
+            class="tab-scroll-button tab-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll practice ownership tabs right"
+          >›</button>
         </div>
 
         <div
-          id="sourceIndicator"
+          id="dataSourceIndicator"
           class="live-data"
           aria-label="Live data"
-          aria-live="polite"
         >
           <span class="live-data-dot" aria-hidden="true"></span>
-          <span id="sourceText">LIVE data</span>
+          <span id="dataSourceText">LIVE data</span>
         </div>
       </div>
 
-      <div id="status" role="status" aria-live="polite"></div>
+      <div id="status" role="alert" aria-live="polite"></div>
 
       <div class="chart-heading-row">
-        <div class="heading-scroll-shell">
-          <div class="heading-scroll-viewport">
-            <h2 class="chart-heading">Supply vs demand by rurality</h2>
-          </div>
-        </div>
+        <h2 id="chartHeading" class="chart-heading">
+          <span class="chart-heading-fixed">Practice ownership</span>
+          <span id="chartHeadingDetail" class="chart-heading-detail"></span>
+        </h2>
 
-        <div class="heading-controls">
-          <div id="stateControl" class="state-control">
+        <div id="headingControls" class="heading-controls is-hidden">
+          <div id="dimensionControl" class="state-control">
             <button
-              id="stateButton"
-              class="state-button"
+              id="dimensionButton"
+              class="state-button dimension-button"
               type="button"
               aria-expanded="false"
-              aria-controls="stateMenu"
+              aria-controls="dimensionMenu"
             >
-              <span>State</span>
-              <span id="stateButtonValue" class="state-button-value">AUS</span>
+              <span id="dimensionButtonLabel">States</span>
+              <span id="dimensionButtonValue" class="state-button-value">All</span>
               <span class="menu-arrow" aria-hidden="true"></span>
             </button>
 
-            <div id="stateMenu" class="state-menu" role="menu">
-              <div class="state-menu-title">Show state</div>
-              <div id="stateOptions"></div>
+            <div id="dimensionMenu" class="state-menu dimension-menu" role="menu">
+              <div id="dimensionMenuTitle" class="state-menu-title">Show states</div>
+
+              <label class="state-option state-option-all">
+                <input id="dimensionAll" type="checkbox" checked>
+                <span class="state-option-box" aria-hidden="true"></span>
+                <span id="dimensionAllLabel">All states</span>
+              </label>
+
+              <div id="dimensionOptions"></div>
             </div>
           </div>
         </div>
       </div>
 
       <div class="chart-options-row">
-        <div class="legend-nav">
-          <div class="legend-viewport">
-            <div class="chart-legend" aria-label="Rurality legend">
-              <span class="legend-item">
-                <span class="legend-line" style="--legend-colour: var(--rurality-metro)"></span>
-                <span>Metro (MM1)</span>
-              </span>
-              <span class="legend-item">
-                <span class="legend-line" style="--legend-colour: var(--rurality-nonmetro)"></span>
-                <span>Non-metro (MM2–7)</span>
-              </span>
-              <span class="legend-item">
-                <span class="legend-line is-gap" style="--legend-colour: var(--pff-purple)"></span>
-                <span>Distribution gap</span>
-              </span>
-            </div>
+        <div id="legendNav" class="legend-nav">
+          <button
+            id="legendScrollLeft"
+            class="legend-scroll-button legend-scroll-left is-hidden"
+            type="button"
+            aria-label="Scroll ownership legend left"
+          >&#8249;</button>
+
+          <div id="legendViewport" class="legend-viewport">
+            <div
+              id="chartLegend"
+              class="chart-legend"
+              aria-label="Practice ownership legend"
+            ></div>
           </div>
+
+          <button
+            id="legendScrollRight"
+            class="legend-scroll-button legend-scroll-right is-hidden"
+            type="button"
+            aria-label="Scroll ownership legend right"
+          >&#8250;</button>
         </div>
       </div>
 
       <div id="chartShell" class="chart-shell">
-        <canvas
-          id="ruralityChart"
-          aria-label="Clinician and population proportions by rurality"
-          role="img"
-        ></canvas>
+        <div id="chartScroll" class="chart-scroll is-pie">
+          <div id="chartStage" class="chart-stage">
+            <canvas
+              id="practiceChart"
+              aria-label="Practice ownership chart"
+              tabindex="-1"
+            ></canvas>
+          </div>
+        </div>
       </div>
-
-      <p class="method-note">
-        Metro (MM1) vs non-metro (MM2–MM7) distribution by supply (clinicians, <em>top</em>) and demand (population, <em>bottom</em>)
-      </p>
     </main>
   </div>
 
   <script>
     'use strict';
 
-    // Explicit opt-in: no changes to global Chart defaults or data workflows.
-    const Shared = window.PFFModules || {};
-
-    // ============================================================
-    // DATA SOURCE
-    // ============================================================
+    // Opt-in shared assets. Never replace PFF's loader, chart core, cached data,
+    // grouping, PHN geometry, pie/bar labels, state outlines or chart-type logic.
+    const sharedChart = Object.freeze({
+      styling: window.PFFModules?.chartStyling,
+      axes: window.PFFModules?.chartAxes,
+      animations: window.PFFModules?.chartAnimations,
+      tooltips: window.PFFModules?.chartTooltips,
+      responsive: window.PFFModules?.chartResponsive,
+      labels: window.PFFModules?.chartValueLabels
+    });
+    const missingSharedChartAssets = Object.entries(sharedChart)
+      .filter(([, module]) => !module)
+      .map(([name]) => name);
+    if (missingSharedChartAssets.length) {
+      throw new Error(
+        'Practice Ownership pilot requires the approved shared assets: ' +
+        missingSharedChartAssets.join(', ')
+      );
+    }
+    sharedChart.styling.applyGlobalFontDefaults(window.Chart);
 
     const CONFIG = Object.freeze({
-      sheetId:
-        '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
-
-      clinicianSheet:
-        'OptomsbystatebyMMM',
-
-      /*
-        A = year; B:AO = State × MMM active clinician counts.
-        These are the same active clinician counts used elsewhere in the
-        workforce apps, rather than general-registration headcounts.
-      */
-      clinicianRange:
-        'A29:AO',
-
-      populationSheet:
-        'AuspopnbystatebyMMM',
-
-      populationRange:
-        'A29:AO',
-
-      localCacheKey:
-        'pff-workforce-rurality-proportions-v1',
-
-      barTransitionMs:
-        Shared.chartAnimations?.defaults?.chartMs ?? 600
+      spreadsheetId: '1v6nHeJDkbYF-Pan7OEDLLBhYLghuGxFVBoRX4ibuWSE',
+      sheetName: '2026 Optom EAT',
+      sheetGid: '884596310',
+      sourceRange: 'B32:AJ',
+      sourceColumnCount: 35,
+      fetchTimeoutMs: 25000,
+      jsonFallbackUrl: './assets/practice_directory_fallback.json',
+      jsonFetchTimeoutMs: 15000,
+      appKey: 'pff-optom-practice-directory',
+      localCacheKey: 'pff-practice-ownership-rows-v3',
+      minimumRows: 100,
+      barTransitionMs: 600,
+      columns: Object.freeze({
+        practiceName: 0,
+        state: 3,
+        employerType: 11,
+        rurality: 12,
+        phn: 18
+      })
     });
 
-    const CACHE_WEB_APP_URL =
-      'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
 
-    // Backend 1 stores the raw State × MMM workforce snapshot.
-    const CACHE_APP_KEY =
-      'pff-state-mmm-workforce-v1';
+    /* Testing switch only. Leave false in production. */
+    const FORCE_CACHED_DATA = false;
 
-    const ACTIVE_CLINICIAN_FIRST_INDEX =
-      1; // B
+    const EMPLOYER_TYPES = Object.freeze([
+      'Corporate',
+      'Independent',
+      'Other'
+    ]);
 
-    const POPULATION_FIRST_INDEX =
-      1; // B
+    const EMPLOYER_COLOURS = Object.freeze({
+      Corporate: '#00b26f',
+      Independent: '#5a3be7',
+      Other: '#8b9099'
+    });
 
-    const SERIES_SCHEMA = [
-      { state: 'NSW', mmm: 1 },
-      { state: 'NSW', mmm: 2 },
-      { state: 'NSW', mmm: 3 },
-      { state: 'NSW', mmm: 4 },
-      { state: 'NSW', mmm: 5 },
-      { state: 'NSW', mmm: 6 },
-      { state: 'NSW', mmm: 7 },
+    const STATE_ORDER = Object.freeze([
+      'NSW',
+      'VIC',
+      'QLD',
+      'SA',
+      'WA',
+      'TAS',
+      'NT',
+      'ACT'
+    ]);
 
-      { state: 'VIC', mmm: 1 },
-      { state: 'VIC', mmm: 2 },
-      { state: 'VIC', mmm: 3 },
-      { state: 'VIC', mmm: 4 },
-      { state: 'VIC', mmm: 5 },
+    const STATE_NAMES = Object.freeze({
+      NSW: 'New South Wales',
+      VIC: 'Victoria',
+      QLD: 'Queensland',
+      SA: 'South Australia',
+      WA: 'Western Australia',
+      TAS: 'Tasmania',
+      NT: 'Northern Territory',
+      ACT: 'Australian Capital Territory'
+    });
 
-      { state: 'QLD', mmm: 1 },
-      { state: 'QLD', mmm: 2 },
-      { state: 'QLD', mmm: 3 },
-      { state: 'QLD', mmm: 4 },
-      { state: 'QLD', mmm: 5 },
-      { state: 'QLD', mmm: 6 },
-      { state: 'QLD', mmm: 7 },
+    const MMM_ORDER = Object.freeze([
+      'MM1',
+      'MM2',
+      'MM3',
+      'MM4',
+      'MM5',
+      'MM6',
+      'MM7'
+    ]);
 
-      { state: 'SA', mmm: 1 },
-      { state: 'SA', mmm: 2 },
-      { state: 'SA', mmm: 3 },
-      { state: 'SA', mmm: 4 },
-      { state: 'SA', mmm: 5 },
-      { state: 'SA', mmm: 6 },
-      { state: 'SA', mmm: 7 },
+    const PHN_ORDER = Object.freeze([
+      'Central and Eastern Sydney',
+      'Northern Sydney',
+      'Western Sydney',
+      'Nepean Blue Mountains',
+      'South Western Sydney',
+      'South Eastern NSW',
+      'Western NSW',
+      'Hunter New England and Central Coast',
+      'North Coast',
+      'Murrumbidgee',
+      'North Western Melbourne',
+      'Eastern Melbourne',
+      'South Eastern Melbourne',
+      'Gippsland',
+      'Murray',
+      'Western Victoria',
+      'Brisbane North',
+      'Brisbane South',
+      'Gold Coast',
+      'Darling Downs and West Moreton',
+      'Western Queensland',
+      'Central Queensland',
+      'Northern Queensland',
+      'Adelaide',
+      'Country SA',
+      'Perth North',
+      'Perth South',
+      'Country WA',
+      'Tasmania',
+      'Northern Territory',
+      'Australian Capital Territory'
+    ]);
 
-      { state: 'WA', mmm: 1 },
-      { state: 'WA', mmm: 2 },
-      { state: 'WA', mmm: 3 },
-      { state: 'WA', mmm: 4 },
-      { state: 'WA', mmm: 5 },
-      { state: 'WA', mmm: 6 },
-      { state: 'WA', mmm: 7 },
+    const PHN_STATE_CODES = Object.freeze([
+      'NSW', 'NSW', 'NSW', 'NSW', 'NSW',
+      'NSW', 'NSW', 'NSW', 'NSW', 'NSW',
+      'VIC', 'VIC', 'VIC', 'VIC', 'VIC', 'VIC',
+      'QLD', 'QLD', 'QLD', 'QLD', 'QLD', 'QLD', 'QLD',
+      'SA', 'SA',
+      'WA', 'WA', 'WA',
+      'TAS',
+      'NT',
+      'ACT'
+    ]);
 
-      { state: 'TAS', mmm: 2 },
-      { state: 'TAS', mmm: 3 },
-      { state: 'TAS', mmm: 5 },
+    const PHN_STATE_BY_NAME = Object.freeze(
+      Object.fromEntries(
+        PHN_ORDER.map((name, index) => [
+          name,
+          PHN_STATE_CODES[index]
+        ])
+      )
+    );
 
-      { state: 'NT', mmm: 2 },
-      { state: 'NT', mmm: 6 },
-      { state: 'NT', mmm: 7 },
+    const LEGEND_ITEMS = Object.freeze(
+      EMPLOYER_TYPES.map(type => ({
+        label: type,
+        colour: EMPLOYER_COLOURS[type],
+        markerType: 'square'
+      }))
+    );
 
-      { state: 'ACT', mmm: 1 }
-    ];
+    const app = document.getElementById('app');
+    const statusElement = document.getElementById('status');
+    const dataSourceIndicator = document.getElementById('dataSourceIndicator');
+    const dataSourceText = document.getElementById('dataSourceText');
+    const tabList = document.getElementById('tabList');
+    const tabScrollLeft = document.getElementById('tabScrollLeft');
+    const tabScrollRight = document.getElementById('tabScrollRight');
+    const chartHeading = document.getElementById('chartHeading');
+    const chartHeadingDetail = document.getElementById('chartHeadingDetail');
+    const headingControls = document.getElementById('headingControls');
+    const dimensionControl = document.getElementById('dimensionControl');
+    const dimensionButton = document.getElementById('dimensionButton');
+    const dimensionButtonLabel = document.getElementById('dimensionButtonLabel');
+    const dimensionButtonValue = document.getElementById('dimensionButtonValue');
+    const dimensionMenu = document.getElementById('dimensionMenu');
+    const dimensionMenuTitle = document.getElementById('dimensionMenuTitle');
+    const dimensionAll = document.getElementById('dimensionAll');
+    const dimensionAllLabel = document.getElementById('dimensionAllLabel');
+    const dimensionOptions = document.getElementById('dimensionOptions');
+    const chartShell = document.getElementById('chartShell');
+    const chartScroll = document.getElementById('chartScroll');
+    const chartStage = document.getElementById('chartStage');
+    const chartCanvas = document.getElementById('practiceChart');
+    const chartLegend = document.getElementById('chartLegend');
+    const legendScrollLeft = document.getElementById('legendScrollLeft');
+    const legendScrollRight = document.getElementById('legendScrollRight');
 
-    const ALL_STATES = [
-      'NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'
-    ];
+    let sourceRows = [];
+    let chart = null;
+    let activeView = 'all';
+    let activeModel = null;
+    let tabsController = null;
+    let dimensionMenuController = null;
+    let legendController = null;
+    let chartInteractionController = null;
+    let responsiveController = null;
+    let chartSummary = null;
 
-    const METRO_COLOUR =
-      '#30475d';
-
-    const NON_METRO_COLOUR =
-      '#b54a0a';
-
-    const AUSTRALIA_COLOUR =
-      '#0b5d1e';
-
-    const AUSTRALIA_OUTLINE =
-      '#69718a';
-
-    const DISTRIBUTION_GAP_COLOUR =
-      '#6600ff';
-
-    const CHART_RIGHT_GUTTER = 7;
-
-    function fixedAxisX() {
-      return PFF.mobileLayout()
-        ? 60
-        : 72;
-    }
-
-    function fixedPlotRight(chartInstance) {
-      return Math.max(
-        fixedAxisX() + 120,
-        chartInstance.width - CHART_RIGHT_GUTTER
-      );
-    }
-
-    // ============================================================
-    // DOM + STATE
-    // ============================================================
-
-    const app =
-      document.getElementById('app');
-
-    const loaderText =
-      document.getElementById('loaderText');
-
-    const statusEl =
-      document.getElementById('status');
-
-    const sourceIndicator =
-      document.getElementById('sourceIndicator');
-
-    const sourceText =
-      document.getElementById('sourceText');
-
-    const chartShell =
-      document.getElementById('chartShell');
-
-    const chartCanvas =
-      document.getElementById('ruralityChart');
-
-    const stateControl =
-      document.getElementById('stateControl');
-
-    const stateButton =
-      document.getElementById('stateButton');
-
-    const stateButtonValue =
-      document.getElementById('stateButtonValue');
-
-    const stateMenu =
-      document.getElementById('stateMenu');
-
-    const stateOptions =
-      document.getElementById('stateOptions');
-
-    const state = {
-      scope: 'AUS',
-      clinicianByYear: {},
-      populationByYear: {}
+    const spineTransitionState = {
+      active: false,
+      left: NaN,
+      right: NaN,
+      top: NaN,
+      bottom: NaN
     };
 
-    let chart = null;
-    let chartSummary = null;
-    let stateMenuController = null;
-    let interactionsController = null;
-    let responsiveController = null;
+    const selectedByView = {
+      state: new Set(),
+      rurality: new Set(),
+      phn: new Set()
+    };
 
-    // ============================================================
-    // DATA PARSING
-    // ============================================================
+    const chartTransitionController =
+      PFFCharts.createAnimationController();
 
-    function dataNumber(value) {
-      if (
-        value &&
-        typeof value === 'object' &&
-        (
-          Object.prototype.hasOwnProperty.call(value, 'v') ||
-          Object.prototype.hasOwnProperty.call(value, 'f')
-        )
-      ) {
-        const direct =
-          PFFCharts.numericCell(value);
+    function normaliseEmployerType(value) {
+      const text = PFF.cleanText(value).toLowerCase();
 
-        return Number.isFinite(direct)
-          ? direct
-          : null;
-      }
-
-      if (
-        value === null ||
-        value === undefined ||
-        value === ''
-      ) {
+      if (!text) {
         return null;
       }
 
-      const cleaned =
-        PFF.cleanText(value)
-          .replace(/,/g, '')
-          .replace(/[^0-9.+-]/g, '');
-
       if (
-        !cleaned ||
-        !/\d/.test(cleaned)
+        text === 'corporate' ||
+        text.startsWith('corporate ')
       ) {
-        return null;
+        return 'Corporate';
       }
 
-      const number =
-        Number(cleaned);
+      if (
+        text === 'independent' ||
+        text.startsWith('independent ')
+      ) {
+        return 'Independent';
+      }
 
-      return Number.isFinite(number)
-        ? number
-        : null;
+      return 'Other';
     }
 
-    function yearValue(value) {
-      const numeric =
-        dataNumber(value);
+    function normaliseRurality(value) {
+      return PFF.normaliseMMM(value);
+    }
 
-      if (!Number.isFinite(numeric)) {
+
+    function phnLookupKey(value) {
+      return PFF.cleanText(value)
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
+    }
+
+    const PHN_CANONICAL_LOOKUP = new Map(
+      PHN_ORDER.map(name => [
+        phnLookupKey(name),
+        name
+      ])
+    );
+
+    function normalisePhn(value) {
+      const text = PFF.cleanText(value);
+
+      if (!text) {
         return null;
       }
 
-      const year =
-        Math.round(numeric);
-
-      return year >= 1900 && year <= 2200
-        ? year
-        : null;
+      return PHN_CANONICAL_LOOKUP.get(
+        phnLookupKey(text)
+      ) || text;
     }
 
-    function activeClinicianValues(getValue) {
-      return SERIES_SCHEMA.map(
-        (_, index) => {
-          const value =
-            dataNumber(
-              getValue(
-                ACTIVE_CLINICIAN_FIRST_INDEX +
-                index
-              )
-            );
+    function sourceRowsFromTable(table) {
+      return (table?.rows || [])
+        .map(rawRow => {
+          const cells = rawRow?.c || [];
 
-          if (!Number.isFinite(value) || value < 0) {
+          return Array.from(
+            { length: CONFIG.sourceColumnCount },
+            (_, index) => PFF.cleanText(
+              PFF.cellValue(cells[index])
+            )
+          );
+        })
+        .filter(values =>
+          Boolean(
+            PFF.cleanText(
+              values[CONFIG.columns.practiceName]
+            )
+          )
+        );
+    }
+
+    function sourceRowsFromRemoteCache(payload) {
+      const rows = Array.isArray(payload?.data?.rows)
+        ? payload.data.rows
+        : [];
+
+      return rows
+        .map(row => {
+          if (!Array.isArray(row)) {
             return null;
           }
 
-          return value;
-        }
-      );
-    }
+          /*
+           * Current Practice Directory fallback rows are A:AJ (36 columns)
+           * and include the practice ID in column A. This chart's live
+           * source uses B:AJ (35 columns), so drop the ID when present.
+           */
+          const offset =
+            row.length >= CONFIG.sourceColumnCount + 1
+              ? 1
+              : 0;
 
-    function populationValues(getValue) {
-      return SERIES_SCHEMA.map(
-        (_, index) => {
-          const value =
-            dataNumber(
-              getValue(
-                POPULATION_FIRST_INDEX +
-                index
-              )
-            );
-
-          if (!Number.isFinite(value) || value < 0) {
+          if (
+            row.length <
+            CONFIG.sourceColumnCount + offset
+          ) {
             return null;
           }
 
-          return value;
-        }
-      );
-    }
-
-    function parseClinicianTable(table) {
-      const result = {};
-
-      (table?.rows || []).forEach(sourceRow => {
-        const cells =
-          sourceRow?.c || [];
-
-        const year =
-          yearValue(cells[0]);
-
-        if (!year) {
-          return;
-        }
-
-        const values =
-          activeClinicianValues(
-            index => cells[index]
+          return Array.from(
+            { length: CONFIG.sourceColumnCount },
+            (_, index) =>
+              PFF.cleanText(
+                row[index + offset]
+              )
           );
-
-        if (values.some(Number.isFinite)) {
-          result[year] = values;
-        }
-      });
-
-      return result;
-    }
-
-    function parsePopulationTable(table) {
-      const result = {};
-
-      (table?.rows || []).forEach(sourceRow => {
-        const cells =
-          sourceRow?.c || [];
-
-        const year =
-          yearValue(cells[0]);
-
-        if (!year) {
-          return;
-        }
-
-        const values =
-          populationValues(
-            index => cells[index]
-          );
-
-        if (values.some(Number.isFinite)) {
-          result[year] = values;
-        }
-      });
-
-      return result;
-    }
-
-    function parseRemoteClinicianRows(sourceRows) {
-      const result = {};
-
-      (Array.isArray(sourceRows) ? sourceRows : [])
-        .forEach(row => {
-          const year =
-            yearValue(row?.[0]);
-
-          if (!year) {
-            return;
-          }
-
-          const values =
-            activeClinicianValues(
-              index => row?.[index]
-            );
-
-          if (values.some(Number.isFinite)) {
-            result[year] = values;
-          }
-        });
-
-      return result;
-    }
-
-    function parseRemotePopulationRows(sourceRows) {
-      const result = {};
-
-      (Array.isArray(sourceRows) ? sourceRows : [])
-        .forEach(row => {
-          const year =
-            yearValue(row?.[0]);
-
-          if (!year) {
-            return;
-          }
-
-          const values =
-            populationValues(
-              index => row?.[index]
-            );
-
-          if (values.some(Number.isFinite)) {
-            result[year] = values;
-          }
-        });
-
-      return result;
-    }
-
-    function normaliseSeries(values) {
-      if (
-        !Array.isArray(values) ||
-        values.length < SERIES_SCHEMA.length
-      ) {
-        return null;
-      }
-
-      const normalised =
-        values
-          .slice(0, SERIES_SCHEMA.length)
-          .map(value => {
-            if (
-              value === null ||
-              value === undefined ||
-              value === ''
-            ) {
-              return null;
-            }
-
-            const number =
-              Number(value);
-
-            return Number.isFinite(number)
-              ? number
-              : null;
-          });
-
-      return normalised.some(Number.isFinite)
-        ? normalised
-        : null;
-    }
-
-    function combineYearMaps(
-      clinicianByYear,
-      populationByYear
-    ) {
-      const years =
-        Array.from(
-          new Set([
-            ...Object.keys(clinicianByYear || {}).map(Number),
-            ...Object.keys(populationByYear || {}).map(Number)
-          ])
-        )
-          .filter(Number.isFinite)
-          .sort((first, second) => first - second);
-
-      return years.map(year => ({
-        year,
-        clinician:
-          normaliseSeries(
-            clinicianByYear?.[year]
-          ),
-        population:
-          normaliseSeries(
-            populationByYear?.[year]
+        })
+        .filter(Boolean)
+        .filter(values =>
+          Boolean(
+            PFF.cleanText(
+              values[CONFIG.columns.practiceName]
+            )
           )
-      }));
-    }
-
-    function validateCombinedRows(sourceRows) {
-      const rows =
-        (Array.isArray(sourceRows) ? sourceRows : [])
-          .map(row => {
-            const year =
-              Number(row?.year);
-
-            if (
-              !Number.isFinite(year) ||
-              year < 1900 ||
-              year > 2200
-            ) {
-              return null;
-            }
-
-            const clinician =
-              normaliseSeries(row?.clinician);
-
-            const population =
-              normaliseSeries(row?.population);
-
-            if (!clinician && !population) {
-              return null;
-            }
-
-            return {
-              year: Math.round(year),
-              clinician,
-              population
-            };
-          })
-          .filter(Boolean)
-          .sort(
-            (first, second) =>
-              first.year - second.year
-          );
-
-      if (
-        !rows.some(row => row.clinician) ||
-        !rows.some(row => row.population) ||
-        !rows.some(
-          row => row.clinician && row.population
-        )
-      ) {
-        throw new Error(
-          'State × MMM rurality data were incomplete.'
         );
-      }
-
-      return rows;
     }
 
-    function parseLiveData(raw) {
-      return validateCombinedRows(
-        combineYearMaps(
-          parseClinicianTable(
-            raw?.clinicianTable
-          ),
-          parsePopulationTable(
-            raw?.populationTable
-          )
-        )
-      );
+    function normaliseRows(rows) {
+      return (Array.isArray(rows) ? rows : [])
+        .map((values, sourceIndex) => {
+          if (
+            !Array.isArray(values) ||
+            values.length < CONFIG.sourceColumnCount
+          ) {
+            return null;
+          }
+
+          const practiceName = PFF.cleanText(
+            values[CONFIG.columns.practiceName]
+          );
+
+          if (!practiceName) {
+            return null;
+          }
+
+          return {
+            sourceIndex,
+            practiceName,
+            state: PFF.normaliseState(
+              values[CONFIG.columns.state]
+            ),
+            employerType: normaliseEmployerType(
+              values[CONFIG.columns.employerType]
+            ),
+            rurality: normaliseRurality(
+              values[CONFIG.columns.rurality]
+            ),
+            phn: normalisePhn(
+              values[CONFIG.columns.phn]
+            )
+          };
+        })
+        .filter(Boolean);
     }
 
-    function parseRemoteCache(snapshot) {
-      return validateCombinedRows(
-        combineYearMaps(
-          parseRemoteClinicianRows(
-            snapshot?.data?.clinicianRows
-          ),
-          parseRemotePopulationRows(
-            snapshot?.data?.populationRows
-          )
-        )
-      );
-    }
+    async function loadJsonFallback() {
+      const controller =
+        new AbortController();
 
-    function applyLoadedRows(sourceRows) {
-      const rows =
-        validateCombinedRows(sourceRows);
-
-      state.clinicianByYear = {};
-      state.populationByYear = {};
-
-      rows.forEach(row => {
-        if (row.clinician) {
-          state.clinicianByYear[row.year] =
-            [...row.clinician];
-        }
-
-        if (row.population) {
-          state.populationByYear[row.year] =
-            [...row.population];
-        }
-      });
-    }
-
-    // ============================================================
-    // AGGREGATION
-    // ============================================================
-
-    function commonYears() {
-      const clinicianYears =
-        new Set(
-          Object.keys(state.clinicianByYear)
-            .map(Number)
-            .filter(Number.isFinite)
+      const timeout =
+        window.setTimeout(
+          () => controller.abort(),
+          CONFIG.jsonFetchTimeoutMs
         );
 
-      return Object.keys(state.populationByYear)
-        .map(Number)
-        .filter(
-          year =>
-            Number.isFinite(year) &&
-            clinicianYears.has(year)
-        )
-        .sort((first, second) => first - second);
-    }
+      try {
+        const url = new URL(
+          CONFIG.jsonFallbackUrl,
+          window.location.href
+        );
 
-    function scopeIndices(scope = state.scope) {
-      return SERIES_SCHEMA
-        .map(
-          (item, index) => ({
-            ...item,
-            index
-          })
-        )
-        .filter(
-          item =>
-            scope === 'AUS' ||
-            item.state === scope
-        )
-        .map(item => item.index);
-    }
+        url.searchParams.set(
+          '_',
+          String(Date.now())
+        );
 
-    function groupIndices(scope, group) {
-      return scopeIndices(scope)
-        .filter(index => {
-          const mmm =
-            SERIES_SCHEMA[index].mmm;
-
-          if (group === 'metro') {
-            return mmm === 1;
+        const response = await fetch(
+          url.toString(),
+          {
+            cache: 'no-store',
+            signal: controller.signal
           }
+        );
 
-          if (group === 'nonmetro') {
-            return mmm >= 2;
-          }
-
-          return true;
-        });
-    }
-
-    function aggregateYear(
-      year,
-      scope = state.scope,
-      group = 'all'
-    ) {
-      const clinician =
-        state.clinicianByYear[year] || [];
-
-      const population =
-        state.populationByYear[year] || [];
-
-      const indices =
-        group === 'all'
-          ? scopeIndices(scope)
-          : groupIndices(scope, group);
-
-      let activeClinicians = 0;
-      let people = 0;
-      let hasClinicians = false;
-      let hasPopulation = false;
-      let incompleteClinicians = false;
-      let incompletePopulation = false;
-
-      indices.forEach(index => {
-        const clinicianValue =
-          clinician[index];
-
-        const populationValue =
-          population[index];
-
-        if (Number.isFinite(clinicianValue)) {
-          activeClinicians += clinicianValue;
-          hasClinicians = true;
-        } else if (
-          Number.isFinite(populationValue) &&
-          populationValue > 0
-        ) {
-          incompleteClinicians = true;
+        if (!response.ok) {
+          throw new Error(
+            `Static JSON fallback returned HTTP ${response.status}.`
+          );
         }
 
-        if (Number.isFinite(populationValue)) {
-          people += populationValue;
-          hasPopulation = true;
-        } else if (
-          Number.isFinite(clinicianValue) &&
-          clinicianValue > 0
+        const payload =
+          await response.json();
+
+        if (
+          !payload ||
+          payload.ok !== true ||
+          !payload.data
         ) {
-          incompletePopulation = true;
+          throw new Error(
+            payload?.error ||
+            'Static JSON fallback has an invalid snapshot structure.'
+          );
+        }
+
+        if (
+          payload.appKey !==
+          CONFIG.appKey
+        ) {
+          throw new Error(
+            'Static JSON fallback has the wrong app key.'
+          );
+        }
+
+        return payload;
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw new Error(
+            'Timed out loading the static JSON fallback.'
+          );
+        }
+
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+
+    function setLoadedSourceIndicator(loaded) {
+      const source = loaded?.source;
+      const remote = Boolean(loaded?.remote);
+
+      if (source === 'live') {
+        PFF.setDataSourceIndicator('live', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+
+        dataSourceText.textContent = 'LIVE data';
+        return;
+      }
+
+      if (source === 'cached' && remote) {
+        PFF.setDataSourceIndicator('cached', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+
+        dataSourceText.textContent = 'JSON cache';
+        return;
+      }
+
+      if (source === 'cached') {
+        PFF.setDataSourceIndicator('cached', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+
+        dataSourceText.textContent = 'BROWSER cache';
+        return;
+      }
+
+      PFF.setDataSourceIndicator('unavailable', {
+        indicator: dataSourceIndicator,
+        text: dataSourceText
+      });
+    }
+
+    async function loadPracticeRows() {
+      return PFFCharts.loadLiveCacheFallback({
+        forceCached: FORCE_CACHED_DATA,
+        cacheKey: CONFIG.localCacheKey,
+        minRows: CONFIG.minimumRows,
+
+        loadLive: () =>
+          PFFCharts.loadGVizSheet({
+            sheetId: CONFIG.spreadsheetId,
+            sheetName: CONFIG.sheetName,
+            gid: CONFIG.sheetGid,
+            range: CONFIG.sourceRange,
+            headers: '1',
+            timeoutMs: CONFIG.fetchTimeoutMs
+          }),
+
+        parseLive: sourceRowsFromTable,
+
+        loadRemoteCache:
+          loadJsonFallback,
+
+        parseRemoteCache: sourceRowsFromRemoteCache,
+
+        onLiveError(error) {
+          console.warn(
+            'Live practice-ownership data unavailable; trying static JSON fallback.',
+            error
+          );
+        },
+
+        onRemoteCacheError(error) {
+          console.warn(
+            'Practice Directory static JSON fallback unavailable; trying browser cache.',
+            error
+          );
         }
       });
+    }
 
+
+    function emptyCounts() {
       return {
-        activeClinicians:
-          hasClinicians && !incompleteClinicians
-            ? activeClinicians
-            : null,
-
-        population:
-          hasPopulation && !incompletePopulation
-            ? people
-            : null,
-
-        indices
+        Corporate: 0,
+        Independent: 0,
+        Other: 0
       };
     }
 
-    function latestUsableYear(scope = state.scope) {
-      const years =
-        commonYears();
+    function groupKey(row, view) {
+      if (view === 'all') {
+        return 'All practices';
+      }
 
-      for (
-        let index = years.length - 1;
-        index >= 0;
-        index -= 1
-      ) {
-        const year =
-          years[index];
+      if (view === 'state') {
+        return row.state;
+      }
 
-        const totals =
-          aggregateYear(
-            year,
-            scope,
-            'all'
-          );
+      if (view === 'rurality') {
+        return row.rurality;
+      }
 
-        if (
-          Number.isFinite(totals.activeClinicians) &&
-          totals.activeClinicians > 0 &&
-          Number.isFinite(totals.population) &&
-          totals.population > 0
-        ) {
-          return year;
-        }
+      if (view === 'phn') {
+        return row.phn;
       }
 
       return null;
     }
 
-    function distributionFor(year, scope) {
-      const metro =
-        aggregateYear(
-          year,
-          scope,
-          'metro'
+    function dominantState(rows) {
+      const counts = new Map();
+
+      rows.forEach(row => {
+        if (!row.state) {
+          return;
+        }
+
+        counts.set(
+          row.state,
+          (counts.get(row.state) || 0) + 1
         );
+      });
 
-      const nonMetro =
-        aggregateYear(
-          year,
-          scope,
-          'nonmetro'
-        );
-
-      const metroExpected =
-        metro.indices.length > 0;
-
-      const nonMetroExpected =
-        nonMetro.indices.length > 0;
-
-      if (
-        (
-          metroExpected &&
-          (
-            !Number.isFinite(metro.activeClinicians) ||
-            !Number.isFinite(metro.population)
-          )
-        ) ||
-        (
-          nonMetroExpected &&
-          (
-            !Number.isFinite(nonMetro.activeClinicians) ||
-            !Number.isFinite(nonMetro.population)
-          )
-        )
-      ) {
-        return null;
-      }
-
-      const metroPopulation =
-        metroExpected
-          ? metro.population
-          : 0;
-
-      const nonMetroPopulation =
-        nonMetroExpected
-          ? nonMetro.population
-          : 0;
-
-      const metroClinicians =
-        metroExpected
-          ? metro.activeClinicians
-          : 0;
-
-      const nonMetroClinicians =
-        nonMetroExpected
-          ? nonMetro.activeClinicians
-          : 0;
-
-      const populationTotal =
-        metroPopulation +
-        nonMetroPopulation;
-
-      const clinicianTotal =
-        metroClinicians +
-        nonMetroClinicians;
-
-      if (
-        !(populationTotal > 0) ||
-        !(clinicianTotal > 0)
-      ) {
-        return null;
-      }
-
-      return {
-        year,
-
-        metroPopulation,
-        nonMetroPopulation,
-        metroClinicians,
-        nonMetroClinicians,
-
-        metroPopulationPct:
-          metroPopulation /
-          populationTotal *
-          100,
-
-        nonMetroPopulationPct:
-          nonMetroPopulation /
-          populationTotal *
-          100,
-
-        metroClinicianPct:
-          metroClinicians /
-          clinicianTotal *
-          100,
-
-        nonMetroClinicianPct:
-          nonMetroClinicians /
-          clinicianTotal *
-          100
-      };
+      return [...counts.entries()]
+        .sort((first, second) =>
+          second[1] - first[1] ||
+          first[0].localeCompare(second[0])
+        )[0]?.[0] || null;
     }
 
-    // ============================================================
-    // STATE FILTER
-    // ============================================================
-
-    function stateOutlineColour() {
-      if (state.scope === 'AUS') {
-        return AUSTRALIA_OUTLINE;
-      }
-
-      return PFF.stateColours?.[state.scope] ||
-        AUSTRALIA_OUTLINE;
+    function phnStateCode(key, rows) {
+      return PHN_STATE_BY_NAME[key] || dominantState(rows);
     }
 
-    function buildStateOptions() {
-      stateOptions.textContent = '';
+    function groupOutlineColour(view, key, rows) {
+      if (view === 'state') {
+        return PFF.stateColours?.[key] || '#69718a';
+      }
 
-      ['AUS', ...ALL_STATES]
-        .forEach(code => {
-          const label =
-            document.createElement('label');
+      if (view === 'rurality') {
+        return PFF.mmmColours?.[key] || '#69718a';
+      }
 
-          label.className =
-            'state-option';
+      if (view === 'phn') {
+        const stateCode = phnStateCode(key, rows);
+        return PFF.stateColours?.[stateCode] || '#6600ff';
+      }
 
-          const input =
-            document.createElement('input');
+      return '#6600ff';
+    }
 
-          input.type = 'radio';
-          input.name = 'stateScope';
-          input.value = code;
-          input.checked = code === state.scope;
+    function availableValues(view) {
+      const values = new Set();
 
-          const box =
-            document.createElement('span');
+      sourceRows.forEach(row => {
+        if (!row.employerType) {
+          return;
+        }
 
-          box.className =
-            'state-option-box';
+        const key = groupKey(row, view);
 
-          box.setAttribute(
-            'aria-hidden',
-            'true'
+        if (key) {
+          values.add(key);
+        }
+      });
+
+      if (view === 'state') {
+        return STATE_ORDER.filter(value => values.has(value));
+      }
+
+      if (view === 'rurality') {
+        return MMM_ORDER.filter(value => values.has(value));
+      }
+
+      if (view === 'phn') {
+        const known = PHN_ORDER.filter(value => values.has(value));
+        const knownSet = new Set(known);
+        const unknown = [...values]
+          .filter(value => !knownSet.has(value))
+          .sort((first, second) =>
+            first.localeCompare(second, 'en-AU', {
+              sensitivity: 'base',
+              numeric: true
+            })
           );
 
-          const text =
-            document.createElement('span');
-
-          text.className =
-            'state-option-code';
-
-          text.textContent =
-            code;
-
-          text.style.color =
-            code === 'AUS'
-              ? AUSTRALIA_COLOUR
-              : PFF.stateColours?.[code] ||
-                '#151515';
-
-          label.append(
-            input,
-            box,
-            text
-          );
-
-          stateOptions.appendChild(label);
-        });
-    }
-
-    function syncStateFilterUi(animate = true) {
-      stateOptions
-        .querySelectorAll('input[name="stateScope"]')
-        .forEach(input => {
-          input.checked =
-            input.value === state.scope;
-        });
-
-      const colour =
-        state.scope === 'AUS'
-          ? AUSTRALIA_COLOUR
-          : stateOutlineColour();
-
-      stateButtonValue.style.color =
-        colour;
-
-      if (!animate) {
-        stateButtonValue.textContent =
-          state.scope;
-        return;
+        return [...known, ...unknown];
       }
 
-      PFF.animateHeading({
-        fixed: stateButtonValue,
-        fixedText: state.scope,
-        duration: 180
+      return [];
+    }
+
+    function initialiseSelections() {
+      ['state', 'rurality', 'phn'].forEach(view => {
+        selectedByView[view] = new Set(
+          availableValues(view)
+        );
       });
     }
 
-    function setupStateFilter(onChange) {
-      buildStateOptions();
-      syncStateFilterUi(false);
+    function buildModel(view = activeView) {
+      const classifiedRows = sourceRows.filter(
+        row => row.employerType
+      );
 
-      stateMenuController =
-        PFF.setupMenu({
-          menu: stateControl,
-          button: stateButton,
-          panel: stateMenu,
-          focusOnOpen: false
-        });
+      const groups = new Map();
 
-      stateOptions.addEventListener(
-        'change',
-        event => {
-          const input =
-            event.target.closest(
-              'input[name="stateScope"]'
-            );
+      classifiedRows.forEach(row => {
+        const key = groupKey(row, view);
+
+        if (!key) {
+          return;
+        }
+
+        if (
+          view !== 'all' &&
+          !selectedByView[view]?.has(key)
+        ) {
+          return;
+        }
+
+        if (!groups.has(key)) {
+          groups.set(key, {
+            key,
+            rows: [],
+            counts: emptyCounts()
+          });
+        }
+
+        const group = groups.get(key);
+        group.rows.push(row);
+        group.counts[row.employerType] += 1;
+      });
+
+      let orderedGroups = [...groups.values()];
+
+      orderedGroups.forEach(group => {
+        group.total = EMPLOYER_TYPES.reduce(
+          (sum, type) => sum + group.counts[type],
+          0
+        );
+
+        group.proportions = Object.fromEntries(
+          EMPLOYER_TYPES.map(type => [
+            type,
+            group.total > 0
+              ? group.counts[type] / group.total * 100
+              : 0
+          ])
+        );
+
+        group.stateCode = view === 'phn'
+          ? phnStateCode(group.key, group.rows)
+          : view === 'state'
+            ? group.key
+            : null;
+
+        group.outlineColour = groupOutlineColour(
+          view,
+          group.key,
+          group.rows
+        );
+      });
+
+      if (view === 'all') {
+        orderedGroups = orderedGroups.filter(
+          group => group.key === 'All practices'
+        );
+      } else if (view === 'state') {
+        const order = new Map(
+          STATE_ORDER.map((value, index) => [value, index])
+        );
+
+        orderedGroups.sort((first, second) =>
+          (order.get(first.key) ?? 999) -
+          (order.get(second.key) ?? 999)
+        );
+      } else if (view === 'rurality') {
+        const order = new Map(
+          MMM_ORDER.map((value, index) => [value, index])
+        );
+
+        orderedGroups.sort((first, second) =>
+          (order.get(first.key) ?? 999) -
+          (order.get(second.key) ?? 999)
+        );
+      } else if (view === 'phn') {
+        const order = new Map(
+          PHN_ORDER.map((value, index) => [value, index])
+        );
+
+        orderedGroups.sort((first, second) => {
+          const firstOrder = order.get(first.key);
+          const secondOrder = order.get(second.key);
 
           if (
-            !input ||
-            !input.checked ||
-            input.value === state.scope
+            Number.isFinite(firstOrder) ||
+            Number.isFinite(secondOrder)
           ) {
-            return;
+            return (
+              (firstOrder ?? 9999) -
+              (secondOrder ?? 9999)
+            );
           }
 
-          state.scope =
-            input.value;
+          return first.key.localeCompare(
+            second.key,
+            'en-AU',
+            {
+              sensitivity: 'base',
+              numeric: true
+            }
+          );
+        });
+      }
 
-          syncStateFilterUi(true);
-          stateMenuController?.closeMenu();
-          onChange?.();
-        }
-      );
+      return {
+        view,
+        groups: orderedGroups,
+        labels: orderedGroups.map(group => group.key),
+        totals: orderedGroups.map(group => group.total),
+        outlineColours: orderedGroups.map(
+          group => group.outlineColour
+        )
+      };
     }
-
-    // ============================================================
-    // CHART PRESENTATION
-    // ============================================================
 
     function formatPercent(value) {
       return Number.isFinite(Number(value))
@@ -1209,70 +1090,257 @@
         : '—';
     }
 
-    function renderedBarBounds(
-      chartInstance,
-      index
-    ) {
-      let left =
-        Number.POSITIVE_INFINITY;
 
-      let right =
-        Number.NEGATIVE_INFINITY;
+    function headingDetailForView(view) {
+      if (view === 'state') {
+        return 'by state';
+      }
 
-      let y =
-        NaN;
+      if (view === 'rurality') {
+        return 'by rurality';
+      }
 
-      let height =
-        0;
+      if (view === 'phn') {
+        return 'by PHN';
+      }
 
-      chartInstance.data.datasets
-        .forEach((dataset, datasetIndex) => {
-          const meta =
-            chartInstance.getDatasetMeta(
-              datasetIndex
+      return '';
+    }
+
+    function headingForView(view) {
+      const detail = headingDetailForView(view);
+      return detail
+        ? `Practice ownership ${detail}`
+        : 'Practice ownership';
+    }
+
+    function selectionLabels(view) {
+      if (view === 'state') {
+        return {
+          button: 'States',
+          title: 'Show states',
+          all: 'All states'
+        };
+      }
+
+      if (view === 'rurality') {
+        return {
+          button: 'MMM',
+          title: 'Show rurality',
+          all: 'All MMM'
+        };
+      }
+
+      return {
+        button: 'PHNs',
+        title: 'Show PHNs',
+        all: 'All PHNs'
+      };
+    }
+
+    function selectedSummary(view) {
+      const available = availableValues(view);
+      const selected = available.filter(
+        value => selectedByView[view]?.has(value)
+      );
+
+      if (selected.length === available.length) {
+        return 'All';
+      }
+
+      if (selected.length === 0) {
+        return 'None';
+      }
+
+      if (selected.length === 1) {
+        if (view === 'phn') {
+          return '1';
+        }
+
+        return selected[0];
+      }
+
+      return String(selected.length);
+    }
+
+    function optionColour(view, value) {
+      if (view === 'state') {
+        return PFF.stateColours?.[value] || '#151515';
+      }
+
+      if (view === 'rurality') {
+        return PFF.mmmColours?.[value] || '#151515';
+      }
+
+      const stateCode = PHN_STATE_BY_NAME[value];
+      return PFF.stateColours?.[stateCode] || '#151515';
+    }
+
+    function buildDimensionMenu() {
+      const visible = activeView !== 'all';
+      headingControls.classList.toggle('is-hidden', !visible);
+
+      if (!visible) {
+        dimensionMenuController?.closeMenu?.();
+        return;
+      }
+
+      const labels = selectionLabels(activeView);
+      const available = availableValues(activeView);
+      const selected = selectedByView[activeView];
+
+      dimensionButtonLabel.textContent = labels.button;
+      dimensionMenuTitle.textContent = labels.title;
+      dimensionAllLabel.textContent = labels.all;
+      dimensionMenu.classList.toggle(
+        'is-phn',
+        activeView === 'phn'
+      );
+
+      dimensionOptions.textContent = '';
+
+      available.forEach(value => {
+        const label = document.createElement('label');
+        label.className = 'state-option';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = selected.has(value);
+        input.dataset.dimensionValue = value;
+
+        const box = document.createElement('span');
+        box.className = 'state-option-box';
+        box.setAttribute('aria-hidden', 'true');
+
+        const text = document.createElement('span');
+        text.className = activeView === 'phn'
+          ? 'dimension-option-text'
+          : 'state-option-code';
+        text.textContent = value;
+        text.style.color = activeView === 'phn'
+          ? '#151515'
+          : optionColour(activeView, value);
+
+        if (activeView === 'state') {
+          text.title = STATE_NAMES[value] || value;
+        }
+
+        label.append(input, box, text);
+
+        if (activeView === 'phn') {
+          const stateCode =
+            PHN_STATE_BY_NAME[value] ||
+            dominantState(
+              sourceRows.filter(row => row.phn === value)
             );
 
-          const element =
-            meta?.data?.[index];
-
-          if (!element || element.skip) {
-            return;
+          if (stateCode) {
+            const stateText = document.createElement('span');
+            stateText.className = 'dimension-option-state';
+            stateText.textContent = stateCode;
+            stateText.style.color =
+              PFF.stateColours?.[stateCode] || '#69718a';
+            label.appendChild(stateText);
           }
+        }
 
-          const properties =
-            element.getProps(
-              ['x', 'base', 'y', 'height'],
-              false
-            );
+        dimensionOptions.appendChild(label);
+      });
 
-          if (
-            !Number.isFinite(properties.x) ||
-            !Number.isFinite(properties.base) ||
-            !Number.isFinite(properties.y)
-          ) {
-            return;
-          }
+      syncDimensionMenuUi(false);
+    }
 
-          left = Math.min(
-            left,
-            properties.x,
-            properties.base
-          );
+    function syncDimensionMenuUi(animate = true) {
+      if (activeView === 'all') {
+        return;
+      }
 
-          right = Math.max(
-            right,
-            properties.x,
-            properties.base
-          );
+      const available = availableValues(activeView);
+      const selected = selectedByView[activeView];
+      const selectedCount = available.filter(
+        value => selected.has(value)
+      ).length;
 
-          y =
-            properties.y;
+      dimensionAll.checked =
+        selectedCount === available.length;
+      dimensionAll.indeterminate =
+        selectedCount > 0 &&
+        selectedCount < available.length;
 
-          height = Math.max(
-            height,
-            Number(properties.height) || 0
+      dimensionOptions
+        .querySelectorAll('input[data-dimension-value]')
+        .forEach(input => {
+          input.checked = selected.has(
+            input.dataset.dimensionValue
           );
         });
+
+      const nextValue = selectedSummary(activeView);
+
+      if (!animate) {
+        dimensionButtonValue.textContent = nextValue;
+        return;
+      }
+
+      PFF.animateHeading({
+        fixed: dimensionButtonValue,
+        fixedText: nextValue,
+        duration: 180
+      });
+    }
+
+    function updateStageGeometry(model) {
+      const pie = model.view === 'all';
+      chartScroll.classList.toggle('is-pie', pie);
+
+      // Keep every tab within the same chart-shell height. PHN labels and
+      // bars scale to fit rather than creating an internal vertical scroll.
+      chartStage.style.height = '100%';
+      chartStage.style.minHeight = '100%';
+      chartScroll.scrollTop = 0;
+    }
+
+    function labelTextColour(type) {
+      return type === 'Other'
+        ? '#151515'
+        : '#ffffff';
+    }
+
+    function renderedBarBounds(chartInstance, index) {
+      let left = Number.POSITIVE_INFINITY;
+      let right = Number.NEGATIVE_INFINITY;
+      let y = NaN;
+      let height = 0;
+
+      chartInstance.data.datasets.forEach((dataset, datasetIndex) => {
+        const meta = chartInstance.getDatasetMeta(datasetIndex);
+        const element = meta?.data?.[index];
+
+        if (!element || element.skip) {
+          return;
+        }
+
+        const properties = element.getProps(
+          ['x', 'base', 'y', 'height'],
+          true
+        );
+
+        if (
+          !Number.isFinite(properties.x) ||
+          !Number.isFinite(properties.base) ||
+          !Number.isFinite(properties.y)
+        ) {
+          return;
+        }
+
+        left = Math.min(left, properties.x, properties.base);
+        right = Math.max(right, properties.x, properties.base);
+        y = properties.y;
+        height = Math.max(
+          height,
+          Number(properties.height) || 0
+        );
+      });
 
       if (
         !Number.isFinite(left) ||
@@ -1291,182 +1359,229 @@
       };
     }
 
-    const fixedPlotGeometryPlugin = {
-      id: 'pffRuralityFixedPlotGeometry',
-
-      afterLayout(chartInstance) {
-        const geometry =
-          chartInstance.chartArea;
-
-        const xScale =
-          chartInstance.scales?.x;
-
-        if (!geometry || !xScale) {
-          return;
-        }
-
-        const left =
-          fixedAxisX();
-
-        const right =
-          fixedPlotRight(chartInstance);
-
-        // Do not let Chart.js choose the visible plot origin. The same
-        // literal x coordinate is used on first render and every update.
-        geometry.left = left;
-        geometry.right = right;
-
-        xScale.left = left;
-        xScale.right = right;
-        xScale.width = right - left;
-        xScale._startPixel = left;
-        xScale._endPixel = right;
-        xScale._length = right - left;
-      }
-    };
-
     const barOutlinePlugin = {
-      id: 'pffRuralityStateOutline',
+      id: 'pffPracticeGroupOutline',
 
       afterDatasetsDraw(chartInstance) {
-        if (!chartInstance.chartArea) {
+        if (
+          activeView === 'all' ||
+          !activeModel?.groups?.length ||
+          !chartInstance.chartArea
+        ) {
           return;
         }
 
-        const context =
-          chartInstance.ctx;
+        const context = chartInstance.ctx;
 
         context.save();
         context.lineWidth = 1.05;
         context.lineJoin = 'round';
 
-        chartInstance.data.labels
-          .forEach((_, index) => {
-            const bounds =
-              renderedBarBounds(
-                chartInstance,
-                index
-              );
+        activeModel.groups.forEach((group, index) => {
+          const bounds = renderedBarBounds(
+            chartInstance,
+            index
+          );
 
-            if (!bounds) {
-              return;
-            }
+          if (!bounds) {
+            return;
+          }
 
-            const top =
-              bounds.y -
-              bounds.height / 2;
+          const top = bounds.y - bounds.height / 2;
+          const width = Math.max(
+            0,
+            bounds.right - bounds.left
+          );
+          const height = Math.max(0, bounds.height);
+          const radius = Math.min(2, height / 2);
 
-            const width =
-              Math.max(
-                0,
-                bounds.right - bounds.left
-              );
+          context.beginPath();
 
-            const height =
-              Math.max(
-                0,
-                bounds.height
-              );
+          if (typeof context.roundRect === 'function') {
+            context.roundRect(
+              bounds.left + 0.5,
+              top + 0.5,
+              Math.max(0, width - 1),
+              Math.max(0, height - 1),
+              radius
+            );
+          } else {
+            context.rect(
+              bounds.left + 0.5,
+              top + 0.5,
+              Math.max(0, width - 1),
+              Math.max(0, height - 1)
+            );
+          }
 
-            const radius =
-              Math.min(
-                2,
-                height / 2
-              );
+          context.strokeStyle =
+            group.outlineColour || '#69718a';
 
-            context.beginPath();
-
-            if (
-              typeof context.roundRect === 'function'
-            ) {
-              context.roundRect(
-                bounds.left + 0.5,
-                top + 0.5,
-                Math.max(0, width - 1),
-                Math.max(0, height - 1),
-                radius
-              );
-            } else {
-              context.rect(
-                bounds.left + 0.5,
-                top + 0.5,
-                Math.max(0, width - 1),
-                Math.max(0, height - 1)
-              );
-            }
-
-            context.strokeStyle =
-              stateOutlineColour();
-
-            context.stroke();
-          });
+          context.stroke();
+        });
 
         context.restore();
       }
     };
 
-    function xAxisPixel(
-      geometry,
-      value
-    ) {
+    function copyChartArea(area) {
+      if (!area) {
+        return null;
+      }
+
+      const copy = {
+        left: Number(area.left),
+        right: Number(area.right),
+        top: Number(area.top),
+        bottom: Number(area.bottom)
+      };
+
+      return Object.values(copy).every(Number.isFinite)
+        ? copy
+        : null;
+    }
+
+    function setSpineGeometry(area) {
+      const geometry = copyChartArea(area);
+
+      if (!geometry) {
+        return;
+      }
+
+      spineTransitionState.left = geometry.left;
+      spineTransitionState.right = geometry.right;
+      spineTransitionState.top = geometry.top;
+      spineTransitionState.bottom = geometry.bottom;
+    }
+
+
+    const constantSpinePlugin = {
+      id: 'pffPracticeConstantSpines',
+
+      afterDatasetsDraw(chartInstance) {
+        if (activeView === 'all') {
+          return;
+        }
+
+        const area = chartInstance.chartArea;
+
+        if (!area) {
+          return;
+        }
+
+        const left =
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.left)
+            ? spineTransitionState.left
+            : area.left;
+
+        const right =
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.right)
+            ? spineTransitionState.right
+            : area.right;
+
+        const top =
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.top)
+            ? spineTransitionState.top
+            : area.top;
+
+        const bottom =
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.bottom)
+            ? spineTransitionState.bottom
+            : area.bottom;
+
+        const context = chartInstance.ctx;
+
+        context.save();
+        context.strokeStyle = '#151515';
+        context.lineWidth = 1;
+        context.lineCap = 'butt';
+
+        context.beginPath();
+        context.moveTo(left, bottom);
+        context.lineTo(right, bottom);
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(left, top);
+        context.lineTo(left, bottom);
+        context.stroke();
+
+        context.restore();
+      }
+    };
+
+    function currentAxisGeometry(chartInstance) {
+      const area = chartInstance?.chartArea;
+
+      if (!area) {
+        return null;
+      }
+
+      return {
+        left:
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.left)
+            ? spineTransitionState.left
+            : area.left,
+        right:
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.right)
+            ? spineTransitionState.right
+            : area.right,
+        top:
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.top)
+            ? spineTransitionState.top
+            : area.top,
+        bottom:
+          spineTransitionState.active &&
+          Number.isFinite(spineTransitionState.bottom)
+            ? spineTransitionState.bottom
+            : area.bottom
+      };
+    }
+
+    function xAxisPixel(geometry, value) {
       return geometry.left +
-        (
-          geometry.right -
-          geometry.left
-        ) *
+        (geometry.right - geometry.left) *
         (Number(value) / 100);
     }
 
     const barAxisPresentationPlugin = {
-      id: 'pffRuralityAxisPresentation',
+      id: 'pffPracticeBarAxisPresentation',
 
       beforeDatasetsDraw(chartInstance) {
-        const geometry =
-          chartInstance.chartArea;
+        if (activeView === 'all') {
+          return;
+        }
+
+        const geometry = currentAxisGeometry(chartInstance);
 
         if (!geometry) {
           return;
         }
 
-        const context =
-          chartInstance.ctx;
+        const context = chartInstance.ctx;
 
         context.save();
         context.lineCap = 'butt';
 
-        for (
-          let value = 0;
-          value <= 100;
-          value += 10
-        ) {
-          const x =
-            xAxisPixel(
-              geometry,
-              value
-            );
+        for (let value = 0; value <= 100; value += 10) {
+          const x = xAxisPixel(geometry, value);
+          const major = value % 20 === 0;
 
-          const major =
-            value % 20 === 0;
-
-          context.strokeStyle =
-            major
-              ? Shared.chartStyling.palette.gridMajor
-              : Shared.chartStyling.palette.gridMinor;
-
-          context.lineWidth =
-            major
-              ? 1
-              : 0.7;
+          context.strokeStyle = major
+            ? sharedChart.styling.palette.gridMajor
+            : sharedChart.styling.palette.gridMinor;
+          context.lineWidth = sharedChart.axes.tickMarkStyle(major).width;
 
           context.beginPath();
-          context.moveTo(
-            Math.round(x) + 0.5,
-            geometry.top
-          );
-          context.lineTo(
-            Math.round(x) + 0.5,
-            geometry.bottom
-          );
+          context.moveTo(Math.round(x) + 0.5, geometry.top);
+          context.lineTo(Math.round(x) + 0.5, geometry.bottom);
           context.stroke();
         }
 
@@ -1474,134 +1589,88 @@
       },
 
       afterDraw(chartInstance) {
-        const geometry =
-          chartInstance.chartArea;
+        if (activeView === 'all') {
+          return;
+        }
+
+        const geometry = currentAxisGeometry(chartInstance);
 
         if (!geometry) {
           return;
         }
 
-        const context =
-          chartInstance.ctx;
-
-        const mobile =
-          PFF.mobileLayout();
-
-        const tickFontSize =
-          Shared.chartStyling.getAxisTypography().size;
-
-        const titleFontSize =
-          Shared.chartStyling.getAxisTypography(true).size;
+        const context = chartInstance.ctx;
+        const mobile = PFF.mobileLayout();
+        const tickTypography = sharedChart.styling.getAxisTypography();
+        const titleTypography = sharedChart.styling.getAxisTypography(true);
+        const tickFontSize = tickTypography.size;
+        const titleFontSize = titleTypography.size;
 
         context.save();
         context.lineCap = 'butt';
         context.strokeStyle = '#151515';
-        context.lineWidth = 1;
 
-        // Black x and y spines, matching practice_ownership.html.
-        context.beginPath();
-        context.moveTo(
-          geometry.left,
-          geometry.bottom
-        );
-        context.lineTo(
-          geometry.right,
-          geometry.bottom
-        );
-        context.stroke();
-
-        context.beginPath();
-        context.moveTo(
-          geometry.left,
-          geometry.top
-        );
-        context.lineTo(
-          geometry.left,
-          geometry.bottom
-        );
-        context.stroke();
-
-        const firstDatasetMeta =
-          chartInstance.getDatasetMeta(0);
+        const firstDatasetMeta = chartInstance.getDatasetMeta(0);
+        const yLabelPadding = activeView === 'phn' ? 3 : 5;
 
         context.fillStyle = '#151515';
         context.textAlign = 'right';
         context.textBaseline = 'middle';
-        context.font =
-          `400 ${tickFontSize}px Lato, sans-serif`;
 
-        chartInstance.data.labels
-          .forEach((label, index) => {
-            const bar =
-              firstDatasetMeta?.data?.[index];
+        (activeModel?.labels || []).forEach((label, index) => {
+          const bar = firstDatasetMeta?.data?.[index];
 
-            if (!Number.isFinite(bar?.y)) {
-              return;
-            }
+          if (!Number.isFinite(bar?.y)) {
+            return;
+          }
 
-            context.fillText(
+          let fontSize;
+
+          if (activeView === 'phn') {
+            fontSize = fittedPhnFontSize(
               String(label || ''),
-              geometry.left - 5,
-              bar.y
+              phnAxisBaseFontSize()
             );
-          });
+          } else {
+            fontSize = PFF.mobileLayout() ? 9 : 10;
+          }
 
-        for (
-          let value = 0;
-          value <= 100;
-          value += 10
-        ) {
-          const x =
-            xAxisPixel(
-              geometry,
-              value
-            );
+          context.font = `400 ${fontSize}px Lato, sans-serif`;
+          context.fillText(
+            String(label || ''),
+            geometry.left - yLabelPadding,
+            bar.y
+          );
+        });
 
-          const major =
-            value % 20 === 0;
-
-          // Same major/minor dimensions as the approved shared axis asset.
-          const tick = Shared.chartAxes.tickMarkStyle(major);
-          const tickLength = tick.length;
+        for (let value = 0; value <= 100; value += 10) {
+          const x = xAxisPixel(geometry, value);
+          const major = value % 20 === 0;
+          const mark = sharedChart.axes.tickMarkStyle(major);
+          const tickLength = mark.length;
 
           context.beginPath();
-          context.lineWidth = tick.width;
-
-          context.moveTo(
-            Math.round(x) + 0.5,
-            geometry.bottom
-          );
-
+          context.lineWidth = mark.width;
+          context.moveTo(Math.round(x) + 0.5, geometry.bottom);
           context.lineTo(
             Math.round(x) + 0.5,
             geometry.bottom + tickLength
           );
-
           context.stroke();
         }
 
         context.fillStyle = '#151515';
-        context.font =
-          `400 ${tickFontSize}px Lato, sans-serif`;
+        context.font = `400 ${tickFontSize}px Lato, sans-serif`;
         context.textBaseline = 'top';
 
-        for (
-          let value = 0;
-          value <= 100;
-          value += 20
-        ) {
-          const x =
-            xAxisPixel(
-              geometry,
-              value
-            );
+        for (let value = 0; value <= 100; value += 20) {
+          const x = xAxisPixel(geometry, value);
 
-          context.textAlign =
-            value === 0
-              ? 'left'
-              : value === 100
-                ? 'right'
-                : 'center';
+          context.textAlign = value === 0
+            ? 'left'
+            : value === 100
+              ? 'right'
+              : 'center';
 
           context.fillText(
             `${value}%`,
@@ -1610,18 +1679,12 @@
           );
         }
 
-        context.font =
-          `700 ${titleFontSize}px Lato, sans-serif`;
+        context.font = `700 ${titleFontSize}px Lato, sans-serif`;
         context.textAlign = 'center';
         context.textBaseline = 'alphabetic';
-
         context.fillText(
-          'Proportion by rurality (%)',
-          geometry.left +
-            (
-              geometry.right -
-              geometry.left
-            ) / 2,
+          'Proportion of practices (%)',
+          geometry.left + (geometry.right - geometry.left) / 2,
           geometry.bottom + 42
         );
 
@@ -1629,385 +1692,683 @@
       }
     };
 
-    const distributionGapPlugin = {
-      id: 'pffRuralityDistributionGap',
+    const phnStateSeparatorsPlugin = {
+      id: 'pffPracticePhnStateSeparators',
 
-      afterDatasetsDraw(chartInstance) {
-        const geometry =
-          chartInstance.chartArea;
-
-        const metroMeta =
-          chartInstance.getDatasetMeta(0);
-
-        const clinicianBar =
-          metroMeta?.data?.[0];
-
-        const populationBar =
-          metroMeta?.data?.[1];
-
+      beforeDatasetsDraw(chartInstance) {
         if (
-          !geometry ||
-          !clinicianBar ||
-          !populationBar
+          activeView !== 'phn' ||
+          !activeModel?.groups?.length
         ) {
           return;
         }
 
-        const clinician =
-          clinicianBar.getProps(
-            ['x', 'y', 'height'],
-            false
-          );
+        const meta = chartInstance.getDatasetMeta(0);
 
-        const population =
-          populationBar.getProps(
-            ['x', 'y', 'height'],
-            false
-          );
-
-        if (
-          ![
-            clinician.x,
-            clinician.y,
-            population.x,
-            population.y
-          ].every(Number.isFinite)
-        ) {
+        if (!meta?.data || meta.data.length < 2) {
           return;
         }
 
-        const plotWidth =
-          geometry.right -
-          geometry.left;
-
-        if (!(plotWidth > 0)) {
-          return;
-        }
-
-        const gapPp =
-          Math.abs(
-            clinician.x -
-            population.x
-          ) / plotWidth * 100;
-
-        if (!Number.isFinite(gapPp)) {
-          return;
-        }
-
-        const top =
-          clinician.y < population.y
-            ? clinician
-            : population;
-
-        const bottom =
-          clinician.y < population.y
-            ? population
-            : clinician;
-
-        const xFirst =
-          Math.min(
-            clinician.x,
-            population.x
-          );
-
-        const xSecond =
-          Math.max(
-            clinician.x,
-            population.x
-          );
-
-        const yBracket =
-          (top.y + bottom.y) / 2;
-
-        const topEdge =
-          top.y +
-          (Number(top.height) || 0) / 2;
-
-        const bottomEdge =
-          bottom.y -
-          (Number(bottom.height) || 0) / 2;
-
-        const context =
-          chartInstance.ctx;
-
-        const mobile =
-          PFF.mobileLayout();
-
-        const fontSize =
-          mobile ? 8.7 : 9.5;
-
-        const label =
-          `${PFF.formatNumber(gapPp, 1)} pp gap`;
-
-        const pillHeight =
-          mobile ? 16 : 17;
-
-        const pillPadX =
-          mobile ? 5 : 6;
+        const context = chartInstance.ctx;
+        const area = chartInstance.chartArea;
 
         context.save();
-        context.lineCap = 'round';
+        context.strokeStyle = 'rgba(105, 113, 138, 0.075)';
+        context.lineWidth = 1;
+        context.setLineDash([2, 3]);
 
-        // Subtle guides connect each bar's Metro/non-metro boundary
-        // to the measurement bracket in the whitespace between rows.
-        context.strokeStyle =
-          'rgba(102, 0, 255, 0.28)';
-
-        context.lineWidth =
-          mobile ? 0.9 : 1;
-
-        context.setLineDash([2, 2]);
-        context.beginPath();
-        context.moveTo(
-          clinician.x,
-          top === clinician
-            ? topEdge
-            : bottomEdge
-        );
-        context.lineTo(
-          clinician.x,
-          yBracket
-        );
-        context.moveTo(
-          population.x,
-          top === population
-            ? topEdge
-            : bottomEdge
-        );
-        context.lineTo(
-          population.x,
-          yBracket
-        );
-        context.stroke();
-
-        // Solid bracket measures the absolute percentage-point gap.
-        context.setLineDash([]);
-        context.strokeStyle =
-          'rgba(102, 0, 255, 0.82)';
-
-        context.lineWidth =
-          mobile ? 1.2 : 1.35;
-
-        context.beginPath();
-        context.moveTo(
-          xFirst,
-          yBracket
-        );
-        context.lineTo(
-          xSecond,
-          yBracket
-        );
-
-        const capHalf =
-          mobile ? 3.5 : 4;
-
-        context.moveTo(
-          xFirst,
-          yBracket - capHalf
-        );
-        context.lineTo(
-          xFirst,
-          yBracket + capHalf
-        );
-        context.moveTo(
-          xSecond,
-          yBracket - capHalf
-        );
-        context.lineTo(
-          xSecond,
-          yBracket + capHalf
-        );
-        context.stroke();
-
-        // A compact white pill keeps the value readable even when the
-        // distribution gap itself is narrower than the text label.
-        context.font =
-          `700 ${fontSize}px Lato, sans-serif`;
-
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-
-        const textWidth =
-          context.measureText(label).width;
-
-        const pillWidth =
-          textWidth +
-          pillPadX * 2;
-
-        const pillLeft =
-          PFF.clamp(
-            (xFirst + xSecond) / 2 -
-              pillWidth / 2,
-            geometry.left + 2,
-            geometry.right - pillWidth - 2
-          );
-
-        const pillTop =
-          yBracket -
-          pillHeight / 2;
-
-        const radius = 3.5;
-
-        context.beginPath();
-
-        if (
-          typeof context.roundRect ===
-          'function'
+        for (
+          let index = 0;
+          index < activeModel.groups.length - 1;
+          index += 1
         ) {
-          context.roundRect(
-            pillLeft,
-            pillTop,
-            pillWidth,
-            pillHeight,
-            radius
-          );
-        } else {
-          context.rect(
-            pillLeft,
-            pillTop,
-            pillWidth,
-            pillHeight
-          );
+          const currentState = activeModel.groups[index]?.stateCode;
+          const nextState = activeModel.groups[index + 1]?.stateCode;
+
+          if (!currentState || currentState === nextState) {
+            continue;
+          }
+
+          const firstBar = meta.data[index];
+          const secondBar = meta.data[index + 1];
+
+          if (
+            !Number.isFinite(firstBar?.y) ||
+            !Number.isFinite(secondBar?.y)
+          ) {
+            continue;
+          }
+
+          const y = (firstBar.y + secondBar.y) / 2;
+
+          context.beginPath();
+          context.moveTo(0, Math.round(y) + 0.5);
+          context.lineTo(area.right, Math.round(y) + 0.5);
+          context.stroke();
         }
-
-        context.fillStyle =
-          'rgba(255, 255, 255, 0.92)';
-        context.fill();
-
-        context.strokeStyle =
-          'rgba(102, 0, 255, 0.28)';
-        context.lineWidth = 0.7;
-        context.stroke();
-
-        context.fillStyle =
-          DISTRIBUTION_GAP_COLOUR;
-
-        context.fillText(
-          label,
-          pillLeft + pillWidth / 2,
-          yBracket + 0.2
-        );
 
         context.restore();
       }
     };
 
-    // Shared stacked-segment labels. The app retains its one-decimal percent
-    // formatting and 6% visibility cutoff, while narrow segments avoid overflow.
-    const segmentLabelsPlugin = Shared.chartValueLabels.createSegmentLabelsPlugin({
-      id: 'pffRuralitySegmentLabels',
-      minimumWidth: 30,
-      showFor: () => true,
-      formatValue(value) {
-        return Number.isFinite(value) && value >= 6
-          ? formatPercent(value)
-          : '';
+    function fitFontSize(
+      context,
+      text,
+      maximumWidth,
+      preferredSize,
+      minimumSize
+    ) {
+      if (
+        !text ||
+        !Number.isFinite(maximumWidth) ||
+        maximumWidth <= 0
+      ) {
+        return minimumSize;
       }
-    });
 
-    const tooltipTopLayerPlugin = {
-      id: 'pffRuralityTooltipTopLayer',
+      context.save();
+      context.font = `700 ${preferredSize}px Lato, sans-serif`;
+      const fitted = sharedChart.labels.fitCategoryLabel(
+        context,
+        text,
+        maximumWidth,
+        {
+          mode: 'shrink',
+          baseFontPx: preferredSize,
+          minFontPx: minimumSize
+        }
+      );
+      context.restore();
+      if (!fitted.truncated) {
+        return fitted.fontSize;
+      }
 
-      afterDraw(chartInstance) {
-        const tooltip =
-          chartInstance?.tooltip;
+      // Very narrow PHN/bar segments retain the original minimum-font
+      // fallback rather than truncating the percentage or count text.
+      const font =
+        `700 ${preferredSize}px Lato, sans-serif`;
+      const measured =
+        measuredTextWidth(
+          context,
+          text,
+          font
+        );
 
-        if (
-          !tooltip ||
-          !(Number(tooltip.opacity) > 0)
-        ) {
+      if (!Number.isFinite(measured) || measured <= maximumWidth) {
+        return preferredSize;
+      }
+
+      return Math.max(
+        minimumSize,
+        preferredSize * maximumWidth / measured
+      );
+    }
+
+    const valueLabelsPlugin = {
+      id: 'pffPracticeValueLabels',
+
+      afterDatasetsDraw(chartInstance) {
+        if (!activeModel?.groups?.length) {
           return;
         }
 
-        tooltip.draw(
-          chartInstance.ctx
-        );
+        const context = chartInstance.ctx;
+        const mobile = PFF.mobileLayout();
+
+        context.save();
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+
+        if (activeView === 'all') {
+          const group = activeModel.groups[0];
+          const meta = chartInstance.getDatasetMeta(0);
+
+          meta.data.forEach((arc, index) => {
+            const type = EMPLOYER_TYPES[index];
+            const targetCount = group?.counts?.[type] || 0;
+            const targetProportion = group?.proportions?.[type] || 0;
+
+            if (!targetCount || !arc) {
+              return;
+            }
+
+            const properties = arc.getProps(
+              [
+                'x',
+                'y',
+                'startAngle',
+                'endAngle',
+                'innerRadius',
+                'outerRadius'
+              ],
+              true
+            );
+
+            const angle =
+              (properties.startAngle + properties.endAngle) / 2;
+            const span = Math.max(
+              0,
+              properties.endAngle - properties.startAngle
+            );
+            const currentProportion =
+              span / (Math.PI * 2) * 100;
+            const progress = targetProportion > 0
+              ? Math.min(1, currentProportion / targetProportion)
+              : 1;
+            const currentCount = Math.round(
+              targetCount * progress
+            );
+            const radius =
+              properties.innerRadius +
+              (properties.outerRadius - properties.innerRadius) * 0.62;
+            const x = properties.x + Math.cos(angle) * radius;
+            const y = properties.y + Math.sin(angle) * radius;
+            const mainText = formatPercent(currentProportion);
+            const countText = `(${PFF.formatInteger(currentCount)})`;
+            const mainSize = mobile ? 12 : 15;
+            const countSize = mobile ? 8.5 : 10.5;
+
+            context.fillStyle = labelTextColour(type);
+            context.font = `700 ${mainSize}px Lato, sans-serif`;
+            context.fillText(
+              mainText,
+              x,
+              y - countSize * 0.55
+            );
+
+            context.font = `400 ${countSize}px Lato, sans-serif`;
+            context.fillText(
+              countText,
+              x,
+              y + mainSize * 0.53
+            );
+          });
+
+          context.restore();
+          return;
+        }
+
+        const xScale = chartInstance.scales.x;
+
+        chartInstance.data.datasets.forEach((dataset, datasetIndex) => {
+          const meta = chartInstance.getDatasetMeta(datasetIndex);
+          const type = dataset.employerType;
+
+          meta.data.forEach((bar, dataIndex) => {
+            const group = activeModel.groups[dataIndex];
+            const targetCount = group?.counts?.[type] || 0;
+            const targetProportion = group?.proportions?.[type] || 0;
+
+            if (!targetCount || !bar) {
+              return;
+            }
+
+            const properties = bar.getProps(
+              ['x', 'base', 'y', 'height'],
+              true
+            );
+
+            if (
+              !Number.isFinite(properties.x) ||
+              !Number.isFinite(properties.base) ||
+              !Number.isFinite(properties.y)
+            ) {
+              return;
+            }
+
+            const centreX =
+              (properties.x + properties.base) / 2;
+            const width = Math.abs(
+              properties.x - properties.base
+            );
+            const currentProportion = Math.abs(
+              xScale.getValueForPixel(properties.x) -
+              xScale.getValueForPixel(properties.base)
+            );
+            const progress = targetProportion > 0
+              ? Math.min(1, currentProportion / targetProportion)
+              : 1;
+            const currentCount = Math.round(
+              targetCount * progress
+            );
+            const mainText = formatPercent(currentProportion);
+            const countText = `(${PFF.formatInteger(currentCount)})`;
+
+            context.fillStyle = labelTextColour(type);
+
+            if (activeView === 'phn') {
+              const combinedText = `${mainText} ${countText}`;
+              const combinedSize = fitFontSize(
+                context,
+                combinedText,
+                Math.max(1, width - 3),
+                mobile ? 7.0 : 7.8,
+                4.4
+              );
+
+              context.font = `700 ${combinedSize}px Lato, sans-serif`;
+              context.fillText(
+                combinedText,
+                centreX,
+                properties.y
+              );
+
+              return;
+            }
+
+            const preferredMain = mobile ? 8.2 : 9.3;
+            const preferredCount = mobile ? 6.4 : 7.2;
+            const mainSize = fitFontSize(
+              context,
+              mainText,
+              Math.max(1, width - 4),
+              preferredMain,
+              4.8
+            );
+            const countSize = fitFontSize(
+              context,
+              countText,
+              Math.max(1, width - 4),
+              preferredCount,
+              4.6
+            );
+            const lineGap = Math.max(
+              3.2,
+              Math.min(
+                Number(properties.height) * 0.24,
+                4.4
+              )
+            );
+
+            context.font = `700 ${mainSize}px Lato, sans-serif`;
+            context.fillText(
+              mainText,
+              centreX,
+              properties.y - lineGap
+            );
+
+            context.font = `400 ${countSize}px Lato, sans-serif`;
+            context.fillText(
+              countText,
+              centreX,
+              properties.y + lineGap
+            );
+          });
+        });
+
+        context.restore();
       }
     };
 
-    function tooltipOptions() {
-      return Shared.chartTooltips.tooltipOptions({
+    function pieDataset(model) {
+      const group = model.groups[0] || {
+        counts: emptyCounts(),
+        proportions: emptyCounts()
+      };
+
+      return {
+        label: 'Practice ownership',
+        data: EMPLOYER_TYPES.map(
+          type => group.proportions[type]
+        ),
+        backgroundColor: EMPLOYER_TYPES.map(
+          type => EMPLOYER_COLOURS[type]
+        ),
+        hoverBackgroundColor: EMPLOYER_TYPES.map(
+          type => EMPLOYER_COLOURS[type]
+        ),
+        borderColor: '#ffffff',
+        hoverBorderColor: '#ffffff',
+        borderWidth: 2,
+        hoverBorderWidth: 2,
+        spacing: 0,
+        _counts: EMPLOYER_TYPES.map(
+          type => group.counts[type]
+        ),
+        _proportions: EMPLOYER_TYPES.map(
+          type => group.proportions[type]
+        )
+      };
+    }
+
+    function barDatasets(model) {
+      return EMPLOYER_TYPES.map(type => sharedChart.tooltips.preserveBarHoverAppearance({
+        label: type,
+        employerType: type,
+        data: model.groups.map(
+          group => group.proportions[type]
+        ),
+        backgroundColor: EMPLOYER_COLOURS[type],
+        hoverBackgroundColor: EMPLOYER_COLOURS[type],
+        borderColor: 'transparent',
+        hoverBorderColor: 'transparent',
+        borderWidth: 0,
+        hoverBorderWidth: 0,
+        borderSkipped: false,
+        borderRadius: 2,
+        barPercentage: activeView === 'phn' ? 0.92 : 0.78,
+        categoryPercentage: activeView === 'phn' ? 0.94 : 0.82,
+        _counts: model.groups.map(
+          group => group.counts[type]
+        ),
+        _proportions: model.groups.map(
+          group => group.proportions[type]
+        )
+      }));
+    }
+
+    function overallTooltipOptions(model) {
+      return sharedChart.tooltips.tooltipOptions({
+        padding: 9,
+        bodySpacing: 0,
+        footerColor: '#69718a',
+        footerMarginTop: 4,
+        footerFont: {
+          family: 'Lato',
+          size: 11,
+          weight: '400'
+        },
         callbacks: {
           title(items) {
             return items?.[0]?.label || '';
           },
 
           label(item) {
-            const rowIndex =
-              item.dataIndex;
+            const type = item.label;
+            const group = model.groups[0];
+            const proportion = group?.proportions?.[type] || 0;
 
-            const raw =
-              item.dataset
-                ._rawValues?.[rowIndex];
+            return `${type}: ${formatPercent(proportion)}`;
+          },
 
-            const rawText =
-              rowIndex === 0
-                ? `${PFFCharts.formatInteger(
-                    Math.round(raw || 0)
-                  )} clinicians`
-                : PFFCharts.formatCompactNumber(
-                    Math.round(raw || 0)
-                  );
+          afterLabel(item) {
+            const type = item.label;
+            const group = model.groups[0];
+            const count = group?.counts?.[type] || 0;
 
-            return `${item.dataset.label}: ${formatPercent(item.raw)} · ${rawText}`;
+            return `Count: ${PFF.formatInteger(count)}`;
           },
 
           footer() {
-            const distribution =
-              chart?._distribution;
-
-            const year =
-              distribution?.year;
-
-            const metroGap =
-              Number(distribution?.metroClinicianPct) -
-              Number(distribution?.metroPopulationPct);
-
-            const lines = [];
-
-            if (Number.isFinite(year)) {
-              lines.push(String(year));
-            }
-
-            if (Number.isFinite(metroGap)) {
-              const direction =
-                metroGap >= 0
-                  ? 'more metropolitan'
-                  : 'less metropolitan';
-
-              lines.push(
-                `Supply is ${PFF.formatNumber(
-                  Math.abs(metroGap),
-                  1
-                )} pp ${direction} than demand`
-              );
-            }
-
-            return lines;
+            return `Total practices: ${PFF.formatInteger(
+              model.groups[0]?.total || 0
+            )}`;
           }
         }
       });
     }
 
-    function chartOptions() {
+    function barTooltipOptions(model) {
+      return sharedChart.tooltips.tooltipOptions({
+        mode: 'index',
+        axis: 'y',
+        intersect: false,
+        position: 'nearest',
+        padding: 9,
+        bodySpacing: 0,
+        footerColor: '#69718a',
+        footerMarginTop: 4,
+        footerFont: {
+          family: 'Lato',
+          size: 11,
+          weight: '400'
+        },
+
+        filter(item) {
+          return item.datasetIndex === 0;
+        },
+
+        callbacks: {
+          title(items) {
+            const index = items?.[0]?.dataIndex;
+            return model.groups?.[index]?.key || '';
+          },
+
+          label(item) {
+            const group = model.groups?.[item.dataIndex];
+
+            if (!group) {
+              return '';
+            }
+
+            const lines = [];
+
+            EMPLOYER_TYPES.forEach((type, index) => {
+              lines.push(
+                `${type}: ${formatPercent(group.proportions[type])}`
+              );
+              lines.push(
+                `Count: ${PFF.formatInteger(group.counts[type])}`
+              );
+
+              if (index < EMPLOYER_TYPES.length - 1) {
+                lines.push(' ');
+              }
+            });
+
+            return lines;
+          },
+
+          footer(items) {
+            const index = items?.[0]?.dataIndex;
+            const total = model.groups?.[index]?.total || 0;
+            return `Total practices: ${PFF.formatInteger(total)}`;
+          }
+        }
+      });
+    }
+
+    function phnAxisWidth() {
+      if (!PFF.mobileLayout()) {
+        return 186;
+      }
+
+      return Math.round(
+        Math.max(
+          84,
+          Math.min(
+            140,
+            window.innerWidth / 3
+          )
+        )
+      );
+    }
+
+    function phnAxisBaseFontSize() {
+      const rows = Math.max(
+        1,
+        activeModel?.groups?.length || 1
+      );
+      const height = Math.max(
+        220,
+        chartCanvas.clientHeight || 420
+      );
+      const rowSpacing = Math.max(
+        1,
+        (height - 42) / rows
+      );
+      const cap = PFF.mobileLayout() ? 9.2 : 10.2;
+
+      return Math.max(
+        5.8,
+        Math.min(cap, rowSpacing * 0.76)
+      );
+    }
+
+    const textMeasurementCache =
+      new Map();
+
+    if (document.fonts?.ready) {
+      document.fonts.ready
+        .then(() => textMeasurementCache.clear())
+        .catch(() => {});
+    }
+
+    function measuredTextWidth(
+      context,
+      text,
+      font
+    ) {
+      const key =
+        `${font}\u0000${text}`;
+
+      const cached =
+        textMeasurementCache.get(key);
+
+      if (Number.isFinite(cached)) {
+        return cached;
+      }
+
+      const previousFont =
+        context.font;
+
+      context.font =
+        font;
+
+      const measured =
+        context.measureText(text).width;
+
+      context.font =
+        previousFont;
+
+      if (
+        Number.isFinite(measured) &&
+        (
+          !document.fonts ||
+          document.fonts.status === 'loaded'
+        )
+      ) {
+        textMeasurementCache.set(
+          key,
+          measured
+        );
+      }
+
+      return measured;
+    }
+
+    function fittedPhnFontSize(label, baseSize) {
+      const text = String(label || '');
+
+      if (!text) {
+        return baseSize;
+      }
+
+      const availableWidth = Math.max(
+        1,
+        phnAxisWidth() - 10
+      );
+      const context = chartCanvas.getContext('2d');
+      const font =
+        `400 ${baseSize}px Lato, sans-serif`;
+      const measuredWidth =
+        measuredTextWidth(
+          context,
+          text,
+          font
+        );
+
+      if (
+        !Number.isFinite(measuredWidth) ||
+        measuredWidth <= availableWidth
+      ) {
+        return baseSize;
+      }
+
+      return Math.max(
+        5.1,
+        Math.min(
+          baseSize,
+          baseSize * availableWidth / measuredWidth
+        )
+      );
+    }
+
+    function handleChartClick(event, _elements, activeChart) {
+      if (!activeChart?.tooltip) {
+        return;
+      }
+
+      const nativeEvent = event?.native || event;
+      const isPie = activeView === 'all';
+      const mode = isPie ? 'nearest' : 'index';
+      const axis = isPie ? 'xy' : 'y';
+
+      const activeElements = activeChart.getElementsAtEventForMode(
+        nativeEvent,
+        mode,
+        {
+          axis,
+          intersect: true
+        },
+        false
+      );
+
+      if (!activeElements.length) {
+        activeChart.tooltip.setActiveElements(
+          [],
+          {
+            x: 0,
+            y: 0
+          }
+        );
+
+        activeChart.update('none');
+        return;
+      }
+
+      activeChart.tooltip.setActiveElements(
+        activeElements,
+        {
+          x: Number.isFinite(event?.x) ? event.x : 0,
+          y: Number.isFinite(event?.y) ? event.y : 0
+        }
+      );
+
+      activeChart.update('none');
+    }
+
+    function pieOptions(model) {
+      return sharedChart.animations.withChartJsTiming(
+        PFFCharts.baseChartOptions({
+        interaction: {
+          mode: 'nearest',
+          intersect: true
+        },
+        onClick: handleChartClick,
+        layout: {
+          autoPadding: false,
+          padding: {
+            top: 8,
+            right: 10,
+            bottom: 8,
+            left: 10
+          }
+        },
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: overallTooltipOptions(model)
+        }
+      })
+      );
+    }
+
+    function barOptions(model) {
       const duration =
         PFF.reducedMotion()
           ? 0
           : CONFIG.barTransitionMs;
 
-      const originalOptions = PFFCharts.baseChartOptions({
-        devicePixelRatio: Shared.chartResponsive.getLayout().devicePixelRatio,
+      return sharedChart.animations.withChartJsTiming(
+        PFFCharts.baseChartOptions({
         animation: {
           duration,
           easing: 'easeInOutCubic'
         },
-
         animations: {
           x: {
-            duration,
-            easing: 'easeInOutCubic'
-          },
-          base: {
             duration,
             easing: 'easeInOutCubic'
           },
@@ -2016,36 +2377,29 @@
             easing: 'easeInOutCubic'
           }
         },
-
         indexAxis: 'y',
-
-        interaction: Shared.chartTooltips.interactionOptions('point', {
+        interaction: {
           mode: 'index',
           axis: 'y',
           intersect: true,
           includeInvisible: false
-        }),
-
-        elements: Shared.chartTooltips.subtleEmphasisOptions(),
-
+        },
+        onClick: handleChartClick,
         layout: {
           autoPadding: false,
           padding: {
-            top: 6,
-            right: CHART_RIGHT_GUTTER,
+            top: activeView === 'phn' ? 2 : 6,
+            right: 7,
             bottom: 0,
             left: 0
           }
         },
-
         plugins: {
           legend: {
             display: false
           },
-          tooltip:
-            tooltipOptions()
+          tooltip: barTooltipOptions(model)
         },
-
         scales: {
           x: {
             type: 'linear',
@@ -2053,435 +2407,530 @@
             beginAtZero: true,
             min: 0,
             max: 100,
-
             afterFit(scale) {
-              scale.height =
-                PFF.mobileLayout()
-                  ? 50
-                  : 48;
+              scale.height = PFF.mobileLayout() ? 50 : 48;
             },
-
             afterBuildTicks(scale) {
-              scale.ticks =
-                Array.from(
-                  { length: 11 },
-                  (_, index) => ({
-                    value: index * 10
-                  })
-                );
+              scale.ticks = Array.from(
+                { length: 11 },
+                (_, index) => ({
+                  value: index * 10
+                })
+              );
             },
-
             title: {
               display: false
             },
-
             ticks: {
               display: false,
               autoSkip: false
             },
-
             grid: {
               drawOnChartArea: false,
               drawTicks: false
             },
-
             border: {
               display: false
             }
           },
-
           y: {
             stacked: true,
             offset: true,
-            display: false,
+            afterFit(scale) {
+              if (activeView === 'phn') {
+                scale.width = phnAxisWidth();
+                return;
+              }
 
-            // The label gutter is reserved by fixed layout padding above,
-            // so Chart.js cannot move the plotting edge when this scale
-            // is recalculated during state/territory updates.
+              scale.width = PFF.mobileLayout() ? 60 : 72;
+            },
             ticks: {
               display: false,
-              autoSkip: false
-            },
+              color: '#151515',
+              autoSkip: false,
+              padding: activeView === 'phn' ? 3 : 5,
+              font(context) {
+                if (activeView !== 'phn') {
+                  return {
+                    family: 'Lato',
+                    size: PFF.mobileLayout() ? 9 : 10,
+                    weight: '400',
+                    lineHeight: 1
+                  };
+                }
 
+                const rawLabel = context?.tick?.label;
+                const label = Array.isArray(rawLabel)
+                  ? rawLabel.join(' ')
+                  : String(rawLabel ?? '');
+                const baseSize = phnAxisBaseFontSize();
+
+                return {
+                  family: 'Lato',
+                  size: fittedPhnFontSize(label, baseSize),
+                  weight: '400',
+                  lineHeight: 1
+                };
+              }
+            },
             grid: {
-              display: false,
+              drawOnChartArea: false,
               drawTicks: false
             },
-
             border: {
               display: false
             }
           }
         }
-      });
-
-      // The custom canvas axis already owns gridlines, ticks and spines:
-      // do not add a second Chart.js Cartesian grid on top.
-      const styled = Shared.chartStyling.getChartBaseOptions(originalOptions);
-      const timed = Shared.chartAnimations.withChartJsTiming(styled);
-      if (PFF.reducedMotion()) {
-        timed.animation.duration = 0;
-        for (const key of ['x', 'base', 'y']) {
-          if (timed.animations?.[key]) timed.animations[key].duration = 0;
-        }
-      }
-      return timed;
-    }
-
-    function datasetsFor(distribution) {
-      return [
-        {
-          label: 'Metro',
-          data: [
-            distribution.metroClinicianPct,
-            distribution.metroPopulationPct
-          ],
-          _rawValues: [
-            distribution.metroClinicians,
-            distribution.metroPopulation
-          ],
-          backgroundColor: METRO_COLOUR,
-          hoverBackgroundColor: METRO_COLOUR,
-          borderColor: 'transparent',
-          hoverBorderColor: 'transparent',
-          borderWidth: 0,
-          hoverBorderWidth: 0,
-          borderSkipped: false,
-          borderRadius: 2,
-          barPercentage: 0.78,
-          categoryPercentage: 0.82
-        },
-        {
-          label: 'Non-metro',
-          data: [
-            distribution.nonMetroClinicianPct,
-            distribution.nonMetroPopulationPct
-          ],
-          _rawValues: [
-            distribution.nonMetroClinicians,
-            distribution.nonMetroPopulation
-          ],
-          backgroundColor: NON_METRO_COLOUR,
-          hoverBackgroundColor: NON_METRO_COLOUR,
-          borderColor: 'transparent',
-          hoverBorderColor: 'transparent',
-          borderWidth: 0,
-          hoverBorderWidth: 0,
-          borderSkipped: false,
-          borderRadius: 2,
-          barPercentage: 0.78,
-          categoryPercentage: 0.82
-        }
-      ].map(dataset => Shared.chartTooltips.preserveBarHoverAppearance(dataset));
-    }
-
-    function morphDatasetsTo(distribution) {
-      const nextDatasets =
-        datasetsFor(distribution);
-
-      nextDatasets.forEach(
-        (nextDataset, datasetIndex) => {
-          const currentDataset =
-            chart.data.datasets[datasetIndex];
-
-          if (!currentDataset) {
-            chart.data.datasets.push(
-              nextDataset
-            );
-            return;
-          }
-
-          nextDataset.data.forEach(
-            (value, dataIndex) => {
-              currentDataset.data[dataIndex] =
-                value;
-            }
-          );
-
-          currentDataset._rawValues =
-            nextDataset._rawValues.slice();
-        }
+      })
       );
     }
 
-    function updateAccessibleSummary() {
+    function motionOptions(options) {
+      if (!PFF.reducedMotion()) return options;
+      options.animation = false;
+      if (options.animations) {
+        Object.values(options.animations).forEach(setting => {
+          if (setting && typeof setting === 'object') setting.duration = 0;
+        });
+      }
+      Object.values(options.transitions || {}).forEach(transition => {
+        if (transition?.animation) transition.animation.duration = 0;
+      });
+      return options;
+    }
+
+    function createChart(model, animate = true) {
+      activeModel = model;
+      updateStageGeometry(model);
+
+      const isPie = model.view === 'all';
+
+      chart = new Chart(
+        chartCanvas.getContext('2d'),
+        {
+          type: isPie ? 'pie' : 'bar',
+          data: isPie
+            ? {
+                labels: EMPLOYER_TYPES,
+                datasets: [pieDataset(model)]
+              }
+            : {
+                labels: model.labels,
+                datasets: barDatasets(model)
+              },
+          options: motionOptions(
+            isPie ? pieOptions(model) : barOptions(model)
+          ),
+          plugins: isPie
+            ? [valueLabelsPlugin]
+            : [
+                phnStateSeparatorsPlugin,
+                barOutlinePlugin,
+                valueLabelsPlugin,
+                constantSpinePlugin,
+                barAxisPresentationPlugin,
+                {
+                  id: 'pffTooltipTopLayer',
+                  afterDraw(chartInstance) {
+                    const tooltip = chartInstance?.tooltip;
+                    if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
+                    tooltip.draw(chartInstance.ctx);
+                  }
+                }
+              ]
+        }
+      );
+
+      if (!isPie) {
+        setSpineGeometry(chart.chartArea);
+      }
+
+      if (!animate || PFF.reducedMotion()) {
+        chartCanvas.style.opacity = '1';
+      }
+    }
+
+    function updateBarChart(model, animate = true) {
+      const previousArea = copyChartArea(chart?.chartArea);
+
+      spineTransitionState.active = false;
+
+      if (previousArea) {
+        setSpineGeometry(previousArea);
+      }
+
+      activeModel = model;
+      updateStageGeometry(model);
+
+      chart.data.labels = model.labels;
+
+      chart.data.datasets.forEach((dataset, index) => {
+        const type = EMPLOYER_TYPES[index];
+
+        dataset.data = model.groups.map(
+          group => group.proportions[type]
+        );
+
+        dataset._counts = model.groups.map(
+          group => group.counts[type]
+        );
+
+        dataset._proportions = model.groups.map(
+          group => group.proportions[type]
+        );
+
+        dataset.barPercentage = activeView === 'phn'
+          ? 0.92
+          : 0.78;
+
+        dataset.categoryPercentage = activeView === 'phn'
+          ? 0.94
+          : 0.82;
+      });
+
+      chart.options.layout.padding.top =
+        activeView === 'phn' ? 2 : 6;
+
+      chart.options.scales.y.afterFit = scale => {
+        if (activeView === 'phn') {
+          scale.width = phnAxisWidth();
+          return;
+        }
+
+        scale.width = PFF.mobileLayout() ? 60 : 72;
+      };
+
+      chart.options.scales.y.ticks.padding =
+        activeView === 'phn' ? 3 : 5;
+
+      chart.options.scales.y.ticks.font = context => {
+        if (activeView !== 'phn') {
+          return {
+            family: 'Lato',
+            size: PFF.mobileLayout() ? 9 : 10,
+            weight: '400',
+            lineHeight: 1
+          };
+        }
+
+        const rawLabel = context?.tick?.label;
+        const label = Array.isArray(rawLabel)
+          ? rawLabel.join(' ')
+          : String(rawLabel ?? '');
+        const baseSize = phnAxisBaseFontSize();
+
+        return {
+          family: 'Lato',
+          size: fittedPhnFontSize(label, baseSize),
+          weight: '400',
+          lineHeight: 1
+        };
+      };
+
+      chart.options.plugins.tooltip =
+        barTooltipOptions(model);
+
+      chart.update(
+        animate && !PFF.reducedMotion()
+          ? undefined
+          : 'none'
+      );
+
+      const nextArea = copyChartArea(chart.chartArea);
+
+      spineTransitionState.active = false;
+      setSpineGeometry(
+        nextArea || previousArea
+      );
+    }
+
+    function updatePieChart(model) {
+      activeModel = model;
+      updateStageGeometry(model);
+
+      const dataset = chart.data.datasets[0];
+      const nextDataset = pieDataset(model);
+
+      dataset.data = nextDataset.data;
+      dataset._counts = nextDataset._counts;
+      dataset._proportions = nextDataset._proportions;
+
+      chart.options.plugins.tooltip =
+        overallTooltipOptions(model);
+
+      chart.update();
+    }
+
+    function replaceChart(model) {
+      const finishCreate = () => {
+        chart?.destroy();
+        chart = null;
+        createChart(model, true);
+
+        chartCanvas.style.opacity = '0';
+
+        chartTransitionController.run({
+          duration: PFF.defaults.microTransitionMs,
+          easing: PFFCharts.easeOutCubic,
+          onFrame(progress) {
+            chartCanvas.style.opacity = String(progress);
+          },
+          onComplete() {
+            chartCanvas.style.opacity = '1';
+          }
+        });
+      };
+
       if (
-        !chartSummary ||
-        !chart?._distribution
+        !chart ||
+        PFF.reducedMotion()
       ) {
+        finishCreate();
         return;
       }
 
-      const distribution =
-        chart._distribution;
+      chartTransitionController.run({
+        duration: PFF.defaults.microTransitionMs,
+        easing: PFFCharts.easeInOutCubic,
+        onFrame(progress) {
+          chartCanvas.style.opacity = String(1 - progress);
+        },
+        onComplete: finishCreate
+      });
+    }
 
-      const scope =
-        state.scope === 'AUS'
-          ? 'Australia'
-          : state.scope;
+    function updateAccessibleSummary() {
+      if (!chartSummary) {
+        return;
+      }
 
-      const gapPp =
-        Math.abs(
-          distribution.metroClinicianPct -
-          distribution.metroPopulationPct
-        );
+      const model = activeModel;
+
+      if (!model) {
+        return;
+      }
+
+      const totalShown = model.groups.reduce(
+        (sum, group) => sum + group.total,
+        0
+      );
 
       PFFCharts.updateChartSummary(
-        `${scope}, ${distribution.year}. Non-metro areas contained ${formatPercent(distribution.nonMetroPopulationPct)} of the population and ${formatPercent(distribution.nonMetroClinicianPct)} of clinicians, a ${PFF.formatNumber(gapPp, 1)} percentage-point distribution gap.`,
+        `${headingForView(activeView)}. ${model.groups.length} groups shown, containing ${PFF.formatInteger(totalShown)} classified practice rows.`,
         chartSummary
       );
     }
 
-    function renderLoaded(animate = true) {
-      if (!Object.keys(state.clinicianByYear).length) {
+    function renderView({ animate = true } = {}) {
+      const model = buildModel(activeView);
+      const desiredType = activeView === 'all'
+        ? 'pie'
+        : 'bar';
+      const currentType = chart?.config?.type || null;
+
+      const nextHeadingDetail = headingDetailForView(activeView);
+
+      if (!animate || PFF.reducedMotion()) {
+        chartHeadingDetail.textContent = nextHeadingDetail;
+      } else {
+        PFF.animateTextChange(
+          chartHeadingDetail,
+          nextHeadingDetail,
+          {
+            fadeOutMs: 170,
+            fadeInMs: 260
+          }
+        );
+      }
+
+      buildDimensionMenu();
+
+      if (!chart) {
+        createChart(model, false);
+        updateAccessibleSummary();
         return;
       }
 
-      const year =
-        latestUsableYear(state.scope);
-
-      const distribution =
-        distributionFor(
-          year,
-          state.scope
+      if (currentType !== desiredType) {
+        replaceChart(model);
+        window.setTimeout(
+          updateAccessibleSummary,
+          PFF.defaults.microTransitionMs + 20
         );
-
-      if (!distribution) {
-        throw new Error(
-          `No usable rurality data for ${state.scope}.`
-        );
+        return;
       }
 
-      const datasets =
-        datasetsFor(distribution);
-
-      if (!chart) {
-        chart =
-          new Chart(
-            chartCanvas.getContext('2d'),
-            {
-              type: 'bar',
-              data: {
-                labels: [
-                  'Clinicians',
-                  'Population'
-                ],
-                datasets
-              },
-              options:
-                chartOptions(),
-              plugins: [
-                fixedPlotGeometryPlugin,
-                barAxisPresentationPlugin,
-                distributionGapPlugin,
-                segmentLabelsPlugin,
-                barOutlinePlugin,
-                tooltipTopLayerPlugin
-              ]
-            }
-          );
-      } else {
-        const duration =
-          animate && !PFF.reducedMotion()
-            ? CONFIG.barTransitionMs
-            : 0;
-
-        // Keep the existing Chart.js dataset and bar elements so the
-        // state change morphs from the previous proportions instead of
-        // redrawing each stack from zero.
-        morphDatasetsTo(distribution);
-
-        chart.options.animation.duration =
-          duration;
-
-        chart.options.animation.easing =
-          'easeInOutCubic';
-
-        if (chart.options.animations?.x) {
-          chart.options.animations.x.duration =
-            duration;
-        }
-
-        if (chart.options.animations?.base) {
-          chart.options.animations.base.duration =
-            duration;
-        }
-
-        if (chart.options.animations?.y) {
-          chart.options.animations.y.duration =
-            duration;
-        }
-
-        chart.update();
+      if (desiredType === 'pie') {
+        updatePieChart(model);
+        updateAccessibleSummary();
+        return;
       }
 
-      chart._distribution =
-        distribution;
-
+      updateBarChart(model, animate);
       updateAccessibleSummary();
     }
 
-    // ============================================================
-    // APP STARTUP
-    // ============================================================
+    function configureControls() {
+      tabsController = PFF.setupTabs({
+        tabList,
+        tabs: tabList.querySelectorAll('.chart-tab'),
+        valueAttribute: 'view',
+        initialValue: activeView,
+        leftButton: tabScrollLeft,
+        rightButton: tabScrollRight,
+        onChange(value) {
+          activeView = value;
+          dimensionMenuController?.closeMenu?.();
+          renderView({ animate: true });
+        }
+      });
 
-    function startApp() {
-      const requiredAssets = [
-        ['Chart styling', Shared.chartStyling?.getChartBaseOptions],
-        ['Chart axes', Shared.chartAxes?.tickMarkStyle],
-        ['Chart animations', Shared.chartAnimations?.withChartJsTiming],
-        ['Chart value labels', Shared.chartValueLabels?.createSegmentLabelsPlugin],
-        ['Chart tooltips v4', Shared.chartTooltips?.bindDismissOnOutside],
-        ['Responsive touch', Shared.chartResponsive?.suppressTapFlash]
-      ];
-      const missing = requiredAssets
-        .filter(([, method]) => typeof method !== 'function')
-        .map(([name]) => name);
-      if (missing.length) {
-        loaderText.textContent = 'Missing shared chart assets: ' + missing.join(', ');
-        statusEl.textContent = loaderText.textContent;
-        console.error('[PFF Distribution Gap Pilot]', loaderText.textContent);
-        return;
-      }
+      dimensionMenuController = PFF.setupMenu({
+        menu: dimensionControl,
+        button: dimensionButton,
+        panel: dimensionMenu,
+        focusOnOpen: false
+      });
 
-      setupStateFilter(
-        () => renderLoaded(true)
+      dimensionAll.addEventListener('change', () => {
+        if (activeView === 'all') {
+          return;
+        }
+
+        const available = availableValues(activeView);
+        selectedByView[activeView] = dimensionAll.checked
+          ? new Set(available)
+          : new Set();
+
+        syncDimensionMenuUi(true);
+        renderView({ animate: true });
+      });
+
+      dimensionOptions.addEventListener('change', event => {
+        const input = event.target.closest(
+          'input[data-dimension-value]'
+        );
+
+        if (!input || activeView === 'all') {
+          return;
+        }
+
+        const value = input.dataset.dimensionValue;
+        const selected = selectedByView[activeView];
+
+        if (input.checked) {
+          selected.add(value);
+        } else {
+          selected.delete(value);
+        }
+
+        syncDimensionMenuUi(true);
+        renderView({ animate: true });
+      });
+
+      legendController = PFFCharts.setupDisplayLegend({
+        legend: chartLegend,
+        leftButton: legendScrollLeft,
+        rightButton: legendScrollRight
+      });
+
+      legendController.update(
+        LEGEND_ITEMS,
+        false
       );
 
-      PFF.initialiseApp({
-        app,
-        status: statusEl,
+      chartInteractionController =
+        sharedChart.tooltips.bindDismissOnOutside({
+          canvas: chartCanvas,
+          getChart: () => chart,
+          keepTooltipPress: true
+        });
 
-        async loadLive() {
-          loaderText.textContent =
-            'Loading live State × MMM data…';
+      // Preserve Chart.js onClick year/group selection, browser focus rings,
+      // and the original touch-action while removing mobile tap flash.
+      sharedChart.responsive.suppressTapFlash(chartCanvas);
 
-          const [
-            clinicianTable,
-            populationTable
-          ] =
-            await Promise.all([
-              PFFCharts.loadGVizSheet({
-                sheetId: CONFIG.sheetId,
-                sheetName: CONFIG.clinicianSheet,
-                range: CONFIG.clinicianRange,
-                headers: '2'
-              }),
+      responsiveController = PFFCharts.createResponsiveController({
+        getChart: () => chart,
+        observe: [app, chartShell],
+        applyResponsiveChartOptions: false,
+        onRefresh() {
+          if (!chart || !activeModel) {
+            return;
+          }
 
-              PFFCharts.loadGVizSheet({
-                sheetId: CONFIG.sheetId,
-                sheetName: CONFIG.populationSheet,
-                range: CONFIG.populationRange,
-                headers: '2'
-              })
-            ]);
+          updateStageGeometry(activeModel);
 
-          return {
-            clinicianTable,
-            populationTable
-          };
-        },
-
-        parseLive:
-          parseLiveData,
-
-        loadRemoteCache() {
-          loaderText.textContent =
-            'Loading cached PFF data…';
-
-          return PFFCharts.loadAppsScriptCache({
-            url: CACHE_WEB_APP_URL,
-            appKey: CACHE_APP_KEY
-          });
-        },
-
-        parseRemoteCache,
-
-        cacheKey:
-          CONFIG.localCacheKey,
-
-        minRows:
-          1,
-
-        onLiveError(error) {
-          console.warn(
-            'Live State × MMM data unavailable; trying Apps Script cache.',
-            error
-          );
-        },
-
-        onRemoteCacheError(error) {
-          console.warn(
-            'Apps Script State × MMM cache unavailable; trying browser cache.',
-            error
-          );
-        },
-
-        dataSourceOptions: {
-          indicator: sourceIndicator,
-          text: sourceText
-        },
-
-        render(loaded) {
-          applyLoadedRows(
-            loaded.rows
-          );
-
-          renderLoaded(false);
-
-          chartSummary =
-            PFFCharts.ensureChartSummary({
-              parent: app
-            });
-
-          chartCanvas.setAttribute(
-            'aria-describedby',
-            chartSummary.id
-          );
-
-          updateAccessibleSummary();
-
-          const outsideDismissal = Shared.chartTooltips.bindDismissOnOutside({
-            canvas: chartCanvas,
-            getChart() { return chart; }
-          });
-          const restoreTapStyle = Shared.chartResponsive.suppressTapFlash(chartCanvas);
-          interactionsController = {
-            destroy() {
-              outsideDismissal.destroy();
-              restoreTapStyle();
-            }
-          };
-
-          responsiveController =
-            PFFCharts.createResponsiveController({
-              getChart() {
-                return chart;
-              },
-              observe: [
-                app,
-                chartShell
-              ],
-              onRefresh() {
-                chart?.resize();
-                chart?.draw();
+          if (activeView !== 'all') {
+            chart.options.scales.y.afterFit = scale => {
+              if (activeView === 'phn') {
+                scale.width = phnAxisWidth();
+                return;
               }
+
+              scale.width = PFF.mobileLayout() ? 60 : 72;
+            };
+
+            requestAnimationFrame(() => {
+              setSpineGeometry(chart?.chartArea);
+              chart?.draw();
             });
+          }
 
-          return chart;
-        },
-
-        onError() {
-          sourceIndicator.style.visibility =
-            'hidden';
-        },
-
-        errorMessage:
-          'Rurality proportions unavailable.'
+          tabsController?.update?.();
+          legendController?.update?.(
+            LEGEND_ITEMS,
+            false
+          );
+        }
       });
     }
 
-    startApp();
+    PFF.initialiseApp({
+      app,
+      status: statusElement,
+      load: loadPracticeRows,
+
+      render(loaded) {
+        sourceRows = normaliseRows(loaded.rows);
+
+        if (!sourceRows.length) {
+          throw new Error(
+            'No usable practice rows were returned from the practice directory.'
+          );
+        }
+
+        initialiseSelections();
+        setLoadedSourceIndicator(loaded);
+        configureControls();
+        renderView({ animate: false });
+
+        chartSummary = PFFCharts.ensureChartSummary({
+          id: 'practiceOwnershipChartSummary',
+          parent: app
+        });
+
+        chartCanvas.setAttribute(
+          'aria-describedby',
+          chartSummary.id
+        );
+
+        updateAccessibleSummary();
+        return chart;
+      },
+
+      onError() {
+        PFF.setDataSourceIndicator('unavailable', {
+          indicator: dataSourceIndicator,
+          text: dataSourceText
+        });
+      },
+
+      errorMessage:
+        'Practice ownership data unavailable.'
+    });
+
   </script>
 </body>
 </html>
