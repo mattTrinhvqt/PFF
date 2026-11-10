@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js?v=1.2.11-20260917"></script>
-  <!-- Existing loader/core are unchanged. These approved helpers are scoped to this pilot. -->
+  <!-- Practice Ownership axis-morph pilot v2. Shared assets and loader/core are unchanged. -->
   <script src="./assets/chart-styling-and-defaults.js"></script>
   <script src="./assets/chart-axes-and-ticks.js"></script>
   <script src="./assets/chart-animations-and-transitions.js"></script>
@@ -506,12 +506,19 @@
     let responsiveController = null;
     let chartSummary = null;
 
+    // The plotted area changes width when entering/leaving PHN because the
+    // much longer category labels need a wider Y-axis gutter. Keep the
+    // approved 600 ms easing for the *visible* spines, ticks, grid and title,
+    // instead of jumping to the new Chart.js layout in a single frame.
     const spineTransitionState = {
       active: false,
       left: NaN,
       right: NaN,
       top: NaN,
-      bottom: NaN
+      bottom: NaN,
+      from: null,
+      to: null,
+      progress: 1
     };
 
     const selectedByView = {
@@ -521,6 +528,8 @@
     };
 
     const chartTransitionController =
+      PFFCharts.createAnimationController();
+    const axisGeometryController =
       PFFCharts.createAnimationController();
 
     function normaliseEmployerType(value) {
@@ -1455,6 +1464,35 @@
     }
 
 
+    function interpolateSpineGeometry(from, to, amount) {
+      if (!from || !to) {
+        return to || from || null;
+      }
+
+      const t = Math.max(0, Math.min(1, Number(amount) || 0));
+      return {
+        left: from.left + (to.left - from.left) * t,
+        right: from.right + (to.right - from.right) * t,
+        top: from.top + (to.top - from.top) * t,
+        bottom: from.bottom + (to.bottom - from.bottom) * t
+      };
+    }
+
+    function stopAxisGeometryMotion() {
+      axisGeometryController.cancel();
+      spineTransitionState.active = false;
+      spineTransitionState.from = null;
+      spineTransitionState.to = null;
+      spineTransitionState.progress = 1;
+    }
+
+    function axisGeometryChanged(from, to) {
+      return Boolean(from && to &&
+        ['left', 'right', 'top', 'bottom'].some(
+          key => Math.abs(from[key] - to[key]) > 0.5
+        ));
+    }
+
     const constantSpinePlugin = {
       id: 'pffPracticeConstantSpines',
 
@@ -1463,35 +1501,13 @@
           return;
         }
 
-        const area = chartInstance.chartArea;
+        const geometry = currentAxisGeometry(chartInstance);
 
-        if (!area) {
+        if (!geometry) {
           return;
         }
 
-        const left =
-          spineTransitionState.active &&
-          Number.isFinite(spineTransitionState.left)
-            ? spineTransitionState.left
-            : area.left;
-
-        const right =
-          spineTransitionState.active &&
-          Number.isFinite(spineTransitionState.right)
-            ? spineTransitionState.right
-            : area.right;
-
-        const top =
-          spineTransitionState.active &&
-          Number.isFinite(spineTransitionState.top)
-            ? spineTransitionState.top
-            : area.top;
-
-        const bottom =
-          spineTransitionState.active &&
-          Number.isFinite(spineTransitionState.bottom)
-            ? spineTransitionState.bottom
-            : area.bottom;
+        const { left, right, top, bottom } = geometry;
 
         const context = chartInstance.ctx;
 
@@ -1515,34 +1531,24 @@
     };
 
     function currentAxisGeometry(chartInstance) {
-      const area = chartInstance?.chartArea;
+      const area = copyChartArea(chartInstance?.chartArea);
 
       if (!area) {
         return null;
       }
 
-      return {
-        left:
-          spineTransitionState.active &&
-          Number.isFinite(spineTransitionState.left)
-            ? spineTransitionState.left
-            : area.left,
-        right:
-          spineTransitionState.active &&
-          Number.isFinite(spineTransitionState.right)
-            ? spineTransitionState.right
-            : area.right,
-        top:
-          spineTransitionState.active &&
-          Number.isFinite(spineTransitionState.top)
-            ? spineTransitionState.top
-            : area.top,
-        bottom:
-          spineTransitionState.active &&
-          Number.isFinite(spineTransitionState.bottom)
-            ? spineTransitionState.bottom
-            : area.bottom
-      };
+      if (!spineTransitionState.active || !spineTransitionState.from) {
+        return area;
+      }
+
+      // Chart.js determines its new plot area during update(). Reading it
+      // here also ensures the *first* new frame draws the old axis position.
+      const target = spineTransitionState.to || area;
+      return interpolateSpineGeometry(
+        spineTransitionState.from,
+        target,
+        spineTransitionState.progress
+      );
     }
 
     function xAxisPixel(geometry, value) {
@@ -1710,7 +1716,8 @@
         }
 
         const context = chartInstance.ctx;
-        const area = chartInstance.chartArea;
+        const area = currentAxisGeometry(chartInstance);
+        if (!area) return;
 
         context.save();
         context.strokeStyle = 'rgba(105, 113, 138, 0.075)';
@@ -2552,11 +2559,21 @@
     }
 
     function updateBarChart(model, animate = true) {
-      const previousArea = copyChartArea(chart?.chartArea);
+      // Snapshot the *visible* position, not merely the previous layout.
+      // This also lets rapid tab switches retarget without snapping back.
+      const previousArea = currentAxisGeometry(chart);
+      stopAxisGeometryMotion();
 
-      spineTransitionState.active = false;
+      const animateAxis = Boolean(
+        animate && !PFF.reducedMotion() && previousArea
+      );
 
-      if (previousArea) {
+      if (animateAxis) {
+        spineTransitionState.active = true;
+        spineTransitionState.from = previousArea;
+        spineTransitionState.to = null;
+        spineTransitionState.progress = 0;
+      } else if (previousArea) {
         setSpineGeometry(previousArea);
       }
 
@@ -2639,10 +2656,32 @@
 
       const nextArea = copyChartArea(chart.chartArea);
 
-      spineTransitionState.active = false;
-      setSpineGeometry(
-        nextArea || previousArea
-      );
+      if (!animateAxis || !axisGeometryChanged(previousArea, nextArea)) {
+        stopAxisGeometryMotion();
+        setSpineGeometry(nextArea || previousArea);
+        return;
+      }
+
+      spineTransitionState.to = nextArea;
+      const transitionChart = chart;
+      axisGeometryController.run({
+        duration: CONFIG.barTransitionMs,
+        easing: PFFCharts.easeInOutCubic,
+        onFrame(progress) {
+          // The custom X-axis (including marks/title/grid) and Y-spine
+          // share the same coordinates while Chart.js moves the bar values.
+          spineTransitionState.progress = progress;
+          if (chart === transitionChart) {
+            transitionChart.draw();
+          }
+        },
+        onComplete() {
+          if (chart !== transitionChart) return;
+          stopAxisGeometryMotion();
+          setSpineGeometry(nextArea);
+          transitionChart.draw();
+        }
+      });
     }
 
     function updatePieChart(model) {
@@ -2664,6 +2703,7 @@
 
     function replaceChart(model) {
       const finishCreate = () => {
+        stopAxisGeometryMotion();
         chart?.destroy();
         chart = null;
         createChart(model, true);
