@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js?v=1.2.11-20260917"></script>
-  <!-- Practice Ownership axis-morph pilot v2. Shared assets and loader/core are unchanged. -->
+  <!-- Practice Ownership axis-morph refinement v3: resize safety and PHN-label reveal. Shared assets and loader/core unchanged. -->
   <script src="./assets/chart-styling-and-defaults.js"></script>
   <script src="./assets/chart-axes-and-ticks.js"></script>
   <script src="./assets/chart-animations-and-transitions.js"></script>
@@ -518,7 +518,9 @@
       bottom: NaN,
       from: null,
       to: null,
-      progress: 1
+      progress: 1,
+      // Absolute canvas pixel coordinates are invalid after a resize.
+      canvasSize: null
     };
 
     const selectedByView = {
@@ -1484,7 +1486,50 @@
       spineTransitionState.from = null;
       spineTransitionState.to = null;
       spineTransitionState.progress = 1;
+      spineTransitionState.canvasSize = null;
     }
+
+    function chartCanvasSize(chartInstance) {
+      const width = Number(chartInstance?.width);
+      const height = Number(chartInstance?.height);
+      return Number.isFinite(width) && Number.isFinite(height)
+        ? { width, height }
+        : null;
+    }
+
+    function axisMotionNeedsResizeReset(chartInstance) {
+      const before = spineTransitionState.canvasSize;
+      const after = chartCanvasSize(chartInstance);
+      return Boolean(
+        spineTransitionState.active && before && after &&
+        (Math.abs(after.width - before.width) > 0.5 ||
+         Math.abs(after.height - before.height) > 0.5)
+      );
+    }
+
+    function resetResizedAxisMotion(chartInstance) {
+      if (!axisMotionNeedsResizeReset(chartInstance)) return false;
+      stopAxisGeometryMotion();
+      setSpineGeometry(chartInstance.chartArea);
+      return true;
+    }
+
+    // Chart.js fires resize before redrawing the newly laid-out canvas.
+    // Revert to the *new* chartArea instead of rendering stale pixel axes.
+    const axisResizeGuardPlugin = {
+      id: 'pffPracticeAxisResizeGuard',
+      resize(chartInstance) {
+        if (spineTransitionState.active) {
+          stopAxisGeometryMotion();
+        }
+      },
+      afterLayout(chartInstance) {
+        resetResizedAxisMotion(chartInstance);
+        if (!spineTransitionState.active) {
+          setSpineGeometry(chartInstance.chartArea);
+        }
+      }
+    };
 
     function axisGeometryChanged(from, to) {
       return Boolean(from && to &&
@@ -1531,6 +1576,8 @@
     };
 
     function currentAxisGeometry(chartInstance) {
+      // Safety net for a resize that arrives between two animation frames.
+      resetResizedAxisMotion(chartInstance);
       const area = copyChartArea(chartInstance?.chartArea);
 
       if (!area) {
@@ -1641,12 +1688,49 @@
             fontSize = PFF.mobileLayout() ? 9 : 10;
           }
 
+          const labelText = String(label || '');
           context.font = `400 ${fontSize}px Lato, sans-serif`;
+
+          // Incoming PHN names are much longer than State/Rurality labels.
+          // Their final font size is unchanged, but do not draw them while
+          // the moving spine leaves insufficient space to fit the text.
+          // Fade them in over the remaining gutter expansion so a long name
+          // never flashes cropped against the canvas edge.
+          let labelOpacity = 1;
+          if (
+            activeView === 'phn' &&
+            spineTransitionState.active &&
+            spineTransitionState.to &&
+            spineTransitionState.from &&
+            spineTransitionState.to.left > spineTransitionState.from.left + 0.5
+          ) {
+            const measuredWidth = context.measureText(labelText).width;
+            const availableWidth = Math.max(0, geometry.left - yLabelPadding - 4);
+            const finalWidth = Math.max(
+              0,
+              spineTransitionState.to.left - yLabelPadding - 4
+            );
+            if (Number.isFinite(measuredWidth)) {
+              const spareWidth = availableWidth - measuredWidth;
+              if (spareWidth <= 0) return;
+              const finalSpare = Math.max(1, finalWidth - measuredWidth);
+              const fadeSpan = Math.max(1, Math.min(18, finalSpare));
+              const fitFade = Math.min(1, spareWidth / fadeSpan);
+              const travelFade = Math.min(
+                1,
+                Math.max(0, (spineTransitionState.progress - 0.06) / 0.82)
+              );
+              labelOpacity = fitFade * travelFade;
+            }
+          }
+          if (labelOpacity <= 0) return;
+          context.globalAlpha = labelOpacity;
           context.fillText(
-            String(label || ''),
+            labelText,
             geometry.left - yLabelPadding,
             bar.y
           );
+          context.globalAlpha = 1;
         });
 
         for (let value = 0; value <= 100; value += 10) {
@@ -2532,6 +2616,7 @@
           plugins: isPie
             ? [valueLabelsPlugin]
             : [
+                axisResizeGuardPlugin,
                 phnStateSeparatorsPlugin,
                 barOutlinePlugin,
                 valueLabelsPlugin,
@@ -2573,6 +2658,7 @@
         spineTransitionState.from = previousArea;
         spineTransitionState.to = null;
         spineTransitionState.progress = 0;
+        spineTransitionState.canvasSize = chartCanvasSize(chart);
       } else if (previousArea) {
         setSpineGeometry(previousArea);
       }
@@ -2670,10 +2756,14 @@
         onFrame(progress) {
           // The custom X-axis (including marks/title/grid) and Y-spine
           // share the same coordinates while Chart.js moves the bar values.
-          spineTransitionState.progress = progress;
-          if (chart === transitionChart) {
+          if (chart !== transitionChart || !spineTransitionState.active) return;
+          // Browser resize/orientation changes invalidate absolute coords.
+          if (resetResizedAxisMotion(transitionChart)) {
             transitionChart.draw();
+            return;
           }
+          spineTransitionState.progress = progress;
+          transitionChart.draw();
         },
         onComplete() {
           if (chart !== transitionChart) return;
@@ -2912,9 +3002,17 @@
               scale.width = PFF.mobileLayout() ? 60 : 72;
             };
 
+            // A responsive refresh can arrive before/after Chart.js resize.
+            // Do not overwrite a running transition unless the canvas changed.
+            resetResizedAxisMotion(chart);
+            const refreshedChart = chart;
             requestAnimationFrame(() => {
-              setSpineGeometry(chart?.chartArea);
-              chart?.draw();
+              if (chart !== refreshedChart || !chart || activeView === 'all') return;
+              resetResizedAxisMotion(chart);
+              if (!spineTransitionState.active) {
+                setSpineGeometry(chart.chartArea);
+              }
+              chart.draw();
             });
           }
 
