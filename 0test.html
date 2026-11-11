@@ -4905,7 +4905,10 @@
     }
 
     .data-table th[data-key="postcode"] .sort-label {
-      width: 100%;
+      box-sizing: border-box;
+      width: auto;
+      min-width: 0;
+      flex: 1 1 auto;
       overflow: visible;
       padding-right: 10px;
       text-align: left;
@@ -5086,7 +5089,7 @@
                  entry (DD/MM/YYYY), update data-beta-version / aria-label / visible badge text together, and preserve older
                  milestone entries. Do not use em dashes in version log summaries; use commas, semicolons, colons or plain
                  wording instead. -->
-            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.880" data-beta-log="0.880|11/11/2026|Additional-language access; leaner clinician filters; startup handoff and table-density improvements&#10;0.870|04/11/2026|Referral/contact redesign; leaner directory table; service-transition and loader polish&#10;0.860|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.850|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.880">E.A.T. Beta v0.880</div>
+            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.890" data-beta-log="0.890|11/11/2026|Single-owner loader handoff; hidden-filter preservation; language-row geometry and filter-count fixes&#10;0.880|11/11/2026|Additional-language access; leaner clinician filters; startup handoff and table-density improvements&#10;0.870|04/11/2026|Referral/contact redesign; leaner directory table; service-transition and loader polish&#10;0.860|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.850|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.890">E.A.T. Beta v0.890</div>
             <div
               id="dataSourceIndicator"
               class="live-data eat-live-data"
@@ -6621,9 +6624,7 @@
     let preservedRuralitySelection = new Set(MMM_VALUES);
     let preservedStateSelection = new Set(STATES);
     let preservedPhnSelection = new Set();
-    let warmRevealToken = 0;
-    let warmRevealPromise = null;
-    let resolveWarmRevealPromise = null;
+    const preservedPhnSelectionsByService = new Map();
     let filterCountWorkHandle = null;
     let filterCountWorkToken = 0;
     let selectedTableRow = null;
@@ -13827,21 +13828,20 @@
 
       let anchor = resetFiltersButton;
       const placeAfter = control => {
+        if (!control || control.hidden) {
+          return;
+        }
         anchor.insertAdjacentElement('afterend', control);
         anchor = control;
       };
 
-      /* Clinical priority: Reset → Add. languages → Specialty. The language
-       * control disappears automatically for services with no language data. */
+      /* Clinical priority: Reset → Add. languages → Specialty. Disabled
+       * controls stay parked in their original DOM location rather than being
+       * shuffled invisibly through the active control sequence. */
       placeAfter(languageControl);
       placeAfter(specialtyControl);
 
-      if (activeServiceType === 'ophthalmology') {
-        placeAfter(stateControl);
-        placeAfter(ruralityControl);
-        placeAfter(phnControl);
-        placeAfter(ownershipControl);
-      } else if (isFavourites) {
+      if (activeServiceType === 'ophthalmology' || isFavourites) {
         placeAfter(stateControl);
         placeAfter(ruralityControl);
         placeAfter(phnControl);
@@ -13854,6 +13854,27 @@
       }
 
       requestAnimationFrame(updateControlsScrollUi);
+    }
+
+    function rememberPreservedPhnSelection(service = activeServiceType) {
+      if (!service) return;
+      preservedPhnSelectionsByService.set(
+        service,
+        new Set(preservedPhnSelection)
+      );
+    }
+
+    function restorePreservedPhnSelection(service = activeServiceType) {
+      const allowed = new Set(phnValues);
+      const stored = preservedPhnSelectionsByService.get(service);
+      const valid = stored
+        ? [...stored].filter(value => allowed.has(value))
+        : [];
+
+      preservedPhnSelection = new Set(
+        valid.length ? valid : phnValues
+      );
+      rememberPreservedPhnSelection(service);
     }
 
     function activateServiceDataset(service = activeServiceType, arrangeControls = true) {
@@ -13878,10 +13899,18 @@
       lastSortSignature = '';
       lastFilterCountSignature = '';
 
+      if (expandedLanguageRows.size) {
+        invalidateExpandedLanguageRowGeometry();
+      }
+
       selectedPHNs.clear();
       phnValues.forEach(value => selectedPHNs.add(value));
-      if (!preservedPhnSelection.size) {
-        preservedPhnSelection = new Set(phnValues);
+      if (SHOW_PHN_UI) {
+        if (!preservedPhnSelection.size) {
+          preservedPhnSelection = new Set(phnValues);
+        }
+      } else {
+        restorePreservedPhnSelection(service);
       }
 
       renderPHNOptions();
@@ -14159,6 +14188,10 @@
         captureSharedServiceLayout();
       cancelServiceTransitionAnimations();
 
+      if (!SHOW_PHN_UI) {
+        rememberPreservedPhnSelection(current);
+      }
+
       activeServiceType =
         nextService;
 
@@ -14435,10 +14468,10 @@
 
       lastFilterCountSignature = countSignature;
 
-      const stateCounts = new Map();
+      const stateCounts = SHOW_STATE_FILTER_UI ? new Map() : null;
       const ownershipCounts = new Map();
-      const mmmCounts = new Map();
-      const phnCounts = new Map();
+      const mmmCounts = SHOW_RURALITY_UI ? new Map() : null;
+      const phnCounts = SHOW_PHN_UI ? new Map() : null;
       const specialtyCounts = new Map();
       const languageCounts = new Map();
       const specialtyDefinitions = activeSpecialtyDefinitions();
@@ -14499,6 +14532,7 @@
           }
 
           const statePass =
+            !SHOW_STATE_FILTER_UI ||
             selectedStates.size === STATES.length ||
             selectedStates.has(row.stateCode);
 
@@ -14508,10 +14542,12 @@
             selectedOwnershipTypes.has(row.ownershipCode);
 
           const mmmPass =
+            !SHOW_RURALITY_UI ||
             selectedMMM.size === MMM_VALUES.length ||
             selectedMMM.has(row.mmmCode);
 
           const phnPass =
+            !SHOW_PHN_UI ||
             selectedPHNs.size === phnValues.length ||
             selectedPHNs.has(row.phnCode);
 
@@ -14524,6 +14560,7 @@
           // Each facet ignores only its own current selection, while all
           // other active search/location/filter constraints remain applied.
           if (
+            SHOW_STATE_FILTER_UI &&
             ownershipPass &&
             mmmPass &&
             phnPass &&
@@ -14546,6 +14583,7 @@
           }
 
           if (
+            SHOW_RURALITY_UI &&
             statePass &&
             ownershipPass &&
             phnPass &&
@@ -14557,6 +14595,7 @@
           }
 
           if (
+            SHOW_PHN_UI &&
             statePass &&
             ownershipPass &&
             mmmPass &&
@@ -14603,12 +14642,14 @@
         }
       );
 
-      STATES.forEach(
-        value => setCountText(
-          `[data-count-for="state:${value}"]`,
-          stateCounts.get(value) || 0
-        )
-      );
+      if (SHOW_STATE_FILTER_UI) {
+        STATES.forEach(
+          value => setCountText(
+            `[data-count-for="state:${value}"]`,
+            stateCounts.get(value) || 0
+          )
+        );
+      }
 
       OWNERSHIP_TYPES.forEach(
         value => setCountText(
@@ -14617,23 +14658,27 @@
         )
       );
 
-      MMM_VALUES.forEach(
-        value => setCountText(
-          `[data-count-for="mmm:${value}"]`,
-          mmmCounts.get(value) || 0
-        )
-      );
-
-      phnOptions
-        .querySelectorAll('[data-phn-count]')
-        .forEach(
-          element => {
-            const value = element.dataset.phnCount || '';
-            element.textContent = PFF.formatInteger(
-              phnCounts.get(value) || 0
-            );
-          }
+      if (SHOW_RURALITY_UI) {
+        MMM_VALUES.forEach(
+          value => setCountText(
+            `[data-count-for="mmm:${value}"]`,
+            mmmCounts.get(value) || 0
+          )
         );
+      }
+
+      if (SHOW_PHN_UI) {
+        phnOptions
+          .querySelectorAll('[data-phn-count]')
+          .forEach(
+            element => {
+              const value = element.dataset.phnCount || '';
+              element.textContent = PFF.formatInteger(
+                phnCounts.get(value) || 0
+              );
+            }
+          );
+      }
 
       specialtyDefinitions.forEach(
         definition => {
@@ -14653,14 +14698,20 @@
         }
       );
 
-      document.getElementById('state-all-count').textContent =
-        PFF.formatInteger(stateAllCount);
+      if (SHOW_STATE_FILTER_UI) {
+        document.getElementById('state-all-count').textContent =
+          PFF.formatInteger(stateAllCount);
+      }
       document.getElementById('ownership-all-count').textContent =
         PFF.formatInteger(ownershipAllCount);
-      document.getElementById('rurality-all-count').textContent =
-        PFF.formatInteger(mmmAllCount);
-      document.getElementById('phn-all-count').textContent =
-        PFF.formatInteger(phnAllCount);
+      if (SHOW_RURALITY_UI) {
+        document.getElementById('rurality-all-count').textContent =
+          PFF.formatInteger(mmmAllCount);
+      }
+      if (SHOW_PHN_UI) {
+        document.getElementById('phn-all-count').textContent =
+          PFF.formatInteger(phnAllCount);
+      }
       document.getElementById('specialty-all-count').textContent =
         PFF.formatInteger(specialtyAllCount);
       document.getElementById('language-all-count').textContent =
@@ -14757,6 +14808,7 @@
         const visibleSelection = selectedCheckboxValues('.phn-filter');
         visibleSelection.forEach(value => selectedPHNs.add(value));
         preservedPhnSelection = new Set(visibleSelection);
+        rememberPreservedPhnSelection(activeServiceType);
       } else {
         phnValues.forEach(value => selectedPHNs.add(value));
       }
@@ -16269,6 +16321,11 @@
               tableScrollController.update();
               stickyTableScrollController.update();
 
+              if (expandedLanguageRows.size) {
+                invalidateExpandedLanguageRowGeometry();
+                renderVirtualTableWindow(true);
+              }
+
               if (practiceContactCard?.classList.contains('is-visible')) {
                 positionPracticeContactCard();
               }
@@ -16574,6 +16631,15 @@
       });
 
       return changed;
+    }
+
+    function invalidateExpandedLanguageRowGeometry() {
+      if (!expandedLanguageRowHeights.size) {
+        return;
+      }
+
+      expandedLanguageRowHeights.clear();
+      rebuildVirtualExpandedHeightPrefix();
     }
 
     function restoreVirtualSelectedRow() {
@@ -17548,6 +17614,7 @@
       preservedPhnSelection = new Set(
         savedPhnValues.length ? savedPhnValues : phnValues
       );
+      rememberPreservedPhnSelection(activeServiceType);
       if (SHOW_PHN_UI) {
         setCheckedValues('.phn-filter', Array.from(preservedPhnSelection));
       } else {
@@ -17630,9 +17697,16 @@
           input.checked = true;
         }
       );
-      preservedRuralitySelection = new Set(MMM_VALUES);
-      preservedStateSelection = new Set(STATES);
-      preservedPhnSelection = new Set(phnValues);
+      if (SHOW_RURALITY_UI) {
+        preservedRuralitySelection = new Set(MMM_VALUES);
+      }
+      if (SHOW_STATE_FILTER_UI) {
+        preservedStateSelection = new Set(STATES);
+      }
+      if (SHOW_PHN_UI) {
+        preservedPhnSelection = new Set(phnValues);
+        rememberPreservedPhnSelection(activeServiceType);
+      }
 
       document.querySelectorAll('.specialty-filter')
         .forEach(
@@ -17701,6 +17775,8 @@
         // View persistence is optional; cached data are intentionally retained.
       }
 
+      preservedPhnSelectionsByService.clear();
+
       if (serviceChanged) {
         activateServiceDataset('ophthalmology');
       } else {
@@ -17720,6 +17796,7 @@
       preservedRuralitySelection = new Set(MMM_VALUES);
       preservedStateSelection = new Set(STATES);
       preservedPhnSelection = new Set(phnValues);
+      rememberPreservedPhnSelection(activeServiceType);
 
       document.querySelectorAll('.specialty-filter')
         .forEach(
@@ -18267,9 +18344,8 @@
           syncFrozenColumnShadow();
           if (expandedLanguageRows.size) {
             window.requestAnimationFrame(() => {
-              measureExpandedLanguageRowHeights();
-              rebuildVirtualExpandedHeightPrefix();
-              scheduleVirtualTableWindowUpdate(true);
+              invalidateExpandedLanguageRowGeometry();
+              renderVirtualTableWindow(true);
             });
           }
         }
@@ -18958,6 +19034,10 @@
       window.addEventListener('resize', () => {
         hideActionTooltip();
 
+        if (expandedLanguageRows.size) {
+          invalidateExpandedLanguageRowGeometry();
+        }
+
         const mobileWidthMode = usesMobileTableWidths();
         if (mobileWidthMode !== lastMobileTableWidthMode) {
           lastMobileTableWidthMode = mobileWidthMode;
@@ -19074,106 +19154,14 @@
 
 
     function revealWarmStartUi() {
-      const token = ++warmRevealToken;
+      /* The loader asset is the sole owner of cycle completion. Calling the
+       * core reveal path removes is-loading; pff_loader.js observes that change
+       * and keeps its opaque cycle-hold overlay until the CURRENT visible
+       * spectral cycle completes. Any live refresh that arrives meanwhile is
+       * rendered underneath, so the handoff shows the newest dataset available. */
       window.PFFLoader?.sync();
-
-      const settleWarmReveal = () => {
-        if (token !== warmRevealToken) return;
-
-        /* Use the core reveal path rather than manually removing loading
-         * classes. It keeps the opaque loader over the already-rendered app
-         * for the final paint frames, preventing a white/blank handoff gap. */
-        PFF.hideLoadingState(app);
-
-        const waitForOpaqueHandoffToFinish = () => {
-          if (token !== warmRevealToken) return;
-
-          const stillHolding =
-            app.classList.contains('is-loading') ||
-            app.classList.contains('pff-reveal-pending') ||
-            app.classList.contains('pff-loader-cycle-hold');
-
-          if (stillHolding) {
-            requestAnimationFrame(waitForOpaqueHandoffToFinish);
-            return;
-          }
-
-          window.EATStartupGuard?.clear();
-          resolveWarmRevealPromise?.();
-          resolveWarmRevealPromise = null;
-        };
-
-        requestAnimationFrame(waitForOpaqueHandoffToFinish);
-      };
-
-      const finishAtCurrentCycleBoundary = () => {
-        if (token !== warmRevealToken) return;
-
-        const loader = app.querySelector(
-          ':scope > .app-loading > .cone-loader.pff-spectral-loader'
-        );
-
-        /* Freeze the just-completed curve before core removes is-loading.
-         * pff_loader.js then knows that this cycle is complete and does not
-         * start another wait. Core's pff-reveal-pending overlay remains opaque
-         * while whichever dataset is newest (warm or live) finishes painting. */
-        loader?.classList.add('pff-spectral-complete');
-        settleWarmReveal();
-      };
-
-      if (
-        document.visibilityState === 'hidden' ||
-        PFF.reducedMotion?.()
-      ) {
-        finishAtCurrentCycleBoundary();
-        return;
-      }
-
-      const reveal = app.querySelector(
-        ':scope > .app-loading > .cone-loader.pff-spectral-loader .pff-spectral-reveal'
-      );
-
-      if (!reveal) {
-        finishAtCurrentCycleBoundary();
-        return;
-      }
-
-      const animation = reveal.getAnimations?.()
-        .find(item => item.playState === 'running' && item.animationName === 'pffSpectralReveal');
-
-      if (!animation) {
-        /* Very early warm starts may arrive before the browser exposes the CSS
-         * animation object. Keep the opaque loader up for one complete visible
-         * cycle rather than allowing cached content to interrupt it. */
-        window.setTimeout(finishAtCurrentCycleBoundary, 3370);
-        return;
-      }
-
-      const durationCandidate = Number(
-        animation.effect?.getComputedTiming?.().duration
-      );
-      const duration = Number.isFinite(durationCandidate) && durationCandidate > 0
-        ? durationCandidate
-        : 3350;
-      const elapsed = Number(animation.currentTime);
-      const position = Number.isFinite(elapsed)
-        ? ((elapsed % duration) + duration) % duration
-        : 0;
-      const remaining = position < 1 ? duration : duration - position;
-
-      let completed = false;
-      const done = () => {
-        if (completed) return;
-        completed = true;
-        reveal.removeEventListener('animationiteration', onIteration);
-        finishAtCurrentCycleBoundary();
-      };
-      const onIteration = event => {
-        if (event.animationName === 'pffSpectralReveal') done();
-      };
-
-      reveal.addEventListener('animationiteration', onIteration);
-      window.setTimeout(done, Math.min(duration + 250, remaining + 250));
+      PFF.hideLoadingState(app);
+      window.EATStartupGuard?.clear();
     }
 
     function finishDatasetRender() {
@@ -19227,26 +19215,13 @@
       hasRenderedDataset = true;
 
       if (warm) {
-        // The live request may finish while the warm snapshot is still waiting
-        // for the visible animation cycle. Keep PFF.initialiseApp from revealing
-        // early; at the cycle boundary the newest already-rendered dataset wins.
-        if (!warmRevealPromise) {
-          warmRevealPromise = new Promise(resolve => {
-            resolveWarmRevealPromise = resolve;
-          }).finally(() => {
-            warmRevealPromise = null;
-          });
-        }
-
-        // Give the loader time to register and paint before requesting the
-        // cycle-aware reveal of cached data.
+        /* Give the loader one paint opportunity to register its visible-cycle
+         * epoch, then request the normal core reveal. pff_loader.js extends the
+         * opaque overlay through the rest of that CURRENT cycle. If live data
+         * arrives before release, refreshLoadedDataset() updates underneath it. */
         window.requestAnimationFrame(
           () => {
-            window.requestAnimationFrame(
-              () => {
-                revealWarmStartUi();
-              }
-            );
+            revealWarmStartUi();
           }
         );
       }
@@ -19289,6 +19264,10 @@
         });
 
         updateAllCheckbox('phn-all', '.phn-filter');
+
+        if (!SHOW_PHN_UI) {
+          restorePreservedPhnSelection(activeServiceType);
+        }
       }
 
       const languageListChanged =
@@ -19296,6 +19275,10 @@
         previousLanguageValues.some((value, index) => value !== languageValues[index]);
 
       if (languageListChanged) {
+        if (expandedLanguageRows.size) {
+          invalidateExpandedLanguageRowGeometry();
+        }
+
         const availableLanguageKeys = new Set(
           activeLanguageDefinitions().map(definition => definition.key)
         );
@@ -19478,14 +19461,8 @@
           dataSourceText
       },
 
-      async render(loaded) {
-        const result = renderLoadedDataset(loaded);
-
-        if (warmRevealPromise && app.classList.contains('is-loading')) {
-          await warmRevealPromise;
-        }
-
-        return result;
+      render(loaded) {
+        return renderLoadedDataset(loaded);
       },
 
       onError() {
