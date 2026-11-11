@@ -5089,7 +5089,7 @@
                  entry (DD/MM/YYYY), update data-beta-version / aria-label / visible badge text together, and preserve older
                  milestone entries. Do not use em dashes in version log summaries; use commas, semicolons, colons or plain
                  wording instead. -->
-            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.890" data-beta-log="0.890|11/11/2026|Single-owner loader handoff; hidden-filter preservation; language-row geometry and filter-count fixes&#10;0.880|11/11/2026|Additional-language access; leaner clinician filters; startup handoff and table-density improvements&#10;0.870|04/11/2026|Referral/contact redesign; leaner directory table; service-transition and loader polish&#10;0.860|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.850|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.890">E.A.T. Beta v0.890</div>
+            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.891" data-beta-log="0.891|11/11/2026|Saved-view compatibility; live-language sync; dynamic-sort and virtual-row edge-case fixes&#10;0.890|11/11/2026|Single-owner loader handoff; hidden-filter preservation; language-row geometry and filter-count fixes&#10;0.880|11/11/2026|Additional-language access; leaner clinician filters; startup handoff and table-density improvements&#10;0.870|04/11/2026|Referral/contact redesign; leaner directory table; service-transition and loader polish&#10;0.860|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.850|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.891">E.A.T. Beta v0.891</div>
             <div
               id="dataSourceIndicator"
               class="live-data eat-live-data"
@@ -6620,7 +6620,7 @@
     const expandedLanguageRows = new Set();
     const expandedLanguageRowHeights = new Map();
     let virtualExpandedHeightPrefix = new Float64Array(1);
-    const pendingSavedLanguageKeys = new Set();
+    const pendingSavedLanguageKeysByService = new Map();
     let preservedRuralitySelection = new Set(MMM_VALUES);
     let preservedStateSelection = new Set(STATES);
     let preservedPhnSelection = new Set();
@@ -13866,14 +13866,13 @@
 
     function restorePreservedPhnSelection(service = activeServiceType) {
       const allowed = new Set(phnValues);
+      const hasStoredSelection = preservedPhnSelectionsByService.has(service);
       const stored = preservedPhnSelectionsByService.get(service);
-      const valid = stored
+      const valid = hasStoredSelection
         ? [...stored].filter(value => allowed.has(value))
-        : [];
+        : phnValues;
 
-      preservedPhnSelection = new Set(
-        valid.length ? valid : phnValues
-      );
+      preservedPhnSelection = new Set(valid);
       rememberPreservedPhnSelection(service);
     }
 
@@ -13906,8 +13905,12 @@
       selectedPHNs.clear();
       phnValues.forEach(value => selectedPHNs.add(value));
       if (SHOW_PHN_UI) {
-        if (!preservedPhnSelection.size) {
+        if (preservedPhnSelectionsByService.has(service)) {
+          restorePreservedPhnSelection(service);
+          setCheckedValues('.phn-filter', Array.from(preservedPhnSelection));
+        } else {
           preservedPhnSelection = new Set(phnValues);
+          rememberPreservedPhnSelection(service);
         }
       } else {
         restorePreservedPhnSelection(service);
@@ -13916,6 +13919,33 @@
       renderPHNOptions();
       renderSpecialtyOptions();
       requiredLanguages.clear();
+
+      const pendingSavedLanguageKeys =
+        pendingSavedLanguageKeysByService.get(service);
+      if (pendingSavedLanguageKeys?.size) {
+        const availableLanguageKeys = new Set(
+          activeLanguageDefinitions().map(definition => definition.key)
+        );
+        const unresolvedLanguageKeys = new Set();
+
+        pendingSavedLanguageKeys.forEach(key => {
+          if (availableLanguageKeys.has(key)) {
+            requiredLanguages.add(key);
+          } else {
+            unresolvedLanguageKeys.add(key);
+          }
+        });
+
+        if (unresolvedLanguageKeys.size) {
+          pendingSavedLanguageKeysByService.set(
+            service,
+            unresolvedLanguageKeys
+          );
+        } else {
+          pendingSavedLanguageKeysByService.delete(service);
+        }
+      }
+
       renderLanguageOptions();
       syncSelectedSpecialtyChips();
       syncSelectedSetsFromControls();
@@ -14473,7 +14503,8 @@
       const mmmCounts = SHOW_RURALITY_UI ? new Map() : null;
       const phnCounts = SHOW_PHN_UI ? new Map() : null;
       const specialtyCounts = new Map();
-      const languageCounts = new Map();
+      const hasLanguageFacet = languageValues.length > 0;
+      const languageCounts = hasLanguageFacet ? new Map() : null;
       const specialtyDefinitions = activeSpecialtyDefinitions();
 
       let stateAllCount = 0;
@@ -14555,7 +14586,7 @@
             specialtyRequirementsMet(row);
 
           const languagePass =
-            languageRequirementsMet(row);
+            !hasLanguageFacet || languageRequirementsMet(row);
 
           // Each facet ignores only its own current selection, while all
           // other active search/location/filter constraints remain applied.
@@ -14628,6 +14659,7 @@
            * respecting every other active facet. Multiple selected languages
            * are OR'd by languageRequirementsMet(). */
           if (
+            hasLanguageFacet &&
             statePass &&
             ownershipPass &&
             mmmPass &&
@@ -14689,14 +14721,16 @@
         }
       );
 
-      activeLanguageDefinitions().forEach(
-        definition => {
-          setCountText(
-            `[data-count-for="language:${definition.key}"]`,
-            languageCounts.get(definition.key) || 0
-          );
-        }
-      );
+      if (hasLanguageFacet) {
+        activeLanguageDefinitions().forEach(
+          definition => {
+            setCountText(
+              `[data-count-for="language:${definition.key}"]`,
+              languageCounts.get(definition.key) || 0
+            );
+          }
+        );
+      }
 
       if (SHOW_STATE_FILTER_UI) {
         document.getElementById('state-all-count').textContent =
@@ -14714,8 +14748,10 @@
       }
       document.getElementById('specialty-all-count').textContent =
         PFF.formatInteger(specialtyAllCount);
-      document.getElementById('language-all-count').textContent =
-        PFF.formatInteger(languageAllCount);
+      if (hasLanguageFacet) {
+        document.getElementById('language-all-count').textContent =
+          PFF.formatInteger(languageAllCount);
+      }
     }
 
     function cancelScheduledFilterCountUpdate() {
@@ -17378,8 +17414,17 @@
     }
 
     function savedViewSnapshot() {
+      const pendingLanguages =
+        pendingSavedLanguageKeysByService.get(activeServiceType) || new Set();
+      const savedLanguageKeys = Array.from(
+        new Set([
+          ...requiredLanguages,
+          ...pendingLanguages
+        ])
+      );
+
       return {
-        version: 7,
+        version: 6,
         serviceType: activeServiceType,
         search: searchInput.value,
         practiceCountScope,
@@ -17401,9 +17446,9 @@
             : Array.from(preservedRuralitySelection),
           phn: SHOW_PHN_UI
             ? checkedValues('.phn-filter')
-            : Array.from(preservedPhnSelection.size ? preservedPhnSelection : phnValues),
+            : Array.from(preservedPhnSelection),
           specialties: checkedValues('.specialty-filter'),
-          languages: Array.from(requiredLanguages)
+          languages: savedLanguageKeys
         },
         sortKey,
         sortDirection,
@@ -17582,38 +17627,35 @@
 
       syncSelectedLocationChip();
 
+      const hasSavedStateValues = Array.isArray(saved.filters?.states);
       const savedStateValues =
-        (Array.isArray(saved.filters?.states) ? saved.filters.states : STATES)
+        (hasSavedStateValues ? saved.filters.states : STATES)
           .map(cleanText)
           .filter(value => STATES.includes(value));
-      preservedStateSelection = new Set(
-        savedStateValues.length ? savedStateValues : STATES
-      );
+      preservedStateSelection = new Set(savedStateValues);
       if (SHOW_STATE_FILTER_UI) {
         setCheckedValues('.state-filter', Array.from(preservedStateSelection));
       } else {
         setCheckedValues('.state-filter', STATES);
       }
       setCheckedValues('.ownership-filter', saved.filters?.ownership);
+      const hasSavedRuralityValues = Array.isArray(saved.filters?.rurality);
       const savedRuralityValues =
-        (Array.isArray(saved.filters?.rurality) ? saved.filters.rurality : MMM_VALUES)
+        (hasSavedRuralityValues ? saved.filters.rurality : MMM_VALUES)
           .map(cleanText)
           .filter(value => MMM_VALUES.includes(value));
-      preservedRuralitySelection = new Set(
-        savedRuralityValues.length ? savedRuralityValues : MMM_VALUES
-      );
+      preservedRuralitySelection = new Set(savedRuralityValues);
       if (SHOW_RURALITY_UI) {
         setCheckedValues('.rurality-filter', Array.from(preservedRuralitySelection));
       } else {
         setCheckedValues('.rurality-filter', MMM_VALUES);
       }
+      const hasSavedPhnValues = Array.isArray(saved.filters?.phn);
       const savedPhnValues =
-        (Array.isArray(saved.filters?.phn) ? saved.filters.phn : phnValues)
+        (hasSavedPhnValues ? saved.filters.phn : phnValues)
           .map(cleanText)
           .filter(value => phnValues.includes(value));
-      preservedPhnSelection = new Set(
-        savedPhnValues.length ? savedPhnValues : phnValues
-      );
+      preservedPhnSelection = new Set(savedPhnValues);
       rememberPreservedPhnSelection(activeServiceType);
       if (SHOW_PHN_UI) {
         setCheckedValues('.phn-filter', Array.from(preservedPhnSelection));
@@ -17623,7 +17665,8 @@
       setCheckedValues('.specialty-filter', saved.filters?.specialties, false);
 
       requiredLanguages.clear();
-      pendingSavedLanguageKeys.clear();
+      const pendingSavedLanguageKeys = new Set();
+      pendingSavedLanguageKeysByService.delete(activeServiceType);
       const availableLanguageKeys = new Set(
         activeLanguageDefinitions().map(definition => definition.key)
       );
@@ -17637,6 +17680,12 @@
             pendingSavedLanguageKeys.add(key);
           }
         });
+      if (pendingSavedLanguageKeys.size) {
+        pendingSavedLanguageKeysByService.set(
+          activeServiceType,
+          pendingSavedLanguageKeys
+        );
+      }
 
       syncLanguageFilterControls();
       syncSelectedSetsFromControls();
@@ -17719,6 +17768,7 @@
           input.checked = false;
         });
       requiredLanguages.clear();
+      pendingSavedLanguageKeysByService.delete(activeServiceType);
       syncLanguageFilterControls();
 
       syncFilterAllStates();
@@ -17776,6 +17826,7 @@
       }
 
       preservedPhnSelectionsByService.clear();
+      pendingSavedLanguageKeysByService.clear();
 
       if (serviceChanged) {
         activateServiceDataset('ophthalmology');
@@ -19245,6 +19296,10 @@
       const prepared = ensureServicePrepared(activeServiceType);
       applyPreparedServiceState(prepared);
 
+      if (expandedLanguageRows.size) {
+        invalidateExpandedLanguageRowGeometry();
+      }
+
       const phnListChanged =
         previousPhnValues.length !== phnValues.length ||
         previousPhnValues.some((value, index) => value !== phnValues[index]);
@@ -19282,6 +19337,8 @@
         const availableLanguageKeys = new Set(
           activeLanguageDefinitions().map(definition => definition.key)
         );
+        const pendingSavedLanguageKeys =
+          pendingSavedLanguageKeysByService.get(activeServiceType) || new Set();
         const requestedLanguageKeys = new Set([
           ...previousRequiredLanguages,
           ...pendingSavedLanguageKeys
@@ -19294,10 +19351,31 @@
             pendingSavedLanguageKeys.delete(key);
           }
         });
+        if (pendingSavedLanguageKeys.size) {
+          pendingSavedLanguageKeysByService.set(
+            activeServiceType,
+            pendingSavedLanguageKeys
+          );
+        } else {
+          pendingSavedLanguageKeysByService.delete(activeServiceType);
+        }
 
         renderLanguageOptions();
         arrangeServiceControls();
         lastTableHeaderSignature = '';
+      }
+
+      syncSelectedSpecialtyChips();
+
+      if (
+        sortKey !== DEFAULT_SORT_KEY &&
+        !activeColumns().some(column => column.key === sortKey)
+      ) {
+        sortKey = activeLocation
+          ? 'distanceKm'
+          : DEFAULT_SORT_KEY;
+        sortDirection = 'asc';
+        distanceSortWasUserRequested = false;
       }
 
       setLoadedSourceIndicator(loaded);
