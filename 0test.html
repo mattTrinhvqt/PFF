@@ -1134,8 +1134,16 @@
       display: block;
       max-width: 100%;
       overflow: hidden;
+      box-sizing: border-box;
       line-height: 1.25;
       white-space: nowrap;
+    }
+
+    /* Expandable language cells reserve a fixed right-side slot for the
+     * overflow count. This keeps every …+N aligned to the same cell edge and
+     * prevents long language names from clipping the control itself. */
+    .language-cell-text.has-overflow:not(.is-expanded) {
+      padding-right: 34px;
     }
 
     .language-entry {
@@ -1158,6 +1166,7 @@
 
     .language-cell-text.is-expanded {
       overflow: visible;
+      padding-right: 0;
       text-overflow: clip;
       white-space: normal;
     }
@@ -1181,37 +1190,32 @@
       text-decoration: none;
     }
 
-    .language-expand-button {
-      display: inline;
-      margin: 0 0 0 4px;
-      padding: 0;
+    .language-expand-indicator {
+      position: absolute;
+      top: 50%;
+      right: var(--eat-table-cell-padding-inline);
+      z-index: 2;
+      display: inline-block;
       color: var(--pff-muted);
-      background: transparent;
-      border: 0;
       font: inherit;
       font-weight: 700;
-      line-height: inherit;
-      cursor: pointer;
+      line-height: 1;
       white-space: nowrap;
+      transform: translateY(-50%);
+      pointer-events: none;
     }
 
-    .language-expand-button:hover,
-    .language-expand-button:focus-visible {
+    .data-table td[data-key="additionalLanguages"].is-language-expandable {
+      cursor: pointer;
+    }
+
+    .data-table td[data-key="additionalLanguages"].is-language-expandable:hover .language-expand-indicator,
+    .data-table td[data-key="additionalLanguages"].is-language-expandable:focus-visible .language-expand-indicator {
       color: var(--eat-accent);
-      outline: 0;
-      text-decoration: none;
     }
 
-    .language-expand-expanded {
+    .language-cell-text.is-expanded .language-expand-indicator {
       display: none;
-    }
-
-    .language-cell-text.is-expanded .language-expand-collapsed {
-      display: none;
-    }
-
-    .language-cell-text.is-expanded .language-expand-expanded {
-      display: inline;
     }
 
     .data-table td.is-language-expanded {
@@ -6584,6 +6588,14 @@
     let virtualTableStart = -1;
     let virtualTableEnd = -1;
     let virtualTableRowHeight = 29;
+    const expandedLanguageRows = new Set();
+    const expandedLanguageRowHeights = new Map();
+    let virtualExpandedHeightPrefix = new Float64Array(1);
+    const pendingSavedLanguageKeys = new Set();
+    let preservedRuralitySelection = new Set(MMM_VALUES);
+    let warmRevealToken = 0;
+    let warmRevealPromise = null;
+    let resolveWarmRevealPromise = null;
     let filterCountWorkHandle = null;
     let filterCountWorkToken = 0;
     let selectedTableRow = null;
@@ -7139,6 +7151,10 @@
       const legacyKey =
         `${service}:${legacyPracticeIdForFavouriteRow(row, service)}`;
       return favouriteIdAliases.get(legacyKey) || legacyKey;
+    }
+
+    function languageExpansionKey(row) {
+      return favouriteKeyForRow(row, serviceTypeForRow(row));
     }
 
     function favouriteIdentityForRow(row, serviceHint = activeServiceType) {
@@ -14693,12 +14709,9 @@
 
       selectedMMM.clear();
       if (SHOW_RURALITY_UI) {
-        selectedCheckboxValues(
-          '.rurality-filter'
-        ).forEach(
-          value =>
-            selectedMMM.add(value)
-        );
+        const visibleSelection = selectedCheckboxValues('.rurality-filter');
+        visibleSelection.forEach(value => selectedMMM.add(value));
+        preservedRuralitySelection = new Set(visibleSelection);
       } else {
         MMM_VALUES.forEach(value => selectedMMM.add(value));
       }
@@ -15406,11 +15419,19 @@
         ).join('');
 
         const hiddenCount = Math.max(0, entries.length - 2);
-        const expandButton = hiddenCount
-          ? `<button class="language-expand-button" type="button" aria-expanded="false" aria-label="Show ${hiddenCount} more languages" title="Show all languages"><span class="language-expand-collapsed">…+${hiddenCount}</span><span class="language-expand-expanded">−</span></button>`
+        const expanded =
+          hiddenCount > 0 &&
+          expandedLanguageRows.has(languageExpansionKey(row));
+        const indicator = hiddenCount > 0 && !expanded
+          ? `<span class="language-expand-indicator" aria-hidden="true">…+${hiddenCount}</span>`
           : '';
+        const classes = [
+          'language-cell-text',
+          hiddenCount > 0 ? 'has-overflow' : '',
+          expanded ? 'is-expanded' : ''
+        ].filter(Boolean).join(' ');
 
-        return `<span class="language-cell-text">${links}${expandButton}</span>`;
+        return `<span class="${classes}">${links}${indicator}</span>`;
       }
 
       if (column.key === 'specialtiesSummary') {
@@ -16286,18 +16307,55 @@
                 !Number.isFinite(distanceNumber(row.distanceKm))
                 ? ''
                 : cleanText(raw);
-          const popoverAttrs = fullText
-            ? ` class="has-full-text" tabindex="0" data-full-text="${escapeHtml(fullText)}" title="${escapeHtml(fullText)}"`
+
+          const cellClasses = [];
+          const cellAttrs = [];
+
+          if (fullText) {
+            cellClasses.push('has-full-text');
+            cellAttrs.push('tabindex="0"');
+            cellAttrs.push(`data-full-text="${escapeHtml(fullText)}"`);
+            cellAttrs.push(`title="${escapeHtml(fullText)}"`);
+          }
+
+          if (column.key === 'additionalLanguages') {
+            const languageEntries = row.languageEntries || [];
+            const expandable = languageEntries.length > 2;
+            const expansionKey = languageExpansionKey(row);
+            const expanded = expandable && expandedLanguageRows.has(expansionKey);
+
+            if (expandable) {
+              cellClasses.push('is-language-expandable');
+              if (expanded) cellClasses.push('is-language-expanded');
+              cellAttrs.push('tabindex="0"');
+              cellAttrs.push(`data-language-expand-key="${escapeHtml(expansionKey)}"`);
+              cellAttrs.push(`aria-expanded="${String(expanded)}"`);
+              cellAttrs.push(`aria-label="${expanded ? 'Show fewer' : 'Show all'} additional languages for ${escapeHtml(row.practiceName)}"`);
+              cellAttrs.push(`title="${expanded ? 'Click to show fewer additional languages' : 'Click to show all additional languages'}"`);
+            }
+          }
+
+          const classAttr = cellClasses.length
+            ? ` class="${cellClasses.join(' ')}"`
+            : '';
+          const extraAttrs = cellAttrs.length
+            ? ` ${cellAttrs.join(' ')}`
             : '';
 
           cells.push(
-            `<td data-key="${column.key}"${SPECIALTY_TABLE_COLUMN_KEYS.has(column.key) ? ' data-specialty-column="true"' : ''} ${popoverAttrs}>${formatCell(row, column)}</td>`
+            `<td data-key="${column.key}"${SPECIALTY_TABLE_COLUMN_KEYS.has(column.key) ? ' data-specialty-column="true"' : ''}${classAttr}${extraAttrs}>${formatCell(row, column)}</td>`
           );
         }
       );
 
       const rowClasses = ['virtual-data-row'];
       if (row.isPublicService) rowClasses.push('is-public-service');
+      if (
+        (row.languageEntries || []).length > 2 &&
+        expandedLanguageRows.has(languageExpansionKey(row))
+      ) {
+        rowClasses.push('is-language-expanded');
+      }
       if (rowIndex === selectedTableRowIndex) rowClasses.push('is-selected');
 
       return `
@@ -16341,6 +16399,58 @@
       return window.scrollY + rect.top;
     }
 
+    function rebuildVirtualExpandedHeightPrefix() {
+      const prefix = new Float64Array(filteredRows.length + 1);
+
+      for (let index = 0; index < filteredRows.length; index += 1) {
+        const row = filteredRows[index];
+        const key = languageExpansionKey(row);
+        const expandedHeight =
+          (row.languageEntries || []).length > 2 &&
+          expandedLanguageRows.has(key)
+            ? Number(expandedLanguageRowHeights.get(key))
+            : NaN;
+        const extra = Number.isFinite(expandedHeight)
+          ? Math.max(0, expandedHeight - virtualTableRowHeight)
+          : 0;
+        prefix[index + 1] = prefix[index] + extra;
+      }
+
+      virtualExpandedHeightPrefix = prefix;
+    }
+
+    function virtualHeightBeforeIndex(index) {
+      const safeIndex = Math.max(0, Math.min(filteredRows.length, Number(index) || 0));
+      const extra = virtualExpandedHeightPrefix[safeIndex] || 0;
+      return safeIndex * virtualTableRowHeight + extra;
+    }
+
+    function virtualHeightBetween(start, end) {
+      const safeStart = Math.max(0, Math.min(filteredRows.length, Number(start) || 0));
+      const safeEnd = Math.max(safeStart, Math.min(filteredRows.length, Number(end) || 0));
+      const extra =
+        (virtualExpandedHeightPrefix[safeEnd] || 0) -
+        (virtualExpandedHeightPrefix[safeStart] || 0);
+      return (safeEnd - safeStart) * virtualTableRowHeight + extra;
+    }
+
+    function virtualIndexForOffset(offset) {
+      let low = 0;
+      let high = filteredRows.length;
+      const target = Math.max(0, Number(offset) || 0);
+
+      while (low < high) {
+        const mid = Math.floor((low + high + 1) / 2);
+        if (virtualHeightBeforeIndex(mid) <= target) {
+          low = mid;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      return low;
+    }
+
     function desiredVirtualTableStart() {
       const totalRows = filteredRows.length;
       if (totalRows <= TABLE_VIRTUAL_MIN_ROWS) return 0;
@@ -16373,8 +16483,7 @@
 
       const estimatedIndex = Math.max(
         0,
-        Math.floor(offset / Math.max(1, virtualTableRowHeight)) -
-          TABLE_VIRTUAL_OVERSCAN_ROWS
+        virtualIndexForOffset(offset) - TABLE_VIRTUAL_OVERSCAN_ROWS
       );
 
       const stepped = Math.floor(
@@ -16389,7 +16498,7 @@
 
     function measureVirtualRowHeight() {
       const heights = [
-        ...tableBody.querySelectorAll('tr.virtual-data-row')
+        ...tableBody.querySelectorAll('tr.virtual-data-row:not(.is-language-expanded)')
       ]
         .slice(0, 30)
         .map(row => row.getBoundingClientRect().height)
@@ -16402,6 +16511,30 @@
       if (!Number.isFinite(median) || median <= 0) return;
 
       virtualTableRowHeight = Math.max(18, Math.min(80, median));
+    }
+
+    function measureExpandedLanguageRowHeights() {
+      let changed = false;
+
+      tableBody.querySelectorAll(
+        'tr.virtual-data-row.is-language-expanded td[data-language-expand-key]'
+      ).forEach(cell => {
+        const key = cleanText(cell.dataset.languageExpandKey || '');
+        const rowElement = cell.closest('tr.virtual-data-row');
+        const height = rowElement?.getBoundingClientRect().height;
+
+        if (!key || !Number.isFinite(height) || height <= 8) {
+          return;
+        }
+
+        const previous = Number(expandedLanguageRowHeights.get(key));
+        if (!Number.isFinite(previous) || Math.abs(previous - height) > 0.5) {
+          expandedLanguageRowHeights.set(key, height);
+          changed = true;
+        }
+      });
+
+      return changed;
     }
 
     function restoreVirtualSelectedRow() {
@@ -16438,10 +16571,10 @@
       virtualTableEnd = end;
 
       const topHeight = shouldVirtualise
-        ? start * virtualTableRowHeight
+        ? virtualHeightBeforeIndex(start)
         : 0;
       const bottomHeight = shouldVirtualise
-        ? (totalRows - end) * virtualTableRowHeight
+        ? virtualHeightBetween(end, totalRows)
         : 0;
       const rows = filteredRows.slice(start, end);
       const contactCardIdentity = practiceContactCardTargetIdentity();
@@ -16461,11 +16594,16 @@
       requestAnimationFrame(() => {
         const previousHeight = virtualTableRowHeight;
         measureVirtualRowHeight();
+        const expandedHeightsChanged = measureExpandedLanguageRowHeights();
 
         if (
-          shouldVirtualise &&
-          Math.abs(previousHeight - virtualTableRowHeight) > 0.5
+          Math.abs(previousHeight - virtualTableRowHeight) > 0.5 ||
+          expandedHeightsChanged
         ) {
+          rebuildVirtualExpandedHeightPrefix();
+        }
+
+        if (shouldVirtualise) {
           const topSpacer = tableBody.querySelector(
             '.virtual-spacer-row:first-child td'
           );
@@ -16476,14 +16614,14 @@
           if (topSpacer && start > 0) {
             topSpacer.style.setProperty(
               '--virtual-spacer-height',
-              `${Math.round(start * virtualTableRowHeight)}px`
+              `${Math.round(virtualHeightBeforeIndex(start))}px`
             );
           }
 
           if (bottomSpacer && end < totalRows) {
             bottomSpacer.style.setProperty(
               '--virtual-spacer-height',
-              `${Math.round((totalRows - end) * virtualTableRowHeight)}px`
+              `${Math.round(virtualHeightBetween(end, totalRows))}px`
             );
           }
         }
@@ -16520,6 +16658,7 @@
       virtualTableColumns = columns;
       virtualTableStart = -1;
       virtualTableEnd = -1;
+      rebuildVirtualExpandedHeightPrefix();
 
       tableScroll.style.display = hasRows ? '' : 'none';
 
@@ -17150,7 +17289,9 @@
         filters: {
           states: checkedValues('.state-filter'),
           ownership: checkedValues('.ownership-filter'),
-          rurality: checkedValues('.rurality-filter'),
+          rurality: SHOW_RURALITY_UI
+            ? checkedValues('.rurality-filter')
+            : Array.from(preservedRuralitySelection),
           phn: checkedValues('.phn-filter'),
           specialties: checkedValues('.specialty-filter'),
           languages: Array.from(requiredLanguages)
@@ -17334,8 +17475,15 @@
 
       setCheckedValues('.state-filter', saved.filters?.states);
       setCheckedValues('.ownership-filter', saved.filters?.ownership);
+      const savedRuralityValues =
+        (Array.isArray(saved.filters?.rurality) ? saved.filters.rurality : MMM_VALUES)
+          .map(cleanText)
+          .filter(value => MMM_VALUES.includes(value));
+      preservedRuralitySelection = new Set(
+        savedRuralityValues.length ? savedRuralityValues : MMM_VALUES
+      );
       if (SHOW_RURALITY_UI) {
-        setCheckedValues('.rurality-filter', saved.filters?.rurality);
+        setCheckedValues('.rurality-filter', Array.from(preservedRuralitySelection));
       } else {
         setCheckedValues('.rurality-filter', MMM_VALUES);
       }
@@ -17343,13 +17491,20 @@
       setCheckedValues('.specialty-filter', saved.filters?.specialties, false);
 
       requiredLanguages.clear();
+      pendingSavedLanguageKeys.clear();
       const availableLanguageKeys = new Set(
         activeLanguageDefinitions().map(definition => definition.key)
       );
       (Array.isArray(saved.filters?.languages) ? saved.filters.languages : [])
         .map(cleanText)
-        .filter(key => availableLanguageKeys.has(key))
-        .forEach(key => requiredLanguages.add(key));
+        .filter(Boolean)
+        .forEach(key => {
+          if (availableLanguageKeys.has(key)) {
+            requiredLanguages.add(key);
+          } else {
+            pendingSavedLanguageKeys.add(key);
+          }
+        });
 
       syncLanguageFilterControls();
       syncSelectedSetsFromControls();
@@ -17410,6 +17565,7 @@
           input.checked = true;
         }
       );
+      preservedRuralitySelection = new Set(MMM_VALUES);
 
       document.querySelectorAll('.specialty-filter')
         .forEach(
@@ -17494,6 +17650,7 @@
           input.checked = true;
         }
       );
+      preservedRuralitySelection = new Set(MMM_VALUES);
 
       document.querySelectorAll('.specialty-filter')
         .forEach(
@@ -18039,6 +18196,13 @@
         () => {
           syncLocationChipTooltip();
           syncFrozenColumnShadow();
+          if (expandedLanguageRows.size) {
+            window.requestAnimationFrame(() => {
+              measureExpandedLanguageRowHeights();
+              rebuildVirtualExpandedHeightPrefix();
+              scheduleVirtualTableWindowUpdate(true);
+            });
+          }
         }
       );
 
@@ -18271,23 +18435,31 @@
       dataTable.addEventListener(
         'click',
         event => {
-          const languageExpandButton = event.target.closest('.language-expand-button');
-          if (languageExpandButton) {
+          if (event.target.closest('.language-evidence-link')) {
+            return;
+          }
+
+          const languageCell = event.target.closest(
+            'td[data-key="additionalLanguages"].is-language-expandable'
+          );
+          if (languageCell) {
             event.preventDefault();
             event.stopPropagation();
 
-            const languageList = languageExpandButton.closest('.language-cell-text');
-            const cell = languageExpandButton.closest('td[data-key="additionalLanguages"]');
-            const expanded = !languageList?.classList.contains('is-expanded');
-
-            languageList?.classList.toggle('is-expanded', expanded);
-            cell?.classList.toggle('is-language-expanded', expanded);
-            languageExpandButton.setAttribute('aria-expanded', String(expanded));
-            languageExpandButton.setAttribute(
-              'aria-label',
-              expanded ? 'Collapse additional languages' : 'Show more additional languages'
+            const expansionKey = cleanText(
+              languageCell.dataset.languageExpandKey || ''
             );
-            languageExpandButton.title = expanded ? 'Show fewer languages' : 'Show all languages';
+            if (!expansionKey) return;
+
+            if (expandedLanguageRows.has(expansionKey)) {
+              expandedLanguageRows.delete(expansionKey);
+              expandedLanguageRowHeights.delete(expansionKey);
+            } else {
+              expandedLanguageRows.add(expansionKey);
+            }
+
+            rebuildVirtualExpandedHeightPrefix();
+            renderVirtualTableWindow(true);
             return;
           }
 
@@ -18301,6 +18473,27 @@
           if (row) {
             selectTableRow(row);
           }
+        }
+      );
+
+      dataTable.addEventListener(
+        'keydown',
+        event => {
+          if (event.key !== 'Enter' && event.key !== ' ') {
+            return;
+          }
+
+          if (event.target.closest('.language-evidence-link')) {
+            return;
+          }
+
+          const languageCell = event.target.closest(
+            'td[data-key="additionalLanguages"].is-language-expandable'
+          );
+          if (!languageCell) return;
+
+          event.preventDefault();
+          languageCell.click();
         }
       );
 
@@ -18793,6 +18986,7 @@
       sourceRows = prepared.rows;
       sourceRowsPracticeAsc = prepared.rowsPracticeAsc;
       phnValues = [...prepared.phnValues];
+      languageValues = [...(prepared.languageValues || [])];
       practiceSpatialIndex = prepared.spatialIndex;
       nearbyPercentileCache = prepared.nearbyPercentileCache;
       phnPracticeCountMap = prepared.phnCountMap;
@@ -18811,9 +19005,97 @@
 
 
     function revealWarmStartUi() {
+      const token = ++warmRevealToken;
       window.PFFLoader?.sync();
-      PFF.hideLoadingState(app);
-      window.EATStartupGuard?.clear();
+
+      const finish = () => {
+        if (token !== warmRevealToken) return;
+        const loader = app.querySelector(
+          ':scope > .app-loading > .cone-loader.pff-spectral-loader'
+        );
+
+        /* Mark the already-completed curve before removing is-loading so the
+         * loader observer does not begin another full spectral cycle. */
+        loader?.classList.add('pff-spectral-complete');
+        app.classList.remove(
+          'is-loading',
+          'pff-reveal-pending',
+          'pff-loader-cycle-hold'
+        );
+        app.setAttribute('aria-busy', 'false');
+        window.EATStartupGuard?.clear();
+        resolveWarmRevealPromise?.();
+        resolveWarmRevealPromise = null;
+      };
+
+      if (
+        document.visibilityState === 'hidden' ||
+        PFF.reducedMotion?.()
+      ) {
+        finish();
+        return;
+      }
+
+      const reveal = app.querySelector(
+        ':scope > .app-loading > .cone-loader.pff-spectral-loader .pff-spectral-reveal'
+      );
+
+      if (!reveal) {
+        finish();
+        return;
+      }
+
+      const animation = reveal.getAnimations?.()
+        .find(item => item.playState === 'running' && item.animationName === 'pffSpectralReveal');
+
+      if (!animation) {
+        /* Early-cache fallback: allow one complete visible loader cycle rather
+         * than letting warm-start data interrupt a partially painted cycle. */
+        window.setTimeout(finish, 3370);
+        return;
+      }
+
+      const durationCandidate = Number(
+        animation.effect?.getComputedTiming?.().duration
+      );
+      const duration = Number.isFinite(durationCandidate) && durationCandidate > 0
+        ? durationCandidate
+        : 3350;
+      const elapsed = Number(animation.currentTime);
+      const position = Number.isFinite(elapsed)
+        ? ((elapsed % duration) + duration) % duration
+        : 0;
+      const remaining = position < 1 ? duration : duration - position;
+
+      const completeAtCycleBoundary = () => {
+        if (token !== warmRevealToken) return;
+        /* Keep the completed curve on screen for two paints before revealing
+         * cached content, matching the normal loader handoff without cutting
+         * the animation short. */
+        const loader = app.querySelector(
+          ':scope > .app-loading > .cone-loader.pff-spectral-loader'
+        );
+        loader?.classList.add('pff-spectral-complete');
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            window.setTimeout(finish, 120);
+          });
+        });
+      };
+
+      let completed = false;
+      const done = () => {
+        if (completed) return;
+        completed = true;
+        reveal.removeEventListener('animationiteration', onIteration);
+        completeAtCycleBoundary();
+      };
+      const onIteration = event => {
+        if (event.animationName === 'pffSpectralReveal') done();
+      };
+
+      reveal.addEventListener('animationiteration', onIteration);
+      window.setTimeout(done, Math.min(duration + 250, remaining + 250));
     }
 
     function finishDatasetRender() {
@@ -18867,6 +19149,17 @@
       hasRenderedDataset = true;
 
       if (warm) {
+        // The live loader may finish while the warm snapshot is still waiting
+        // for its visible animation cycle. Keep PFF.initialiseApp from revealing
+        // early by exposing a promise that resolves only at the warm handoff.
+        if (!warmRevealPromise) {
+          warmRevealPromise = new Promise(resolve => {
+            resolveWarmRevealPromise = resolve;
+          }).finally(() => {
+            warmRevealPromise = null;
+          });
+        }
+
         // Give the loader time to register and paint before requesting the
         // cycle-aware reveal of cached data.
         window.requestAnimationFrame(
@@ -18886,6 +19179,8 @@
     function refreshLoadedDataset(loaded) {
       const previousPhnValues = [...phnValues];
       const previousSelectedPhns = new Set(selectedPHNs);
+      const previousLanguageValues = [...languageValues];
+      const previousRequiredLanguages = new Set(requiredLanguages);
       const allPhnsWereSelected =
         previousPhnValues.length > 0 &&
         previousSelectedPhns.size === previousPhnValues.length &&
@@ -18916,6 +19211,32 @@
         });
 
         updateAllCheckbox('phn-all', '.phn-filter');
+      }
+
+      const languageListChanged =
+        previousLanguageValues.length !== languageValues.length ||
+        previousLanguageValues.some((value, index) => value !== languageValues[index]);
+
+      if (languageListChanged) {
+        const availableLanguageKeys = new Set(
+          activeLanguageDefinitions().map(definition => definition.key)
+        );
+        const requestedLanguageKeys = new Set([
+          ...previousRequiredLanguages,
+          ...pendingSavedLanguageKeys
+        ]);
+
+        requiredLanguages.clear();
+        requestedLanguageKeys.forEach(key => {
+          if (availableLanguageKeys.has(key)) {
+            requiredLanguages.add(key);
+            pendingSavedLanguageKeys.delete(key);
+          }
+        });
+
+        renderLanguageOptions();
+        arrangeServiceControls();
+        lastTableHeaderSignature = '';
       }
 
       setLoadedSourceIndicator(loaded);
@@ -19079,8 +19400,14 @@
           dataSourceText
       },
 
-      render(loaded) {
-        return renderLoadedDataset(loaded);
+      async render(loaded) {
+        const result = renderLoadedDataset(loaded);
+
+        if (warmRevealPromise && app.classList.contains('is-loading')) {
+          await warmRevealPromise;
+        }
+
+        return result;
       },
 
       onError() {
