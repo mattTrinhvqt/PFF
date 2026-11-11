@@ -5089,7 +5089,7 @@
                  entry (DD/MM/YYYY), update data-beta-version / aria-label / visible badge text together, and preserve older
                  milestone entries. Do not use em dashes in version log summaries; use commas, semicolons, colons or plain
                  wording instead. -->
-            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.892" data-beta-log="0.892|11/11/2026|Language reset/pending-state fixes; saved language-sort recovery; PHN re-enable and search-term cleanup fixes&#10;0.891|11/11/2026|Saved-view compatibility; live-language sync; dynamic-sort and virtual-row edge-case fixes&#10;0.890|11/11/2026|Single-owner loader handoff; hidden-filter preservation; language-row geometry and filter-count fixes&#10;0.880|11/11/2026|Additional-language access; leaner clinician filters; startup handoff and table-density improvements&#10;0.870|04/11/2026|Referral/contact redesign; leaner directory table; service-transition and loader polish&#10;0.860|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.850|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.892">E.A.T. Beta v0.892</div>
+            <div class="eat-beta-badge" tabindex="0" data-action-tooltip="version" data-beta-version="0.893" data-beta-log="0.893|11/11/2026|Binary ophthalmology specialty practice-icon links; pending-language, saved-sort and service-order state fixes&#10;0.892|11/11/2026|Language reset/pending-state fixes; saved language-sort recovery; PHN re-enable and search-term cleanup fixes&#10;0.891|11/11/2026|Saved-view compatibility; live-language sync; dynamic-sort and virtual-row edge-case fixes&#10;0.890|11/11/2026|Single-owner loader handoff; hidden-filter preservation; language-row geometry and filter-count fixes&#10;0.880|11/11/2026|Additional-language access; leaner clinician filters; startup handoff and table-density improvements&#10;0.870|04/11/2026|Referral/contact redesign; leaner directory table; service-transition and loader polish&#10;0.860|03/11/2026|Mode accents; referral UX; layout/loader fixes&#10;0.850|15/10/2026|Added optom practitioners and practitioner URLs" aria-label="E.A.T. Beta version 0.893">E.A.T. Beta v0.893</div>
             <div
               id="dataSourceIndicator"
               class="live-data eat-live-data"
@@ -12790,6 +12790,8 @@
       const definition = activeLanguageDefinitions().find(item => item.key === key);
       if (!definition) return;
 
+      pendingSavedLanguageKeysByService.delete(activeServiceType);
+
       if (selected) {
         requiredLanguages.add(key);
       } else {
@@ -14283,6 +14285,7 @@
               }
 
               activateServiceDataset(activeServiceType, false);
+              arrangeServiceControls();
 
               if (
                 sortKey !== DEFAULT_SORT_KEY &&
@@ -15664,6 +15667,52 @@
       ) {
         const yes =
           isYes(value);
+
+        const rowServiceType =
+          serviceTypeForRow(row);
+
+        /* Ophthalmology specialties are intentionally a binary directory-level
+         * signal. Do not expose practitioner-level evidence/mapping here: a
+         * positive cell links to the same Practitioners page as the first
+         * column so users can verify the practice's clinicians themselves. */
+        if (rowServiceType === 'ophthalmology') {
+          if (!yes) {
+            return `
+              <span
+                class="specialty-no"
+                aria-label="Not listed"
+              >—</span>
+            `;
+          }
+
+          const practitionersUrl =
+            safeExternalUrl(row.practitionersUrl);
+          const definition =
+            activeSpecialtyDefinitions()
+              .find(item => item.key === column.key);
+          const label =
+            definition?.label || column.label || 'Specialty';
+
+          if (practitionersUrl) {
+            return `
+              <a
+                class="specialty-yes specialty-evidence-link"
+                href="${escapeHtml(practitionersUrl)}"
+                target="_blank"
+                rel="noopener"
+                aria-label="${escapeHtml(label)} listed; open practitioners for ${escapeHtml(row.practiceName)}"
+                title="Open practitioners"
+              >${ACTION_ICON_SVGS.specialtyPractice}</a>
+            `;
+          }
+
+          return `
+            <span
+              class="specialty-yes"
+              aria-label="${escapeHtml(label)} listed; practitioner profiles unavailable"
+            >${ACTION_ICON_SVGS.specialtyPractice}</span>
+          `;
+        }
 
         const specialtyValue =
           cleanText(value);
@@ -17277,6 +17326,10 @@
             ).checked = false;
           }
 
+          if (container === languageOptions) {
+            pendingSavedLanguageKeysByService.delete(activeServiceType);
+          }
+
           handleFilterChange();
         }
       );
@@ -17429,6 +17482,8 @@
     function savedViewSnapshot() {
       const pendingLanguages =
         pendingSavedLanguageKeysByService.get(activeServiceType) || new Set();
+      const pendingSort =
+        pendingSavedSortByService.get(activeServiceType);
       const savedLanguageKeys = Array.from(
         new Set([
           ...requiredLanguages,
@@ -17463,9 +17518,10 @@
           specialties: checkedValues('.specialty-filter'),
           languages: savedLanguageKeys
         },
-        sortKey,
-        sortDirection,
-        distanceSortWasUserRequested
+        sortKey: pendingSort?.key || sortKey,
+        sortDirection: pendingSort?.direction || sortDirection,
+        distanceSortWasUserRequested:
+          pendingSort ? false : distanceSortWasUserRequested
       };
     }
 
@@ -19407,6 +19463,28 @@
         renderLanguageOptions();
         arrangeServiceControls();
         lastTableHeaderSignature = '';
+      }
+
+      /* Once live data are authoritative, resolve any still-pending saved
+       * languages even when the overall language list did not change. */
+      if (authoritativeLiveDataLoaded) {
+        const pendingSavedLanguageKeys =
+          pendingSavedLanguageKeysByService.get(activeServiceType);
+
+        if (pendingSavedLanguageKeys?.size) {
+          const availableLanguageKeys = new Set(
+            activeLanguageDefinitions().map(definition => definition.key)
+          );
+
+          pendingSavedLanguageKeys.forEach(key => {
+            if (availableLanguageKeys.has(key)) {
+              requiredLanguages.add(key);
+            }
+          });
+
+          pendingSavedLanguageKeysByService.delete(activeServiceType);
+          syncLanguageFilterControls();
+        }
       }
 
       syncSelectedSpecialtyChips();
