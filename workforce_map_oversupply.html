@@ -9,6 +9,14 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Excess Clinicians pilot: opt-in approved presentation helpers. -->
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-trends-and-labels.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+
 
   <style>
 
@@ -39,6 +47,58 @@
       padding: 0 0 2px;
     }
 
+    .chart-heading-row .heading-controls {
+      margin-left: auto;
+      padding-left: 8px;
+      flex: 0 0 auto;
+    }
+
+    /* The custom tooltip uses true columns, never approximated spaces. */
+    .pff-excess-tooltip {
+      position: absolute;
+      z-index: 20;
+      box-sizing: border-box;
+      width: max-content;
+      max-width: calc(100% - 12px);
+      padding: 9px 10px;
+      border: 1px solid #e8eaf0;
+      border-radius: 4px;
+      background: #fff;
+      color: #151515;
+      font-family: Lato, Arial, sans-serif;
+      font-size: 11px;
+      line-height: 1.3;
+      box-shadow: 0 3px 12px rgba(21,21,21,0.10);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .pff-excess-tooltip[hidden] { display: none !important; }
+    .pff-excess-tooltip-year {
+      margin-bottom: 5px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pff-excess-tooltip-grid {
+      display: grid;
+      grid-template-columns: max-content max-content max-content;
+      column-gap: 12px;
+      row-gap: 2px;
+      align-items: baseline;
+    }
+    .pff-excess-tooltip-grid.is-off {
+      grid-template-columns: max-content max-content;
+    }
+    .pff-excess-tooltip-name { color: #69718a; }
+    .pff-excess-tooltip-value {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .pff-excess-tooltip-trend {
+      text-align: left;
+      color: #69718a;
+      font-variant-numeric: tabular-nums;
+    }
+
     .method-note {
       margin: 5px 3px 0;
       color: var(--pff-muted);
@@ -56,6 +116,12 @@
     }
 
     @media (max-width: 430px) {
+      .pff-excess-tooltip {
+        padding: 7px 8px;
+        font-size: 10px;
+      }
+      .pff-excess-tooltip-year { font-size: 11px; }
+      .pff-excess-tooltip-grid { column-gap: 8px; }
       .method-note {
         font-size: 10.5px;
       }
@@ -132,6 +198,18 @@
           >›</button>
         </div>
 
+        <div class="heading-controls">
+          <button
+            id="yoyTrendToggle"
+            class="yoy-trend-toggle is-on"
+            type="button"
+            aria-pressed="true"
+            aria-label="10-year trend. Press to switch to trend off."
+          >
+            <span class="yoy-binary-indicator" aria-hidden="true"></span>
+            <span class="yoy-toggle-label">10yr Trend</span>
+          </button>
+        </div>
       </div>
 
       <div class="chart-options-row">
@@ -170,13 +248,32 @@
 
       <p class="method-note">
         <span class="method-note-line"><strong>Excess clinicians:</strong> clinical capacity above Medicare-billed service demand, expressed using adjusted annual clinical hours per active clinician</span>
-        <span class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends</span>
+        <span class="method-note-line" id="trendMethodNote"><strong>Trends:</strong> pills show the latest 10-year log-linear annual trends</span>
       </p>
     </main>
   </div>
 
   <script>
     'use strict';
+
+    // These shared visual modules are opt-in. Keep all original Sheets,
+    // Apps Script, cache, computation and state-series logic below intact.
+    const sharedChart = Object.freeze({
+      styling: window.PFFModules?.chartStyling,
+      axes: window.PFFModules?.chartAxes,
+      animations: window.PFFModules?.chartAnimations,
+      tooltips: window.PFFModules?.chartTooltips,
+      trends: window.PFFModules?.chartTrends,
+      responsive: window.PFFModules?.chartResponsive
+    });
+    const missingSharedChartAssets = Object.entries(sharedChart)
+      .filter(([, asset]) => !asset)
+      .map(([name]) => name);
+    if (missingSharedChartAssets.length) {
+      throw new Error('Excess Clinicians pilot requires shared assets: ' +
+        missingSharedChartAssets.join(', '));
+    }
+    sharedChart.styling.applyGlobalFontDefaults(window.Chart);
 
     // ============================================================
     // DATA SOURCE
@@ -215,7 +312,7 @@
 
     const CLINICAL_HOURS_TOTAL_INDEX = 9;
     const EXPECTED_ITEM_COUNT = 32;
-    const FIXED_TREND_WINDOW = 10;
+    const FIXED_TREND_WINDOW = 10; // Original default, preserved at initial load.
 
     const WORKING_WEEKS_PER_YEAR = 46;
     const ADMIN_HOURS_PER_WEEK = 2.5;
@@ -330,6 +427,8 @@
     const legendRight = document.getElementById('legendRight');
     const chartShell = document.getElementById('chartShell');
     const canvas = document.getElementById('excessChart');
+    const yoyTrendToggle = document.getElementById('yoyTrendToggle');
+    const trendMethodNote = document.getElementById('trendMethodNote');
 
     let sourceData = null;
     let rows = [];
@@ -342,6 +441,12 @@
     let chartInteractions = null;
     let tooltipInteractionCleanup = null;
     let chartSummary = null;
+    let trendController = null;
+    let trendMode = '10yr';
+    let pinnedYearIndex = null;
+    let alignedTooltipElement = null;
+    let lastTooltipKey = '';
+    const trendValueCache = new Map();
 
 
     // ============================================================
@@ -795,12 +900,24 @@
       };
     }
 
+    function trendWindowSize() {
+      return trendMode === '3yr' ? 3
+        : trendMode === '10yr' ? FIXED_TREND_WINDOW
+          : 0;
+    }
+
     function trendForSeries(seriesKey) {
-      return PFFCharts.latestConsecutiveTrend(
+      const windowSize = trendWindowSize();
+      if (!windowSize) return NaN;
+      const cacheKey = `${windowSize}:${seriesKey}`;
+      if (trendValueCache.has(cacheKey)) return trendValueCache.get(cacheKey);
+      const value = PFFCharts.latestConsecutiveTrend(
         rows,
         row => Number(row?.values?.[seriesKey]),
-        FIXED_TREND_WINDOW
+        windowSize
       );
+      trendValueCache.set(cacheKey, value);
+      return value;
     }
 
     // ============================================================
@@ -821,7 +938,10 @@
         backgroundColor: series.colour,
         pointBackgroundColor: series.colour,
         pointBorderColor: '#ffffff',
-        pointBorderWidth: 1,
+        pointBorderWidth: 0,
+        pointRadius: 0,
+        pointHoverRadius: 0, // No floating hover dot over the selected year.
+        pointHitRadius: sharedChart.responsive.getPointHitRadius(),
         borderWidth: series.width,
         cubicInterpolationMode: 'monotone',
         order: series.key === AUSTRALIA_KEY ? 1 : 2
@@ -832,44 +952,30 @@
       return SERIES.map(datasetForSeries);
     }
 
-    const yearTicksPlugin =
-      PFFCharts.createYearTickMarksPlugin({
-        id: 'pffExcessCliniciansStateYearTicks',
-        getValue({ index }) {
-          return rows[index]?.year;
-        }
-      });
+    const yearTicksPlugin = sharedChart.axes.createLabelDrivenTicksPlugin({
+      id: 'pffExcessCliniciansSharedYearTicks',
+      axes: ['x'] // The original unified Y-axis draws its own ticks and grid.
+    });
 
-    // Keep tooltips above the custom unified y-axis ticks/title on mobile.
-    const tooltipTopLayerPlugin = {
-      id: 'pffExcessCliniciansStateTooltipTopLayer',
-      afterDraw(chartInstance) {
-        const tooltip = chartInstance?.tooltip;
-        if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
-        tooltip.draw(chartInstance.ctx);
+    const trendLabelsPlugin = sharedChart.trends.createTrendPillsPlugin({
+      id: 'pffExcessCliniciansSharedTrendPills',
+      enabled() { return trendMode !== 'off'; },
+      isActive({ dataset }) { return Boolean(dataset?._activeSeries); },
+      getTrendValue({ dataset }) { return trendForSeries(dataset?._seriesKey); },
+      getSeriesColour({ dataset }) { return dataset?.borderColor || '#69718a'; }
+    });
+
+    // Pinning is performed by the existing nearest-point hit test. On pointer
+    // motion, do not let Chart.js replace the pinned year's tooltip.
+    const pinnedYearPlugin = {
+      id: 'pffExcessCliniciansPinnedYear',
+      beforeEvent(_chart, args) {
+        if (pinnedYearIndex !== null &&
+            (args?.event?.type === 'mousemove' || args?.event?.type === 'mouseout')) {
+          return false;
+        }
       }
     };
-
-    const trendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
-        id: 'pffExcessCliniciansStateTrendLabels',
-
-        enabled() {
-          return true;
-        },
-
-        isActive({ dataset }) {
-          return Boolean(dataset?._activeSeries);
-        },
-
-        getTrendValue({ dataset }) {
-          return trendForSeries(dataset?._seriesKey);
-        },
-
-        getSeriesColour({ dataset }) {
-          return dataset?.borderColor || '#69718a';
-        }
-      });
 
     // ============================================================
     // CHART
@@ -886,92 +992,127 @@
       });
     }
 
-    function alignedTooltipLabel(context) {
-      const value = Number(context.raw);
+    function tooltipElement() {
+      if (alignedTooltipElement) return alignedTooltipElement;
+      const element = document.createElement('div');
+      element.className = 'pff-excess-tooltip';
+      element.hidden = true;
+      element.setAttribute('role', 'tooltip');
+      element.setAttribute('aria-hidden', 'true');
+      chartShell.appendChild(element);
+      alignedTooltipElement = element;
+      return element;
+    }
+
+    function hideAlignedTooltip() {
+      if (!alignedTooltipElement) return;
+      alignedTooltipElement.hidden = true;
+      alignedTooltipElement.setAttribute('aria-hidden', 'true');
+      lastTooltipKey = '';
+    }
+
+    function formatTooltipTrend(value) {
       if (!Number.isFinite(value)) return '';
+      const sign = value < 0 ? '−' : '+';
+      return `${sign}${Math.abs(value).toFixed(1)}% p.a. (${trendWindowSize()}yr)`;
+    }
 
-      const dataIndex = context.dataIndex;
-      const tooltipRows = SERIES
-        .map(series => {
-          const rowValue = Number(rows[dataIndex]?.values?.[series.key]);
-          if (!Number.isFinite(rowValue)) return null;
+    function buildTooltipContents(element, index) {
+      element.replaceChildren();
+      const heading = document.createElement('div');
+      heading.className = 'pff-excess-tooltip-year';
+      heading.textContent = String(rows[index]?.year ?? '');
+      element.appendChild(heading);
+      const grid = document.createElement('div');
+      grid.className = 'pff-excess-tooltip-grid';
+      grid.classList.toggle('is-off', trendMode === 'off');
+      SERIES.forEach(series => {
+        const rowValue = Number(rows[index]?.values?.[series.key]);
+        if (!Number.isFinite(rowValue)) return;
+        const name = document.createElement('span');
+        name.className = 'pff-excess-tooltip-name';
+        name.textContent = `${series.label}:`;
+        const value = document.createElement('span');
+        value.className = 'pff-excess-tooltip-value';
+        value.textContent = PFFCharts.formatInteger(Math.round(rowValue));
+        grid.append(name, value);
+        if (trendMode !== 'off') {
+          const trend = document.createElement('span');
+          trend.className = 'pff-excess-tooltip-trend';
+          trend.textContent = formatTooltipTrend(trendForSeries(series.key));
+          grid.appendChild(trend);
+        }
+      });
+      element.appendChild(grid);
+    }
 
-          const trend = trendForSeries(series.key);
-          return {
-            key: series.key,
-            label: `${series.label}:`,
-            count: PFFCharts.formatInteger(Math.round(rowValue)),
-            trend: Number.isFinite(trend)
-              ? `· ${trend >= 0 ? '+' : '−'}${Math.abs(trend).toFixed(1)}% p.a. (10yr)`
-              : ''
-          };
-        })
-        .filter(Boolean);
+    function positionAlignedTooltip(element, chartInstance, tooltip) {
+      const shellRect = chartShell.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const canvasWidth = Number(chartInstance.width) || canvasRect.width;
+      const canvasHeight = Number(chartInstance.height) || canvasRect.height;
+      const anchorX = canvasRect.left - shellRect.left +
+        Number(tooltip.caretX || 0) * canvasRect.width / canvasWidth;
+      const anchorY = canvasRect.top - shellRect.top +
+        Number(tooltip.caretY || 0) * canvasRect.height / canvasHeight;
+      const width = element.offsetWidth;
+      const height = element.offsetHeight;
+      const availableWidth = shellRect.width || canvasRect.width;
+      const availableHeight = shellRect.height || canvasRect.height;
+      const x = anchorX + 12 + width > availableWidth - 6
+        ? anchorX - width - 12 : anchorX + 12;
+      const y = anchorY + 8 + height > availableHeight - 6
+        ? anchorY - height - 8 : anchorY + 8;
+      element.style.left = `${Math.max(6, Math.min(x, availableWidth - width - 6))}px`;
+      element.style.top = `${Math.max(6, Math.min(y, availableHeight - height - 6))}px`;
+    }
 
-      const current = tooltipRows.find(
-        item => item.key === context.dataset?._seriesKey
-      );
-      if (!current) return '';
-
-      const canvasContext = context.chart?.ctx;
-      const tooltip = context.chart?.tooltip;
-      const toFont = Chart?.helpers?.toFont;
-
-      if (!canvasContext || typeof toFont !== 'function') {
-        return `${current.label}  ${current.count}${current.trend ? `  ${current.trend}` : ''}`;
+    function renderAlignedTooltip({ chart: chartInstance, tooltip }) {
+      if (!chartInstance || !tooltip || !(Number(tooltip.opacity) > 0) ||
+          !tooltip.dataPoints?.length) {
+        hideAlignedTooltip();
+        return;
       }
-
-      const previousFont = canvasContext.font;
-
-      try {
-        const bodyFont = toFont(tooltip?.options?.bodyFont || {});
-        if (bodyFont?.string) canvasContext.font = bodyFont.string;
-
-        const measure = text => canvasContext.measureText(String(text)).width;
-        const maxLabelWidth = Math.max(...tooltipRows.map(item => measure(item.label)));
-        const maxCountWidth = Math.max(...tooltipRows.map(item => measure(item.count)));
-        const spaceWidth = Math.max(measure(' '), 1);
-        const columnGap = PFFCharts.mobileLayout() ? 8 : 10;
-
-        const spacesFor = pixels =>
-          ' '.repeat(Math.max(2, Math.ceil(pixels / spaceWidth)));
-
-        const beforeCount = spacesFor(
-          maxLabelWidth - measure(current.label) + columnGap
-        );
-        const beforeTrend = spacesFor(
-          maxCountWidth - measure(current.count) + columnGap
-        );
-
-        return current.trend
-          ? `${current.label}${beforeCount}${current.count}${beforeTrend}${current.trend}`
-          : `${current.label}${beforeCount}${current.count}`;
-      } finally {
-        canvasContext.font = previousFont;
+      const index = tooltip.dataPoints[0]?.dataIndex;
+      if (!Number.isInteger(index) || !rows[index]) {
+        hideAlignedTooltip();
+        return;
       }
+      const element = tooltipElement();
+      const key = `${index}|${trendMode}`;
+      if (key !== lastTooltipKey) {
+        buildTooltipContents(element, index);
+        lastTooltipKey = key;
+      }
+      element.hidden = false;
+      element.setAttribute('aria-hidden', 'false');
+      positionAlignedTooltip(element, chartInstance, tooltip);
+    }
+
+    function refreshAlignedTooltip() {
+      lastTooltipKey = '';
+      if (chart?.tooltip) renderAlignedTooltip({chart, tooltip: chart.tooltip});
     }
 
     function tooltipOptions() {
-      return PFFCharts.tooltipOptions({
+      return sharedChart.tooltips.tooltipOptions({
+        enabled: false, // External Lato grid: accurate columns, no swatch/dot.
+        displayColors: false,
         mode: 'index',
         intersect: true,
+        external: renderAlignedTooltip,
         callbacks: {
           title(items) {
             const index = items?.[0]?.dataIndex;
             return Number.isInteger(index)
-              ? String(rows[index]?.year ?? '')
-              : '';
-          },
-
-          label(context) {
-            return alignedTooltipLabel(context);
+              ? String(rows[index]?.year ?? '') : '';
           }
         }
       });
     }
 
     function chartOptions() {
-      return PFFCharts.baseChartOptions({
+      const options = PFFCharts.baseChartOptions({
         transitions:
           PFFCharts.seriesVisibilityTransitionOptions(240),
 
@@ -1004,6 +1145,18 @@
           y: leftScaleOptions()
         }
       });
+      options.scales.x = sharedChart.axes.withXAxisTickMarks(
+        options.scales.x,
+        { yearMode: 'even' }
+      );
+      const timed = sharedChart.animations.withChartJsTiming(options);
+      if (PFF.reducedMotion()) {
+        timed.animation = false;
+        if (timed.transitions?.active?.animation) {
+          timed.transitions.active.animation.duration = 0;
+        }
+      }
+      return timed;
     }
 
     function legendItems() {
@@ -1052,7 +1205,7 @@
             yAxisController.plugin,
             yearTicksPlugin,
             trendLabelsPlugin,
-            tooltipTopLayerPlugin
+            pinnedYearPlugin
           ]
         }
       );
@@ -1073,8 +1226,9 @@
           : `${series.label} unavailable`;
       }).join(', ');
 
-      const trendDescription =
-        'Fixed 10-year log-linear trend annotations are shown where defined; trends are omitted for non-positive series.';
+      const trendDescription = trendMode === 'off'
+        ? 'Trend annotations are off.'
+        : `${trendWindowSize()}-year log-linear annual trends are shown where defined; trends are omitted for non-positive series.`;
 
       PFFCharts.updateChartSummary(
         `Excess clinicians. Latest year ${latest.year}: ${values}. ${trendDescription}`,
@@ -1087,103 +1241,71 @@
     // ============================================================
 
     function clearChartTooltip() {
+      pinnedYearIndex = null;
+      hideAlignedTooltip();
       if (!chart) return;
-
       chart.setActiveElements([]);
-      chart.tooltip?.setActiveElements(
-        [],
-        { x: 0, y: 0 }
-      );
+      chart.tooltip?.setActiveElements([], {x: 0, y: 0});
       chart.draw();
     }
 
     function activateTooltipIndex(index, anchorElement) {
       if (!chart || !Number.isInteger(index)) return;
-
       const active = chart.data.datasets
         .map((dataset, datasetIndex) => {
           const value = Number(dataset?.data?.[index]);
-          return Number.isFinite(value)
-            ? { datasetIndex, index }
-            : null;
+          return Number.isFinite(value) ? {datasetIndex, index} : null;
         })
         .filter(Boolean);
-
       if (!active.length) {
         clearChartTooltip();
         return;
       }
-
+      pinnedYearIndex = index;
       const x = Number(anchorElement?.x);
       const y = Number(anchorElement?.y);
-
-      chart.setActiveElements(active);
-      chart.tooltip?.setActiveElements(
-        active,
-        {
-          x: Number.isFinite(x) ? x : chart.chartArea.left,
-          y: Number.isFinite(y) ? y : chart.chartArea.top
-        }
-      );
+      // Do not add a floating data-point dot when a tooltip is pinned.
+      chart.setActiveElements([]);
+      chart.tooltip?.setActiveElements(active, {
+        x: Number.isFinite(x) ? x : chart.chartArea.left,
+        y: Number.isFinite(y) ? y : chart.chartArea.top
+      });
       chart.draw();
+    }
+
+    function isTooltipPress(event) {
+      if (!alignedTooltipElement || alignedTooltipElement.hidden) return false;
+      const rect = alignedTooltipElement.getBoundingClientRect();
+      const x = Number(event?.clientX);
+      const y = Number(event?.clientY);
+      return Number.isFinite(x) && Number.isFinite(y) &&
+        x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    }
+
+    function getPressedPoint(event, chartInstance) {
+      if (!chartInstance) return null;
+      try {
+        const hits = chartInstance.getElementsAtEventForMode(event,
+          'nearest', {intersect: true, axis: 'xy', includeInvisible: false}, false);
+        return hits[0] || null;
+      } catch (_) {
+        return null;
+      }
     }
 
     function setupTooltipTapInteractions() {
       tooltipInteractionCleanup?.();
-
       const handleCanvasPress = event => {
-        if (!chart) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const tooltip = chart.tooltip;
-        const x =
-          (Number(event.clientX) - rect.left) *
-          (chart.width / rect.width);
-        const y =
-          (Number(event.clientY) - rect.top) *
-          (chart.height / rect.height);
-
-        const insideTooltip =
-          tooltip &&
-          Number(tooltip.opacity) > 0 &&
-          [
-            x,
-            y,
-            tooltip.x,
-            tooltip.y,
-            tooltip.width,
-            tooltip.height
-          ].every(Number.isFinite) &&
-          x >= tooltip.x &&
-          x <= tooltip.x + tooltip.width &&
-          y >= tooltip.y &&
-          y <= tooltip.y + tooltip.height;
-
-        if (insideTooltip) return;
-
-        const hits = chart.getElementsAtEventForMode(
-          event,
-          'nearest',
-          { intersect: true },
-          true
-        );
-
-        if (!hits.length) {
-          requestAnimationFrame(clearChartTooltip);
+        if (!chart || isTooltipPress(event)) return;
+        const hit = getPressedPoint(event, chart);
+        if (!hit) {
+          clearChartTooltip();
           return;
         }
-
-        const hit = hits[0];
-        const anchorElement =
-          chart.getDatasetMeta(hit.datasetIndex)?.data?.[hit.index];
-
-        requestAnimationFrame(() =>
-          activateTooltipIndex(hit.index, anchorElement)
-        );
+        const anchor = chart.getDatasetMeta(hit.datasetIndex)?.data?.[hit.index];
+        activateTooltipIndex(hit.index, anchor);
       };
-
-      canvas.addEventListener('pointerdown', handleCanvasPress, { passive: true });
-
+      canvas.addEventListener('pointerdown', handleCanvasPress, {passive: true});
       tooltipInteractionCleanup = () => {
         canvas.removeEventListener('pointerdown', handleCanvasPress);
       };
@@ -1208,12 +1330,33 @@
 
       legendController.update(legendItems(), false);
 
-      chartInteractions = PFFCharts.setupChartInteractions({
-        canvas,
-        getChart() {
-          return chart;
+      trendController = PFFCharts.setupTrendToggle({
+        button: yoyTrendToggle,
+        initialMode: trendMode,
+        onChange(mode) {
+          trendMode = mode;
+          trendMethodNote.innerHTML = trendMode === 'off'
+            ? '<strong>Trends:</strong> off'
+            : `<strong>Trends:</strong> pills show the latest ${trendWindowSize()}-year log-linear annual trends`;
+          chart?.draw();
+          refreshAlignedTooltip();
+          updateAccessibleSummary();
         }
       });
+
+      chartInteractions = sharedChart.tooltips.bindDismissOnOutside({
+        canvas,
+        getChart: () => chart,
+        keepTooltipPress: false,
+        isDataPress(event, chartInstance) {
+          return isTooltipPress(event) || !!getPressedPoint(event, chartInstance);
+        },
+        onDismiss() {
+          pinnedYearIndex = null;
+          hideAlignedTooltip();
+        }
+      });
+      sharedChart.responsive.suppressTapFlash(canvas);
 
       responsiveController = PFFCharts.createResponsiveController({
         getChart() {
@@ -1222,12 +1365,15 @@
         observe: [app, chartShell],
         beforeResize(chartInstance) {
           chartInstance.data.datasets.forEach(dataset => {
-            dataset.pointHitRadius = PFFCharts.mobileLayout() ? 9 : 5;
+            dataset.pointHitRadius = sharedChart.responsive.getPointHitRadius();
           });
         },
         onRefresh() {
           headingScroller?.update();
           legendController?.update();
+          if (alignedTooltipElement && !alignedTooltipElement.hidden) {
+            refreshAlignedTooltip();
+          }
         }
       });
 
@@ -1354,6 +1500,7 @@
           throw new Error('There were not enough overlapping supply and Medicare years to plot.');
         }
 
+        trendValueCache.clear();
         createChart();
         legendController?.update(legendItems(), false);
         responsiveController?.refresh();
