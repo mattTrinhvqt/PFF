@@ -9,6 +9,14 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Opt-in approved chart assets. Production loader/core and modules remain unchanged. -->
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-reference-lines-and-annotations.js"></script>
+  <script src="./assets/chart-value-and-category-labels.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
 
   <style>
 
@@ -141,6 +149,8 @@
   <script>
     'use strict';
 
+    const Shared = window.PFFModules || {};
+
     // ============================================================
     // DATA SOURCE
     // ============================================================
@@ -180,7 +190,6 @@
 
     const SUFFICIENT_POPULATION = 10000;
     const DENSE_POPULATION = 5000;
-    const CHART_TRANSITION_MS = 500;
     const X_AXIS_MAJOR_INTERVALS = 6;
     const X_AXIS_MAJOR_TICK_COUNT = X_AXIS_MAJOR_INTERVALS + 1;
 
@@ -784,75 +793,64 @@
     // CUSTOM AXIS + REFERENCE LINE
     // ============================================================
 
+    // The axes module owns major/minor tick placement and sizes. The page
+    // continues to own its six-interval scale, numeric labels, title and
+    // intentionally subtle gridline strengths.
     const xAxisPresentationPlugin = {
       id: 'pffRuralRedistributionAxis',
 
       beforeDatasetsDraw(chartInstance) {
         const { ctx, chartArea } = chartInstance;
         if (!chartArea) return;
-        const intervals = X_AXIS_MAJOR_INTERVALS;
+        const major = Shared.chartAxes.tickDefinitions(currentScale, 'major');
+        const minor = Shared.chartAxes.tickDefinitions(currentScale, 'minor');
 
         ctx.save();
-
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.035)';
-        ctx.lineWidth = 0.7;
-        for (let index = 0; index < intervals; index += 1) {
-          const ratio = (index + 0.5) / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.stroke();
+        for (const [ticks, strokeStyle, lineWidth] of [
+          [minor, 'rgba(105, 113, 138, 0.035)', 0.7],
+          [major, 'rgba(105, 113, 138, 0.075)', 1]
+        ]) {
+          ctx.strokeStyle = strokeStyle;
+          ctx.lineWidth = lineWidth;
+          for (const tick of ticks) {
+            const x = chartArea.left + chartArea.width * tick.ratio;
+            ctx.beginPath();
+            ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
+            ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
+            ctx.stroke();
+          }
         }
-
-        ctx.strokeStyle = 'rgba(105, 113, 138, 0.075)';
-        ctx.lineWidth = 1;
-        for (let index = 0; index <= intervals; index += 1) {
-          const ratio = index / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.top);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.stroke();
-        }
-
         ctx.restore();
       },
 
       afterDraw(chartInstance) {
         const { ctx, chartArea } = chartInstance;
         if (!chartArea) return;
-        const intervals = X_AXIS_MAJOR_INTERVALS;
         const mobile = PFF.mobileLayout();
+        const major = Shared.chartAxes.tickDefinitions(currentScale, 'major');
+        const minor = Shared.chartAxes.tickDefinitions(currentScale, 'minor');
 
         ctx.save();
         ctx.strokeStyle = '#151515';
         ctx.lineWidth = 1;
-
         ctx.beginPath();
         ctx.moveTo(chartArea.left, Math.round(chartArea.bottom) + 0.5);
         ctx.lineTo(chartArea.right, Math.round(chartArea.bottom) + 0.5);
         ctx.stroke();
 
-        for (let index = 0; index <= intervals; index += 1) {
-          const ratio = index / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 4);
-          ctx.stroke();
-        }
-
-        ctx.strokeStyle = '#69718a';
-        ctx.globalAlpha = 0.60;
-        ctx.lineWidth = 0.7;
-        for (let index = 0; index < intervals; index += 1) {
-          const ratio = (index + 0.5) / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
-          ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + 2);
-          ctx.stroke();
+        // The approved convention is 6 px major and 2 px minor marks.
+        for (const [ticks, isMajor] of [[major, true], [minor, false]]) {
+          const style = Shared.chartAxes.tickMarkStyle(isMajor);
+          ctx.strokeStyle = isMajor ? '#151515' : '#69718a';
+          ctx.globalAlpha = isMajor ? 1 : 0.60;
+          ctx.lineWidth = style.width;
+          for (const tick of ticks) {
+            const x = chartArea.left + chartArea.width * tick.ratio;
+            ctx.beginPath();
+            ctx.moveTo(Math.round(x) + 0.5, chartArea.bottom);
+            ctx.lineTo(Math.round(x) + 0.5, chartArea.bottom + style.length);
+            ctx.stroke();
+          }
         }
 
         ctx.globalAlpha = 1;
@@ -863,14 +861,13 @@
           ? axisTickAnimation.values
           : axisTickTargets();
 
-        for (let index = 0; index <= intervals; index += 1) {
-          const ratio = index / intervals;
-          const x = chartArea.left + chartArea.width * ratio;
+        major.forEach((tick, index) => {
+          const x = chartArea.left + chartArea.width * tick.ratio;
           if (index === 0) ctx.textAlign = 'left';
-          else if (index === intervals) ctx.textAlign = 'right';
+          else if (index === major.length - 1) ctx.textAlign = 'right';
           else ctx.textAlign = 'center';
           ctx.fillText(formatAxisTick(values[index]), x, chartArea.bottom + 8);
-        }
+        });
 
         ctx.fillStyle = '#151515';
         ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
@@ -880,35 +877,26 @@
           chartArea.left + chartArea.width / 2,
           chartArea.bottom + (mobile ? 28 : 29)
         );
-
         ctx.restore();
       }
     };
 
-    const excessReferencePlugin = {
+    // The shared annotation draws the same 2.2 px purple dotted oversupply
+    // reference, while scale/threshold values stay under application control.
+    function createExcessReferencePlugin() {
+      return Shared.chartAnnotations.createPlugin({
       id: 'pffRuralRedistributionExcessReference',
-      beforeDatasetsDraw(chartInstance) {
-        const { ctx, chartArea } = chartInstance;
-        const xScale = chartInstance.scales?.x;
-        const value = Number(displayRow?.excessClinicians);
-        if (!chartArea || !xScale || !Number.isFinite(value)) return;
+      getItems: () => [{
+        axis: 'x',
+        value: Number(displayRow?.excessClinicians),
+        preset: 'excess'
+      }]
+      });
+    }
 
-        const x = xScale.getPixelForValue(value);
-        if (!Number.isFinite(x)) return;
-
-        ctx.save();
-        ctx.strokeStyle = EXCESS_COLOUR;
-        ctx.lineWidth = 2.2;
-        ctx.lineCap = 'round';
-        ctx.setLineDash([1, 4]);
-        ctx.beginPath();
-        ctx.moveTo(x, chartArea.top);
-        ctx.lineTo(x, chartArea.bottom);
-        ctx.stroke();
-        ctx.restore();
-      }
-    };
-
+    // The page-specific label combines clinician count and share of oversupply;
+    // reuse the shared bar-end placement helper but preserve the original
+    // right-edge fallback so all three scenario labels remain visible.
     const valueLabelsPlugin = {
       id: 'pffRuralRedistributionValueLabels',
       afterDatasetsDraw(chartInstance) {
@@ -918,33 +906,51 @@
         if (!meta?.data?.length) return;
 
         const mobile = PFF.mobileLayout();
+        const rows = scenarioRows();
         ctx.save();
         ctx.font = `${mobile ? 8.8 : 9.8}px Lato, sans-serif`;
         ctx.fillStyle = '#151515';
         ctx.textBaseline = 'middle';
 
         meta.data.forEach((bar, index) => {
-          const props = bar?.getProps?.(['x', 'y'], false);
-          const row = scenarioRows()[index];
+          const props = bar?.getProps?.(['x', 'y', 'base'], false);
+          const row = rows[index];
           if (!row || !props || !Number.isFinite(props.x) || !Number.isFinite(props.y)) return;
 
-          const percentage = percentOfExcess(row.value);
+          // Count up with the approved 600 ms entrance transition. The final
+          // label and tooltip text remain identical to the production chart.
+          const animatedValue = chartInstance.animating
+            ? chartInstance.scales?.x?.getValueForPixel?.(props.x)
+            : row.value;
+          const plotted = Number.isFinite(animatedValue)
+            ? Math.max(0, animatedValue) : row.value;
+          const percentage = percentOfExcess(plotted);
           const text = Number.isFinite(percentage)
-            ? `${clinicianLabel(row.value)} = ${percentage.toFixed(0)}%${mobile ? '' : ' of oversupply'}`
-            : clinicianLabel(row.value);
+            ? `${clinicianLabel(plotted)} = ${percentage.toFixed(0)}%${mobile ? '' : ' of oversupply'}`
+            : clinicianLabel(plotted);
           const gap = mobile ? 4 : 5;
-          let x = props.x + gap;
-          ctx.textAlign = 'left';
           const width = ctx.measureText(text).width;
-
-          if (x + width > chartArea.right - 1) {
+          const placement = Shared.chartValueLabels.getBarEndPlacement({
+            area: chartArea,
+            orientation: 'horizontal',
+            x: props.x, y: props.y, base: props.base,
+            value: plotted, textWidth: width,
+            fontSize: mobile ? 8.8 : 9.8,
+            gap,
+            outsideColour: '#151515', insideColour: '#151515'
+          });
+          let x = props.x + gap;
+          let align = 'left';
+          if (placement && !placement.inside) {
+            x = placement.x;
+            align = placement.textAlign;
+          } else if (x + width > chartArea.right - 1) {
             x = chartArea.right - 1;
-            ctx.textAlign = 'right';
+            align = 'right';
           }
-
+          ctx.textAlign = align;
           ctx.fillText(text, x, props.y);
         });
-
         ctx.restore();
       }
     };
@@ -954,7 +960,7 @@
     // ============================================================
 
     function tooltipOptions() {
-      return PFFCharts.tooltipOptions({
+      return Shared.chartTooltips.tooltipOptions({
         mode: 'nearest',
         intersect: true,
         callbacks: {
@@ -979,11 +985,12 @@
     }
 
     function chartOptions(animate = false) {
-      const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
+      const duration = PFF.reducedMotion() || !animate ? 0 : Shared.chartAnimations.defaults.chartMs;
 
-      return PFFCharts.baseChartOptions({
-        // Keep small in-chart text and fine lines crisp even on 1x displays.
-        devicePixelRatio: Math.max(2, Math.min(window.devicePixelRatio || 1, 3)),
+      const base = PFFCharts.baseChartOptions({
+        // Retain the original minimum 2x drawing resolution, respecting the
+        // shared module's 3x cap.
+        devicePixelRatio: Math.max(2, Shared.chartResponsive.getLayout().devicePixelRatio),
         animation: {
           duration,
           easing: 'easeInOutCubic'
@@ -996,12 +1003,10 @@
         },
         indexAxis: 'y',
         normalized: true,
-        interaction: {
-          mode: 'nearest',
-          axis: 'xy',
-          intersect: true,
+        interaction: Shared.chartTooltips.interactionOptions('point', {
           includeInvisible: false
-        },
+        }),
+        elements: Shared.chartTooltips.subtleEmphasisOptions(),
         layout: {
           autoPadding: false,
           padding: {
@@ -1069,11 +1074,20 @@
           }
         }
       });
+      const timed = Shared.chartAnimations.withChartJsTiming(base);
+      if (!animate || PFF.reducedMotion()) {
+        timed.animation = false;
+        if (timed.transitions?.active?.animation) timed.transitions.active.animation.duration = 0;
+      }
+      return timed;
     }
 
     function buildDataset() {
       const rows = scenarioRows();
-      return {
+      return Shared.chartTooltips.preserveBarHoverAppearance({
+        ...Shared.chartStyling.getBarStyle({
+          borderRadius: 2, borderSkipped: false, borderWidth: 0
+        }),
         label: 'Clinicians redistributed rurally',
         data: rows.map(row => row.value),
         backgroundColor: rows.map(row => row.colour),
@@ -1083,7 +1097,7 @@
         borderSkipped: false,
         categoryPercentage: 0.78,
         barPercentage: 0.80
-      };
+      });
     }
 
     function updateFootnotes() {
@@ -1129,10 +1143,10 @@
           labels: scenarioRows().map(row => row.axisLabel || row.label),
           datasets: [buildDataset()]
         },
-        options: chartOptions(false),
+        options: chartOptions(true),
         plugins: [
           xAxisPresentationPlugin,
-          excessReferencePlugin,
+          createExcessReferencePlugin(),
           valueLabelsPlugin,
           {
             id: 'pffTooltipTopLayer',
@@ -1154,6 +1168,25 @@
     // ============================================================
 
     function startApp() {
+      const requiredAssets = [
+        ['Chart styling', Shared.chartStyling?.getBarStyle],
+        ['Chart axes', Shared.chartAxes?.tickDefinitions],
+        ['Chart animations', Shared.chartAnimations?.withChartJsTiming],
+        ['Reference annotations', Shared.chartAnnotations?.createPlugin],
+        ['Chart labels', Shared.chartValueLabels?.getBarEndPlacement],
+        ['Chart tooltips', Shared.chartTooltips?.bindDismissOnOutside],
+        ['Responsive touch', Shared.chartResponsive?.suppressTapFlash]
+      ];
+      const missing = requiredAssets
+        .filter(([, method]) => typeof method !== 'function')
+        .map(([name]) => name);
+      if (missing.length) {
+        loaderText.textContent = 'Missing shared chart assets: ' + missing.join(', ');
+        statusEl.textContent = loaderText.textContent;
+        console.error('[PFF Rural Redistribution Pilot]', loaderText.textContent);
+        return;
+      }
+
       PFF.initialiseApp({
         app,
         status: statusEl,
@@ -1280,10 +1313,17 @@
           chartCanvas.setAttribute('aria-describedby', chartSummary.id);
           updateAccessibleSummary();
 
-          interactionsController = PFFCharts.setupChartInteractions({
+          const outsideDismissal = Shared.chartTooltips.bindDismissOnOutside({
             canvas: chartCanvas,
             getChart() { return chart; }
           });
+          const restoreTapStyle = Shared.chartResponsive.suppressTapFlash(chartCanvas);
+          interactionsController = {
+            destroy() {
+              outsideDismissal.destroy();
+              restoreTapStyle();
+            }
+          };
 
           responsiveController = PFFCharts.createResponsiveController({
             getChart() { return chart; },
