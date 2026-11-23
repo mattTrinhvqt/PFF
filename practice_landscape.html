@@ -9,6 +9,13 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js?v=1.2.5-20261013a"></script>
   <script src="./assets/pff_chart_core.js?v=1.2.11-20260919a"></script>
+  <!-- Shared chart modules: opt-in; the three specialist views retain their own renderer. -->
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-value-and-category-labels.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
 
   <style>
 
@@ -348,6 +355,8 @@
   <script>
     'use strict';
 
+    const Shared = window.PFFModules || {};
+
     const CONFIG = Object.freeze({
       spreadsheetId:
         '1v6nHeJDkbYF-Pan7OEDLLBhYLghuGxFVBoRX4ibuWSE',
@@ -400,11 +409,12 @@
       spineTransitionMs:
         220,
 
+      // The shared chart transition standard is 600 ms, previously 700 ms.
       axisTransitionMs:
-        700,
+        600,
 
       locationTransitionMs:
-        700,
+        600,
 
       columns: Object.freeze({
         practiceName: 0,
@@ -1923,11 +1933,22 @@
             ? metricValueText(animatedValue)
             : valueText(group);
           const width = ctx.measureText(text).width;
-          const proposedX = properties.x + 5;
+          // Shared position check; preserve the existing right-edge fallback
+          // for long counts and distances instead of moving labels inside bars.
+          const placement = Shared.chartValueLabels.getBarEndPlacement({
+            area,
+            orientation: 'horizontal',
+            x: properties.x,
+            y: properties.y,
+            base: area.left,
+            value: model.values[index],
+            textWidth: width,
+            gap: 5
+          });
 
-          if (proposedX + width <= area.right - 2) {
-            ctx.textAlign = 'left';
-            ctx.fillText(text, proposedX, properties.y);
+          if (placement && !placement.inside) {
+            ctx.textAlign = placement.textAlign;
+            ctx.fillText(text, placement.x, properties.y);
           } else {
             ctx.textAlign = 'right';
             ctx.fillText(text, area.right - 2, properties.y);
@@ -2583,7 +2604,7 @@
         const context = chartInstance.ctx;
 
         context.save();
-        context.strokeStyle = '#151515';
+        context.strokeStyle = Shared.chartStyling.palette.ink;
         context.lineWidth = 1;
         context.lineCap = 'butt';
 
@@ -2664,8 +2685,8 @@
 
         context.save();
         context.lineCap = 'butt';
-        context.strokeStyle = '#151515';
-        context.fillStyle = '#151515';
+        context.strokeStyle = Shared.chartStyling.palette.ink;
+        context.fillStyle = Shared.chartStyling.palette.ink;
         context.textAlign = 'right';
         context.textBaseline = 'middle';
 
@@ -2689,7 +2710,7 @@
             return;
           }
 
-          const text =
+          let text =
             labelTexts[index] || '';
           let labelFontSize =
             labelBaseSize;
@@ -2704,6 +2725,19 @@
             labelFontSize -= 0.5;
             context.font =
               `400 ${labelFontSize}px Lato, sans-serif`;
+          }
+
+          if (context.measureText(text).width > labelMaxWidth) {
+            // Shared long-category fallback: very long place names no
+            // longer paint across the plotted data at minimum font size.
+            const fitted = Shared.chartValueLabels.fitCategoryLabel(
+              context,
+              text,
+              labelMaxWidth,
+              { mode: 'shrink', baseFontPx: labelFontSize,
+                minFontPx: labelFontSize }
+            );
+            text = fitted.text;
           }
 
           context.fillText(
@@ -2724,12 +2758,14 @@
           }
 
           context.globalAlpha = mark.alpha;
-          const tickLength =
-            2 + 4 * mark.majorStrength;
+          const minorTick = Shared.chartAxes.tickMarkStyle(false);
+          const majorTick = Shared.chartAxes.tickMarkStyle(true);
+          const tickLength = minorTick.length +
+            (majorTick.length - minorTick.length) * mark.majorStrength;
 
           context.beginPath();
-          context.lineWidth =
-            0.7 + 0.3 * mark.majorStrength;
+          context.lineWidth = minorTick.width +
+            (majorTick.width - minorTick.width) * mark.majorStrength;
           context.moveTo(Math.round(x) + 0.5, geometry.bottom);
           context.lineTo(
             Math.round(x) + 0.5,
@@ -2831,15 +2867,21 @@
 
     function chartOptions(model) {
       const spec = axisSpecFor(model);
+      // The shared timing adapter defaults to 600 ms. Respect the user's
+      // reduced-motion setting for both Chart.js property animations and hover.
+      const reducedMotion = PFF.reducedMotion();
+      const chartDuration = reducedMotion ? 0 : Shared.chartAnimations.defaults.chartMs;
 
-      return PFFCharts.baseChartOptions({
+      const options = Shared.chartAnimations.withChartJsTiming(PFFCharts.baseChartOptions({
         indexAxis: 'y',
-
-        interaction: {
-          mode: 'nearest',
-          intersect: true,
-          axis: 'y'
+        animations: {
+          x: {duration: chartDuration, easing: 'easeInOutCubic'},
+          y: {duration: chartDuration, easing: 'easeInOutCubic'}
         },
+
+        interaction: Shared.chartTooltips.interactionOptions('point', {
+          mode: 'nearest', intersect: true, axis: 'y'
+        }),
 
         layout: {
           autoPadding: false,
@@ -2897,11 +2939,19 @@
           legend: {
             display: false
           },
-          tooltip: PFFCharts.tooltipOptions({
+          tooltip: Shared.chartTooltips.tooltipOptions({
             callbacks: tooltipCallbacks()
           })
         }
-      });
+      }));
+
+      // withChartJsTiming applies its default even when the base options
+      // requested zero duration. Restore zero for motion-sensitive users.
+      if (reducedMotion) {
+        options.animation.duration = 0;
+        options.transitions.active.animation.duration = 0;
+      }
+      return options;
     }
 
     function chartData(model) {
@@ -2923,9 +2973,10 @@
             ),
             borderColor: appearances.map(item => item.border),
             hoverBorderColor: appearances.map(item => item.hoverBorder),
-            borderWidth: appearances.map(item => item.borderWidth),
-            borderRadius: 2,
-            borderSkipped: false,
+            ...Shared.chartStyling.getBarStyle({
+              borderRadius: 2, borderSkipped: false,
+              borderWidth: appearances.map(item => item.borderWidth)
+            }),
             categoryPercentage: 0.82,
             barPercentage: 0.74,
             minBarLength: 2
@@ -3291,11 +3342,35 @@
         renderView({ animate: true });
       });
 
-      chartInteractionController =
-        PFFCharts.setupChartInteractions({
-          canvas: chartCanvas,
-          getChart: () => chart
-        });
+      // Preserve the production graph's draw-only tooltip dismissal. The
+      // current shared dismissal helper calls chart.update('none'), which can
+      // cancel a chart transition mid-flight; the core controller does not.
+      const coreInteractions = PFFCharts.setupChartInteractions({
+        canvas: chartCanvas,
+        getChart: () => chart
+      });
+      const dismissTooltipOnEscape = event => {
+        if (event.key !== 'Escape' || !chart?.tooltip) return;
+        const tooltip = chart.tooltip;
+        const visible = Boolean(
+          tooltip.getActiveElements?.().length ||
+          tooltip._active?.length ||
+          Number(tooltip.opacity) > 0
+        );
+        if (!visible) return;
+        chart.setActiveElements?.([]);
+        tooltip.setActiveElements([], { x: 0, y: 0 });
+        chart.draw();
+      };
+      document.addEventListener('keydown', dismissTooltipOnEscape, true);
+      chartInteractionController = {
+        destroy() {
+          coreInteractions.destroy();
+          document.removeEventListener('keydown', dismissTooltipOnEscape, true);
+        }
+      };
+      // Does not change touch-action or browser scrolling.
+      Shared.chartResponsive.suppressTapFlash(chartCanvas);
 
       responsiveController =
         PFFCharts.createResponsiveController({
@@ -3335,7 +3410,28 @@
         });
     }
 
-    PFF.initialiseApp({
+    const requiredSharedAssets = [
+      ['styling', Shared.chartStyling?.getBarStyle],
+      ['axes', Shared.chartAxes?.tickMarkStyle],
+      ['animations', Shared.chartAnimations?.withChartJsTiming],
+      ['labels', Shared.chartValueLabels?.fitCategoryLabel],
+      ['tooltips', Shared.chartTooltips?.tooltipOptions],
+      ['responsive touch', Shared.chartResponsive?.suppressTapFlash]
+    ];
+    const missingSharedAssets = requiredSharedAssets
+      .filter(([, method]) => typeof method !== 'function')
+      .map(([name]) => name);
+
+    if (missingSharedAssets.length) {
+      const message = `Missing shared chart assets: ${missingSharedAssets.join(', ')}`;
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      const loadingState = document.getElementById('loadingState');
+      if (loadingState) loadingState.style.display = 'none';
+      statusElement.textContent = message;
+      statusElement.setAttribute('role', 'alert');
+      console.error('[PFF Practice Landscape Pilot]', message);
+    } else PFF.initialiseApp({
       app,
       status: statusElement,
       load: loadPracticeRows,
