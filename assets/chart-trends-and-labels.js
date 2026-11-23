@@ -12,7 +12,8 @@
     mobileTrendLabelFont: '700 8.2px Lato, sans-serif',
     labelHeight: 15, mobileLabelHeight: 14,
     labelGap: 5, labelBorderWidth: 0.65, connectorWidth: 0.8,
-    pillBackdropOpacity: 0.22, endpointBackdropOpacity: 0.26,
+    pillBackdropOpacity: 0.84, pillTintStrength: 0.20,
+    endpointBackdropOpacity: 0.26,
     endpointLabelFont: '700 10px Lato, sans-serif',
     mobileEndpointLabelFont: '700 9px Lato, sans-serif',
     trendThreshold: 0.05
@@ -106,9 +107,13 @@
       ctx.beginPath();
       if (typeof ctx.roundRect==='function') ctx.roundRect(p.left,p.y-h/2,p.right-p.left,h,3);
       else ctx.rect(p.left,p.y-h/2,p.right-p.left,h);
-      // Very light backing preserves visibility of data lines underneath, close to the original v1 tint.
-      ctx.fillStyle=`rgba(255,255,255,${defaults.pillBackdropOpacity})`;ctx.fill();
-      ctx.fillStyle=rgba(ink,0.15);ctx.fill();ctx.strokeStyle=rgba(ink,0.42);
+      // Match the original PFFCharts pill: 20% series-colour tint at 84% opacity.
+      const hex = /^#[0-9a-f]{6}$/i.test(ink) ? ink : '#69718a';
+      const rgb = Number.parseInt(hex.slice(1), 16);
+      const tint = channel => Math.round(channel + (255 - channel) * (1 - defaults.pillTintStrength));
+      ctx.fillStyle=`rgba(${tint((rgb >> 16) & 255)},${tint((rgb >> 8) & 255)},${tint(rgb & 255)},${defaults.pillBackdropOpacity})`;
+      ctx.fill();
+      ctx.strokeStyle=rgba(ink,0.42);
       ctx.lineWidth=defaults.labelBorderWidth;ctx.stroke();
       ctx.textAlign='left'; ctx.fillStyle=arrowColour;
       let tx=p.left+pad;
