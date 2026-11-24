@@ -9,6 +9,14 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Uses PFF shared axes v2.3.0-candidate.1 sliding Y-axis tick tracks (the asset also supports X axes). MMM calculations and year-axis cadence remain app-owned. -->
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+  <script src="./assets/chart-reference-lines-and-annotations.js"></script>
+  <script src="./assets/chart-trends-and-labels.js"></script>
 
   <style>
 
@@ -217,6 +225,8 @@
 
   <script>
     'use strict';
+
+    const Shared = window.PFFModules || {};
 
     const CONFIG = Object.freeze({
       sheetId:
@@ -1359,6 +1369,12 @@
         !state.hiddenMMMs.has(mmm);
 
       return PFFCharts.lineDataset({
+        ...Shared.chartStyling.getLineStyle({
+          borderWidth: 3,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          tension: 0.28
+        }),
         label:
           `MM${mmm}`,
         data,
@@ -1483,126 +1499,58 @@
       return lines;
     }
 
-    const coverageBenchmarksPlugin = {
-      id:
-        'coverageBenchmarksPlugin',
-
-      beforeDatasetsDraw(chartInstance) {
-        const {
-          ctx,
-          chartArea
-        } = chartInstance;
-
-        if (
-          !chartArea ||
-          !unifiedYAxis
-        ) {
-          return;
-        }
-
-        const benchmarks = [
-          {
-            value:
-              SUFFICIENT_BENCHMARK,
-            colour:
-              SUFFICIENT_COLOUR
-          },
-          {
-            value:
-              SATURATED_BENCHMARK,
-            colour:
-              SATURATED_COLOUR
-          }
-        ];
-
-        ctx.save();
-        ctx.lineCap =
-          'round';
-        ctx.lineWidth =
-          2.2;
-        ctx.setLineDash(
-          [1, 4]
-        );
-
-        benchmarks.forEach(
-          benchmark => {
-            const ratio =
-              PFF.clamp(
-                unifiedYAxis.valueToRatio(
-                  benchmark.value
-                ),
-                0,
-                1
+    // Keep the original benchmark semantics: both reference lines are visible,
+    // even when a state's custom Y-axis puts a benchmark outside its range.
+    // The shared annotation helper normally omits out-of-range marks; the
+    // custom getPixel adapter preserves the production graph's edge clamping.
+    const coverageBenchmarksPlugin =
+      Shared.chartAnnotations?.createPlugin?.({
+        id: 'coverageBenchmarksPlugin',
+        getItems() {
+          return [
+            { value: SUFFICIENT_BENCHMARK, preset: 'sufficient' },
+            { value: SATURATED_BENCHMARK, preset: 'saturated' }
+          ].map(item => ({
+            ...item,
+            axis: 'y',
+            getPixel(chartInstance) {
+              if (!unifiedYAxis || !chartInstance.chartArea) return NaN;
+              const area = chartInstance.chartArea;
+              const ratio = PFF.clamp(
+                unifiedYAxis.valueToRatio(item.value), 0, 1
               );
-
-            const y =
-              chartArea.bottom -
-              chartArea.height *
-                ratio;
-
-            ctx.strokeStyle =
-              benchmark.colour;
-
-            ctx.beginPath();
-            ctx.moveTo(
-              chartArea.left,
-              y
-            );
-            ctx.lineTo(
-              chartArea.right,
-              y
-            );
-            ctx.stroke();
-          }
-        );
-
-        ctx.restore();
-      }
-    };
-
-    const yearTickMarksPlugin =
-      PFFCharts.createYearTickMarksPlugin({
-        id:
-          'coverageYearTickMarks',
-        getValue({ index }) {
-          return state.years[index];
-        },
-        isMajor(value) {
-          const year =
-            Number(value);
-
-          return Number.isFinite(year) &&
-            year % 2 === 0;
+              return area.bottom - area.height * ratio;
+            }
+          }));
         }
       });
 
+    // Use the shared 6/2 px tick renderer. Odd years remain minor ticks;
+    // labelled even years remain major, matching production label cadence.
+    const yearTickMarksPlugin =
+      Shared.chartAxes?.createLabelDrivenTicksPlugin?.({
+        id: 'coverageYearTickMarks',
+        axes: ['x']
+      });
+
+    // The shared trend plugin retains the original 3yr/Off toggle and trend
+    // calculation, while fitting overlapping trend pills consistently.
     const coverageTrendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
-        id:
-          'coverageTrendLabelsPlugin',
-
+      Shared.chartTrends?.createTrendPillsPlugin?.({
+        id: 'coverageTrendLabelsPlugin',
+        isMobile: () => PFF.mobileLayout(),
         enabled() {
-          return (
-            trendController?.mode !==
-            'off'
-          );
+          return trendController?.mode !== 'off';
         },
-
-        isActive({
-          dataset,
-          meta
-        }) {
+        isActive({ dataset, meta }) {
           return Boolean(
             dataset?._existsForActiveState &&
             dataset?._activeSeries !== false &&
             !meta?.hidden
           );
         },
-
         getTrendValue({ dataset }) {
-          return latestAnnualisedGrowth(
-            dataset?._mmm
-          );
+          return latestAnnualisedGrowth(dataset?._mmm);
         }
       });
 
@@ -1610,10 +1558,13 @@
       const scale =
         yScaleForState();
 
-      const duration =
-        PFFCharts.chartAnimationDuration();
+      const reducedMotion = PFF.reducedMotion();
+      const duration = reducedMotion ? 0 : Shared.chartAnimations.defaults.chartMs;
 
-      return PFFCharts.baseChartOptions({
+      // This opt-in adapter supplies the common 600 ms timing, then the
+      // explicit app options retain no X-movement and no colour tweening.
+      const options = Shared.chartAnimations.withChartJsTiming(
+        PFFCharts.baseChartOptions({
         normalized:
           true,
 
@@ -1662,7 +1613,7 @@
         },
 
         plugins: {
-          tooltip: {
+          tooltip: Shared.chartTooltips.tooltipOptions({
             callbacks: {
               title(items) {
                 return items?.length
@@ -1674,12 +1625,13 @@
               label:
                 tooltipLabel
             }
-          }
+          })
         },
 
         scales: {
-          x:
-            PFFCharts.xYearScaleOptions(),
+          x: Shared.chartAxes.withXAxisTickMarks(
+            PFFCharts.xYearScaleOptions(), { yearMode: 'even' }
+          ),
 
           y:
             PFFCharts.yScaleOptions(
@@ -1698,7 +1650,19 @@
               }
             )
         }
-      });
+      })
+      );
+
+      // The shared helper sets the default duration, but must never override
+      // the browser's reduced-motion preference or our stationary year axis.
+      options.animation.duration = duration;
+      options.animations.x.duration = 0;
+      options.animations.y.duration = duration;
+      options.animations.colors.duration = 0;
+      if (reducedMotion) {
+        options.transitions.active.animation.duration = 0;
+      }
+      return options;
     }
 
     function syncChartScale() {
@@ -1905,10 +1869,11 @@
         return;
       }
 
-      const duration =
-        reason === 'state'
-          ? PFFCharts.chartAnimationDuration()
-          : 520;
+      const duration = PFF.reducedMotion()
+        ? 0
+        : (reason === 'state'
+          ? Shared.chartAnimations.defaults.chartMs
+          : 520);
 
       const oldScale =
         previousScale
@@ -1942,6 +1907,10 @@
 
       chart.update();
 
+      // Preserve the currently displayed ticks if the user switches states
+      // again during an unfinished transition.
+      const previousMajorTicks = unifiedYAxis.majorTracks();
+      const previousMinorTicks = unifiedYAxis.minorTracks();
       unifiedYAxis.animate(
         oldScale,
         nextScale,
@@ -1953,6 +1922,23 @@
             0
         }
       );
+      // The core axis already animates its grid, labels and benchmark scale,
+      // but normally pairs ticks by POSITION. Re-pair by numeric VALUE using
+      // the opt-in shared asset so labels visibly slide as the range changes.
+      // Keep the core draw/plugin intact; reduced motion stays immediate.
+      if (duration > 0 &&
+          (oldScale.min !== nextScale.min ||
+           oldScale.max !== nextScale.max ||
+           oldScale.intervals !== nextScale.intervals)) {
+        unifiedYAxis.state.majorTracks =
+          Shared.chartAxes.slidingNumericAxisTracks(oldScale, nextScale, {
+            kind: 'major', fromTracks: previousMajorTicks
+          });
+        unifiedYAxis.state.minorTracks =
+          Shared.chartAxes.slidingNumericAxisTracks(oldScale, nextScale, {
+            kind: 'minor', fromTracks: previousMinorTicks
+          });
+      }
 
       legendController?.render();
       tabsController?.update();
@@ -2089,7 +2075,9 @@
               yScaleForState();
 
             chartInstance.options.scales.x =
-              PFFCharts.xYearScaleOptions();
+              Shared.chartAxes.withXAxisTickMarks(
+                PFFCharts.xYearScaleOptions(), { yearMode: 'even' }
+              );
 
             chartInstance.options.scales.y =
               PFFCharts.yScaleOptions(
@@ -2126,7 +2114,29 @@
     migrateLegacyLocalCache();
     setupControls();
 
-    PFF.initialiseApp({
+    const requiredSharedAssets = [
+      ['styling', Shared.chartStyling?.getLineStyle],
+      ['axes', Shared.chartAxes?.createLabelDrivenTicksPlugin],
+      ['sliding axis', Shared.chartAxes?.slidingNumericAxisTracks],
+      ['animations', Shared.chartAnimations?.withChartJsTiming],
+      ['tooltips', Shared.chartTooltips?.tooltipOptions],
+      ['responsive', Shared.chartResponsive?.suppressTapFlash],
+      ['annotations', Shared.chartAnnotations?.createPlugin],
+      ['trends', Shared.chartTrends?.createTrendPillsPlugin]
+    ];
+    const missingSharedAssets = requiredSharedAssets
+      .filter(([, helper]) => typeof helper !== 'function')
+      .map(([name]) => name);
+
+    if (missingSharedAssets.length) {
+      const message = `Missing shared chart assets: ${missingSharedAssets.join(', ')}`;
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      document.getElementById('loadingState').style.display = 'none';
+      statusEl.textContent = message;
+      statusEl.setAttribute('role', 'alert');
+      console.error('[PFF MMM Coverage Pilot]', message);
+    } else PFF.initialiseApp({
       app,
       status:
         statusEl,
@@ -2240,14 +2250,30 @@
 
         updateAccessibleSummary();
 
-        interactionsController =
+        const coreInteractions =
           PFFCharts.setupChartInteractions({
-            canvas:
-              chartCanvas,
-            getChart() {
-              return chart;
-            }
+            canvas: chartCanvas,
+            getChart() { return chart; }
           });
+
+        const onEscape = event => {
+          if (event.key !== 'Escape' || !chart?.tooltip) return;
+          const tip = chart.tooltip;
+          if (!(tip.getActiveElements?.().length ||
+                tip._active?.length || Number(tip.opacity) > 0)) return;
+          chart.setActiveElements?.([]);
+          tip.setActiveElements([], { x: 0, y: 0 });
+          // This draw-only path cannot cancel an in-flight Chart.js transition.
+          chart.draw();
+        };
+        document.addEventListener('keydown', onEscape, true);
+        interactionsController = {
+          destroy() {
+            coreInteractions.destroy();
+            document.removeEventListener('keydown', onEscape, true);
+          }
+        };
+        Shared.chartResponsive.suppressTapFlash(chartCanvas);
 
         setupResponsiveBehaviour();
 
