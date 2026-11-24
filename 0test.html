@@ -12,6 +12,7 @@
   <script src="./assets/chart-styling-and-defaults.js"></script>
   <script src="./assets/chart-axes-and-ticks.js"></script>
   <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-legends-and-interactions.js"></script>
   <script src="./assets/chart-tooltips-and-hover.js"></script>
   <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
   <script src="./assets/chart-reference-lines-and-annotations.js"></script>
@@ -56,12 +57,19 @@
     .state-filter-nt { color: var(--pff-nt); }
     .state-filter-act { color: var(--pff-act); }
 
-    .chart-legend .legend-item {
-      cursor: default;
+    /* The shared legend owns its own scroll viewport and buttons. Its
+       internal styling is scoped, while this override preserves the original
+       28px chart-row geometry and avoids nested horizontal scrolling. */
+    #chartLegend.pff-shared-legend {
+      display: block;
+      height: 28px;
+      min-height: 0;
+      padding: 0;
+      overflow: hidden;
     }
-
-    .chart-legend .legend-item:hover {
-      color: var(--pff-muted);
+    #chartLegend .pff-shared-legend__viewport {
+      height: 28px;
+      padding-bottom: 2px;
     }
 
     .benchmark-legend {
@@ -244,23 +252,7 @@
 
       <div class="chart-options-row">
         <div class="legend-nav">
-          <button
-            id="legendScrollLeft"
-            class="legend-scroll-button legend-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll legend left"
-          >‹</button>
-
-          <div id="legendViewport" class="legend-viewport">
-            <div id="chartLegend" class="chart-legend" aria-label="Chart legend"></div>
-          </div>
-
-          <button
-            id="legendScrollRight"
-            class="legend-scroll-button legend-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll legend right"
-          >›</button>
+          <div id="chartLegend" class="chart-legend" aria-label="Chart legend"></div>
         </div>
       </div>
 
@@ -481,11 +473,6 @@
     const chartLegend =
       document.getElementById('chartLegend');
 
-    const legendScrollLeft =
-      document.getElementById('legendScrollLeft');
-
-    const legendScrollRight =
-      document.getElementById('legendScrollRight');
 
     const chartShell =
       document.getElementById('chartShell');
@@ -498,6 +485,9 @@
       populationByYear: {},
       years: [],
       selectedStates: new Set(ALL_STATES),
+      // A clicked-off legend entry remains hidden after a display-mode change;
+      // the state filter independently controls which PHNs are eligible.
+      hiddenLegendStates: new Set(),
       displayMode: 'dense',
       fixedExtremes: {},
       yScales: {
@@ -518,7 +508,7 @@
     let headingScroller =
       null;
 
-    let legendScroller =
+    let legendController =
       null;
 
     let trendController =
@@ -1384,9 +1374,8 @@
         stateCode;
 
       const visible =
-        state.selectedStates.has(
-          stateCode
-        );
+        state.selectedStates.has(stateCode) &&
+        !state.hiddenLegendStates.has(stateCode);
 
       return PFFCharts.lineDataset({
         ...Shared.chartStyling.getLineStyle({
@@ -1727,9 +1716,8 @@
           );
 
           const visible =
-            state.selectedStates.has(
-              nextDataset._stateCode
-            );
+            state.selectedStates.has(nextDataset._stateCode) &&
+            !state.hiddenLegendStates.has(nextDataset._stateCode);
 
           current._activeSeries =
             visible;
@@ -1745,39 +1733,41 @@
         nextDatasets.length;
     }
 
-    function appendLegendItem({
-      colour,
-      label
-    }) {
-      const item =
-        document.createElement('span');
+    // The existing small shared legend asset is responsible for rendering,
+    // scrolling and keyboard-accessible click-to-toggle controls. No new
+    // PFFCharts / pff_chart_core legend calls are introduced.
+    function legendItemsForDisplay() {
+      return ALL_STATES
+        .filter(stateCode => state.selectedStates.has(stateCode))
+        .map(stateCode => {
+          const series = pointSeriesFor(stateCode, state.displayMode);
+          return {
+            id: stateCode,
+            datasetIndex: ALL_STATES.indexOf(stateCode),
+            label: series.phnByPoint.find(Boolean) || stateCode,
+            colour: STATE_COLOURS[stateCode],
+            markerType: 'line',
+            visible: !state.hiddenLegendStates.has(stateCode)
+          };
+        });
+    }
 
-      item.className =
-        'legend-item';
-
-      const marker =
-        document.createElement('span');
-
-      marker.className =
-        'legend-line';
-
-      marker.style.setProperty(
-        '--legend-colour',
-        colour
-      );
-
-      const text =
-        document.createElement('span');
-
-      text.textContent =
-        label;
-
-      item.append(
-        marker,
-        text
-      );
-
-      chartLegend.appendChild(item);
+    function setupSharedLegend() {
+      legendController?.destroy();
+      legendController = Shared.chartLegends.mount({
+        root: chartLegend,
+        label: 'Toggle PHN trend series',
+        getChart() { return chart; },
+        items: legendItemsForDisplay(),
+        // Keep Chart.js and its already configured 600 ms easing in charge
+        // of the series transitions (undefined selects the default mode).
+        onToggle({id, visible}) {
+          if (!ALL_STATES.includes(id)) return;
+          if (visible) state.hiddenLegendStates.delete(id);
+          else state.hiddenLegendStates.add(id);
+          updateAccessibleSummary();
+        }
+      });
     }
 
     function renderLegend(
@@ -1791,41 +1781,9 @@
           return;
         }
 
-        chartLegend.replaceChildren();
-
-        ALL_STATES.forEach(
-          stateCode => {
-            if (
-              !state.selectedStates.has(
-                stateCode
-              )
-            ) {
-              return;
-            }
-
-            const series =
-              pointSeriesFor(
-                stateCode,
-                state.displayMode
-              );
-
-            const phnName =
-              series.phnByPoint.find(Boolean) ||
-              stateCode;
-
-            appendLegendItem({
-              colour:
-                STATE_COLOURS[stateCode],
-              label:
-                phnName
-            });
-          }
-        );
-
-        requestAnimationFrame(
-          () =>
-            legendScroller?.update()
-        );
+        // Rebuild the names for Densest/Sparsest, retaining the separate
+        // per-state legend visibility choices. The asset preserves scrolling.
+        legendController?.setItems(legendItemsForDisplay());
       };
 
       if (
@@ -1998,10 +1956,8 @@
 
       const selected =
         ALL_STATES.filter(
-          code =>
-            state.selectedStates.has(
-              code
-            )
+          code => state.selectedStates.has(code) &&
+            !state.hiddenLegendStates.has(code)
         );
 
       const modeText =
@@ -2251,16 +2207,6 @@
             headingScrollRight
         });
 
-      legendScroller =
-        PFF.setupScrollableRegion({
-          scroller:
-            chartLegend,
-          leftButton:
-            legendScrollLeft,
-          rightButton:
-            legendScrollRight
-        });
-
       trendController =
         PFFCharts.setupTrendToggle({
           button:
@@ -2383,7 +2329,7 @@
           onRefresh() {
             tabsController?.update();
             headingScroller?.update();
-            legendScroller?.update();
+            legendController?.updateArrows();
           }
         });
     }
@@ -2396,6 +2342,7 @@
       ['axes', Shared.chartAxes?.createLabelDrivenTicksPlugin],
       ['sliding axis', Shared.chartAxes?.slidingNumericAxisTracks],
       ['animations', Shared.chartAnimations?.withChartJsTiming],
+      ['legends', Shared.chartLegends?.mount],
       ['tooltips', Shared.chartTooltips?.tooltipOptions],
       ['responsive', Shared.chartResponsive?.suppressTapFlash],
       ['annotations', Shared.chartAnnotations?.createPlugin],
@@ -2511,6 +2458,7 @@
         buildFixedExtremes();
         buildYScales();
         createChart();
+        setupSharedLegend();
         renderLegend(
           false
         );
@@ -2561,7 +2509,7 @@
           () => {
             tabsController?.update();
             headingScroller?.update();
-            legendScroller?.update();
+            legendController?.updateArrows();
             unifiedYAxis?.setImmediately(
               yScaleForMode(),
               0
