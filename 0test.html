@@ -72,6 +72,14 @@
       padding-bottom: 2px;
     }
 
+    /* Explain the second, independent visibility control only when needed. */
+    .legend-visibility-note {
+      margin: 5px 8px 4px;
+      color: var(--pff-muted, #69718a);
+      font: 600 10px/1.35 Lato, Arial, sans-serif;
+    }
+    .legend-visibility-note[hidden] { display: none; }
+
     .benchmark-legend {
       position: absolute;
       top: 8px;
@@ -245,6 +253,8 @@
               </label>
 
               <div id="stateOptions"></div>
+              <p id="legendVisibilityNotice" class="legend-visibility-note"
+                 role="status" aria-live="polite" hidden></p>
             </div>
           </div>
         </div>
@@ -470,6 +480,9 @@
     const stateOptions =
       document.getElementById('stateOptions');
 
+    const legendVisibilityNotice =
+      document.getElementById('legendVisibilityNotice');
+
     const chartLegend =
       document.getElementById('chartLegend');
 
@@ -485,9 +498,9 @@
       populationByYear: {},
       years: [],
       selectedStates: new Set(ALL_STATES),
-      // A clicked-off legend entry remains hidden after a display-mode change;
-      // the state filter independently controls which PHNs are eligible.
-      hiddenLegendStates: new Set(),
+      // Legend toggles follow the specific named PHN, not its state's slot.
+      // Different Densest/Sparsest PHNs therefore remain independently visible.
+      hiddenLegendPHNs: new Set(),
       displayMode: 'dense',
       fixedExtremes: {},
       yScales: {
@@ -1351,6 +1364,12 @@
       );
     }
 
+    // A PHN-specific identity makes a legend toggle independent of a state's
+    // different Densest/Sparsest PHNs while preserving the choice on return.
+    function legendVisibilityKey(stateCode, phnName) {
+      return JSON.stringify([stateCode, phnName]);
+    }
+
     function datasetForState(
       stateCode,
       kind
@@ -1375,7 +1394,7 @@
 
       const visible =
         state.selectedStates.has(stateCode) &&
-        !state.hiddenLegendStates.has(stateCode);
+        !state.hiddenLegendPHNs.has(legendVisibilityKey(stateCode, legendPHN));
 
       return PFFCharts.lineDataset({
         ...Shared.chartStyling.getLineStyle({
@@ -1717,7 +1736,9 @@
 
           const visible =
             state.selectedStates.has(nextDataset._stateCode) &&
-            !state.hiddenLegendStates.has(nextDataset._stateCode);
+            !state.hiddenLegendPHNs.has(legendVisibilityKey(
+              nextDataset._stateCode, nextDataset._seriesLabel || nextDataset.label
+            ));
 
           current._activeSeries =
             visible;
@@ -1747,7 +1768,9 @@
             label: series.phnByPoint.find(Boolean) || stateCode,
             colour: STATE_COLOURS[stateCode],
             markerType: 'line',
-            visible: !state.hiddenLegendStates.has(stateCode)
+            visible: !state.hiddenLegendPHNs.has(legendVisibilityKey(
+              stateCode, series.phnByPoint.find(Boolean) || stateCode
+            ))
           };
         });
     }
@@ -1761,10 +1784,12 @@
         items: legendItemsForDisplay(),
         // Keep Chart.js and its already configured 600 ms easing in charge
         // of the series transitions (undefined selects the default mode).
-        onToggle({id, visible}) {
+        onToggle({id, label, visible}) {
           if (!ALL_STATES.includes(id)) return;
-          if (visible) state.hiddenLegendStates.delete(id);
-          else state.hiddenLegendStates.add(id);
+          const key = legendVisibilityKey(id, label);
+          if (visible) state.hiddenLegendPHNs.delete(key);
+          else state.hiddenLegendPHNs.add(key);
+          updateLegendVisibilityIndicator();
           updateAccessibleSummary();
         }
       });
@@ -1781,8 +1806,8 @@
           return;
         }
 
-        // Rebuild the names for Densest/Sparsest, retaining the separate
-        // per-state legend visibility choices. The asset preserves scrolling.
+        // Rebuild the names for Densest/Sparsest, restoring the visibility
+        // saved for each named PHN. The shared asset preserves scroll/focus.
         legendController?.setItems(legendItemsForDisplay());
       };
 
@@ -1939,14 +1964,25 @@
         count > 0 &&
         count < ALL_STATES.length;
 
-      PFF.animateHeading({
-        fixed:
-          stateButtonValue,
-        fixedText:
-          selectedStateSummary(),
-        duration:
-          180
-      });
+      updateLegendVisibilityIndicator();
+    }
+
+    function updateLegendVisibilityIndicator() {
+      const hiddenCount = legendItemsForDisplay().filter(item => !item.visible).length;
+      const summary = selectedStateSummary();
+      const text = hiddenCount ? `${summary} · ${hiddenCount} off` : summary;
+      if (stateButtonValue.textContent !== text) {
+        PFF.animateHeading({fixed: stateButtonValue, fixedText: text, duration: 180});
+      }
+      const explanation = hiddenCount
+        ? `${hiddenCount} PHN ${hiddenCount === 1 ? 'line is' : 'lines are'} hidden using the clickable legend. Select its faded legend entry to restore it.`
+        : '';
+      stateButton.setAttribute('aria-label', `States: ${summary}${hiddenCount ? `; ${hiddenCount} PHN legend ${hiddenCount === 1 ? 'line' : 'lines'} hidden` : ''}`);
+      stateButton.title = explanation || `States: ${summary}`;
+      if (legendVisibilityNotice) {
+        legendVisibilityNotice.hidden = !hiddenCount;
+        legendVisibilityNotice.textContent = explanation;
+      }
     }
 
     function updateAccessibleSummary() {
@@ -1957,7 +1993,9 @@
       const selected =
         ALL_STATES.filter(
           code => state.selectedStates.has(code) &&
-            !state.hiddenLegendStates.has(code)
+            !state.hiddenLegendPHNs.has(legendVisibilityKey(
+              code, pointSeriesFor(code, state.displayMode).phnByPoint.find(Boolean) || code
+            ))
         );
 
       const modeText =
@@ -2139,6 +2177,7 @@
       renderLegend(
         reason === 'mode'
       );
+      updateLegendVisibilityIndicator();
 
       tabsController?.update();
       headingScroller?.update();
