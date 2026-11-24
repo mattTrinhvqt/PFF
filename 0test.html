@@ -529,6 +529,21 @@
     let legendAnimationToken =
       0;
 
+    // Track this app's Web Animations so a newer legend render can cancel
+    // both phases of an interrupted Densest/Sparsest crossfade.
+    let legendFadeOut = null;
+    let legendFadeIn = null;
+    let legendTransitionLocked = false;
+
+    // The old PHN labels remain in the DOM during fade-out. Block their
+    // activation until the matching labels have been installed. This also
+    // catches keyboard-generated clicks, which pointer-events cannot block.
+    chartLegend.addEventListener('click', event => {
+      if (!legendTransitionLocked) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+
     function dataNumber(value) {
       if (
         value &&
@@ -1799,19 +1814,32 @@
       });
     }
 
+    function cancelLegendFades() {
+      // Cancelling a fill:forwards animation clears its compositor opacity.
+      // Otherwise an earlier fade can make a later instant legend invisible.
+      legendFadeOut?.cancel();
+      legendFadeIn?.cancel();
+      legendFadeOut = null;
+      legendFadeIn = null;
+      legendTransitionLocked = false;
+      chartLegend.style.pointerEvents = '';
+      chartLegend.removeAttribute('aria-busy');
+    }
+
     function renderLegend(
       animate = true
     ) {
       const token =
         ++legendAnimationToken;
 
-      const drawLegend = () => {
-        if (token !== legendAnimationToken) {
-          return;
-        }
+      // Invalidate the previous render AND cancel its animations before any
+      // new render (including a state-filter render with animate=false).
+      cancelLegendFades();
 
-        // Rebuild the names for Densest/Sparsest, restoring the visibility
-        // saved for each named PHN. The shared asset preserves scroll/focus.
+      const drawLegend = () => {
+        if (token !== legendAnimationToken) return;
+        // Use names and visibility from the current view, never a stale
+        // Densest/Sparsest snapshot left in the outgoing legend.
         legendController?.setItems(legendItemsForDisplay());
       };
 
@@ -1825,47 +1853,44 @@
         return;
       }
 
-      const outgoing =
-        chartLegend.animate(
-          [
-            { opacity: 1 },
-            { opacity: 0 }
-          ],
-          {
-            duration: 150,
-            easing: 'ease-out',
-            fill: 'forwards'
-          }
-        );
+      // Old names must not control the newly selected chart datasets while
+      // the 150 ms fade-out is in progress. The capture handler above covers
+      // keyboard activation; pointer-events covers pointer/touch input.
+      legendTransitionLocked = true;
+      chartLegend.style.pointerEvents = 'none';
+      chartLegend.setAttribute('aria-busy', 'true');
 
-      outgoing.finished
-        .catch(() => {})
-        .then(
-          () => {
-            drawLegend();
+      legendFadeOut = chartLegend.animate(
+        [{ opacity: 1 }, { opacity: 0 }],
+        { duration: 150, easing: 'ease-out', fill: 'forwards' }
+      );
 
-            if (
-              token !==
-              legendAnimationToken
-            ) {
-              return;
+      legendFadeOut.finished
+        .catch(() => {}) // A newer render intentionally cancels the old fade.
+        .then(() => {
+          if (token !== legendAnimationToken) return;
+
+          drawLegend();
+          // The old fill:forwards opacity must not override the fade-in or
+          // linger after its completion. Both operations occur before paint.
+          legendFadeOut?.cancel();
+          legendFadeOut = null;
+          legendTransitionLocked = false;
+          chartLegend.style.pointerEvents = '';
+          chartLegend.removeAttribute('aria-busy');
+
+          legendFadeIn = chartLegend.animate(
+            [{ opacity: 0 }, { opacity: 1 }],
+            {
+              duration: 230,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+              fill: 'none'
             }
-
-            chartLegend.animate(
-              [
-                { opacity: 0 },
-                { opacity: 1 }
-              ],
-              {
-                duration: 230,
-                easing:
-                  'cubic-bezier(0.22, 1, 0.36, 1)',
-                fill:
-                  'both'
-              }
-            );
-          }
-        );
+          );
+          legendFadeIn.finished.catch(() => {}).then(() => {
+            if (token === legendAnimationToken) legendFadeIn = null;
+          });
+        });
     }
 
     function buildStateControls() {
