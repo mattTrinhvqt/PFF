@@ -4,14 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>PFF Population Demand State Trends</title>
+  <title>PFF Access gap</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
-  <!-- Opt-in modular chart presentation; legacy core retained only for
-       existing data, controller and custom-axis APIs pending future migration. -->
-  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <!-- Modular presentation only. Legacy core remains for existing loading,
+       state controls and custom-axis controller; no new calls into core. -->
   <script src="./assets/chart-axes-and-ticks.js"></script>
   <script src="./assets/chart-animations-and-transitions.js"></script>
   <script src="./assets/chart-tooltips-and-hover.js"></script>
@@ -23,30 +22,32 @@
   <style>
 
     :root {
-      --pff-saturated: #ff00ff;
+      --metro-colour: #30475d;
+      --nonmetro-colour: #b54a0a;
+      --access-gap-colour: #6600ff;
       --pff-sufficient: #20c9d7;
+      --pff-saturated: #ff00ff;
     }
 
-    .module-title {
-      position: relative;
-      min-height: 29px;
-      margin: 0;
-      padding: 0 9px 6px;
-      color: var(--pff-purple);
-      font-size: 13px;
-      font-weight: 700;
-      line-height: 1;
+    .single-tab-shell .tab-list { min-width: 0; }
+    .single-tab-shell .chart-tab { cursor: default; }
+    .single-tab-shell .tab-list::after { display: none; }
+    .single-tab-shell .chart-tab.is-active,
+    .single-tab-shell .chart-tab[aria-selected='true'] {
+      border-bottom-color: var(--pff-purple);
+    }
+
+    .chart-heading-row { align-items: flex-start; }
+    .chart-heading {
+      min-width: 0;
+      max-width: calc(100% - 92px);
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
     }
-
-    .module-title::after {
-      content: '';
-      position: absolute;
-      right: 0;
-      bottom: 0;
-      left: 0;
-      height: 2px;
-      background: var(--pff-purple);
+    .heading-controls {
+      margin-left: auto;
+      padding-top: 2px;
     }
 
     .chart-options-row {
@@ -59,24 +60,23 @@
       padding: 0 0 2px;
     }
 
-    .chart-shell {
-      margin: -3px 0 0;
-    }
-
-    /* The compact shared legend owns its own viewport and scroll buttons.
-       Hide the old outer scroll buttons to prevent duplicated controls. */
-    .chart-options-row .legend-nav > .legend-scroll-button { display: none; }
-    #chartLegend.pff-shared-legend {
-      display: block;
+    /* The modular legend retains all three toggles, including the derived
+       purple gap highlight. Clicking the gap does not hide either data line. */
+    #accessLegend.pff-shared-legend {
+      width: 100%;
       height: 28px;
       min-height: 0;
-      width: 100%;
-      padding: 0;
       overflow: hidden;
     }
-    #chartLegend .pff-shared-legend__viewport {
+    #accessLegend .pff-shared-legend__viewport {
       height: 28px;
       padding-bottom: 2px;
+    }
+    #accessLegend .pff-shared-legend__marker[data-shape="square"] {
+      width: 17px;
+      height: 7px;
+      background: rgba(102, 0, 255, 0.08);
+      border-color: rgba(102, 0, 255, 0.22);
     }
 
     .benchmark-legend {
@@ -121,11 +121,26 @@
       border-top-color: var(--pff-saturated);
     }
 
-    @media (max-width: 430px) {
-      .module-title {
-        font-size: 12px;
-      }
+    .method-note {
+      margin: 5px 3px 0;
+      color: var(--pff-muted);
+      font-size: 11.5px;
+      line-height: 1.34;
+      text-align: left;
+    }
 
+    .method-note-line { display: block; }
+    .method-note-line + .method-note-line { margin-top: 2px; }
+
+    .state-button { min-width: 84px; }
+    .state-menu { min-width: 128px; }
+    .state-option-code { font-weight: 700; }
+
+    @media (max-width: 430px) {
+      .chart-heading { max-width: calc(100% - 86px); }
+      .method-note { font-size: 10.5px; }
+      .state-button { min-width: 80px; }
+      .state-menu { min-width: 118px; }
       .benchmark-legend {
         top: 7px;
         right: 3px;
@@ -133,28 +148,28 @@
       }
     }
   </style>
+  <style>
+    .chart-shell { margin-top: -2px; }
+  </style>
 </head>
-
 <body class="pff-chart-app">
   <div id="fit">
     <main id="app" class="is-loading" aria-busy="true">
-      <div
-        id="loadingState"
-        class="app-loading"
-        role="status"
-        aria-live="polite"
-        aria-label="Loading Australia and state population coverage data"
-      >
+      <div id="loadingState" class="app-loading" role="status" aria-label="Loading metropolitan and non-metropolitan access trends">
         <div class="cone-loader" aria-hidden="true">
           <span class="cone blue"></span>
           <span class="cone green"></span>
           <span class="cone red"></span>
         </div>
-        <p class="loader-text">Loading population coverage data…</p>
+        <p id="loaderText" class="loader-text">Loading access trends…</p>
       </div>
 
-      <div class="module-top">
-        <h1 class="module-title">Population coverage</h1>
+      <div class="module-top single-tab-shell">
+        <div class="tab-scroll-shell">
+          <div class="tab-list" role="tablist" aria-label="Access gap chart">
+            <button class="chart-tab is-active" type="button" role="tab" aria-selected="true" tabindex="0">Access gap</button>
+          </div>
+        </div>
 
         <div id="liveData" class="live-data" aria-label="Live data" aria-live="polite">
           <span class="live-data-dot" aria-hidden="true"></span>
@@ -165,60 +180,21 @@
       <div id="status" role="status" aria-live="polite"></div>
 
       <div class="chart-heading-row">
-        <div id="headingScrollShell" class="heading-scroll-shell">
-          <button
-            id="headingScrollLeft"
-            class="heading-scroll-button heading-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll graph title left"
-          >‹</button>
-
-          <div id="headingScrollViewport" class="heading-scroll-viewport">
-            <h2 id="chartHeading" class="chart-heading">Population coverage trends</h2>
+        <div class="heading-scroll-shell">
+          <div class="heading-scroll-viewport">
+            <h2 id="chartHeading" class="chart-heading">Metro vs non-metro access</h2>
           </div>
-
-          <button
-            id="headingScrollRight"
-            class="heading-scroll-button heading-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll graph title right"
-          >›</button>
         </div>
 
         <div class="heading-controls">
-          <button
-            id="yoyTrendToggle"
-            class="yoy-trend-toggle is-on"
-            type="button"
-            aria-pressed="true"
-            aria-label="3-year trend"
-          >
-            <span class="yoy-binary-indicator" aria-hidden="true"></span>
-            <span class="yoy-toggle-label">3yr Trend</span>
-          </button>
-
           <div id="stateControl" class="state-control">
-            <button
-              id="stateButton"
-              class="state-button"
-              type="button"
-              aria-expanded="false"
-              aria-controls="stateMenu"
-            >
-              <span>States</span>
-              <span id="stateButtonValue" class="state-button-value">All</span>
+            <button id="stateButton" class="state-button" type="button" aria-expanded="false" aria-controls="stateMenu">
+              <span>State</span>
+              <span id="stateButtonValue" class="state-button-value">AUS</span>
               <span class="menu-arrow" aria-hidden="true"></span>
             </button>
-
             <div id="stateMenu" class="state-menu" role="menu">
-              <div class="state-menu-title">Show states</div>
-
-              <label class="state-option state-option-all">
-                <input id="stateAll" type="checkbox" checked>
-                <span class="state-option-box" aria-hidden="true"></span>
-                <span>All states</span>
-              </label>
-
+              <div class="state-menu-title">Show state</div>
               <div id="stateOptions"></div>
             </div>
           </div>
@@ -227,2282 +203,1399 @@
 
       <div class="chart-options-row">
         <div class="legend-nav">
-          <button
-            id="legendScrollLeft"
-            class="legend-scroll-button legend-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll legend left"
-          >‹</button>
-
-          <div id="legendViewport" class="legend-viewport">
-            <div
-              id="chartLegend"
-              class="chart-legend"
-              aria-label="Population coverage chart legend"
-            ></div>
+          <div class="legend-viewport">
+            <div id="accessLegend" class="chart-legend" aria-label="Chart legend">
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--metro-colour)"></span><span>Metro (MM1)</span></span>
+              <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--nonmetro-colour)"></span><span>Non-metro (MM2–7)</span></span>
+              <span class="legend-item"><span class="legend-line is-gap" style="--legend-colour: var(--access-gap-colour)"></span><span>Access gap</span></span>
+            </div>
           </div>
-
-          <button
-            id="legendScrollRight"
-            class="legend-scroll-button legend-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll legend right"
-          >›</button>
         </div>
       </div>
 
       <div id="chartShell" class="chart-shell">
-        <div class="benchmark-legend" aria-label="Coverage benchmarks">
+        <div class="benchmark-legend" aria-label="Access benchmarks">
           <span class="benchmark-legend-item">
             <span class="benchmark-legend-line is-sufficient" aria-hidden="true"></span>
             <span>Sufficient · 1 / 10k</span>
           </span>
-
           <span class="benchmark-legend-item">
             <span class="benchmark-legend-line is-saturated" aria-hidden="true"></span>
             <span>Saturated · 1 / 5k</span>
           </span>
         </div>
-
-        <canvas
-          id="coverageChart"
-          aria-label="Australia and state people per FTE clinician trends over time"
-          role="img"
-        ></canvas>
+        <canvas id="chartCanvas" aria-label="Metro and non-metro population per active clinician over time, with the access gap highlighted" role="img"></canvas>
       </div>
+
+      <p class="method-note">
+        <span class="method-note-line"><strong>Access:</strong> population per active clinician; lower values indicate greater public access to optometry eyecare (albeit higher supply of optometrists); TAS/NT excluded (all non-metro), ACT excluded (all metro)</span>
+        <span id="trendsNote" class="method-note-line"><strong>Trends:</strong> pills show fixed 10-year log-linear annual trends</span>
+      </p>
     </main>
   </div>
 
   <script>
     'use strict';
-
     const Shared = window.PFFModules || {};
 
     const CONFIG = Object.freeze({
-      sheetId:
-        '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
-
-      clinicianSheet:
-        'OptomsbyPHN',
-
-      clinicianRange:
-        'A30:CQ',
-
-      populationSheet:
-        'Auspopnbystate',
-
-      populationRange:
-        'A30:J',
-
-      localCacheKey:
-        'pff-australia-state-population-coverage-trends-fte-phn-v4'
+      sheetId: '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
+      clinicianSheet: 'OptomsbystatebyMMM',
+      // A = year; B:AO = State × MMM active clinician counts.
+      clinicianRange: 'A29:AO',
+      populationSheet: 'AuspopnbystatebyMMM',
+      populationRange: 'A29:AO',
+      localCacheKey: 'pff-workforce-maldistribution-trends-v2'
     });
 
     const CACHE_WEB_APP_URL =
       'https://script.google.com/macros/s/AKfycbxd-Tt2APxe1mds1APNpg_wTBAldVXJY4L4BUL4EIKg_xX0WBQRF3MrMnRTTX1It1p05A/exec';
 
-    const CLINICIAN_CACHE_APP_KEY =
-      'pff-phn-population-coverage-trends-v1';
+    const CACHE_APP_KEY = 'pff-state-mmm-workforce-v1';
+    const COUNT_FIRST_INDEX = 1;
+    const POPULATION_FIRST_INDEX = 1;
 
-    const POPULATION_CACHE_APP_KEY =
-      'pff-australian-population-trends';
-
-    const LIVE_CLINICIAN_FIRST_INDEX =
-      64; // BM
-
-    const REMOTE_CLINICIAN_FIRST_INDEX =
-      1;
-
-    const PHN_SERIES_COUNT =
-      31;
-
-    const SATURATED_BENCHMARK =
-      5000;
-
-    const SUFFICIENT_BENCHMARK =
-      10000;
-
-    const SATURATED_COLOUR =
-      '#ff00ff';
-
-    const SUFFICIENT_COLOUR =
-      '#20c9d7';
-
-    const AUSTRALIA_COLOUR =
-      '#0b5d1e';
-
-    const STATE_COLOURS = {
-      NSW: '#2db7f5',
-      VIC: '#2d3a8c',
-      QLD: '#7a0036',
-      SA: '#f03a47',
-      WA: '#000000',
-      TAS: '#22a36b',
-      NT: '#c25e00',
-      ACT: '#7b61ff'
-    };
-
-    const FTE_STATE_CODES = [
-      'NSW', 'NSW', 'NSW', 'NSW', 'NSW',
-      'NSW', 'NSW', 'NSW', 'NSW', 'NSW',
-      'VIC', 'VIC', 'VIC', 'VIC', 'VIC', 'VIC',
-      'QLD', 'QLD', 'QLD', 'QLD', 'QLD', 'QLD', 'QLD',
-      'SA', 'SA',
-      'WA', 'WA', 'WA',
-      'TAS',
-      'NT',
-      'ACT'
+    const SERIES_SCHEMA = [
+      { state: 'NSW', mmm: 1 }, { state: 'NSW', mmm: 2 },
+      { state: 'NSW', mmm: 3 }, { state: 'NSW', mmm: 4 },
+      { state: 'NSW', mmm: 5 }, { state: 'NSW', mmm: 6 },
+      { state: 'NSW', mmm: 7 },
+      { state: 'VIC', mmm: 1 }, { state: 'VIC', mmm: 2 },
+      { state: 'VIC', mmm: 3 }, { state: 'VIC', mmm: 4 },
+      { state: 'VIC', mmm: 5 },
+      { state: 'QLD', mmm: 1 }, { state: 'QLD', mmm: 2 },
+      { state: 'QLD', mmm: 3 }, { state: 'QLD', mmm: 4 },
+      { state: 'QLD', mmm: 5 }, { state: 'QLD', mmm: 6 },
+      { state: 'QLD', mmm: 7 },
+      { state: 'SA', mmm: 1 }, { state: 'SA', mmm: 2 },
+      { state: 'SA', mmm: 3 }, { state: 'SA', mmm: 4 },
+      { state: 'SA', mmm: 5 }, { state: 'SA', mmm: 6 },
+      { state: 'SA', mmm: 7 },
+      { state: 'WA', mmm: 1 }, { state: 'WA', mmm: 2 },
+      { state: 'WA', mmm: 3 }, { state: 'WA', mmm: 4 },
+      { state: 'WA', mmm: 5 }, { state: 'WA', mmm: 6 },
+      { state: 'WA', mmm: 7 },
+      { state: 'TAS', mmm: 2 }, { state: 'TAS', mmm: 3 },
+      { state: 'TAS', mmm: 5 },
+      { state: 'NT', mmm: 2 }, { state: 'NT', mmm: 6 },
+      { state: 'NT', mmm: 7 },
+      { state: 'ACT', mmm: 1 }
     ];
 
-    const STATE_CODES = [
-      'NSW',
-      'VIC',
-      'QLD',
-      'SA',
-      'WA',
-      'TAS',
-      'NT',
-      'ACT'
-    ];
-
+    const ALL_STATES = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'];
+    const COMPARABLE_STATES = ALL_STATES.filter(code => {
+      const mmms = SERIES_SCHEMA
+        .filter(item => item.state === code)
+        .map(item => item.mmm);
+      return mmms.includes(1) && mmms.some(mmm => mmm >= 2);
+    });
     const STATE_NAMES = {
-      NSW: 'New South Wales',
-      VIC: 'Victoria',
-      QLD: 'Queensland',
-      SA: 'South Australia',
-      WA: 'Western Australia',
-      TAS: 'Tasmania',
-      NT: 'Northern Territory',
-      ACT: 'Australian Capital Territory'
+      NSW: 'New South Wales', VIC: 'Victoria', QLD: 'Queensland',
+      SA: 'South Australia', WA: 'Western Australia', TAS: 'Tasmania',
+      NT: 'Northern Territory', ACT: 'Australian Capital Territory'
     };
 
-    const SERIES = [
-      {
-        code:
-          'AUS',
-        label:
-          'Australia',
-        colour:
-          AUSTRALIA_COLOUR,
-        width:
-          3
-      },
-      ...STATE_CODES.map(
-        code => ({
-          code,
-          label:
-            code,
-          colour:
-            STATE_COLOURS[code],
-          width:
-            3
-        })
-      )
-    ];
-
-    const app =
-      document.getElementById('app');
-
-    const statusEl =
-      document.getElementById('status');
-
-    const liveData =
-      document.getElementById('liveData');
-
-    const liveDataText =
-      document.getElementById('liveDataText');
-
-    const headingScrollViewport =
-      document.getElementById('headingScrollViewport');
-
-    const headingScrollLeft =
-      document.getElementById('headingScrollLeft');
-
-    const headingScrollRight =
-      document.getElementById('headingScrollRight');
-
-    const yoyTrendToggle =
-      document.getElementById('yoyTrendToggle');
-
-    const stateControl =
-      document.getElementById('stateControl');
-
-    const stateButton =
-      document.getElementById('stateButton');
-
-    const stateButtonValue =
-      document.getElementById('stateButtonValue');
-
-    const stateMenu =
-      document.getElementById('stateMenu');
-
-    const stateAll =
-      document.getElementById('stateAll');
-
-    const stateOptions =
-      document.getElementById('stateOptions');
-
-    const chartLegend =
-      document.getElementById('chartLegend');
-
-    const legendScrollLeft =
-      document.getElementById('legendScrollLeft');
-
-    const legendScrollRight =
-      document.getElementById('legendScrollRight');
-
-    const chartShell =
-      document.getElementById('chartShell');
-
-    const chartCanvas =
-      document.getElementById('coverageChart');
+    const app = document.getElementById('app');
+    const loaderText = document.getElementById('loaderText');
+    const statusEl = document.getElementById('status');
+    const liveData = document.getElementById('liveData');
+    const liveDataText = document.getElementById('liveDataText');
+    const chartHeading = document.getElementById('chartHeading');
+    const chartShell = document.getElementById('chartShell');
+    const chartCanvas = document.getElementById('chartCanvas');
+    const stateControl = document.getElementById('stateControl');
+    const stateButton = document.getElementById('stateButton');
+    const stateButtonValue = document.getElementById('stateButtonValue');
+    const stateMenu = document.getElementById('stateMenu');
+    const stateOptions = document.getElementById('stateOptions');
 
     const state = {
-      rows: [],
+      scope: 'AUS',
       clinicianByYear: {},
-      populationByYear: {},
-      years: [],
-      hiddenSeries: new Set(),
-      scale: {
-        min: 0,
-        max: 12000,
-        step: 2000,
-        intervals: 6
-      }
+      populationByYear: {}
     };
 
-    let chart =
-      null;
-
-    let chartSummary =
-      null;
-
-    let headingScroller =
-      null;
-
-    let legendController =
-      null;
-
-    let trendController =
-      null;
-
-    let stateMenuController =
-      null;
-
-    let interactionsController =
-      null;
-
-    let responsiveController =
-      null;
-
-    let unifiedYAxis =
-      null;
+    let chart = null;
+    let chartSummary = null;
+    let stateMenuController = null;
+    let interactionsController = null;
+    let responsiveController = null;
+    let tooltipInteractionCleanup = null;
+    let yAxisController = null;
+    let legendController = null;
+    let gapVisible = true;
+    let displayRows = [];
+    let yScale = { min: 0, max: 10000, intervals: 5, step: 2000 };
+    let pinnedGapIndex = null;
 
     function dataNumber(value) {
       if (
-        value &&
-        typeof value === 'object' &&
-        (
-          Object.prototype.hasOwnProperty.call(value, 'v') ||
-          Object.prototype.hasOwnProperty.call(value, 'f')
-        )
+        value && typeof value === 'object' &&
+        (Object.prototype.hasOwnProperty.call(value, 'v') ||
+         Object.prototype.hasOwnProperty.call(value, 'f'))
       ) {
-        const direct =
-          PFFCharts.numericCell(value);
-
-        return Number.isFinite(direct)
-          ? direct
-          : null;
+        const direct = PFFCharts.numericCell(value);
+        return Number.isFinite(direct) ? direct : null;
       }
 
-      if (
-        value === null ||
-        value === undefined ||
-        (
-          typeof value === 'string' &&
-          !value.trim()
-        )
-      ) {
-        return null;
-      }
+      if (value === null || value === undefined || value === '') return null;
 
-      const cleaned =
-        PFF.cleanText(value)
-          .replace(/,/g, '')
-          .replace(/[^0-9.+-]/g, '');
+      const cleaned = PFF.cleanText(value)
+        .replace(/,/g, '')
+        .replace(/[^0-9.+-]/g, '');
 
-      if (
-        !cleaned ||
-        !/\d/.test(cleaned)
-      ) {
-        return null;
-      }
-
-      const number =
-        Number(cleaned);
-
-      return Number.isFinite(number)
-        ? number
-        : null;
+      if (!cleaned || !/\d/.test(cleaned)) return null;
+      const number = Number(cleaned);
+      return Number.isFinite(number) ? number : null;
     }
 
     function yearValue(value) {
-      const numeric =
-        dataNumber(value);
-
-      if (!Number.isFinite(numeric)) {
-        return null;
-      }
-
-      const year =
-        Math.round(numeric);
-
-      return year >= 1900 && year <= 2200
-        ? year
-        : null;
+      const numeric = dataNumber(value);
+      if (!Number.isFinite(numeric)) return null;
+      const year = Math.round(numeric);
+      return year >= 1900 && year <= 2200 ? year : null;
     }
 
-    function normaliseMetricObject(values) {
-      if (
-        !values ||
-        typeof values !== 'object'
-      ) {
-        return null;
-      }
-
-      const normalised = {};
-
-      SERIES.forEach(
-        item => {
-          const raw =
-            values[item.code];
-
-          if (
-            raw === null ||
-            raw === undefined ||
-            (
-              typeof raw === 'string' &&
-              !raw.trim()
-            )
-          ) {
-            normalised[item.code] =
-              null;
-
-            return;
-          }
-
-          const number =
-            Number(raw);
-
-          normalised[item.code] =
-            Number.isFinite(number)
-              ? number
-              : null;
-        }
-      );
-
-      return Object.values(
-        normalised
-      ).some(Number.isFinite)
-        ? normalised
-        : null;
+    function clinicianValues(getValue) {
+      return SERIES_SCHEMA.map((_, index) => {
+        const count = dataNumber(getValue(COUNT_FIRST_INDEX + index));
+        if (count === 0) return 0;
+        return Number.isFinite(count) && count >= 0 ? count : null;
+      });
     }
 
-    function aggregateClinicianValues(
-      values
-    ) {
-      const expectedByState =
-        FTE_STATE_CODES.reduce(
-          (counts, code) => {
-            counts[code] =
-              (counts[code] || 0) + 1;
-
-            return counts;
-          },
-          {}
-        );
-
-      const totals =
-        Object.fromEntries(
-          STATE_CODES.map(
-            code => [code, 0]
-          )
-        );
-
-      const validCounts =
-        Object.fromEntries(
-          STATE_CODES.map(
-            code => [code, 0]
-          )
-        );
-
-      let nationalTotal =
-        0;
-
-      let nationalValid =
-        0;
-
-      FTE_STATE_CODES.forEach(
-        (code, index) => {
-          const value =
-            dataNumber(
-              values?.[index]
-            );
-
-          if (
-            !Number.isFinite(value) ||
-            value < 0
-          ) {
-            return;
-          }
-
-          totals[code] +=
-            value;
-
-          validCounts[code] +=
-            1;
-
-          nationalTotal +=
-            value;
-
-          nationalValid +=
-            1;
-        }
+    function populationValues(getValue) {
+      return SERIES_SCHEMA.map((_, index) =>
+        dataNumber(getValue(POPULATION_FIRST_INDEX + index))
       );
+    }
 
+    function parseClinicianTable(table) {
       const result = {};
-
-      STATE_CODES.forEach(
-        code => {
-          result[code] =
-            validCounts[code] ===
-              expectedByState[code]
-              ? totals[code]
-              : null;
-        }
-      );
-
-      result.AUS =
-        nationalValid ===
-          PHN_SERIES_COUNT
-          ? nationalTotal
-          : null;
-
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = clinicianValues(index => cells[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
       return result;
     }
 
-    function parseLiveClinicianTable(
-      table
-    ) {
+    function parsePopulationTable(table) {
       const result = {};
-
-      (table?.rows || []).forEach(
-        sourceRow => {
-          const cells =
-            sourceRow?.c || [];
-
-          const year =
-            yearValue(
-              cells[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          const values =
-            Array.from(
-              {
-                length:
-                  PHN_SERIES_COUNT
-              },
-              (_, index) =>
-                dataNumber(
-                  cells[
-                    LIVE_CLINICIAN_FIRST_INDEX +
-                      index
-                  ]
-                )
-            );
-
-          const aggregated =
-            aggregateClinicianValues(
-              values
-            );
-
-          if (
-            Object.values(
-              aggregated
-            ).some(Number.isFinite)
-          ) {
-            result[year] =
-              aggregated;
-          }
-        }
-      );
-
+      (table?.rows || []).forEach(sourceRow => {
+        const cells = sourceRow?.c || [];
+        const year = yearValue(cells[0]);
+        if (!year) return;
+        const values = populationValues(index => cells[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
       return result;
     }
 
-    function parseRemoteClinicianRows(
-      sourceRows
-    ) {
+    function parseRemoteClinicianRows(sourceRows) {
       const result = {};
-
-      (
-        Array.isArray(sourceRows)
-          ? sourceRows
-          : []
-      ).forEach(
-        row => {
-          const year =
-            yearValue(
-              row?.[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          const values =
-            Array.from(
-              {
-                length:
-                  PHN_SERIES_COUNT
-              },
-              (_, index) =>
-                dataNumber(
-                  row?.[
-                    REMOTE_CLINICIAN_FIRST_INDEX +
-                      index
-                  ]
-                )
-            );
-
-          const aggregated =
-            aggregateClinicianValues(
-              values
-            );
-
-          if (
-            Object.values(
-              aggregated
-            ).some(Number.isFinite)
-          ) {
-            result[year] =
-              aggregated;
-          }
-        }
-      );
-
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = clinicianValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
       return result;
     }
 
-    function parseLivePopulationTable(
-      table
-    ) {
+    function parseRemotePopulationRows(sourceRows) {
       const result = {};
-
-      (table?.rows || []).forEach(
-        sourceRow => {
-          const cells =
-            sourceRow?.c || [];
-
-          const year =
-            yearValue(
-              cells[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          const values = {
-            NSW:
-              dataNumber(cells[1]),
-            VIC:
-              dataNumber(cells[2]),
-            QLD:
-              dataNumber(cells[3]),
-            SA:
-              dataNumber(cells[4]),
-            WA:
-              dataNumber(cells[5]),
-            TAS:
-              dataNumber(cells[6]),
-            NT:
-              dataNumber(cells[7]),
-            ACT:
-              dataNumber(cells[8]),
-            AUS:
-              dataNumber(cells[9])
-          };
-
-          if (
-            Object.values(
-              values
-            ).some(Number.isFinite)
-          ) {
-            result[year] =
-              values;
-          }
-        }
-      );
-
+      (Array.isArray(sourceRows) ? sourceRows : []).forEach(row => {
+        const year = yearValue(row?.[0]);
+        if (!year) return;
+        const values = populationValues(index => row?.[index]);
+        if (values.some(Number.isFinite)) result[year] = values;
+      });
       return result;
     }
 
-    function parseRemotePopulationSnapshot(
-      snapshot
-    ) {
-      const result = {};
-
-      (
-        Array.isArray(
-          snapshot?.data?.stateRows
-        )
-          ? snapshot.data.stateRows
-          : []
-      ).forEach(
-        row => {
-          const year =
-            yearValue(
-              row?.[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          result[year] = {
-            NSW:
-              dataNumber(row?.[1]),
-            VIC:
-              dataNumber(row?.[2]),
-            QLD:
-              dataNumber(row?.[3]),
-            SA:
-              dataNumber(row?.[4]),
-            WA:
-              dataNumber(row?.[5]),
-            TAS:
-              dataNumber(row?.[6]),
-            NT:
-              dataNumber(row?.[7]),
-            ACT:
-              dataNumber(row?.[8]),
-            AUS:
-              null
-          };
-        }
-      );
-
-      (
-        Array.isArray(
-          snapshot?.data?.rows
-        )
-          ? snapshot.data.rows
-          : []
-      ).forEach(
-        row => {
-          const year =
-            yearValue(
-              row?.[0]
-            );
-
-          if (!year) {
-            return;
-          }
-
-          result[year] =
-            result[year] || {
-              NSW: null,
-              VIC: null,
-              QLD: null,
-              SA: null,
-              WA: null,
-              TAS: null,
-              NT: null,
-              ACT: null,
-              AUS: null
-            };
-
-          result[year].AUS =
-            dataNumber(
-              row?.[1]
-            );
-        }
-      );
-
-      return result;
+    function normaliseSeries(values) {
+      if (!Array.isArray(values) || values.length < SERIES_SCHEMA.length) return null;
+      const normalised = values.slice(0, SERIES_SCHEMA.length).map(value => {
+        if (value === null || value === undefined || value === '') return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      });
+      return normalised.some(Number.isFinite) ? normalised : null;
     }
 
-    function combineYearMaps(
-      clinicianByYear,
-      populationByYear
-    ) {
-      const years =
-        Array.from(
-          new Set([
-            ...Object.keys(
-              clinicianByYear || {}
-            ).map(Number),
+    function combineYearMaps(clinicianByYear, populationByYear) {
+      const years = Array.from(new Set([
+        ...Object.keys(clinicianByYear || {}).map(Number),
+        ...Object.keys(populationByYear || {}).map(Number)
+      ])).filter(Number.isFinite).sort((a, b) => a - b);
 
-            ...Object.keys(
-              populationByYear || {}
-            ).map(Number)
-          ])
-        )
-          .filter(Number.isFinite)
-          .sort(
-            (first, second) =>
-              first - second
-          );
+      return years.map(year => ({
+        year,
+        clinician: normaliseSeries(clinicianByYear?.[year]),
+        population: normaliseSeries(populationByYear?.[year])
+      }));
+    }
 
-      return years.map(
-        year => ({
-          year,
-          clinician:
-            normaliseMetricObject(
-              clinicianByYear?.[
-                year
-              ]
-            ),
-          population:
-            normaliseMetricObject(
-              populationByYear?.[
-                year
-              ]
-            )
+    function validateCombinedRows(sourceRows) {
+      const rows = (Array.isArray(sourceRows) ? sourceRows : [])
+        .map(row => {
+          const year = Number(row?.year);
+          if (!Number.isFinite(year) || year < 1900 || year > 2200) return null;
+          const clinician = normaliseSeries(row?.clinician);
+          const population = normaliseSeries(row?.population);
+          if (!clinician && !population) return null;
+          return { year: Math.round(year), clinician, population };
         })
-      );
-    }
-
-    function validateCombinedRows(
-      sourceRows
-    ) {
-      const rows =
-        (
-          Array.isArray(sourceRows)
-            ? sourceRows
-            : []
-        )
-          .map(
-            row => {
-              const year =
-                Number(
-                  row?.year
-                );
-
-              if (
-                !Number.isFinite(year) ||
-                year < 1900 ||
-                year > 2200
-              ) {
-                return null;
-              }
-
-              const clinician =
-                normaliseMetricObject(
-                  row?.clinician
-                );
-
-              const population =
-                normaliseMetricObject(
-                  row?.population
-                );
-
-              if (
-                !clinician &&
-                !population
-              ) {
-                return null;
-              }
-
-              return {
-                year:
-                  Math.round(year),
-                clinician,
-                population
-              };
-            }
-          )
-          .filter(Boolean)
-          .sort(
-            (first, second) =>
-              first.year -
-              second.year
-          );
+        .filter(Boolean)
+        .sort((a, b) => a.year - b.year);
 
       if (
-        !rows.some(
-          row => row.clinician
-        ) ||
-        !rows.some(
-          row => row.population
-        ) ||
-        !rows.some(
-          row =>
-            row.clinician &&
-            row.population
-        )
+        !rows.some(row => row.clinician) ||
+        !rows.some(row => row.population) ||
+        !rows.some(row => row.clinician && row.population)
       ) {
-        throw new Error(
-          'Australia/state population coverage data were incomplete.'
-        );
+        throw new Error('State × MMM workforce data were incomplete.');
       }
 
       return rows;
     }
 
-    function parseLiveData(
-      raw
-    ) {
-      return validateCombinedRows(
-        combineYearMaps(
-          parseLiveClinicianTable(
-            raw?.clinicianTable
-          ),
-          parseLivePopulationTable(
-            raw?.populationTable
-          )
-        )
-      );
+    function parseLiveData(raw) {
+      return validateCombinedRows(combineYearMaps(
+        parseClinicianTable(raw?.clinicianTable),
+        parsePopulationTable(raw?.populationTable)
+      ));
     }
 
-    function parseRemoteCache(
-      raw
-    ) {
-      return validateCombinedRows(
-        combineYearMaps(
-          parseRemoteClinicianRows(
-            raw?.clinicianSnapshot
-              ?.data
-              ?.clinicianRows
-          ),
-          parseRemotePopulationSnapshot(
-            raw?.populationSnapshot
-          )
-        )
-      );
+    function parseRemoteCache(snapshot) {
+      return validateCombinedRows(combineYearMaps(
+        parseRemoteClinicianRows(snapshot?.data?.clinicianRows),
+        parseRemotePopulationRows(snapshot?.data?.populationRows)
+      ));
     }
 
-    function applyLoadedRows(
-      sourceRows
-    ) {
-      const rows =
-        validateCombinedRows(
-          sourceRows
-        );
-
-      state.rows =
-        rows;
-
+    function applyLoadedRows(sourceRows) {
+      const rows = validateCombinedRows(sourceRows);
       state.clinicianByYear = {};
       state.populationByYear = {};
 
-      rows.forEach(
-        row => {
-          if (row.clinician) {
-            state.clinicianByYear[
-              row.year
-            ] = {
-              ...row.clinician
-            };
-          }
-
-          if (row.population) {
-            state.populationByYear[
-              row.year
-            ] = {
-              ...row.population
-            };
-          }
-        }
-      );
-
-      state.years =
-        commonYears();
-
-      if (!state.years.length) {
-        throw new Error(
-          'No annual years were common to OptomsbyPHN and Auspopnbystate.'
-        );
-      }
-
-      state.scale =
-        deriveScale();
-    }
-
-    function migrateLegacyLocalCache() {
-      try {
-        const raw =
-          localStorage.getItem(
-            CONFIG.localCacheKey
-          );
-
-        if (!raw) {
-          return;
-        }
-
-        const parsed =
-          JSON.parse(
-            raw
-          );
-
-        if (
-          Array.isArray(
-            parsed?.rows
-          )
-        ) {
-          return;
-        }
-
-        if (
-          parsed?.clinicianByYear &&
-          parsed?.populationByYear
-        ) {
-          PFFCharts.saveLocalCache(
-            CONFIG.localCacheKey,
-            validateCombinedRows(
-              combineYearMaps(
-                parsed.clinicianByYear,
-                parsed.populationByYear
-              )
-            )
-          );
-        }
-      } catch (_) {
-        // Browser cache is optional.
-      }
-    }
-
-    function sortedYears(
-      object
-    ) {
-      return Object.keys(
-        object || {}
-      )
-        .map(Number)
-        .filter(Number.isFinite)
-        .sort(
-          (first, second) =>
-            first - second
-        );
+      rows.forEach(row => {
+        if (row.clinician) state.clinicianByYear[row.year] = [...row.clinician];
+        if (row.population) state.populationByYear[row.year] = [...row.population];
+      });
     }
 
     function commonYears() {
-      const clinicianYears =
-        new Set(
-          sortedYears(
-            state.clinicianByYear
-          )
-        );
-
-      return sortedYears(
-        state.populationByYear
-      ).filter(
-        year =>
-          clinicianYears.has(
-            year
-          )
+      const clinicianYears = new Set(
+        Object.keys(state.clinicianByYear).map(Number).filter(Number.isFinite)
       );
+      return Object.keys(state.populationByYear)
+        .map(Number)
+        .filter(year => Number.isFinite(year) && clinicianYears.has(year))
+        .sort((a, b) => a - b);
     }
 
-    function safeNumber(
-      value
-    ) {
-      if (
-        value === null ||
-        value === undefined ||
-        (
-          typeof value === 'string' &&
-          !value.trim()
-        )
-      ) {
-        return null;
-      }
-
-      const number =
-        Number(
-          value
-        );
-
-      return Number.isFinite(number)
-        ? number
-        : null;
+    function scopeIndices(scope = state.scope) {
+      return SERIES_SCHEMA
+        .map((item, index) => ({ ...item, index }))
+        .filter(item => scope === 'AUS' || item.state === scope)
+        .map(item => item.index);
     }
 
-    function coverageFor(
-      year,
-      code
-    ) {
-      const population =
-        safeNumber(
-          state.populationByYear?.[
-            year
-          ]?.[
-            code
-          ]
-        );
-
-      const clinicians =
-        safeNumber(
-          state.clinicianByYear?.[
-            year
-          ]?.[
-            code
-          ]
-        );
-
-      if (
-        population === null ||
-        clinicians === null ||
-        population <= 0 ||
-        clinicians <= 0
-      ) {
-        return null;
-      }
-
-      const coverage =
-        population /
-        clinicians;
-
-      return Number.isFinite(coverage) &&
-        coverage > 0
-          ? coverage
-          : null;
+    function groupIndices(scope, group) {
+      return scopeIndices(scope).filter(index => {
+        const mmm = SERIES_SCHEMA[index].mmm;
+        if (group === 'metro') return mmm === 1;
+        if (group === 'nonmetro') return mmm >= 2;
+        return true;
+      });
     }
 
-    function latestTrendFor(
-      code
-    ) {
-      const windowSize =
-        trendController?.windowSize ||
-        0;
+    function aggregateYear(year, scope = state.scope, group = 'all') {
+      const clinician = state.clinicianByYear[year] || [];
+      const population = state.populationByYear[year] || [];
+      const indices = group === 'all' ? scopeIndices(scope) : groupIndices(scope, group);
 
-      if (windowSize < 2) {
-        return NaN;
-      }
+      let clinicians = 0;
+      let people = 0;
+      let hasClinicians = false;
+      let hasPopulation = false;
+      let incompleteClinicians = false;
 
-      const trendRows =
-        state.years.map(
-          year => ({
-            year
-          })
-        );
+      indices.forEach(index => {
+        const count = clinician[index];
+        const p = population[index];
 
-      return PFFCharts.latestConsecutiveTrend(
-        trendRows,
-        row =>
-          coverageFor(
-            row.year,
-            code
-          ),
-        windowSize
-      );
-    }
-
-    function niceStep(
-      rawStep
-    ) {
-      if (
-        !Number.isFinite(rawStep) ||
-        rawStep <= 0
-      ) {
-        return 1;
-      }
-
-      const exponent =
-        Math.floor(
-          Math.log10(
-            rawStep
-          )
-        );
-
-      const magnitude =
-        Math.pow(
-          10,
-          exponent
-        );
-
-      const fraction =
-        rawStep /
-        magnitude;
-
-      let niceFraction;
-
-      if (fraction <= 1) {
-        niceFraction =
-          1;
-      } else if (fraction <= 2) {
-        niceFraction =
-          2;
-      } else if (fraction <= 2.5) {
-        niceFraction =
-          2.5;
-      } else if (fraction <= 5) {
-        niceFraction =
-          5;
-      } else {
-        niceFraction =
-          10;
-      }
-
-      return niceFraction *
-        magnitude;
-    }
-
-    function nextNiceStep(
-      step
-    ) {
-      const value =
-        Math.max(
-          1e-9,
-          Number(step) || 1
-        );
-
-      const exponent =
-        Math.floor(
-          Math.log10(
-            value
-          )
-        );
-
-      const magnitude =
-        Math.pow(
-          10,
-          exponent
-        );
-
-      const fraction =
-        value /
-        magnitude;
-
-      if (fraction < 1.5) {
-        return 2 *
-          magnitude;
-      }
-
-      if (fraction < 2.25) {
-        return 2.5 *
-          magnitude;
-      }
-
-      if (fraction < 3.75) {
-        return 5 *
-          magnitude;
-      }
-
-      if (fraction < 7.5) {
-        return 10 *
-          magnitude;
-      }
-
-      return 20 *
-        magnitude;
-    }
-
-    function deriveScale() {
-      const values = [
-        SATURATED_BENCHMARK,
-        SUFFICIENT_BENCHMARK
-      ];
-
-      SERIES.forEach(
-        item => {
-          state.years.forEach(
-            year => {
-              const value =
-                coverageFor(
-                  year,
-                  item.code
-                );
-
-              if (
-                Number.isFinite(value)
-              ) {
-                values.push(
-                  value
-                );
-              }
-            }
-          );
-        }
-      );
-
-      const finite =
-        values.filter(
-          value =>
-            Number.isFinite(value) &&
-            value >= 0
-        );
-
-      if (!finite.length) {
-        return {
-          min:
-            0,
-          max:
-            12000,
-          step:
-            2000,
-          intervals:
-            6
-        };
-      }
-
-      const highest =
-        Math.max(
-          ...finite
-        );
-
-      let step =
-        niceStep(
-          Math.max(
-            1,
-            highest / 6
-          )
-        );
-
-      let maximum =
-        Math.ceil(
-          highest /
-            step
-        ) *
-        step;
-
-      if (
-        maximum -
-          highest <
-        step * 0.35
-      ) {
-        maximum +=
-          step;
-      }
-
-      let intervals =
-        Math.round(
-          maximum /
-            step
-        );
-
-      while (
-        intervals > 8
-      ) {
-        step =
-          nextNiceStep(
-            step
-          );
-
-        maximum =
-          Math.ceil(
-            highest /
-              step
-          ) *
-          step;
-
-        if (
-          maximum -
-            highest <
-          step * 0.35
-        ) {
-          maximum +=
-            step;
+        if (Number.isFinite(count)) {
+          clinicians += count;
+          hasClinicians = true;
+        } else if (Number.isFinite(p) && p > 0) {
+          incompleteClinicians = true;
         }
 
-        intervals =
-          Math.round(
-            maximum /
-              step
-          );
-      }
+        if (Number.isFinite(p)) {
+          people += p;
+          hasPopulation = true;
+        }
+      });
 
       return {
-        min:
-          0,
-        max:
-          maximum,
-        step,
-        intervals:
-          Math.max(
-            1,
-            intervals
-          )
+        clinicians: hasClinicians && !incompleteClinicians ? clinicians : null,
+        population: hasPopulation ? people : null,
+        indices
       };
     }
 
-    function datasetFor(
-      item
-    ) {
-      const hidden =
-        state.hiddenSeries.has(
-          item.code
-        );
-
-      return PFFCharts.lineDataset({
-        label:
-          item.label,
-
-        data:
-          state.years.map(
-            year =>
-              coverageFor(
-                year,
-                item.code
-              )
-          ),
-
-        borderColor:
-          item.colour,
-
-        backgroundColor:
-          item.colour,
-
-        pointBackgroundColor:
-          item.colour,
-
-        pointBorderColor:
-          '#ffffff',
-
-        pointBorderWidth:
-          1,
-
-        borderWidth:
-          item.width,
-
-        borderCapStyle:
-          'round',
-
-        borderJoinStyle:
-          'round',
-
-        cubicInterpolationMode:
-          'monotone',
-
-        hidden,
-
-        _code:
-          item.code,
-
-        _seriesLabel:
-          item.label,
-
-        _activeSeries:
-          !hidden
-      });
-    }
-
-    function buildDatasets() {
-      return SERIES.map(
-        datasetFor
-      );
-    }
-
-    // Benchmarks are rendered by the smaller shared annotations asset.
-    // Original 2.2px dotted lines, colours and no-clamping semantics retained.
-    const coverageBenchmarksPlugin =
-      Shared.chartAnnotations?.createPlugin?.({
-        id: 'australiaStateCoverageBenchmarks',
-        getItems() {
-          return [
-            {axis: 'y', value: SUFFICIENT_BENCHMARK, preset: 'sufficient', colour: SUFFICIENT_COLOUR},
-            {axis: 'y', value: SATURATED_BENCHMARK, preset: 'saturated', colour: SATURATED_COLOUR}
-          ];
-        }
-      });
-
-    // Keep the original labelled-year cadence, now using 6/2px shared ticks.
-    const yearTickMarksPlugin =
-      Shared.chartAxes?.createLabelDrivenTicksPlugin?.({
-        id: 'australiaStateCoverageYearTicks', axes: ['x']
-      });
-
-    // Trends, series membership and content remain calculated in this app.
-    // The shared module owns only the pill presentation and collision fitting.
-    const coverageTrendLabelsPlugin =
-      Shared.chartTrends?.createTrendPillsPlugin?.({
-        id: 'australiaStateCoverageTrendLabels',
-        isMobile: () => PFF.mobileLayout(),
-        enabled() { return trendController?.mode !== 'off'; },
-        isActive({chart: c, dataset, datasetIndex, meta}) {
-          return dataset._activeSeries !== false && !meta?.hidden &&
-            (c.isDatasetVisible ? c.isDatasetVisible(datasetIndex) : true);
-        },
-        getTrendValue({dataset}) { return latestTrendFor(dataset._code); },
-        getSeriesColour({dataset}) { return dataset.borderColor || '#69718a'; }
-      });
-
-    function tooltipLabel(
-      context
-    ) {
-      const code =
-        context.dataset._code;
-
-      const year =
-        Number(
-          state.years[
-            context.dataIndex
-          ]
-        );
-
-      const population =
-        safeNumber(
-          state.populationByYear?.[
-            year
-          ]?.[
-            code
-          ]
-        );
-
-      const clinicians =
-        safeNumber(
-          state.clinicianByYear?.[
-            year
-          ]?.[
-            code
-          ]
-        );
-
-      const coverage =
-        coverageFor(
-          year,
-          code
-        );
-
-      const label =
-        code === 'AUS'
-          ? 'Australia'
-          : code;
-
-      const lines = [
-        `${label}: ${PFF.formatInteger(coverage)} people per FTE clinician`
-      ];
-
-      if (
-        clinicians !== null &&
-        population !== null
-      ) {
-        lines.push(
-          `${PFF.formatOneDecimal(clinicians)} active FTE clinicians · ${PFF.formatInteger(population)} people`
-        );
-      }
-
-      const windowSize =
-        trendController?.windowSize ||
-        0;
-
-      if (windowSize >= 2) {
-        const trend =
-          latestTrendFor(
-            code
-          );
-
+    function latestUsableYear(scope = state.scope) {
+      const years = commonYears();
+      for (let index = years.length - 1; index >= 0; index -= 1) {
+        const year = years[index];
+        const totals = aggregateYear(year, scope, 'all');
         if (
-          Number.isFinite(trend)
-        ) {
-          const arrow =
-            trend > 0.05
-              ? '↑'
-              : trend < -0.05
-                ? '↓'
-                : '';
-
-          lines.push(
-            `Latest ${windowSize}-year trend: ${arrow}${PFFCharts.formatTrendValue(trend)}`
-          );
-        }
+          Number.isFinite(totals.clinicians) &&
+          Number.isFinite(totals.population) &&
+          totals.population > 0
+        ) return year;
       }
-
-      return lines;
+      return null;
     }
 
-    function chartOptions() {
-      const scale =
-        state.scale;
-
-      const duration = PFF.reducedMotion()
-        ? 0 : Shared.chartAnimations.defaults.chartMs;
-
-      const options = Shared.chartAnimations.withChartJsTiming(
-        PFFCharts.baseChartOptions({
-        normalized:
-          true,
-
-        animation: {
-          duration,
-          easing:
-            'easeInOutCubic'
-        },
-
-        animations: {
-          x: {
-            duration:
-              0
-          },
-
-          y: {
-            duration,
-            easing:
-              'easeInOutCubic'
-          },
-
-          colors: {
-            duration:
-              0
-          }
-        },
-
-        transitions:
-          PFFCharts.seriesVisibilityTransitionOptions(
-            260
-          ),
-
-        layout: {
-          autoPadding:
-            false,
-          padding: {
-            top:
-              PFF.mobileLayout()
-                ? 8
-                : 9,
-            right:
-              5,
-            bottom:
-              0,
-            left:
-              0
-          }
-        },
-
-        plugins: {
-          tooltip: Shared.chartTooltips.tooltipOptions({
-            callbacks: {
-              title(items) {
-                return items?.length
-                  ? String(
-                      items[0].label
-                    )
-                  : '';
-              },
-
-              label:
-                tooltipLabel
-            }
-          })
-        },
-
-        scales: {
-          x: Shared.chartAxes.withXAxisTickMarks(
-            PFFCharts.xYearScaleOptions(), {yearMode: 'even'}
-          ),
-
-          y:
-            PFFCharts.yScaleOptions(
-              scale,
-              {
-                ticks: {
-                  display:
-                    false,
-                  stepSize:
-                    scale.step
-                },
-                title: {
-                  display:
-                    false
-                }
-              }
-            )
-        }
-      })
-      );
-      // Shared animation timing must not override reduced-motion requests.
-      // Keep the categorical year-axis stationary and preserve no colour tween.
-      options.animation.duration = duration;
-      options.animations.x.duration = 0;
-      options.animations.y.duration = duration;
-      options.animations.colors.duration = 0;
-      if (PFF.reducedMotion() && options.transitions?.active?.animation) {
-        options.transitions.active.animation.duration = 0;
-      }
-      return options;
-    }
-
-    function createChart() {
-      unifiedYAxis =
-        PFFCharts.createUnifiedYAxis({
-          id:
-            'australiaStateCoverageUnifiedYAxis',
-
-          getChart() {
-            return chart;
-          },
-
-          getScale() {
-            return state.scale;
-          },
-
-          getDecimals() {
-            return 0;
-          },
-
-          getTitle() {
-            return 'People per FTE clinician';
-          },
-
-          formatValue(
-            value
-          ) {
-            const number =
-              Number(value);
-
-            if (
-              !Number.isFinite(number)
-            ) {
-              return '';
-            }
-
-            if (
-              Math.abs(number) < 1000
-            ) {
-              return PFF.formatInteger(
-                number
-              );
-            }
-
-            const thousands =
-              number / 1000;
-
-            return `${
-              Number.isInteger(thousands)
-                ? thousands
-                : Number(
-                    thousands.toFixed(1)
-                  )
-            }k`;
-          }
-        });
-
-      chart =
-        new Chart(
-          chartCanvas.getContext(
-            '2d'
-          ),
-          {
-            type:
-              'line',
-
-            data: {
-              labels:
-                state.years,
-              datasets:
-                buildDatasets()
-            },
-
-            options:
-              chartOptions(),
-
-            plugins: [
-              unifiedYAxis.plugin,
-              coverageBenchmarksPlugin,
-              yearTickMarksPlugin,
-              coverageTrendLabelsPlugin,
-              {
-                id: 'pffTooltipTopLayer',
-                afterDraw(chartInstance) {
-                  const tooltip = chartInstance?.tooltip;
-                  if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
-                  tooltip.draw(chartInstance.ctx);
-                }
-              }
-            ]
-          }
-        );
-
-      unifiedYAxis.setImmediately(
-        state.scale,
-        0
-      );
+    function scopeLabel(scope = state.scope) {
+      return scope === 'AUS' ? 'Australia' : (STATE_NAMES[scope] || scope);
     }
 
     function buildStateOptions() {
-      stateOptions.innerHTML = '';
+      stateOptions.textContent = '';
 
-      STATE_CODES.forEach(code => {
-        const label =
-          document.createElement('label');
+      ['AUS', ...COMPARABLE_STATES].forEach(code => {
+        const option = document.createElement('label');
+        option.className = 'state-option';
 
-        label.className =
-          'state-option';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'stateScope';
+        input.value = code;
+        input.checked = code === state.scope;
 
-        const input =
-          document.createElement('input');
+        const box = document.createElement('span');
+        box.className = 'state-option-box';
+        box.setAttribute('aria-hidden', 'true');
 
-        input.type =
-          'checkbox';
-
-        input.value =
-          code;
-
-        input.checked =
-          !state.hiddenSeries.has(code);
-
-        input.dataset.stateCode =
-          code;
-
-        const box =
-          document.createElement('span');
-
-        box.className =
-          'state-option-box';
-
-        box.setAttribute(
-          'aria-hidden',
-          'true'
-        );
-
-        const text =
-          document.createElement('span');
-
-        text.className =
-          'state-code';
-
-        text.textContent =
-          code;
-
+        const text = document.createElement('span');
+        text.className = 'state-option-code';
+        text.textContent = code;
         text.style.color =
-          STATE_COLOURS[code];
+          code === 'AUS'
+            ? AUSTRALIA_COLOUR
+            : PFF.stateColours?.[code] || '#151515';
 
-        text.title =
-          STATE_NAMES[code];
-
-        label.append(
-          input,
-          box,
-          text
-        );
-
-        stateOptions.appendChild(
-          label
-        );
+        option.append(input, box, text);
+        stateOptions.appendChild(option);
       });
     }
 
-    function selectedStateSummary() {
-      const selected =
-        STATE_CODES.filter(
-          code =>
-            !state.hiddenSeries.has(code)
-        );
+    function syncStateFilterUi(animate = true) {
+      stateOptions.querySelectorAll('input[name="stateScope"]').forEach(input => {
+        input.checked = input.value === state.scope;
+      });
 
-      if (
-        selected.length ===
-        STATE_CODES.length
-      ) {
-        return 'All';
-      }
+      const colour =
+        state.scope === 'AUS'
+          ? AUSTRALIA_COLOUR
+          : PFF.stateColours?.[state.scope] || '#151515';
 
-      if (!selected.length) {
-        return 'None';
-      }
+      stateButtonValue.style.color = colour;
 
-      if (selected.length === 1) {
-        return selected[0];
-      }
-
-      return String(
-        selected.length
-      );
-    }
-
-    function syncStateFilterUi(
-      animate = true
-    ) {
-      const selectedCount =
-        STATE_CODES.filter(
-          code =>
-            !state.hiddenSeries.has(code)
-        ).length;
-
-      stateAll.checked =
-        selectedCount ===
-        STATE_CODES.length;
-
-      stateAll.indeterminate =
-        selectedCount > 0 &&
-        selectedCount < STATE_CODES.length;
-
-      stateOptions
-        .querySelectorAll(
-          'input[data-state-code]'
-        )
-        .forEach(input => {
-          input.checked =
-            !state.hiddenSeries.has(
-              input.dataset.stateCode
-            );
-        });
-
-      if (animate) {
-        PFF.animateHeading({
-          fixed:
-            stateButtonValue,
-          fixedText:
-            selectedStateSummary(),
-          duration:
-            180
-        });
-      } else {
-        stateButtonValue.textContent =
-          selectedStateSummary();
-      }
-    }
-
-    function setStateDatasetVisibility(
-      code,
-      visible
-    ) {
-      if (
-        !STATE_CODES.includes(code)
-      ) {
+      if (!animate) {
+        stateButtonValue.textContent = state.scope;
         return;
       }
 
-      if (visible) {
-        state.hiddenSeries.delete(
-          code
-        );
-      } else {
-        state.hiddenSeries.add(
-          code
-        );
-      }
-
-      if (!chart) {
-        return;
-      }
-
-      const datasetIndex =
-        SERIES.findIndex(
-          item =>
-            item.code === code
-        );
-
-      if (datasetIndex < 0) {
-        return;
-      }
-
-      chart.setDatasetVisibility(
-        datasetIndex,
-        visible
-      );
-
-      const dataset =
-        chart.data.datasets[
-          datasetIndex
-        ];
-
-      if (dataset) {
-        dataset._activeSeries =
-          visible;
-      }
+      PFF.animateHeading({
+        fixed: stateButtonValue,
+        fixedText: state.scope,
+        duration: 180
+      });
     }
 
-    function commitStateFilter() {
-      chart?.update();
-      syncStateFilterUi();
-      updateSharedLegend();
-      updateAccessibleSummary();
-    }
-
-    function updateAccessibleSummary() {
-      if (!chartSummary) {
-        return;
-      }
-
-      const visible =
-        SERIES
-          .filter(
-            item =>
-              !state.hiddenSeries.has(
-                item.code
-              )
-          )
-          .map(
-            item =>
-              item.label
-          );
-
-      const trendText =
-        trendController?.mode !== 'off'
-          ? ` ${trendController.windowSize}-year trend labels are on.`
-          : ' Trend labels are off.';
-
-      PFFCharts.updateChartSummary(
-        `Australia and state population coverage trends from ${state.years[0] ?? 'unavailable'} to ${state.years[state.years.length - 1] ?? 'unavailable'}. Visible series: ${visible.length ? visible.join(', ') : 'none'}.${trendText}`,
-        chartSummary
-      );
-    }
-
-    function sharedLegendItems() {
-      // Keep even hidden series in the legend (faded), allowing users to
-      // restore a series without reopening the States filter.
-      return SERIES.map((item, datasetIndex) => ({
-        id: item.code,
-        datasetIndex,
-        label: item.label,
-        colour: item.colour,
-        markerType: 'line',
-        visible: !state.hiddenSeries.has(item.code)
-      }));
-    }
-
-    function updateSharedLegend() {
-      legendController?.setItems(sharedLegendItems());
-    }
-
-    function setupControls() {
+    function setupStateFilter(onChange) {
       buildStateOptions();
-      syncStateFilterUi(
-        false
-      );
+      syncStateFilterUi(false);
 
-      headingScroller =
-        PFF.setupScrollableRegion({
-          scroller:
-            headingScrollViewport,
-          leftButton:
-            headingScrollLeft,
-          rightButton:
-            headingScrollRight
-        });
+      stateMenuController = PFF.setupMenu({
+        menu: stateControl,
+        button: stateButton,
+        panel: stateMenu,
+        focusOnOpen: false
+      });
 
-      trendController =
-        PFFCharts.setupTrendToggle({
-          button:
-            yoyTrendToggle,
-          initialMode:
-            '3yr',
-          onChange() {
-            chart?.draw();
-            updateAccessibleSummary();
-          }
-        });
-
-      stateMenuController =
-        PFF.setupMenu({
-          menu:
-            stateControl,
-          button:
-            stateButton,
-          panel:
-            stateMenu
-        });
-
-      stateAll.addEventListener(
-        'change',
-        () => {
-          STATE_CODES.forEach(
-            code =>
-              setStateDatasetVisibility(
-                code,
-                stateAll.checked
-              )
-          );
-
-          commitStateFilter();
-        }
-      );
-
-      stateOptions.addEventListener(
-        'change',
-        event => {
-          const input =
-            event.target.closest(
-              'input[data-state-code]'
-            );
-
-          if (!input) {
-            return;
-          }
-
-          setStateDatasetVisibility(
-            input.dataset.stateCode,
-            input.checked
-          );
-
-          commitStateFilter();
-        }
-      );
-
-      // Small modular legend: retains the familiar coloured line markers,
-      // clickable hide/restore buttons, keyboard focus and scroll arrows.
-      legendController = Shared.chartLegends.mount({
-        root: chartLegend,
-        label: 'Toggle Australia and state population coverage series',
-        getChart() { return chart; },
-        items: sharedLegendItems(),
-        onToggle({id, visible}) {
-          if (!SERIES.some(item => item.code === id)) return;
-          if (visible) state.hiddenSeries.delete(id);
-          else state.hiddenSeries.add(id);
-          // Dataset visibility and update() are handled by the shared module.
-          if (STATE_CODES.includes(id)) syncStateFilterUi(false);
-          updateAccessibleSummary();
-        }
+      stateOptions.addEventListener('change', event => {
+        const input = event.target.closest('input[name="stateScope"]');
+        if (!input || !input.checked || input.value === state.scope) return;
+        state.scope = input.value;
+        syncStateFilterUi(true);
+        stateMenuController?.closeMenu();
+        onChange?.();
       });
     }
 
-    function setupResponsiveBehaviour() {
-      responsiveController =
-        PFFCharts.createResponsiveController({
-          getChart() {
-            return chart;
-          },
-
-          observe: [
-            app,
-            chartShell,
-            chartLegend
-          ],
-
-          beforeResize(
-            chartInstance
-          ) {
-            chartInstance.options.interaction = {
-              mode:
-                'nearest',
-              intersect:
-                true,
-              axis:
-                'xy'
-            };
-
-          },
-
-          afterResize() {
-            unifiedYAxis
-              ?.setImmediately(
-                state.scale,
-                0
-              );
-
-            chart?.draw();
-          },
-
-          onRefresh() {
-            headingScroller?.update();
-            legendController?.updateArrows();
-          }
-        });
-    }
-
-    const requiredSharedAssets = [
-      ['styling', Shared.chartStyling?.getLineStyle],
-      ['axes', Shared.chartAxes?.createLabelDrivenTicksPlugin],
-      ['animations', Shared.chartAnimations?.withChartJsTiming],
-      ['tooltips', Shared.chartTooltips?.tooltipOptions],
-      ['responsive', Shared.chartResponsive?.suppressTapFlash],
-      ['benchmarks', Shared.chartAnnotations?.createPlugin],
-      ['trend pills', Shared.chartTrends?.createTrendPillsPlugin],
-      ['legends', Shared.chartLegends?.mount]
-    ];
-    const missingAssets = requiredSharedAssets
-      .filter(([, helper]) => typeof helper !== 'function')
-      .map(([name]) => name);
-
-    if (missingAssets.length) {
-      const message = `Missing shared chart assets: ${missingAssets.join(', ')}`;
-      app.classList.remove('is-loading');
-      app.setAttribute('aria-busy', 'false');
-      document.getElementById('loadingState').style.display = 'none';
-      statusEl.textContent = message;
-      statusEl.setAttribute('role', 'alert');
-      console.error('[PFF Demand State Trends Pilot]', message);
-    } else {
-      Shared.chartResponsive.suppressTapFlash(chartCanvas);
-      migrateLegacyLocalCache();
-      setupControls();
-
-      // Retain the core's original pointer-based tooltip handling; Escape
-      // dismisses without chart.update('none') interrupting a running tween.
-      document.addEventListener('keydown', event => {
-        if (event.key !== 'Escape' || !chart) return;
-        chart.setActiveElements?.([]);
-        chart.tooltip?.setActiveElements?.([], {x: 0, y: 0});
-        chart.draw?.();
-      });
+    function startApp(renderLoaded) {
+      setupStateFilter(() => renderLoaded(true));
 
       PFF.initialiseApp({
-      app,
-      status:
-        statusEl,
+        app,
+        status: statusEl,
 
-      async loadLive() {
-        const [
-          clinicianTable,
-          populationTable
-        ] =
-          await Promise.all([
+        async loadLive() {
+          loaderText.textContent = 'Loading live State × MMM data…';
+          const [clinicianTable, populationTable] = await Promise.all([
             PFFCharts.loadGVizSheet({
-              sheetId:
-                CONFIG.sheetId,
-              sheetName:
-                CONFIG.clinicianSheet,
-              range:
-                CONFIG.clinicianRange,
-              headers:
-                '1'
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.clinicianSheet,
+              range: CONFIG.clinicianRange,
+              headers: '2'
             }),
-
             PFFCharts.loadGVizSheet({
-              sheetId:
-                CONFIG.sheetId,
-              sheetName:
-                CONFIG.populationSheet,
-              range:
-                CONFIG.populationRange,
-              headers:
-                '1'
+              sheetId: CONFIG.sheetId,
+              sheetName: CONFIG.populationSheet,
+              range: CONFIG.populationRange,
+              headers: '2'
             })
           ]);
+          return { clinicianTable, populationTable };
+        },
 
-        return {
-          clinicianTable,
-          populationTable
-        };
-      },
+        parseLive: parseLiveData,
 
-      parseLive:
-        parseLiveData,
+        loadRemoteCache() {
+          loaderText.textContent = 'Loading cached PFF data…';
+          return PFFCharts.loadAppsScriptCache({
+            url: CACHE_WEB_APP_URL,
+            appKey: CACHE_APP_KEY
+          });
+        },
 
-      async loadRemoteCache() {
-        const [
-          clinicianSnapshot,
-          populationSnapshot
-        ] =
-          await Promise.all([
-            PFFCharts.loadAppsScriptCache({
-              url:
-                CACHE_WEB_APP_URL,
-              appKey:
-                CLINICIAN_CACHE_APP_KEY
-            }),
+        parseRemoteCache,
+        cacheKey: CONFIG.localCacheKey,
+        minRows: 1,
 
-            PFFCharts.loadAppsScriptCache({
-              url:
-                CACHE_WEB_APP_URL,
-              appKey:
-                POPULATION_CACHE_APP_KEY
-            })
-          ]);
+        onLiveError(error) {
+          console.warn('Live State × MMM data unavailable; trying Apps Script cache.', error);
+        },
 
-        return {
-          clinicianSnapshot,
-          populationSnapshot,
-          cachedAt:
-            clinicianSnapshot?.cachedAt ||
-            populationSnapshot?.cachedAt ||
-            null
-        };
-      },
+        onRemoteCacheError(error) {
+          console.warn('Apps Script State × MMM cache unavailable; trying browser cache.', error);
+        },
 
-      parseRemoteCache,
+        dataSourceOptions: { indicator: liveData, text: liveDataText },
 
-      cacheKey:
-        CONFIG.localCacheKey,
+        render(loaded) {
+          applyLoadedRows(loaded.rows);
+          renderLoaded(false);
 
-      minRows:
-        1,
+          chartSummary = PFFCharts.ensureChartSummary({ parent: app });
+          chartCanvas.setAttribute('aria-describedby', chartSummary.id);
+          updateAccessibleSummary();
 
-      onLiveError(
-        error
-      ) {
-        console.warn(
-          'Live Australia/state population coverage data unavailable; trying Apps Script caches.',
-          error
-        );
-      },
-
-      onRemoteCacheError(
-        error
-      ) {
-        console.warn(
-          'Apps Script Australia/state population coverage caches unavailable; trying browser cache.',
-          error
-        );
-      },
-
-      dataSourceOptions: {
-        indicator:
-          liveData,
-        text:
-          liveDataText
-      },
-
-      render(
-        loaded
-      ) {
-        applyLoadedRows(
-          loaded.rows
-        );
-
-        createChart();
-
-        chartSummary =
-          PFFCharts.ensureChartSummary({
-            id:
-              'australiaStateCoverageChartSummary',
-            parent:
-              app
+          interactionsController = PFFCharts.setupChartInteractions({
+            canvas: chartCanvas,
+            getChart() { return chart; }
           });
 
-        chartCanvas.setAttribute(
-          'aria-describedby',
-          chartSummary.id
-        );
-
-        updateAccessibleSummary();
-
-        interactionsController =
-          PFFCharts.setupChartInteractions({
-            canvas:
-              chartCanvas,
-
-            getChart() {
-              return chart;
+          responsiveController = PFFCharts.createResponsiveController({
+            getChart() { return chart; },
+            observe: [app, chartShell],
+            beforeResize(chartInstance) {
+              chartInstance.data.datasets.forEach(dataset => {
+                dataset.pointHitRadius = PFF.mobileLayout() ? 9 : 5;
+              });
+            },
+            onRefresh() {
+              chart?.resize();
+              chart?.draw();
             }
           });
 
-        setupResponsiveBehaviour();
+          return chart;
+        },
 
-        legendController?.updateArrows();
-        headingScroller?.update();
+        onError() { liveData.style.visibility = 'hidden'; },
+        errorMessage: 'Maldistribution data unavailable.'
+      });
+    }
 
-        requestAnimationFrame(
-          () => {
-            unifiedYAxis
-              ?.setImmediately(
-                state.scale,
-                0
-              );
+    const METRO = '#30475d';
+    const NONMETRO = '#b54a0a';
+    const ACCESS_GAP = '#6600ff';
+    const SUFFICIENT_BENCHMARK = 10000;
+    const SATURATED_BENCHMARK = 5000;
+    const SUFFICIENT_COLOUR = '#20c9d7';
+    const SATURATED_COLOUR = '#ff00ff';
+    const AUSTRALIA_COLOUR = '#0b5d1e';
+    const CHART_TRANSITION_MS = Shared.chartAnimations?.defaults?.chartMs ?? 600;
+    const FIXED_TREND_WINDOW = 10;
 
-            chart?.draw();
-            legendController?.updateArrows();
-            headingScroller?.update();
+    function coverageSeries(scope = state.scope) {
+      return commonYears().map(year => {
+        const metro = aggregateYear(year, scope, 'metro');
+        const nonmetro = aggregateYear(year, scope, 'nonmetro');
+        const metroCoverage = Number.isFinite(metro.clinicians) && metro.clinicians > 0 && Number.isFinite(metro.population)
+          ? metro.population / metro.clinicians : null;
+        const nonmetroCoverage = Number.isFinite(nonmetro.clinicians) && nonmetro.clinicians > 0 && Number.isFinite(nonmetro.population)
+          ? nonmetro.population / nonmetro.clinicians : null;
+        return { year, metro: metroCoverage, nonmetro: nonmetroCoverage };
+      }).filter(row => Number.isFinite(row.metro) || Number.isFinite(row.nonmetro));
+    }
+
+    function niceStep(rawStep) {
+      if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+      const exponent = Math.floor(Math.log10(rawStep));
+      const magnitude = 10 ** exponent;
+      const fraction = rawStep / magnitude;
+      const niceFraction = fraction <= 1
+        ? 1
+        : fraction <= 2
+          ? 2
+          : fraction <= 2.5
+            ? 2.5
+            : fraction <= 5
+              ? 5
+              : 10;
+      return niceFraction * magnitude;
+    }
+
+    function nextNiceStep(step) {
+      const value = Math.max(1e-9, Number(step) || 1);
+      const exponent = Math.floor(Math.log10(value));
+      const magnitude = 10 ** exponent;
+      const fraction = value / magnitude;
+      if (fraction < 1.5) return 2 * magnitude;
+      if (fraction < 2.25) return 2.5 * magnitude;
+      if (fraction < 3.75) return 5 * magnitude;
+      if (fraction < 7.5) return 10 * magnitude;
+      return 20 * magnitude;
+    }
+
+    function scaleForRows(rows) {
+      const values = rows
+        .flatMap(row => [row.metro, row.nonmetro])
+        .filter(Number.isFinite);
+
+      values.push(SATURATED_BENCHMARK, SUFFICIENT_BENCHMARK);
+
+      if (!values.length) {
+        return { min: 4000, max: 11000, step: 1000, intervals: 7 };
+      }
+
+      const lowest = Math.min(...values);
+      const highest = Math.max(...values);
+      const span = Math.max(1, highest - lowest);
+      let step = niceStep(span / 7);
+      let min = Math.max(0, Math.floor(lowest / step) * step);
+      let max = Math.ceil(highest / step) * step;
+
+      if (
+        lowest < SATURATED_BENCHMARK &&
+        lowest - min < step * 0.28 &&
+        min - step >= 0
+      ) {
+        min -= step;
+      }
+
+      if (max - highest < step * 0.35) max += step;
+
+      let intervals = Math.round((max - min) / step);
+      while (intervals > 8) {
+        step = nextNiceStep(step);
+        min = Math.max(0, Math.floor(lowest / step) * step);
+        max = Math.ceil(highest / step) * step;
+        if (max - highest < step * 0.35) max += step;
+        intervals = Math.round((max - min) / step);
+      }
+
+      while (intervals < 5) {
+        max += step;
+        intervals += 1;
+      }
+
+      return { min, max, step, intervals };
+    }
+
+    function trendForSeries(seriesKey) {
+      return PFFCharts.latestConsecutiveTrend(
+        displayRows,
+        row => Number(row?.[seriesKey]),
+        FIXED_TREND_WINDOW
+      );
+    }
+
+    function linearFitForSeries(seriesKey) {
+      const points = displayRows
+        .map(row => ({
+          year: Number(row?.year),
+          value: Number(row?.[seriesKey])
+        }))
+        .filter(point => Number.isFinite(point.year) && Number.isFinite(point.value));
+
+      if (points.length < 2) return null;
+
+      const meanYear = points.reduce((sum, point) => sum + point.year, 0) / points.length;
+      const meanValue = points.reduce((sum, point) => sum + point.value, 0) / points.length;
+      let numerator = 0;
+      let denominator = 0;
+
+      points.forEach(point => {
+        const yearOffset = point.year - meanYear;
+        numerator += yearOffset * (point.value - meanValue);
+        denominator += yearOffset * yearOffset;
+      });
+
+      if (!Number.isFinite(denominator) || denominator <= 0) return null;
+
+      const slope = numerator / denominator;
+      const intercept = meanValue - slope * meanYear;
+      if (!Number.isFinite(slope) || !Number.isFinite(intercept)) return null;
+
+      return {
+        slope,
+        intercept,
+        lastYear: Math.max(...points.map(point => point.year))
+      };
+    }
+
+    function linearConvergenceYear() {
+      const metroFit = linearFitForSeries('metro');
+      const nonmetroFit = linearFitForSeries('nonmetro');
+      if (!metroFit || !nonmetroFit) return null;
+
+      const slopeDifference = metroFit.slope - nonmetroFit.slope;
+      if (!Number.isFinite(slopeDifference) || Math.abs(slopeDifference) < 1e-9) {
+        return null;
+      }
+
+      const year = (nonmetroFit.intercept - metroFit.intercept) / slopeDifference;
+      const latestObservedYear = Math.max(metroFit.lastYear, nonmetroFit.lastYear);
+
+      // Only describe a plausible future convergence; otherwise keep the terse
+      // trend note without making a projection claim.
+      if (
+        !Number.isFinite(year) ||
+        year <= latestObservedYear ||
+        year > 2100
+      ) {
+        return null;
+      }
+
+      return Math.round(year);
+    }
+
+    function updateTrendsNote() {
+      const note = document.getElementById('trendsNote');
+      if (!note) return;
+
+      const convergenceYear = linearConvergenceYear();
+      const projectionText = Number.isFinite(convergenceYear)
+        ? `; linear projections suggest the metro–non-metro access gap closes by ${convergenceYear}`
+        : '';
+
+      note.innerHTML = `<strong>Trends:</strong> pills show fixed 10-year log-linear annual trends${projectionText}`;
+    }
+
+    // Shared 6px labelled-year / 2px unlabelled-year ticks.
+    const yearTicksPlugin = Shared.chartAxes?.createLabelDrivenTicksPlugin?.({
+      id: 'pffAccessGapYearTicks', axes: ['x']
+    });
+
+    const tooltipTopLayerPlugin = {
+      id: 'pffAccessGapTooltipTopLayer',
+      afterDraw(chartInstance) {
+        const tooltip = chartInstance?.tooltip;
+        if (!tooltip || !(Number(tooltip.opacity) > 0)) return;
+        tooltip.draw(chartInstance.ctx);
+      }
+    };
+
+    function renderedPoint(meta, index) {
+      const point = meta?.data?.[index];
+      if (!point) return null;
+      const props = point.getProps(['x', 'y'], false);
+      return Number.isFinite(props.x) && Number.isFinite(props.y)
+        ? props
+        : null;
+    }
+
+    function drawRoundedRect(context, x, y, width, height, radius) {
+      context.beginPath();
+      if (typeof context.roundRect === 'function') {
+        context.roundRect(x, y, width, height, radius);
+      } else {
+        context.rect(x, y, width, height);
+      }
+    }
+
+    function rgbaFromHex(hex, alpha) {
+      const value = String(hex || '').replace('#', '');
+      if (!/^[0-9a-f]{6}$/i.test(value)) return `rgba(105, 113, 138, ${alpha})`;
+      const red = parseInt(value.slice(0, 2), 16);
+      const green = parseInt(value.slice(2, 4), 16);
+      const blue = parseInt(value.slice(4, 6), 16);
+      return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+    }
+
+
+    // Preserve the original fixed 10-year trend values; use the more opaque
+    // shared pills and collision-aware placements for the visible lines.
+    const accessTrendLabelsPlugin =
+      Shared.chartTrends?.createTrendPillsPlugin?.({
+        id: 'pffAccessGapFixed10yrTrendPills',
+        isMobile: () => PFF.mobileLayout(),
+        enabled() { return true; },
+        isActive({ dataset, meta }) {
+          return Boolean(dataset?._activeSeries && !meta?.hidden);
+        },
+        getTrendValue({ dataset }) {
+          return trendForSeries(dataset?._seriesKey);
+        },
+        getSeriesColour({ dataset }) {
+          return dataset?.borderColor || '#69718a';
+        }
+      });
+
+    function isLineVisible(chartInstance, datasetIndex) {
+      const dataset = chartInstance?.data?.datasets?.[datasetIndex];
+      if (!dataset || dataset._activeSeries === false) return false;
+      if (typeof chartInstance?.isDatasetVisible === 'function' &&
+          !chartInstance.isDatasetVisible(datasetIndex)) return false;
+      return chartInstance?.getDatasetMeta?.(datasetIndex)?.hidden !== true;
+    }
+
+    function canShowAccessGap(chartInstance) {
+      return gapVisible && isLineVisible(chartInstance, 0) && isLineVisible(chartInstance, 1);
+    }
+
+    const accessPresentationPlugin = {
+      id: 'pffAccessGapPresentation',
+
+      beforeDatasetsDraw(chartInstance) {
+        if (!canShowAccessGap(chartInstance)) return;
+        const metroMeta = chartInstance.getDatasetMeta(0);
+        const nonMetroMeta = chartInstance.getDatasetMeta(1);
+        if (!metroMeta?.data?.length || !nonMetroMeta?.data?.length) return;
+
+        const segments = [];
+        let current = [];
+        const count = Math.min(metroMeta.data.length, nonMetroMeta.data.length);
+
+        for (let index = 0; index < count; index += 1) {
+          const metro = renderedPoint(metroMeta, index);
+          const nonmetro = renderedPoint(nonMetroMeta, index);
+          if (!metro || !nonmetro) {
+            if (current.length >= 2) segments.push(current);
+            current = [];
+            continue;
           }
+          current.push({
+            x: metro.x,
+            top: Math.min(metro.y, nonmetro.y),
+            bottom: Math.max(metro.y, nonmetro.y)
+          });
+        }
+        if (current.length >= 2) segments.push(current);
+        if (!segments.length) return;
+
+        const { ctx } = chartInstance;
+        ctx.save();
+        ctx.fillStyle = 'rgba(102, 0, 255, 0.08)';
+        segments.forEach(segment => {
+          ctx.beginPath();
+          ctx.moveTo(segment[0].x, segment[0].top);
+          segment.slice(1).forEach(point => ctx.lineTo(point.x, point.top));
+          [...segment].reverse().forEach(point => ctx.lineTo(point.x, point.bottom));
+          ctx.closePath();
+          ctx.fill();
+        });
+        ctx.restore();
+      },
+
+      afterDatasetsDraw(chartInstance) {
+        if (!displayRows.length || !canShowAccessGap(chartInstance)) return;
+        const metroMeta = chartInstance.getDatasetMeta(0);
+        const nonMetroMeta = chartInstance.getDatasetMeta(1);
+        if (!metroMeta?.data?.length || !nonMetroMeta?.data?.length) return;
+
+        const activeElements = typeof chartInstance.getActiveElements === 'function'
+          ? chartInstance.getActiveElements()
+          : [];
+        const hoveredIndex = activeElements.find(item => Number.isInteger(item?.index))?.index;
+        const index = Number.isInteger(pinnedGapIndex)
+          ? pinnedGapIndex
+          : Number.isInteger(hoveredIndex)
+            ? hoveredIndex
+            : displayRows.length - 1;
+
+        const metro = renderedPoint(metroMeta, index);
+        const nonmetro = renderedPoint(nonMetroMeta, index);
+        const row = displayRows[index];
+        if (!metro || !nonmetro || !row) return;
+        if (!Number.isFinite(row.metro) || !Number.isFinite(row.nonmetro)) return;
+
+        const { ctx, chartArea } = chartInstance;
+        const mobile = PFF.mobileLayout();
+        const lineX = PFF.clamp(metro.x, chartArea.left + 1, chartArea.right - 1);
+        const yTop = Math.min(metro.y, nonmetro.y);
+        const yBottom = Math.max(metro.y, nonmetro.y);
+        const yScale = chartInstance.scales?.y;
+        const renderedMetro = yScale?.getValueForPixel?.(metro.y);
+        const renderedNonmetro = yScale?.getValueForPixel?.(nonmetro.y);
+        const renderedGap = Number.isFinite(renderedMetro) && Number.isFinite(renderedNonmetro)
+          ? Math.abs(renderedNonmetro - renderedMetro)
+          : Math.abs(row.nonmetro - row.metro);
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(102, 0, 255, 0.82)';
+        ctx.lineWidth = mobile ? 1.2 : 1.35;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(lineX, yTop + 1);
+        ctx.lineTo(lineX, yBottom - 1);
+        ctx.stroke();
+
+        const capHalf = mobile ? 3.5 : 4;
+        ctx.beginPath();
+        ctx.moveTo(lineX - capHalf, yTop);
+        ctx.lineTo(lineX + capHalf, yTop);
+        ctx.moveTo(lineX - capHalf, yBottom);
+        ctx.lineTo(lineX + capHalf, yBottom);
+        ctx.stroke();
+
+        const gapLabel = `${PFFCharts.formatInteger(Math.round(renderedGap))} gap`;
+        const fontSize = mobile ? 8.7 : 9.5;
+        const pillHeight = mobile ? 16 : 17;
+        const pillPadX = mobile ? 5 : 6;
+        const gapFromLine = mobile ? 5 : 6;
+        ctx.font = `700 ${fontSize}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const pillWidth = ctx.measureText(gapLabel).width + pillPadX * 2;
+        let pillLeft = lineX - gapFromLine - pillWidth;
+        if (pillLeft < chartArea.left + 2) {
+          pillLeft = Math.min(lineX + gapFromLine, chartArea.right - pillWidth - 2);
+        }
+        const pillTop = PFF.clamp(
+          (yTop + yBottom) / 2 - pillHeight / 2,
+          chartArea.top + 2,
+          chartArea.bottom - pillHeight - 2
         );
 
-        return chart;
-      },
+        drawRoundedRect(ctx, pillLeft, pillTop, pillWidth, pillHeight, 3.5);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(102, 0, 255, 0.28)';
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+        ctx.fillStyle = ACCESS_GAP;
+        ctx.fillText(gapLabel, pillLeft + pillWidth / 2, pillTop + pillHeight / 2 + 0.2);
+        ctx.restore();
+      }
+    };
 
-      onError() {
-        liveData.style.visibility =
-          'hidden';
-      },
+    const accessBenchmarksPlugin = Shared.chartAnnotations?.createPlugin?.({
+      id: 'pffAccessGapBenchmarks',
+      getItems() {
+        return [
+          { axis: 'y', value: SUFFICIENT_BENCHMARK, colour: SUFFICIENT_COLOUR },
+          { axis: 'y', value: SATURATED_BENCHMARK, colour: SATURATED_COLOUR }
+        ].map(item => ({
+          ...item, width: 2.2, dash: [1, 4], cap: 'round',
+          // The original clamps out-of-scale benchmarks to the plot edge.
+          // Use the interpolated custom Y-axis rather than the Chart.js scale.
+          getPixel(chartInstance) {
+            const area = chartInstance?.chartArea;
+            if (!area || !yAxisController) return NaN;
+            const ratio = PFF.clamp(yAxisController.valueToRatio(item.value), 0, 1);
+            return area.bottom - area.height * ratio;
+          }
+        }));
+      }
+    });
 
-      errorMessage:
-        'Australia and state population coverage data unavailable.'
+    const accessYAxisTitlePlugin = {
+      id: 'pffAccessGapYAxisTitle',
+      afterDraw(chartInstance) {
+        const { ctx, chartArea } = chartInstance;
+        if (!chartArea) return;
+        const mobile = PFF.mobileLayout();
+        const x = chartArea.left - (mobile ? 53 : 60);
+        const y = chartArea.top + chartArea.height / 2;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillStyle = '#151515';
+        ctx.font = `700 ${mobile ? 12 : 13}px Lato, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('People per clinician', 0, 0);
+        ctx.restore();
+      }
+    };
+
+    function tooltipOptions() {
+      return Shared.chartTooltips.tooltipOptions({
+        mode: 'index',
+        intersect: true,
+        filter(item) {
+          // Tooltip remains available when the Metro line is toggled off.
+          const first = isLineVisible(chart, 0) ? 0 : 1;
+          return item.datasetIndex === first;
+        },
+        callbacks: {
+          title(items) {
+            const index = items?.[0]?.dataIndex;
+            return Number.isInteger(index)
+              ? String(displayRows[index]?.year ?? '')
+              : '';
+          },
+          label(context) {
+            const row = displayRows[context.dataIndex];
+            if (!row) return '';
+
+            const trendText = value => Number.isFinite(value)
+              ? ` · ${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(1)}% p.a. (10yr)`
+              : '';
+
+            const gap = Number.isFinite(row.metro) && Number.isFinite(row.nonmetro)
+              ? Math.abs(row.nonmetro - row.metro)
+              : null;
+            const direction = Number.isFinite(gap)
+              ? (row.nonmetro >= row.metro ? 'Non-metro higher' : 'Metro higher')
+              : '';
+
+            return [
+              isLineVisible(chart, 0)
+                ? `Metro (MM1): ${PFFCharts.formatInteger(Math.round(row.metro))}${trendText(trendForSeries('metro'))}` : '',
+              isLineVisible(chart, 1)
+                ? `Non-metro (MM2–7): ${PFFCharts.formatInteger(Math.round(row.nonmetro))}${trendText(trendForSeries('nonmetro'))}` : '',
+              canShowAccessGap(chart) && Number.isFinite(gap)
+                ? `Access gap: ${PFFCharts.formatInteger(Math.round(gap))} people per clinician · ${direction}`
+                : ''
+            ].filter(Boolean);
+          }
+        }
       });
+    }
+
+    function leftScaleOptions() {
+      return PFFCharts.yScaleOptions(yScale, {
+        afterFit(axis) {
+          axis.width = PFF.mobileLayout() ? 61 : 69;
+        }
+      });
+    }
+
+    function chartOptions(animate = false) {
+      const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
+      const base = PFFCharts.baseChartOptions({
+        animation: {
+          duration,
+          easing: 'easeInOutCubic'
+        },
+        animations: {
+          x: {
+            duration,
+            easing: 'easeInOutCubic'
+          },
+          y: {
+            duration,
+            easing: 'easeInOutCubic'
+          }
+        },
+        events: [
+          'mousemove',
+          'mouseout'
+        ],
+
+        interaction: {
+          mode: 'index',
+          intersect: true,
+          axis: 'xy'
+        },
+
+        plugins: {
+          legend: { display: false },
+          tooltip: tooltipOptions()
+        },
+        scales: {
+          x: Shared.chartAxes.withXAxisTickMarks(PFFCharts.xYearScaleOptions({
+            ticks: {
+              callback(value, index) {
+                const year = Number(displayRows[index]?.year);
+                return Number.isFinite(year) && year % 2 === 0 ? String(year) : '';
+              }
+            }
+          }), { yearMode: 'even' }),
+          y: leftScaleOptions()
+        }
+      });
+      const standard = Shared.chartAnimations.withChartJsTiming(base);
+      standard.animation.duration = duration;
+      // The shared 170ms hover transition must also respect reduced motion.
+      standard.transitions.active.animation.duration = PFF.reducedMotion()
+        ? 0 : Shared.chartAnimations.defaults.hoverMs;
+      standard.animations.x = { ...(standard.animations.x || {}), duration, easing: 'easeInOutCubic' };
+      standard.animations.y = { ...(standard.animations.y || {}), duration, easing: 'easeInOutCubic' };
+      return standard;
+    }
+
+    function clearChartTooltip() {
+      pinnedGapIndex = null;
+      if (!chart) return;
+      chart.setActiveElements([]);
+      chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+      chart.draw();
+    }
+
+    function activateTooltipIndex(index, anchorElement) {
+      if (!chart || !Number.isInteger(index)) return;
+      const active = chart.data.datasets
+        .map((dataset, datasetIndex) => {
+          const value = Number(dataset?.data?.[index]);
+          return Number.isFinite(value) ? { datasetIndex, index } : null;
+        })
+        .filter(Boolean);
+      if (!active.length) {
+        clearChartTooltip();
+        return;
+      }
+
+      pinnedGapIndex = index;
+      const x = Number(anchorElement?.x);
+      const y = Number(anchorElement?.y);
+      chart.setActiveElements(active);
+      chart.tooltip?.setActiveElements(active, {
+        x: Number.isFinite(x) ? x : chart.chartArea.left,
+        y: Number.isFinite(y) ? y : chart.chartArea.top
+      });
+      chart.draw();
+    }
+
+    function setupTooltipTapInteractions() {
+      tooltipInteractionCleanup?.();
+
+      const handleCanvasPress = event => {
+        if (!chart) return;
+
+        const rect =
+          chartCanvas.getBoundingClientRect();
+
+        const tooltip =
+          chart.tooltip;
+
+        const x =
+          (Number(event.clientX) - rect.left) *
+          (chart.width / rect.width);
+
+        const y =
+          (Number(event.clientY) - rect.top) *
+          (chart.height / rect.height);
+
+        const insideTooltip =
+          tooltip &&
+          Number(tooltip.opacity) > 0 &&
+          [
+            x,
+            y,
+            tooltip.x,
+            tooltip.y,
+            tooltip.width,
+            tooltip.height
+          ].every(Number.isFinite) &&
+          x >= tooltip.x &&
+          x <= tooltip.x + tooltip.width &&
+          y >= tooltip.y &&
+          y <= tooltip.y + tooltip.height;
+
+        if (insideTooltip) return;
+
+        const hits =
+          chart.getElementsAtEventForMode(
+            event,
+            'nearest',
+            { intersect: true },
+            true
+          );
+
+        if (!hits.length) {
+          requestAnimationFrame(
+            clearChartTooltip
+          );
+          return;
+        }
+
+        const hit =
+          hits[0];
+
+        const anchorElement =
+          chart.getDatasetMeta(
+            hit.datasetIndex
+          )?.data?.[hit.index];
+
+        requestAnimationFrame(() =>
+          activateTooltipIndex(
+            hit.index,
+            anchorElement
+          )
+        );
+      };
+
+      const handleDocumentPress = event => {
+        if (!chart) return;
+
+        if (
+          event.target === chartCanvas ||
+          chartCanvas.contains(event.target)
+        ) {
+          return;
+        }
+
+        requestAnimationFrame(clearChartTooltip);
+      };
+
+      chartCanvas.addEventListener(
+        'pointerdown',
+        handleCanvasPress,
+        { passive: true }
+      );
+
+      document.addEventListener(
+        'pointerdown',
+        handleDocumentPress,
+        { passive: true }
+      );
+
+      const handleEscape = event => {
+        if (event.key === 'Escape') clearChartTooltip();
+      };
+      document.addEventListener('keydown', handleEscape);
+
+      tooltipInteractionCleanup = () => {
+        document.removeEventListener('keydown', handleEscape);
+        chartCanvas.removeEventListener(
+          'pointerdown',
+          handleCanvasPress
+        );
+
+        document.removeEventListener(
+          'pointerdown',
+          handleDocumentPress
+        );
+      };
+    }
+
+    function mountAccessLegend() {
+      if (legendController || !chart) return;
+      legendController = Shared.chartLegends.mount({
+        root: document.getElementById('accessLegend'),
+        label: 'Toggle access chart series and gap highlight',
+        getChart() { return chart; },
+        items: [
+          { id: 'metro', datasetIndex: 0, label: 'Metro (MM1)', colour: METRO, markerType: 'line' },
+          { id: 'nonmetro', datasetIndex: 1, label: 'Non-metro (MM2–7)', colour: NONMETRO, markerType: 'line' },
+          { id: 'gap', datasetIndex: -1, label: 'Access gap', colour: ACCESS_GAP, markerType: 'square' }
+        ],
+        onToggle(item) {
+          if (item.id === 'gap') gapVisible = item.visible;
+          clearChartTooltip();
+          // The gap band/bracket only appears while BOTH constituent lines
+          // are visible, and can be independently switched off in the legend.
+          chart?.draw();
+        }
+      });
+    }
+
+    function buildDatasets(rows) {
+      return [
+        PFFCharts.lineDataset({
+          label: 'Metro (MM1)',
+          _seriesKey: 'metro',
+          _activeSeries: true,
+          data: rows.map(row => row.metro),
+          borderColor: METRO,
+          backgroundColor: METRO,
+          pointBackgroundColor: METRO,
+          pointBorderColor: '#ffffff',
+          pointBorderWidth: 1,
+          borderWidth: 2.7,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          pointHitRadius: PFF.mobileLayout() ? 9 : 5,
+          spanGaps: false,
+          cubicInterpolationMode: 'monotone',
+          tension: 0.28
+        }),
+        PFFCharts.lineDataset({
+          label: 'Non-metro (MM2–7)',
+          _seriesKey: 'nonmetro',
+          _activeSeries: true,
+          data: rows.map(row => row.nonmetro),
+          borderColor: NONMETRO,
+          backgroundColor: NONMETRO,
+          pointBackgroundColor: NONMETRO,
+          pointBorderColor: '#ffffff',
+          pointBorderWidth: 1,
+          borderWidth: 2.7,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          pointHitRadius: PFF.mobileLayout() ? 9 : 5,
+          spanGaps: false,
+          cubicInterpolationMode: 'monotone',
+          tension: 0.28
+        })
+      ];
+    }
+
+    function updateAccessibleSummary() {
+      if (!chartSummary || !displayRows.length) return;
+      const latest = [...displayRows].reverse().find(row =>
+        Number.isFinite(row.metro) && Number.isFinite(row.nonmetro)
+      ) || displayRows[displayRows.length - 1];
+      const first = displayRows[0];
+      const metroTrend = trendForSeries('metro');
+      const nonmetroTrend = trendForSeries('nonmetro');
+      const parts = [`${scopeLabel()}, ${first.year} to ${displayRows[displayRows.length - 1].year}.`];
+      if (Number.isFinite(latest.metro)) {
+        parts.push(`Latest metropolitan access was ${Math.round(latest.metro)} people per active clinician.`);
+      }
+      if (Number.isFinite(latest.nonmetro)) {
+        parts.push(`Latest non-metropolitan access was ${Math.round(latest.nonmetro)} people per active clinician.`);
+      }
+      if (Number.isFinite(latest.metro) && Number.isFinite(latest.nonmetro)) {
+        parts.push(`The latest access gap was ${Math.round(Math.abs(latest.nonmetro - latest.metro))} people per active clinician.`);
+      }
+      parts.push('Reference lines mark sufficient access at one active clinician per 10,000 people and saturated access at one per 5,000.');
+      parts.push('Tasmania and the Northern Territory are excluded because all areas are non-metropolitan; the ACT is excluded because all areas are metropolitan.');
+      if (Number.isFinite(metroTrend) || Number.isFinite(nonmetroTrend)) {
+        parts.push('Fixed 10-year log-linear annual trend annotations are shown where defined.');
+      }
+      const convergenceYear = linearConvergenceYear();
+      if (Number.isFinite(convergenceYear)) {
+        parts.push(`Straight-line projections of the observed Metro and non-metro series converge by ${convergenceYear}.`);
+      }
+      PFFCharts.updateChartSummary(parts.join(' '), chartSummary);
+    }
+
+    function renderLoaded(animate = true) {
+      if (!Object.keys(state.clinicianByYear).length) return;
+      const rows = coverageSeries();
+      if (!rows.length) throw new Error(`No usable access trend data for ${scopeLabel()}.`);
+
+      clearChartTooltip();
+      displayRows = rows;
+      updateTrendsNote();
+      const previousScale = yAxisController?.currentScale?.() || yScale;
+      const nextScale = scaleForRows(rows);
+      yScale = nextScale;
+      const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
+
+      if (!chart) {
+        yAxisController = PFFCharts.createUnifiedYAxis({
+          id: 'pffAccessGapYAxis',
+          getChart() { return chart; },
+          getScale() { return yScale; },
+          getDecimals() { return 0; },
+          getTitle() { return ''; },
+          formatValue(value) {
+            return PFFCharts.formatInteger(Math.round(value));
+          }
+        });
+        yAxisController.setImmediately(yScale, 0);
+        yAxisController.setTitleImmediately('');
+
+        chart = new Chart(chartCanvas.getContext('2d'), {
+          type: 'line',
+          data: {
+            labels: rows.map(row => String(row.year)),
+            datasets: buildDatasets(rows)
+          },
+          options: chartOptions(false),
+          plugins: [
+            accessPresentationPlugin,
+            yAxisController.plugin,
+            accessBenchmarksPlugin,
+            accessYAxisTitlePlugin,
+            yearTicksPlugin,
+            accessTrendLabelsPlugin,
+            tooltipTopLayerPlugin
+          ]
+        });
+        setupTooltipTapInteractions();
+        mountAccessLegend();
+      } else {
+        chart.data.labels = rows.map(row => String(row.year));
+        chart.data.datasets[0].data = rows.map(row => row.metro);
+        chart.data.datasets[1].data = rows.map(row => row.nonmetro);
+        chart.options.scales.y.min = nextScale.min;
+        chart.options.scales.y.max = nextScale.max;
+        chart.options.animation.duration = duration;
+        chart.options.animation.easing = 'easeInOutCubic';
+        chart.options.animations.x.duration = duration;
+        chart.options.animations.x.easing = 'easeInOutCubic';
+        chart.options.animations.y.duration = duration;
+        chart.options.animations.y.easing = 'easeInOutCubic';
+        chart.options.plugins.tooltip = tooltipOptions();
+        chart.update();
+        // Capture the currently displayed positions for rapid state reversals.
+        const priorMajor = yAxisController?.majorTracks?.();
+        const priorMinor = yAxisController?.minorTracks?.();
+        yAxisController?.animate(previousScale, nextScale, {
+          duration,
+          fromDecimals: 0,
+          toDecimals: 0
+        });
+        if (duration > 0 &&
+            (previousScale.min !== nextScale.min ||
+             previousScale.max !== nextScale.max ||
+             previousScale.intervals !== nextScale.intervals)) {
+          yAxisController.state.majorTracks =
+            Shared.chartAxes.slidingNumericAxisTracks(previousScale, nextScale, {
+              kind: 'major', fromTracks: priorMajor
+            });
+          yAxisController.state.minorTracks =
+            Shared.chartAxes.slidingNumericAxisTracks(previousScale, nextScale, {
+              kind: 'minor', fromTracks: priorMinor
+            });
+        }
+      }
+
+      updateAccessibleSummary();
+    }
+
+    const requiredShared = [
+      ['axes', Shared.chartAxes?.withXAxisTickMarks],
+      ['sliding Y-axis', Shared.chartAxes?.slidingNumericAxisTracks],
+      ['year ticks', Shared.chartAxes?.createLabelDrivenTicksPlugin],
+      ['animation', Shared.chartAnimations?.withChartJsTiming],
+      ['tooltip', Shared.chartTooltips?.tooltipOptions],
+      ['responsive touch', Shared.chartResponsive?.suppressTapFlash],
+      ['reference lines', Shared.chartAnnotations?.createPlugin],
+      ['trend pills', Shared.chartTrends?.createTrendPillsPlugin],
+      ['legend', Shared.chartLegends?.mount]
+    ];
+    const missingShared = requiredShared
+      .filter(([, value]) => typeof value !== 'function')
+      .map(([name]) => name);
+    if (missingShared.length) {
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      document.getElementById('loadingState').style.display = 'none';
+      statusEl.textContent = `Missing shared chart assets: ${missingShared.join(', ')}`;
+      statusEl.setAttribute('role', 'alert');
+      console.error('[PFF access gap pilot]', statusEl.textContent);
+    } else {
+      Shared.chartResponsive.suppressTapFlash(chartCanvas);
+      startApp(renderLoaded);
     }
   </script>
 </body>
