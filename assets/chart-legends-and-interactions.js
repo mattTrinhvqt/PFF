@@ -5,7 +5,7 @@
 (function (global) {
   'use strict';
   const namespace = global.PFFModules = global.PFFModules || {};
-  const VERSION = '1.0.0-candidate.1';
+  const VERSION = '1.0.1-candidate.2';
   const STYLE_ID = 'pff-chart-legend-shared-style-v1';
   const CSS = `
   .pff-shared-legend{position:relative;width:100%;min-width:0;height:30px;overflow:hidden;font-family:Lato,Arial,sans-serif;--pff-legend-muted:var(--pff-muted,#69718a);--pff-legend-ink:var(--pff-ink,#151515)}
@@ -104,6 +104,13 @@
     function render() {
       if (destroyed) return;
       const previousScroll = viewport.scrollLeft;
+      // Replacing legend buttons previously discarded keyboard focus after
+      // Space/Enter toggles. Remember the focused item before rebuilding it.
+      const focused = viewport.contains(document.activeElement) &&
+        document.activeElement?.classList?.contains('pff-shared-legend__item')
+        ? document.activeElement : null;
+      const focusedId = focused?.dataset.id;
+      const focusedIndex = focused ? Array.from(viewport.children).indexOf(focused) : -1;
       const fragment = document.createDocumentFragment();
       entries.forEach(item => {
         const el = document.createElement(readOnly ? 'span' : 'button');
@@ -128,6 +135,15 @@
       });
       viewport.replaceChildren(fragment);
       viewport.scrollLeft = previousScroll;
+      if (focused) {
+        // Preserve focus by stable id, or choose the nearest remaining item
+        // when the previous series is removed by a filter change.
+        const buttons = Array.from(viewport.children);
+        const target = buttons.find(button => button.dataset.id === focusedId) ||
+          buttons[Math.min(focusedIndex, buttons.length - 1)];
+        target?.focus({preventScroll:true});
+        viewport.scrollLeft = previousScroll;
+      }
       scheduleArrows();
       options.onRender?.(entries.map(item => ({...item})));
     }
