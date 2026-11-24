@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
-  <!-- Opt-in shared chart presentation; the MMM data pipeline and custom Y-axis remain app-owned. -->
+  <!-- Opt-in shared presentation with range-aware sliding Y-axis ticks; MMM data and scale calculations remain app-owned. -->
   <script src="./assets/chart-styling-and-defaults.js"></script>
   <script src="./assets/chart-axes-and-ticks.js"></script>
   <script src="./assets/chart-animations-and-transitions.js"></script>
@@ -1907,6 +1907,10 @@
 
       chart.update();
 
+      // Preserve the currently displayed ticks if the user switches states
+      // again during an unfinished transition.
+      const previousMajorTicks = unifiedYAxis.majorTracks();
+      const previousMinorTicks = unifiedYAxis.minorTracks();
       unifiedYAxis.animate(
         oldScale,
         nextScale,
@@ -1918,6 +1922,23 @@
             0
         }
       );
+      // The core axis already animates its grid, labels and benchmark scale,
+      // but normally pairs ticks by POSITION. Re-pair by numeric VALUE using
+      // the opt-in shared asset so labels visibly slide as the range changes.
+      // Keep the core draw/plugin intact; reduced motion stays immediate.
+      if (duration > 0 &&
+          (oldScale.min !== nextScale.min ||
+           oldScale.max !== nextScale.max ||
+           oldScale.intervals !== nextScale.intervals)) {
+        unifiedYAxis.state.majorTracks =
+          Shared.chartAxes.slidingNumericAxisTracks(oldScale, nextScale, {
+            kind: 'major', fromTracks: previousMajorTicks
+          });
+        unifiedYAxis.state.minorTracks =
+          Shared.chartAxes.slidingNumericAxisTracks(oldScale, nextScale, {
+            kind: 'minor', fromTracks: previousMinorTicks
+          });
+      }
 
       legendController?.render();
       tabsController?.update();
@@ -2096,6 +2117,7 @@
     const requiredSharedAssets = [
       ['styling', Shared.chartStyling?.getLineStyle],
       ['axes', Shared.chartAxes?.createLabelDrivenTicksPlugin],
+      ['sliding axis', Shared.chartAxes?.slidingNumericAxisTracks],
       ['animations', Shared.chartAnimations?.withChartJsTiming],
       ['tooltips', Shared.chartTooltips?.tooltipOptions],
       ['responsive', Shared.chartResponsive?.suppressTapFlash],
