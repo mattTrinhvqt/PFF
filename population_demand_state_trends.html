@@ -9,6 +9,16 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Opt-in modular chart presentation; legacy core retained only for
+       existing data, controller and custom-axis APIs pending future migration. -->
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+  <script src="./assets/chart-reference-lines-and-annotations.js"></script>
+  <script src="./assets/chart-trends-and-labels.js"></script>
+  <script src="./assets/chart-legends-and-interactions.js"></script>
 
   <style>
 
@@ -51,6 +61,22 @@
 
     .chart-shell {
       margin: -3px 0 0;
+    }
+
+    /* The compact shared legend owns its own viewport and scroll buttons.
+       Hide the old outer scroll buttons to prevent duplicated controls. */
+    .chart-options-row .legend-nav > .legend-scroll-button { display: none; }
+    #chartLegend.pff-shared-legend {
+      display: block;
+      height: 28px;
+      min-height: 0;
+      width: 100%;
+      padding: 0;
+      overflow: hidden;
+    }
+    #chartLegend .pff-shared-legend__viewport {
+      height: 28px;
+      padding-bottom: 2px;
     }
 
     .benchmark-legend {
@@ -249,6 +275,8 @@
 
   <script>
     'use strict';
+
+    const Shared = window.PFFModules || {};
 
     const CONFIG = Object.freeze({
       sheetId:
@@ -1570,144 +1598,38 @@
       );
     }
 
-    const coverageBenchmarksPlugin = {
-      id:
-        'australiaStateCoverageBenchmarks',
-
-      beforeDatasetsDraw(
-        chartInstance
-      ) {
-        const {
-          ctx,
-          chartArea,
-          scales
-        } =
-          chartInstance;
-
-        if (
-          !chartArea ||
-          !scales?.y
-        ) {
-          return;
+    // Benchmarks are rendered by the smaller shared annotations asset.
+    // Original 2.2px dotted lines, colours and no-clamping semantics retained.
+    const coverageBenchmarksPlugin =
+      Shared.chartAnnotations?.createPlugin?.({
+        id: 'australiaStateCoverageBenchmarks',
+        getItems() {
+          return [
+            {axis: 'y', value: SUFFICIENT_BENCHMARK, preset: 'sufficient', colour: SUFFICIENT_COLOUR},
+            {axis: 'y', value: SATURATED_BENCHMARK, preset: 'saturated', colour: SATURATED_COLOUR}
+          ];
         }
-
-        const benchmarks = [
-          {
-            value:
-              SUFFICIENT_BENCHMARK,
-            colour:
-              SUFFICIENT_COLOUR
-          },
-          {
-            value:
-              SATURATED_BENCHMARK,
-            colour:
-              SATURATED_COLOUR
-          }
-        ];
-
-        ctx.save();
-        ctx.lineCap =
-          'round';
-        ctx.lineWidth =
-          2.2;
-        ctx.setLineDash(
-          [1, 4]
-        );
-
-        benchmarks.forEach(
-          benchmark => {
-            const y =
-              scales.y
-                .getPixelForValue(
-                  benchmark.value
-                );
-
-            if (
-              !Number.isFinite(y) ||
-              y < chartArea.top - 1 ||
-              y > chartArea.bottom + 1
-            ) {
-              return;
-            }
-
-            ctx.strokeStyle =
-              benchmark.colour;
-
-            ctx.beginPath();
-            ctx.moveTo(
-              chartArea.left,
-              y
-            );
-            ctx.lineTo(
-              chartArea.right,
-              y
-            );
-            ctx.stroke();
-          }
-        );
-
-        ctx.restore();
-      }
-    };
-
-    const yearTickMarksPlugin =
-      PFFCharts.createYearTickMarksPlugin({
-        id:
-          'australiaStateCoverageYearTicks'
       });
 
+    // Keep the original labelled-year cadence, now using 6/2px shared ticks.
+    const yearTickMarksPlugin =
+      Shared.chartAxes?.createLabelDrivenTicksPlugin?.({
+        id: 'australiaStateCoverageYearTicks', axes: ['x']
+      });
+
+    // Trends, series membership and content remain calculated in this app.
+    // The shared module owns only the pill presentation and collision fitting.
     const coverageTrendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
-        id:
-          'australiaStateCoverageTrendLabels',
-
-        enabled() {
-          return (
-            trendController?.mode !==
-            'off'
-          );
+      Shared.chartTrends?.createTrendPillsPlugin?.({
+        id: 'australiaStateCoverageTrendLabels',
+        isMobile: () => PFF.mobileLayout(),
+        enabled() { return trendController?.mode !== 'off'; },
+        isActive({chart: c, dataset, datasetIndex, meta}) {
+          return dataset._activeSeries !== false && !meta?.hidden &&
+            (c.isDatasetVisible ? c.isDatasetVisible(datasetIndex) : true);
         },
-
-        isActive({
-          chart:
-            chartInstance,
-          dataset,
-          datasetIndex,
-          meta
-        }) {
-          return (
-            dataset._activeSeries !==
-              false &&
-            !meta?.hidden &&
-            (
-              chartInstance
-                .isDatasetVisible
-                ? chartInstance
-                    .isDatasetVisible(
-                      datasetIndex
-                    )
-                : true
-            )
-          );
-        },
-
-        getTrendValue({
-          dataset
-        }) {
-          return latestTrendFor(
-            dataset._code
-          );
-        },
-
-        getSeriesColour({
-          dataset
-        }) {
-          return (
-            dataset.borderColor ||
-            '#69718a'
-          );
-        }
+        getTrendValue({dataset}) { return latestTrendFor(dataset._code); },
+        getSeriesColour({dataset}) { return dataset.borderColor || '#69718a'; }
       });
 
     function tooltipLabel(
@@ -1798,10 +1720,11 @@
       const scale =
         state.scale;
 
-      const duration =
-        PFFCharts.chartAnimationDuration();
+      const duration = PFF.reducedMotion()
+        ? 0 : Shared.chartAnimations.defaults.chartMs;
 
-      return PFFCharts.baseChartOptions({
+      const options = Shared.chartAnimations.withChartJsTiming(
+        PFFCharts.baseChartOptions({
         normalized:
           true,
 
@@ -1852,7 +1775,7 @@
         },
 
         plugins: {
-          tooltip: {
+          tooltip: Shared.chartTooltips.tooltipOptions({
             callbacks: {
               title(items) {
                 return items?.length
@@ -1865,12 +1788,13 @@
               label:
                 tooltipLabel
             }
-          }
+          })
         },
 
         scales: {
-          x:
-            PFFCharts.xYearScaleOptions(),
+          x: Shared.chartAxes.withXAxisTickMarks(
+            PFFCharts.xYearScaleOptions(), {yearMode: 'even'}
+          ),
 
           y:
             PFFCharts.yScaleOptions(
@@ -1889,7 +1813,18 @@
               }
             )
         }
-      });
+      })
+      );
+      // Shared animation timing must not override reduced-motion requests.
+      // Keep the categorical year-axis stationary and preserve no colour tween.
+      options.animation.duration = duration;
+      options.animations.x.duration = 0;
+      options.animations.y.duration = duration;
+      options.animations.colors.duration = 0;
+      if (PFF.reducedMotion() && options.transitions?.active?.animation) {
+        options.transitions.active.animation.duration = 0;
+      }
+      return options;
     }
 
     function createChart() {
@@ -2175,7 +2110,7 @@
     function commitStateFilter() {
       chart?.update();
       syncStateFilterUi();
-      legendController?.update();
+      updateSharedLegend();
       updateAccessibleSummary();
     }
 
@@ -2206,6 +2141,23 @@
         `Australia and state population coverage trends from ${state.years[0] ?? 'unavailable'} to ${state.years[state.years.length - 1] ?? 'unavailable'}. Visible series: ${visible.length ? visible.join(', ') : 'none'}.${trendText}`,
         chartSummary
       );
+    }
+
+    function sharedLegendItems() {
+      // Keep even hidden series in the legend (faded), allowing users to
+      // restore a series without reopening the States filter.
+      return SERIES.map((item, datasetIndex) => ({
+        id: item.code,
+        datasetIndex,
+        label: item.label,
+        colour: item.colour,
+        markerType: 'line',
+        visible: !state.hiddenSeries.has(item.code)
+      }));
+    }
+
+    function updateSharedLegend() {
+      legendController?.setItems(sharedLegendItems());
     }
 
     function setupControls() {
@@ -2282,85 +2234,22 @@
         }
       );
 
-      legendController =
-        PFFCharts.setupLegend({
-          legend:
-            chartLegend,
-
-          leftButton:
-            legendScrollLeft,
-
-          rightButton:
-            legendScrollRight,
-
-          getChart() {
-            return chart;
-          },
-
-          getItems() {
-            return SERIES
-              .map(
-                (
-                  item,
-                  datasetIndex
-                ) => ({
-                  datasetIndex,
-                  label:
-                    item.label,
-                  colour:
-                    item.colour,
-                  active:
-                    !state.hiddenSeries.has(
-                      item.code
-                    ),
-                  code:
-                    item.code
-                })
-              )
-              .filter(
-                item =>
-                  item.code === 'AUS' ||
-                  item.active
-              );
-          },
-
-          onToggle({
-            dataset,
-            visible,
-            item
-          }) {
-            const code =
-              item.code ||
-              dataset?._code;
-
-            if (code) {
-              if (visible) {
-                state.hiddenSeries.delete(
-                  code
-                );
-              } else {
-                state.hiddenSeries.add(
-                  code
-                );
-              }
-            }
-
-            if (dataset) {
-              dataset._activeSeries =
-                visible;
-            }
-
-            if (
-              STATE_CODES.includes(
-                code
-              )
-            ) {
-              syncStateFilterUi();
-            }
-
-            updateAccessibleSummary();
-          }
-        });
+      // Small modular legend: retains the familiar coloured line markers,
+      // clickable hide/restore buttons, keyboard focus and scroll arrows.
+      legendController = Shared.chartLegends.mount({
+        root: chartLegend,
+        label: 'Toggle Australia and state population coverage series',
+        getChart() { return chart; },
+        items: sharedLegendItems(),
+        onToggle({id, visible}) {
+          if (!SERIES.some(item => item.code === id)) return;
+          if (visible) state.hiddenSeries.delete(id);
+          else state.hiddenSeries.add(id);
+          // Dataset visibility and update() are handled by the shared module.
+          if (STATE_CODES.includes(id)) syncStateFilterUi(false);
+          updateAccessibleSummary();
+        }
+      });
     }
 
     function setupResponsiveBehaviour() {
@@ -2402,15 +2291,48 @@
 
           onRefresh() {
             headingScroller?.update();
-            legendController?.update();
+            legendController?.updateArrows();
           }
         });
     }
 
-    migrateLegacyLocalCache();
-    setupControls();
+    const requiredSharedAssets = [
+      ['styling', Shared.chartStyling?.getLineStyle],
+      ['axes', Shared.chartAxes?.createLabelDrivenTicksPlugin],
+      ['animations', Shared.chartAnimations?.withChartJsTiming],
+      ['tooltips', Shared.chartTooltips?.tooltipOptions],
+      ['responsive', Shared.chartResponsive?.suppressTapFlash],
+      ['benchmarks', Shared.chartAnnotations?.createPlugin],
+      ['trend pills', Shared.chartTrends?.createTrendPillsPlugin],
+      ['legends', Shared.chartLegends?.mount]
+    ];
+    const missingAssets = requiredSharedAssets
+      .filter(([, helper]) => typeof helper !== 'function')
+      .map(([name]) => name);
 
-    PFF.initialiseApp({
+    if (missingAssets.length) {
+      const message = `Missing shared chart assets: ${missingAssets.join(', ')}`;
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      document.getElementById('loadingState').style.display = 'none';
+      statusEl.textContent = message;
+      statusEl.setAttribute('role', 'alert');
+      console.error('[PFF Demand State Trends Pilot]', message);
+    } else {
+      Shared.chartResponsive.suppressTapFlash(chartCanvas);
+      migrateLegacyLocalCache();
+      setupControls();
+
+      // Retain the core's original pointer-based tooltip handling; Escape
+      // dismisses without chart.update('none') interrupting a running tween.
+      document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape' || !chart) return;
+        chart.setActiveElements?.([]);
+        chart.tooltip?.setActiveElements?.([], {x: 0, y: 0});
+        chart.draw?.();
+      });
+
+      PFF.initialiseApp({
       app,
       status:
         statusEl,
@@ -2553,7 +2475,7 @@
 
         setupResponsiveBehaviour();
 
-        legendController?.update();
+        legendController?.updateArrows();
         headingScroller?.update();
 
         requestAnimationFrame(
@@ -2565,7 +2487,7 @@
               );
 
             chart?.draw();
-            legendController?.update();
+            legendController?.updateArrows();
             headingScroller?.update();
           }
         );
@@ -2580,7 +2502,8 @@
 
       errorMessage:
         'Australia and state population coverage data unavailable.'
-    });
+      });
+    }
   </script>
 </body>
 </html>
