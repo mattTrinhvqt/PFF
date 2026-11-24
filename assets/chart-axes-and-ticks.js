@@ -1,5 +1,5 @@
 /*
- * PFF chart axes and ticks — v2.2.1-candidate.1
+ * PFF chart axes and ticks — v2.3.0-candidate.1
  * Shared opt-in presentation helpers. No automatic global Chart.js changes.
  * Extracted from PFF core's stable axis fitting, year cadence and tick ratios.
  * Leaves data bounds, Chart.js built-in ticks, custom axis-drawing plugins,
@@ -10,7 +10,7 @@
 (function (global) {
   'use strict';
   const root = global.PFFModules || (global.PFFModules = {});
-  const VERSION = '2.2.1-candidate.1';
+  const VERSION = '2.3.0-candidate.1';
   const DEFAULTS = Object.freeze({
     mobileBreakpoint: 430,
     seriesGutterDesktop: 69,
@@ -414,6 +414,149 @@
     });
     return {displayedMaximum, fromStep, toStep, overlap, ticks};
   }
+
+  // Opt-in slide of fixed numeric tick VALUES between two possibly nonzero ranges.
+  // Unlike animatedNumericTicks (which assumes a zero origin), this returns
+  // tracks suitable for PFFCharts.createUnifiedYAxis's existing tick renderer.
+  // All other charts retain their original axis behaviour unless they call it.
+  function slidingNumericAxisTracks(fromScale, toScale, options = {}) {
+    const kind = options.kind === 'minor' ? 'minor' : 'major';
+    function scaleOf(spec) {
+      const min = Number(spec?.min), max = Number(spec?.max);
+      const intervals = Math.round(Number(spec?.intervals));
+      if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min ||
+          !Number.isInteger(intervals) || intervals < 1 || intervals > 100) {
+        throw new TypeError('[PFF chartAxes] Sliding ticks need finite min < max and 1–100 intervals.');
+      }
+      return {min, max, intervals, step: (max - min) / intervals};
+    }
+    const from = scaleOf(fromScale), to = scaleOf(toScale);
+    const bound = (value, scale) => clamp((value - scale.min) / (scale.max - scale.min), 0, 1);
+    const ticksOf = scale => Array.from(
+      {length: kind === 'major' ? scale.intervals + 1 : scale.intervals},
+      (_, i) => {
+        const value = scale.min + scale.step * (i + (kind === 'minor' ? .5 : 0));
+        return {value, ratio: bound(value, scale), alpha: 1};
+      }
+    );
+    // An interrupted transition may begin between two established axes.
+    // Preserve what is currently shown instead of snapping back to old ticks.
+    const snapshots = Array.isArray(options.fromTracks) ? options.fromTracks : null;
+    const source = snapshots ? snapshots
+      .filter(t => Number.isFinite(t?.value) && Number.isFinite(t?.ratio) && Number(t.alpha) > 1e-4)
+      .map(t => ({value:Number(t.value), ratio:clamp(Number(t.ratio),0,1),alpha:clamp(Number(t.alpha),0,1)}))
+      : ticksOf(from);
+    const dest = ticksOf(to);
+    const consumed = new Set();
+    const sameValue = (a,b) => Math.abs(a-b) <= Math.max(1, Math.abs(a), Math.abs(b)) * 1e-10;
+    const tracks = source.map(oldTick => {
+      const index = dest.findIndex((newTick,i) => !consumed.has(i) && sameValue(oldTick.value,newTick.value));
+      if (index !== -1) {
+        consumed.add(index);
+        const newTick = dest[index];
+        return {fromValue:oldTick.value,toValue:newTick.value,
+          fromRatio:oldTick.ratio,toRatio:newTick.ratio,
+          fromAlpha:oldTick.alpha,toAlpha:1};
+      }
+      return {fromValue:oldTick.value,toValue:oldTick.value,
+        fromRatio:oldTick.ratio,toRatio:bound(oldTick.value,to),
+        fromAlpha:oldTick.alpha,toAlpha:0};
+    });
+    dest.forEach((newTick,index) => {
+      if (consumed.has(index)) return;
+      tracks.push({fromValue:newTick.value,toValue:newTick.value,
+        fromRatio:bound(newTick.value,from),toRatio:newTick.ratio,
+        fromAlpha:0,toAlpha:1});
+    });
+    return tracks.sort((a,b)=>a.toRatio-b.toRatio || a.toValue-b.toValue);
+  }
+
+  // Orientation-aware presentation layer for the sliding tick tracks above.
+  // Both horizontal (numeric X) and vertical (numeric Y) axes are opt-in.
+  // This leaves Chart.js built-in axes, existing PFFCharts renderers and all
+  // callers of slidingNumericAxisTracks untouched until explicitly invoked.
+  function slidingNumericAxisFrame(tracks, progress, options = {}) {
+    if (options.axis !== 'x' && options.axis !== 'y') {
+      throw new TypeError('[PFF chartAxes] Specify axis: "x" or axis: "y".');
+    }
+    const axis = options.axis;
+    const position = options.position || (axis === 'x' ? 'bottom' : 'left');
+    if ((axis === 'x' && !['bottom','top'].includes(position)) ||
+        (axis === 'y' && !['left','right'].includes(position))) {
+      throw new TypeError('[PFF chartAxes] Invalid position for requested axis.');
+    }
+    const area = options.chartArea || options.area || {};
+    const left = Number(area.left), right = Number(area.right);
+    const top = Number(area.top), bottom = Number(area.bottom);
+    if (![left,right,top,bottom].every(Number.isFinite) || right <= left || bottom <= top) {
+      throw new TypeError('[PFF chartAxes] A valid chartArea {left,right,top,bottom} is required.');
+    }
+    const t = options.reducedMotion === true ? 1 :
+      (options.progressIsEased === true ? clamp(finite(progress, 0), 0, 1) : easeInOutCubic(progress));
+    return (Array.isArray(tracks) ? tracks : []).flatMap(track => {
+      if (!track) return [];
+      const values = ['fromValue','toValue','fromRatio','toRatio','fromAlpha','toAlpha']
+        .map(k => Number(track[k]));
+      if (!values.every(Number.isFinite)) return [];
+      const [fromValue,toValue,fromRatio,toRatio,fromAlpha,toAlpha] = values;
+      const alpha = clamp(fromAlpha + (toAlpha - fromAlpha) * t, 0, 1);
+      if (alpha <= 1e-4) return [];
+      const ratioNow = clamp(fromRatio + (toRatio - fromRatio) * t, 0, 1);
+      const pixel = axis === 'x' ? left + (right - left) * ratioNow
+        : bottom - (bottom - top) * ratioNow;
+      return [{
+        value: fromValue + (toValue - fromValue) * t, ratio: ratioNow, alpha,
+        x: axis === 'x' ? pixel : (position === 'right' ? right : left),
+        y: axis === 'y' ? pixel : (position === 'top' ? top : bottom),
+        axis, position
+      }];
+    });
+  }
+
+  // Convenience Canvas renderer for new charts/demos. Defaults to tick marks
+  // and text only: no gridlines or second spine are added to existing charts.
+  // If Chart.js already draws its own native labels, hide those labels in the
+  // opting-in chart to prevent duplicates. Major=6px, minor=2px.
+  function drawSlidingNumericAxis(ctx, tracks, progress, options = {}) {
+    const frame = slidingNumericAxisFrame(tracks, progress, options);
+    if (!ctx || typeof ctx.save !== 'function') return frame;
+    const axis = options.axis;
+    const pos = options.position || (axis === 'x' ? 'bottom' : 'left');
+    const minor = options.kind === 'minor';
+    const length = minor ? DEFAULTS.minorTickLength : DEFAULTS.tickLength;
+    const width = minor ? DEFAULTS.minorTickWidth : DEFAULTS.tickWidth;
+    const direction = pos === 'bottom' || pos === 'right' ? 1 : -1;
+    const color = options.color || DEFAULTS.ink;
+    const labelColor = options.labelColor || color;
+    const formatter = typeof options.formatLabel === 'function' ? options.formatLabel
+      : value => formatValue(value, {decimals: finite(options.decimals, 0)});
+    const gap = Math.max(1, finite(options.labelGap, 7));
+    ctx.save();
+    try {
+      ctx.font = options.font || `400 ${Math.max(8,finite(options.fontSize,11))}px ${DEFAULTS.font}, sans-serif`;
+      ctx.textAlign = axis === 'x' ? 'center' : (pos === 'left' ? 'right' : 'left');
+      ctx.textBaseline = axis === 'x' ? (pos === 'bottom' ? 'top' : 'bottom') : 'middle';
+      for (const tick of frame) {
+        const horizontal = axis === 'x';
+        ctx.globalAlpha = tick.alpha;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(tick.x, tick.y);
+        ctx.lineTo(horizontal ? tick.x : tick.x + direction * length,
+          horizontal ? tick.y + direction * length : tick.y);
+        ctx.stroke();
+        if (!minor && options.labels !== false) {
+          ctx.fillStyle = labelColor;
+          ctx.fillText(String(formatter(tick.value)),
+            tick.x + (horizontal ? 0 : direction * (length + gap)),
+            tick.y + (horizontal ? direction * (length + gap) : 0));
+        }
+      }
+    } finally { ctx.restore(); }
+    return frame;
+  }
+
   function isGridFromCustomAxis(config) {
     return config?.customAxisDrawsGrid === true;
   }
@@ -439,6 +582,7 @@
     hasVisibleLabel, isMajorTick, withLabelDrivenTickMarks,
     withXAxisTickMarks, withYAxisTickMarks, tickDrawPlan,
     createLabelDrivenTicksPlugin, easeInOutCubic, niceMajorStep, adaptiveMajorStep,
-    majorStepWithHysteresis, tickStepHandoffProgress, animatedNumericTicks
+    majorStepWithHysteresis, tickStepHandoffProgress, animatedNumericTicks,
+    slidingNumericAxisTracks, slidingNumericAxisFrame, drawSlidingNumericAxis
   });
 })(typeof window !== 'undefined' ? window : globalThis);
