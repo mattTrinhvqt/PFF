@@ -72,14 +72,6 @@
       padding-bottom: 2px;
     }
 
-    /* Explain the second, independent visibility control only when needed. */
-    .legend-visibility-note {
-      margin: 5px 8px 4px;
-      color: var(--pff-muted, #69718a);
-      font: 600 10px/1.35 Lato, Arial, sans-serif;
-    }
-    .legend-visibility-note[hidden] { display: none; }
-
     .benchmark-legend {
       position: absolute;
       top: 8px;
@@ -253,8 +245,6 @@
               </label>
 
               <div id="stateOptions"></div>
-              <p id="legendVisibilityNotice" class="legend-visibility-note"
-                 role="status" aria-live="polite" hidden></p>
             </div>
           </div>
         </div>
@@ -479,9 +469,6 @@
 
     const stateOptions =
       document.getElementById('stateOptions');
-
-    const legendVisibilityNotice =
-      document.getElementById('legendVisibilityNotice');
 
     const chartLegend =
       document.getElementById('chartLegend');
@@ -1370,6 +1357,21 @@
       return JSON.stringify([stateCode, phnName]);
     }
 
+    function currentLegendVisibilityKey(stateCode) {
+      const series = pointSeriesFor(stateCode, state.displayMode);
+      return legendVisibilityKey(
+        stateCode,
+        series.phnByPoint.find(Boolean) || stateCode
+      );
+    }
+
+    // The States dropdown represents the *visible line* in the current mode,
+    // including a line hidden by its clickable legend button.
+    function stateLineVisible(stateCode) {
+      return state.selectedStates.has(stateCode) &&
+        !state.hiddenLegendPHNs.has(currentLegendVisibilityKey(stateCode));
+    }
+
     function datasetForState(
       stateCode,
       kind
@@ -1789,7 +1791,9 @@
           const key = legendVisibilityKey(id, label);
           if (visible) state.hiddenLegendPHNs.delete(key);
           else state.hiddenLegendPHNs.add(key);
-          updateLegendVisibilityIndicator();
+          // The checkbox for this state mirrors the legend's visibility.
+          // No Chart.js relayout is needed: the legend asset already updated it.
+          syncStateControlsFromState();
           updateAccessibleSummary();
         }
       });
@@ -1927,12 +1931,7 @@
 
     function selectedStateSummary() {
       const selected =
-        ALL_STATES.filter(
-          code =>
-            state.selectedStates.has(
-              code
-            )
-        );
+        ALL_STATES.filter(stateLineVisible);
 
       if (selected.length === ALL_STATES.length) return 'All';
       if (selected.length === 0) return 'None';
@@ -1942,47 +1941,25 @@
 
     function syncStateControlsFromState() {
       stateOptions
-        .querySelectorAll(
-          'input[data-state-code]'
-        )
-        .forEach(
-          input => {
-            input.checked =
-              state.selectedStates.has(
-                input.dataset.stateCode
-              );
-          }
-        );
+        .querySelectorAll('input[data-state-code]')
+        .forEach(input => {
+          input.checked = stateLineVisible(input.dataset.stateCode);
+        });
 
-      const count =
-        state.selectedStates.size;
+      const count = ALL_STATES.filter(stateLineVisible).length;
+      stateAll.checked = count === ALL_STATES.length;
+      stateAll.indeterminate = count > 0 && count < ALL_STATES.length;
 
-      stateAll.checked =
-        count === ALL_STATES.length;
-
-      stateAll.indeterminate =
-        count > 0 &&
-        count < ALL_STATES.length;
-
-      updateLegendVisibilityIndicator();
-    }
-
-    function updateLegendVisibilityIndicator() {
-      const hiddenCount = legendItemsForDisplay().filter(item => !item.visible).length;
       const summary = selectedStateSummary();
-      const text = hiddenCount ? `${summary} · ${hiddenCount} off` : summary;
-      if (stateButtonValue.textContent !== text) {
-        PFF.animateHeading({fixed: stateButtonValue, fixedText: text, duration: 180});
+      if (stateButtonValue.textContent !== summary) {
+        PFF.animateHeading({
+          fixed: stateButtonValue,
+          fixedText: summary,
+          duration: PFF.reducedMotion() ? 0 : 180
+        });
       }
-      const explanation = hiddenCount
-        ? `${hiddenCount} PHN ${hiddenCount === 1 ? 'line is' : 'lines are'} hidden using the clickable legend. Select its faded legend entry to restore it.`
-        : '';
-      stateButton.setAttribute('aria-label', `States: ${summary}${hiddenCount ? `; ${hiddenCount} PHN legend ${hiddenCount === 1 ? 'line' : 'lines'} hidden` : ''}`);
-      stateButton.title = explanation || `States: ${summary}`;
-      if (legendVisibilityNotice) {
-        legendVisibilityNotice.hidden = !hiddenCount;
-        legendVisibilityNotice.textContent = explanation;
-      }
+      stateButton.setAttribute('aria-label', `States: ${summary}`);
+      stateButton.title = `States: ${summary}`;
     }
 
     function updateAccessibleSummary() {
@@ -2177,7 +2154,9 @@
       renderLegend(
         reason === 'mode'
       );
-      updateLegendVisibilityIndicator();
+      // Switching modes can select a different PHN for the same state.
+      // Recalculate the checkmarks using that mode's own saved visibility.
+      syncStateControlsFromState();
 
       tabsController?.update();
       headingScroller?.update();
@@ -2287,6 +2266,14 @@
               ? new Set(ALL_STATES)
               : new Set();
 
+          // Checking All explicitly restores every PHN in the current mode.
+          // Keep independently hidden PHNs in the other mode unchanged.
+          if (stateAll.checked) {
+            ALL_STATES.forEach(code => {
+              state.hiddenLegendPHNs.delete(currentLegendVisibilityKey(code));
+            });
+          }
+
           applyStateFilter();
         }
       );
@@ -2310,6 +2297,8 @@
             state.selectedStates.add(
               stateCode
             );
+            // Checking the state must also restore a legend-hidden PHN.
+            state.hiddenLegendPHNs.delete(currentLegendVisibilityKey(stateCode));
           } else {
             state.selectedStates.delete(
               stateCode
