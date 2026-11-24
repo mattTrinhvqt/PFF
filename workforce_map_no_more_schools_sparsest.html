@@ -9,6 +9,15 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Existing core remains only for legacy loading, controls, custom axes and data utilities.
+       All newly standardised presentation uses smaller, opt-in chart modules. -->
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-reference-lines-and-annotations.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-trends-and-labels.js"></script>
+  <script src="./assets/chart-legends-and-interactions.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
 
   <style>
 
@@ -49,13 +58,10 @@
     .state-filter-nt { color: var(--pff-nt); }
     .state-filter-act { color: var(--pff-act); }
 
-    .chart-legend .legend-item {
-      cursor: default;
-    }
-
-    .chart-legend .legend-item:hover {
-      color: var(--pff-muted);
-    }
+    /* Standard modular legend: all eight states are accessible even when hidden.
+       Hide/show in either the legend or the States menu; both remain synchronised. */
+    #chartLegend.pff-shared-legend { width: 100%; height: 28px; min-height: 0; }
+    #chartLegend .pff-shared-legend__viewport { height: 28px; padding-bottom: 2px; }
 
     .benchmark-legend {
       position: absolute;
@@ -236,25 +242,7 @@
       </div>
 
       <div class="chart-options-row">
-        <div class="legend-nav">
-          <button
-            id="legendScrollLeft"
-            class="legend-scroll-button legend-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll legend left"
-          >‹</button>
-
-          <div id="legendViewport" class="legend-viewport">
-            <div id="chartLegend" class="chart-legend" aria-label="Chart legend"></div>
-          </div>
-
-          <button
-            id="legendScrollRight"
-            class="legend-scroll-button legend-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll legend right"
-          >›</button>
-        </div>
+        <div id="chartLegend" class="chart-legend" aria-label="Toggle PHN state series"></div>
       </div>
 
       <div id="chartShell" class="chart-shell">
@@ -280,6 +268,9 @@
 
   <script>
     'use strict';
+
+    const Shared = window.PFFModules || {};
+    const CHART_TRANSITION_MS = Shared.chartAnimations?.defaults?.chartMs ?? 600;
 
     const CONFIG = Object.freeze({
       sheetId:
@@ -471,12 +462,6 @@
     const chartLegend =
       document.getElementById('chartLegend');
 
-    const legendScrollLeft =
-      document.getElementById('legendScrollLeft');
-
-    const legendScrollRight =
-      document.getElementById('legendScrollRight');
-
     const chartShell =
       document.getElementById('chartShell');
 
@@ -508,7 +493,7 @@
     let headingScroller =
       null;
 
-    let legendScroller =
+    let legendController =
       null;
 
     let trendController =
@@ -526,8 +511,6 @@
     let unifiedYAxis =
       null;
 
-    let legendAnimationToken =
-      0;
 
     function dataNumber(value) {
       if (
@@ -1500,222 +1483,103 @@
       return lines;
     }
 
-    const coverageBenchmarksPlugin = {
-      id:
-        'phnCoverageBenchmarksPlugin',
-
-      beforeDatasetsDraw(chartInstance) {
-        const {
-          ctx,
-          chartArea
-        } = chartInstance;
-
-        if (
-          !chartArea ||
-          !unifiedYAxis
-        ) {
-          return;
-        }
-
-        const benchmarks = [
-          {
-            value:
-              SUFFICIENT_BENCHMARK,
-            colour:
-              SUFFICIENT_COLOUR
-          },
-          {
-            value:
-              SATURATED_BENCHMARK,
-            colour:
-              SATURATED_COLOUR
+    // Shared dotted reference lines, clamped to the original custom Y-axis
+    // boundary when a threshold lies outside the animated plot range.
+    const coverageBenchmarksPlugin = Shared.chartAnnotations?.createPlugin?.({
+      id: 'phnCoverageBenchmarksPlugin',
+      getItems() {
+        return [
+          { value: SUFFICIENT_BENCHMARK, colour: SUFFICIENT_COLOUR },
+          { value: SATURATED_BENCHMARK, colour: SATURATED_COLOUR }
+        ].map(item => ({
+          axis: 'y', value: item.value, colour: item.colour,
+          width: 2.2, dash: [1, 4], cap: 'round',
+          getPixel(chartInstance) {
+            const area = chartInstance?.chartArea;
+            if (!area || !unifiedYAxis) return NaN;
+            const fraction = PFF.clamp(unifiedYAxis.valueToRatio(item.value), 0, 1);
+            return area.bottom - (area.bottom - area.top) * fraction;
           }
-        ];
-
-        ctx.save();
-        ctx.lineCap =
-          'round';
-        ctx.lineWidth =
-          2.2;
-        ctx.setLineDash(
-          [1, 4]
-        );
-
-        benchmarks.forEach(
-          benchmark => {
-            const ratio =
-              PFF.clamp(
-                unifiedYAxis.valueToRatio(
-                  benchmark.value
-                ),
-                0,
-                1
-              );
-
-            const y =
-              chartArea.bottom -
-              chartArea.height *
-                ratio;
-
-            ctx.strokeStyle =
-              benchmark.colour;
-
-            ctx.beginPath();
-            ctx.moveTo(
-              chartArea.left,
-              y
-            );
-            ctx.lineTo(
-              chartArea.right,
-              y
-            );
-            ctx.stroke();
-          }
-        );
-
-        ctx.restore();
+        }));
       }
-    };
+    });
 
-    const yearTickMarksPlugin =
-      PFFCharts.createYearTickMarksPlugin({
-        id:
-          'phnCoverageYearTickMarks',
-        getValue({ index }) {
-          return state.years[index];
-        },
-        isMajor(value) {
-          const year =
-            Number(value);
+    // Shared label-driven 6px major / 2px minor ticks for category years.
+    const yearTickMarksPlugin = Shared.chartAxes?.createLabelDrivenTicksPlugin?.({
+      id: 'phnCoverageYearTickMarks', axes: ['x']
+    });
 
-          return Number.isFinite(year) &&
-            year % 2 === 0;
+    // Shared 84%-opaque tinted pills and collision-aware placement.
+    // The existing PHN selection and three-year trend calculations are untouched.
+    const coverageTrendLabelsPlugin = Shared.chartTrends?.createTrendPillsPlugin?.({
+      id: 'phnCoverageTrendLabels',
+      isMobile: () => PFF.mobileLayout(),
+      enabled: () => trendController?.mode !== 'off',
+      isActive({dataset,meta}) {
+        return Boolean(dataset?._activeSeries !== false && !meta?.hidden);
+      },
+      getTrendValue({dataset}) {
+        return latestAnnualisedGrowth(dataset?._stateCode, state.displayMode);
+      },
+      getSeriesColour({dataset}) {
+        return dataset?.borderColor || '#69718a';
+      }
+    });
+
+    function xYearOptions() {
+      return Shared.chartAxes.withXAxisTickMarks(PFFCharts.xYearScaleOptions({
+        ticks: {
+          callback(value, index) {
+            const year = Number(state.years[index]);
+            return Number.isFinite(year) && year % 2 === 0 ? String(year) : '';
+          }
+        }
+      }), { yearMode: 'even' });
+    }
+
+    function tooltipOptions() {
+      return Shared.chartTooltips.tooltipOptions({
+        callbacks: {
+          title(items) {
+            return items?.length ? String(items[0].label) : '';
+          },
+          label: tooltipLabel
         }
       });
-
-    const coverageTrendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
-        id:
-          'phnCoverageTrendLabelsPlugin',
-
-        enabled() {
-          return (
-            trendController?.mode !==
-            'off'
-          );
-        },
-
-        isActive({
-          dataset,
-          meta
-        }) {
-          return Boolean(
-            dataset?._activeSeries !== false &&
-            !meta?.hidden
-          );
-        },
-
-        getTrendValue({ dataset }) {
-          return latestAnnualisedGrowth(
-            dataset?._stateCode,
-            state.displayMode
-          );
-        }
-      });
+    }
 
     function chartOptions() {
-      const scale =
-        yScaleForMode();
-
-      const duration =
-        PFFCharts.chartAnimationDuration();
-
-      return PFFCharts.baseChartOptions({
-        normalized:
-          true,
-
-        animation: {
-          duration,
-          easing:
-            'easeInOutCubic'
-        },
-
+      const scale = yScaleForMode();
+      const duration = PFF.reducedMotion() ? 0 : CHART_TRANSITION_MS;
+      const base = PFFCharts.baseChartOptions({
+        normalized: true,
+        animation: { duration, easing: 'easeInOutCubic' },
         animations: {
-          x: {
-            duration:
-              0
-          },
-          y: {
-            duration,
-            easing:
-              'easeInOutCubic'
-          },
-          colors: {
-            duration:
-              0
-          }
+          x: { duration: 0 },
+          y: { duration, easing: 'easeInOutCubic' },
+          colors: { duration: 0 }
         },
-
-        transitions:
-          PFFCharts.seriesVisibilityTransitionOptions(
-            260
-          ),
-
         layout: {
-          autoPadding:
-            true,
-          padding: {
-            top:
-              PFF.mobileLayout()
-                ? 8
-                : 9,
-            right:
-              3,
-            bottom:
-              0,
-            left:
-              0
-          }
+          autoPadding: true,
+          padding: { top: PFF.mobileLayout() ? 8 : 9, right: 3, bottom: 0, left: 0 }
         },
-
-        plugins: {
-          tooltip: {
-            callbacks: {
-              title(items) {
-                return items?.length
-                  ? String(
-                      items[0].label
-                    )
-                  : '';
-              },
-              label:
-                tooltipLabel
-            }
-          }
-        },
-
+        plugins: { legend: { display: false }, tooltip: tooltipOptions() },
         scales: {
-          x:
-            PFFCharts.xYearScaleOptions(),
-
-          y:
-            PFFCharts.yScaleOptions(
-              scale,
-              {
-                ticks: {
-                  display:
-                    false,
-                  stepSize:
-                    scale.step
-                },
-                title: {
-                  display:
-                    false
-                }
-              }
-            )
+          x: xYearOptions(),
+          y: PFFCharts.yScaleOptions(scale, {
+            ticks: { display: false, stepSize: scale.step },
+            title: { display: false }
+          })
         }
       });
+      const standard = Shared.chartAnimations.withChartJsTiming(base);
+      standard.animation.duration = duration;
+      standard.animation.easing = 'easeInOutCubic';
+      standard.animations.x = { ...(standard.animations.x || {}), duration: 0 };
+      standard.animations.y = { ...(standard.animations.y || {}), duration, easing: 'easeInOutCubic' };
+      standard.transitions.active.animation.duration = PFF.reducedMotion() ? 0 :
+        Shared.chartAnimations.defaults.hoverMs;
+      return standard;
     }
 
     function syncChartScale() {
@@ -1785,140 +1649,42 @@
         nextDatasets.length;
     }
 
-    function appendLegendItem({
-      colour,
-      label
-    }) {
-      const item =
-        document.createElement('span');
-
-      item.className =
-        'legend-item';
-
-      const marker =
-        document.createElement('span');
-
-      marker.className =
-        'legend-line';
-
-      marker.style.setProperty(
-        '--legend-colour',
-        colour
-      );
-
-      const text =
-        document.createElement('span');
-
-      text.textContent =
-        label;
-
-      item.append(
-        marker,
-        text
-      );
-
-      chartLegend.appendChild(item);
+    function legendItems() {
+      return ALL_STATES.map((stateCode, index) => {
+        const series = pointSeriesFor(stateCode, state.displayMode);
+        return {
+          id: stateCode,
+          datasetIndex: index,
+          label: series.phnByPoint.find(Boolean) || stateCode,
+          colour: STATE_COLOURS[stateCode],
+          markerType: 'line',
+          visible: state.selectedStates.has(stateCode)
+        };
+      });
     }
 
-    function renderLegend(
-      animate = true
-    ) {
-      const token =
-        ++legendAnimationToken;
-
-      const drawLegend = () => {
-        if (token !== legendAnimationToken) {
-          return;
-        }
-
-        chartLegend.replaceChildren();
-
-        ALL_STATES.forEach(
-          stateCode => {
-            if (
-              !state.selectedStates.has(
-                stateCode
-              )
-            ) {
-              return;
-            }
-
-            const series =
-              pointSeriesFor(
-                stateCode,
-                state.displayMode
-              );
-
-            const phnName =
-              series.phnByPoint.find(Boolean) ||
-              stateCode;
-
-            appendLegendItem({
-              colour:
-                STATE_COLOURS[stateCode],
-              label:
-                phnName
-            });
+    function renderLegend() {
+      if (!chart) return;
+      if (!legendController) {
+        legendController = Shared.chartLegends.mount({
+          root: chartLegend,
+          label: 'Toggle PHN lines; synchronised with the States checkboxes',
+          getChart() { return chart; },
+          items: legendItems(),
+          onToggle(item) {
+            // One PHN per state in the current view: legend and state filter
+            // represent the same visibility choice, including across views.
+            if (item.visible) state.selectedStates.add(item.id);
+            else state.selectedStates.delete(item.id);
+            syncStateControlsFromState();
+            updateAccessibleSummary();
           }
-        );
-
-        requestAnimationFrame(
-          () =>
-            legendScroller?.update()
-        );
-      };
-
-      if (
-        !animate ||
-        PFF.reducedMotion() ||
-        !chartLegend.childElementCount ||
-        typeof chartLegend.animate !== 'function'
-      ) {
-        drawLegend();
-        return;
+        });
+      } else {
+        // Update immediately on mode changes. No outgoing buttons remain
+        // clickable against newly selected PHNs during a fade animation.
+        legendController.setItems(legendItems());
       }
-
-      const outgoing =
-        chartLegend.animate(
-          [
-            { opacity: 1 },
-            { opacity: 0 }
-          ],
-          {
-            duration: 150,
-            easing: 'ease-out',
-            fill: 'forwards'
-          }
-        );
-
-      outgoing.finished
-        .catch(() => {})
-        .then(
-          () => {
-            drawLegend();
-
-            if (
-              token !==
-              legendAnimationToken
-            ) {
-              return;
-            }
-
-            chartLegend.animate(
-              [
-                { opacity: 0 },
-                { opacity: 1 }
-              ],
-              {
-                duration: 230,
-                easing:
-                  'cubic-bezier(0.22, 1, 0.36, 1)',
-                fill:
-                  'both'
-              }
-            );
-          }
-        );
     }
 
     function buildStateControls() {
@@ -2156,22 +1922,13 @@
         return;
       }
 
-      const duration =
-        reason === 'mode'
-          ? PFFCharts.chartAnimationDuration()
-          : 520;
-
-      const oldScale =
-        previousScale
-          ? PFFCharts.copyScale(
-              previousScale
-            )
-          : unifiedYAxis.currentScale();
-
-      const nextScale =
-        PFFCharts.copyScale(
-          yScaleForMode()
-        );
+      const duration = PFF.reducedMotion() ? 0 : CHART_TRANSITION_MS;
+      const priorMajor = unifiedYAxis?.majorTracks?.();
+      const priorMinor = unifiedYAxis?.minorTracks?.();
+      const oldScale = previousScale
+        ? PFFCharts.copyScale(previousScale)
+        : unifiedYAxis.currentScale();
+      const nextScale = PFFCharts.copyScale(yScaleForMode());
 
       syncChartScale();
       syncChartDatasets();
@@ -2179,10 +1936,7 @@
       chart.options.animation.duration =
         duration;
 
-      chart.options.animation.easing =
-        reason === 'mode'
-          ? 'easeInOutCubic'
-          : 'easeOutCubic';
+      chart.options.animation.easing = 'easeInOutCubic';
 
       chart.options.animations.x.duration =
         0;
@@ -2190,35 +1944,29 @@
       chart.options.animations.y.duration =
         duration;
 
-      chart.options.animations.y.easing =
-        reason === 'mode'
-          ? 'easeInOutCubic'
-          : 'easeOutCubic';
+      chart.options.animations.y.easing = 'easeInOutCubic';
 
       chart.update();
 
       if (reason === 'mode') {
-        unifiedYAxis.animate(
-          oldScale,
-          nextScale,
-          {
-            duration,
-            fromDecimals:
-              0,
-            toDecimals:
-              0
-          }
-        );
+        unifiedYAxis.animate(oldScale, nextScale, {
+          duration, fromDecimals: 0, toDecimals: 0
+        });
+        if (duration > 0 &&
+            (oldScale.min !== nextScale.min || oldScale.max !== nextScale.max ||
+             oldScale.intervals !== nextScale.intervals)) {
+          unifiedYAxis.state.majorTracks = Shared.chartAxes.slidingNumericAxisTracks(
+            oldScale, nextScale, { kind: 'major', fromTracks: priorMajor }
+          );
+          unifiedYAxis.state.minorTracks = Shared.chartAxes.slidingNumericAxisTracks(
+            oldScale, nextScale, { kind: 'minor', fromTracks: priorMinor }
+          );
+        }
       } else {
-        unifiedYAxis.setImmediately(
-          nextScale,
-          0
-        );
+        unifiedYAxis.setImmediately(nextScale, 0);
       }
 
-      renderLegend(
-        reason === 'mode'
-      );
+      renderLegend();
 
       tabsController?.update();
       headingScroller?.update();
@@ -2285,16 +2033,6 @@
             headingScrollLeft,
           rightButton:
             headingScrollRight
-        });
-
-      legendScroller =
-        PFF.setupScrollableRegion({
-          scroller:
-            chartLegend,
-          leftButton:
-            legendScrollLeft,
-          rightButton:
-            legendScrollRight
         });
 
       trendController =
@@ -2388,7 +2126,7 @@
               yScaleForMode();
 
             chartInstance.options.scales.x =
-              PFFCharts.xYearScaleOptions();
+              xYearOptions();
 
             chartInstance.options.scales.y =
               PFFCharts.yScaleOptions(
@@ -2417,14 +2155,38 @@
           onRefresh() {
             tabsController?.update();
             headingScroller?.update();
-            legendScroller?.update();
+            legendController?.updateArrows();
           }
         });
     }
 
-    migrateLegacyLocalCache();
-    setupControls();
+    const requiredShared = [
+      ['year ticks', Shared.chartAxes?.withXAxisTickMarks],
+      ['year marks', Shared.chartAxes?.createLabelDrivenTicksPlugin],
+      ['sliding Y-axis', Shared.chartAxes?.slidingNumericAxisTracks],
+      ['animation', Shared.chartAnimations?.withChartJsTiming],
+      ['reference lines', Shared.chartAnnotations?.createPlugin],
+      ['tooltips', Shared.chartTooltips?.tooltipOptions],
+      ['trend pills', Shared.chartTrends?.createTrendPillsPlugin],
+      ['legend', Shared.chartLegends?.mount],
+      ['responsive touch', Shared.chartResponsive?.suppressTapFlash]
+    ];
+    const missingShared = requiredShared.filter(([, fn]) => typeof fn !== 'function')
+      .map(([name]) => name);
+    if (missingShared.length) {
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      document.getElementById('loadingState').style.display = 'none';
+      statusEl.setAttribute('role', 'alert');
+      statusEl.textContent = `Missing shared chart assets: ${missingShared.join(', ')}`;
+      console.error('[PFF sparsest/densest pilot]', statusEl.textContent);
+    } else {
+      migrateLegacyLocalCache();
+      setupControls();
+      startDataApp();
+    }
 
+    function startDataApp() {
     PFF.initialiseApp({
       app,
       status:
@@ -2523,9 +2285,7 @@
         buildFixedExtremes();
         buildYScales();
         createChart();
-        renderLegend(
-          false
-        );
+        renderLegend();
 
         chartSummary =
           PFFCharts.ensureChartSummary({
@@ -2542,22 +2302,37 @@
 
         updateAccessibleSummary();
 
-        interactionsController =
-          PFFCharts.setupChartInteractions({
-            canvas:
-              chartCanvas,
-            getChart() {
-              return chart;
-            }
-          });
+        // Keep the original animation-safe outside-click dismissal; add
+        // Escape-key dismissal without causing a Chart.js relayout.
+        const coreInteractions = PFFCharts.setupChartInteractions({
+          canvas: chartCanvas,
+          getChart() { return chart; }
+        });
+        const dismissOnEscape = event => {
+          if (event.key !== 'Escape' || !chart?.tooltip) return;
+          const tooltip = chart.tooltip;
+          if (!(Number(tooltip.opacity) > 0 ||
+                tooltip.getActiveElements?.().length || tooltip._active?.length)) return;
+          chart.setActiveElements?.([]);
+          tooltip.setActiveElements([], {x: 0, y: 0});
+          chart.draw();
+        };
+        document.addEventListener('keydown', dismissOnEscape);
+        interactionsController = {
+          destroy() {
+            coreInteractions?.destroy?.();
+            document.removeEventListener('keydown', dismissOnEscape);
+          }
+        };
 
         setupResponsiveBehaviour();
+        Shared.chartResponsive.suppressTapFlash(chartCanvas);
 
         requestAnimationFrame(
           () => {
             tabsController?.update();
             headingScroller?.update();
-            legendScroller?.update();
+            legendController?.updateArrows();
             unifiedYAxis?.setImmediately(
               yScaleForMode(),
               0
@@ -2577,6 +2352,7 @@
       errorMessage:
         'Population Coverage PHN Trends data unavailable.'
     });
+    }
   </script>
 </body>
 </html>
