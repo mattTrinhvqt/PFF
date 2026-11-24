@@ -9,6 +9,15 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Opt-in small chart assets; the legacy core remains only for existing
+       loading, controls, custom Y-axis geometry and accessibility helpers. -->
+  <script src="./assets/chart-styling-and-defaults.js"></script>
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-trends-and-labels.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+  <script src="./assets/chart-legends-and-interactions.js"></script>
 
   <style>
 
@@ -20,6 +29,16 @@
       flex: 0 0 auto;
       align-items: center;
       padding: 0 0 2px;
+    }
+    /* Let the modular legend own its scroll arrows and focusable items. */
+    #chartLegend.pff-shared-legend {
+      width: 100%;
+      height: 28px;
+      min-height: 28px;
+    }
+    #chartLegend .pff-shared-legend__viewport {
+      height: 28px;
+      padding-bottom: 2px;
     }
 
   </style>
@@ -153,29 +172,7 @@
       </div>
 
       <div class="chart-options-row">
-        <div class="legend-nav">
-          <button
-            id="legendScrollLeft"
-            class="legend-scroll-button legend-scroll-left is-hidden"
-            type="button"
-            aria-label="Scroll legend left"
-          >‹</button>
-
-          <div class="legend-viewport">
-            <div
-              id="chartLegend"
-              class="chart-legend"
-              aria-label="Chart legend"
-            ></div>
-          </div>
-
-          <button
-            id="legendScrollRight"
-            class="legend-scroll-button legend-scroll-right is-hidden"
-            type="button"
-            aria-label="Scroll legend right"
-          >›</button>
-        </div>
+        <div id="chartLegend" class="chart-legend" aria-label="Chart legend"></div>
       </div>
 
       <div id="chartShell" class="chart-shell">
@@ -190,6 +187,8 @@
 
   <script>
     'use strict';
+
+    const Shared = window.PFFModules || {};
 
     const CONFIG = Object.freeze({
       sheetId:
@@ -306,12 +305,6 @@
     const chartLegend =
       document.getElementById('chartLegend');
 
-    const legendScrollLeft =
-      document.getElementById('legendScrollLeft');
-
-    const legendScrollRight =
-      document.getElementById('legendScrollRight');
-
     const chartShell =
       document.getElementById('chartShell');
 
@@ -367,6 +360,9 @@
 
     let lastYAxisTitle =
       'Population';
+
+    const CHART_TRANSITION_MS = Shared.chartAnimations?.defaults?.chartMs ?? 600;
+    let tooltipEscapeListenerInstalled = false;
 
     const hiddenSeriesByGroup =
       new Map();
@@ -1377,44 +1373,28 @@
       return `${dataset._seriesLabel}: ${population}${trendText}`;
     }
 
-    const yearTickPlugin =
-      PFFCharts.createYearTickMarksPlugin({
-        id:
-          'populationLocationYearTicks'
-      });
+    // Shared 6 px labelled-year / 2 px unlabelled-year tick strokes.
+    const yearTickPlugin = Shared.chartAxes.createLabelDrivenTicksPlugin({
+      id: 'populationLocationYearTicks', axes: ['x']
+    });
 
-    const trendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
-        id:
-          'populationLocationTrendLabels',
-
-        enabled() {
-          return (
-            trendController?.mode !== 'off'
-          );
-        },
-
-        isActive({
-          chart: chartInstance,
-          dataset,
-          datasetIndex
-        }) {
-          return Boolean(
-            dataset?._slotActive &&
-            chartInstance.isDatasetVisible(
-              datasetIndex
-            )
-          );
-        },
-
-        getTrendValue({
-          datasetIndex
-        }) {
-          return latestTrendForSeries(
-            datasetIndex
-          );
-        }
-      });
+    // Shared opaque trend pills with collision-aware placement. Trend
+    // calculations and 3yr/10yr/off toggle stay exactly as before.
+    const trendLabelsPlugin = Shared.chartTrends.createTrendPillsPlugin({
+      id: 'populationLocationTrendLabels',
+      enabled() { return trendController?.mode !== 'off'; },
+      isMobile: () => PFF.mobileLayout(),
+      isActive({ chart: chartInstance, dataset, datasetIndex }) {
+        return Boolean(dataset?._slotActive && dataset?._activeSeries &&
+          chartInstance.isDatasetVisible(datasetIndex));
+      },
+      getTrendValue({ datasetIndex }) {
+        return latestTrendForSeries(datasetIndex);
+      },
+      getSeriesColour({ dataset }) {
+        return dataset?.borderColor || Shared.chartStyling.palette.secondary;
+      }
+    });
 
     function createChart() {
       const config =
@@ -1450,40 +1430,44 @@
           }
         });
 
-      const options =
-        PFFCharts.baseChartOptions({
-          normalized:
-            true,
-
-          transitions:
-            PFFCharts.seriesVisibilityTransitionOptions(),
-
-          plugins: {
-            tooltip: {
-              callbacks: {
-                title(items) {
-                  return items?.[0]?.label || '';
-                },
-
-                label(context) {
-                  return tooltipLabel(
-                    context
-                  );
-                }
-              }
+      const initialOptions = PFFCharts.baseChartOptions({
+        normalized: true,
+        animation: { duration: PFF.reducedMotion() ? 0 : CHART_TRANSITION_MS,
+          easing: 'easeInOutCubic' },
+        animations: {
+          x: {duration: 0},
+          y: {duration: PFF.reducedMotion() ? 0 : CHART_TRANSITION_MS},
+          colors: {duration: 0}
+        },
+        // Retain the original visibility transition, now using the approved
+        // shared time; reduced-motion users still receive an instant update.
+        transitions: PFFCharts.seriesVisibilityTransitionOptions(CHART_TRANSITION_MS),
+        plugins: {
+          tooltip: Shared.chartTooltips.tooltipOptions({
+            callbacks: {
+              title(items) { return items?.[0]?.label || ''; },
+              label(context) { return tooltipLabel(context); }
             }
-          },
-
-          scales: {
-            x:
-              PFFCharts.xYearScaleOptions(),
-
-            y:
-              PFFCharts.yScaleOptions(
-                config.scale
-              )
-          }
-        });
+          })
+        },
+        scales: {
+          x: Shared.chartAxes.withXAxisTickMarks(
+            PFFCharts.xYearScaleOptions(), {yearMode: 'even'}
+          ),
+          y: PFFCharts.yScaleOptions(config.scale)
+        }
+      });
+      const options = Shared.chartAnimations.withChartJsTiming(initialOptions);
+      // Use the shared 600 ms entrance animation; preserve the fixed-year X
+      // axis and disable animation when the user requests reduced motion.
+      const initialDuration = PFF.reducedMotion() ? 0 : CHART_TRANSITION_MS;
+      options.animation.duration = initialDuration;
+      options.animations.x.duration = 0;
+      options.animations.y.duration = initialDuration;
+      options.animations.colors.duration = 0;
+      if (PFF.reducedMotion()) {
+        options.transitions.active.animation.duration = 0;
+      }
 
       chart =
         new Chart(
@@ -1524,6 +1508,17 @@
         );
 
       applyDatasetVisibility();
+      // The existing chart interaction controller handles outside presses.
+      // Add only Escape dismissal to avoid duplicate redraw handlers.
+      if (!tooltipEscapeListenerInstalled) {
+        document.addEventListener('keydown', event => {
+          if (event.key !== 'Escape' || !chart?.tooltip) return;
+          chart.setActiveElements([]);
+          chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+          chart.draw();
+        });
+        tooltipEscapeListenerInstalled = true;
+      }
 
       lastYAxisTitle =
         config.yTitle;
@@ -1561,27 +1556,45 @@
       chart.options.scales.y.max =
         config.scale.max;
 
-      yAxisController.animate(
-        previousScale,
-        config.scale
-      );
-
-      if (
-        previousTitle !==
-        config.yTitle
-      ) {
-        yAxisController.animateTitle(
-          previousTitle,
-          config.yTitle
-        );
-      }
-
-      lastYAxisTitle =
-        config.yTitle;
-
+      const duration = PFF.reducedMotion() ? 0 : CHART_TRANSITION_MS;
+      chart.options.animation.duration = duration;
+      chart.options.animation.easing = 'easeInOutCubic';
+      chart.options.animations.x.duration = 0;
+      chart.options.animations.y.duration = duration;
+      chart.options.animations.y.easing = 'easeInOutCubic';
+      chart.options.animations.colors.duration = duration;
       chart.update();
 
-      legendController?.render();
+      // Capture currently rendered numeric ticks before retargeting. The core
+      // continues to draw the established axis geometry; the shared module
+      // re-pairs labels by VALUE, producing the approved sliding effect.
+      const priorMajor = yAxisController.majorTracks();
+      const priorMinor = yAxisController.minorTracks();
+      yAxisController.animate(previousScale, config.scale, {
+        duration, fromDecimals: 0, toDecimals: 0
+      });
+      if (duration > 0 &&
+          (previousScale.min !== config.scale.min ||
+           previousScale.max !== config.scale.max ||
+           previousScale.intervals !== config.scale.intervals)) {
+        yAxisController.state.majorTracks =
+          Shared.chartAxes.slidingNumericAxisTracks(previousScale, config.scale, {
+            kind: 'major', fromTracks: priorMajor
+          });
+        yAxisController.state.minorTracks =
+          Shared.chartAxes.slidingNumericAxisTracks(previousScale, config.scale, {
+            kind: 'minor', fromTracks: priorMinor
+          });
+      }
+
+      if (previousTitle !== config.yTitle) {
+        yAxisController.animateTitle(previousTitle, config.yTitle, duration);
+      }
+      lastYAxisTitle = config.yTitle;
+
+      // Recreate only legend BUTTONS, not Chart.js data visibility state.
+      // Stable group-specific hidden sets preserve choices across tabs.
+      legendController?.setItems(legendItems());
       updateAccessibleSummary();
     }
 
@@ -1625,6 +1638,18 @@
 
       updateHeading();
       renderCurrentChart();
+    }
+
+    function legendItems() {
+      const hidden = hiddenSeriesSet();
+      return groupLabels().map((label, index) => ({
+        id: label,
+        datasetIndex: index,
+        label,
+        colour: groupColours()[index],
+        markerType: 'line',
+        visible: !hidden.has(label)
+      }));
     }
 
     function setupControls() {
@@ -1687,71 +1712,23 @@
           }
         });
 
-      legendController =
-        PFFCharts.setupLegend({
-          legend:
-            chartLegend,
-          leftButton:
-            legendScrollLeft,
-          rightButton:
-            legendScrollRight,
-          getChart() {
-            return chart;
-          },
-          getItems() {
-            const labels =
-              groupLabels();
-
-            const colours =
-              groupColours();
-
-            const hidden =
-              hiddenSeriesSet();
-
-            return labels.map(
-              (
-                label,
-                index
-              ) => ({
-                datasetIndex:
-                  index,
-                label,
-                colour:
-                  colours[index],
-                active:
-                  !hidden.has(
-                    label
-                  )
-              })
-            );
-          },
-          onToggle({
-            visible,
-            item,
-            dataset
-          }) {
-            const hidden =
-              hiddenSeriesSet();
-
-            if (visible) {
-              hidden.delete(
-                item.label
-              );
-            } else {
-              hidden.add(
-                item.label
-              );
-            }
-
-            if (dataset) {
-              dataset._activeSeries =
-                visible &&
-                dataset._slotActive;
-            }
-
-            updateAccessibleSummary();
+      // Shared keyboard-accessible, horizontally scrolling legend. State and
+      // Rurality retain separate hidden-series sets, as in the original app.
+      legendController = Shared.chartLegends.mount({
+        root: chartLegend,
+        getChart() { return chart; },
+        items: legendItems(),
+        onToggle({ id, visible }) {
+          const hidden = hiddenSeriesSet();
+          if (visible) hidden.delete(id);
+          else hidden.add(id);
+          const index = groupLabels().indexOf(id);
+          if (index >= 0 && chart?.data?.datasets?.[index]) {
+            chart.data.datasets[index]._activeSeries = visible;
           }
-        });
+          updateAccessibleSummary();
+        }
+      });
 
       interactionsController =
         PFFCharts.setupChartInteractions({
@@ -1764,8 +1741,36 @@
 
     }
 
-    migrateLegacyLocalCache();
-    setupControls();
+    const requiredModules = [
+      ['styling', Shared.chartStyling?.palette],
+      ['axes', Shared.chartAxes?.withXAxisTickMarks],
+      ['sliding ticks', Shared.chartAxes?.slidingNumericAxisTracks],
+      ['year ticks', Shared.chartAxes?.createLabelDrivenTicksPlugin],
+      ['animations', Shared.chartAnimations?.withChartJsTiming],
+      ['trend pills', Shared.chartTrends?.createTrendPillsPlugin],
+      ['tooltips', Shared.chartTooltips?.tooltipOptions],
+      ['responsive', Shared.chartResponsive?.suppressTapFlash],
+      ['legend', Shared.chartLegends?.mount]
+    ];
+    const missingModules = requiredModules
+      .filter(([, fn]) => !fn)
+      .map(([name]) => name);
+    if (missingModules.length) {
+      const message = `Missing shared chart assets: ${missingModules.join(', ')}`;
+      console.error('[PFF Population Location pilot]', message);
+      statusElement.textContent = message;
+      statusElement.setAttribute('role', 'alert');
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      document.getElementById('loadingState').style.display = 'none';
+    } else {
+      Shared.chartResponsive.suppressTapFlash(chartCanvas);
+      migrateLegacyLocalCache();
+      setupControls();
+      startPopulationLocationApp();
+    }
+
+    function startPopulationLocationApp() {
 
     PFF.initialiseApp({
       app,
@@ -1874,7 +1879,7 @@
 
         createChart();
 
-        legendController.render();
+        legendController.refresh();
         tabsController.update();
         headingScroller.update();
 
@@ -1899,6 +1904,7 @@
       errorMessage:
         'Population location data unavailable.'
     });
+    }
   </script>
 </body>
 </html>
