@@ -9,6 +9,15 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="./assets/pff_loader.js"></script>
   <script src="./assets/pff_chart_core.js"></script>
+  <!-- Modular presentation only. Legacy core remains for existing loading,
+       state controls and custom-axis controller; no new calls into core. -->
+  <script src="./assets/chart-axes-and-ticks.js"></script>
+  <script src="./assets/chart-animations-and-transitions.js"></script>
+  <script src="./assets/chart-tooltips-and-hover.js"></script>
+  <script src="./assets/chart-responsive-layouts-and-touch.js"></script>
+  <script src="./assets/chart-reference-lines-and-annotations.js"></script>
+  <script src="./assets/chart-trends-and-labels.js"></script>
+  <script src="./assets/chart-legends-and-interactions.js"></script>
 
   <style>
 
@@ -51,18 +60,23 @@
       padding: 0 0 2px;
     }
 
-    .chart-legend .legend-item {
-      color: var(--pff-muted);
-      cursor: default;
-      pointer-events: none;
+    /* The modular legend retains all three toggles, including the derived
+       purple gap highlight. Clicking the gap does not hide either data line. */
+    #accessLegend.pff-shared-legend {
+      width: 100%;
+      height: 28px;
+      min-height: 0;
+      overflow: hidden;
     }
-
-    .chart-legend .legend-item:hover { color: var(--pff-muted); }
-
-    .legend-line.is-gap {
+    #accessLegend .pff-shared-legend__viewport {
+      height: 28px;
+      padding-bottom: 2px;
+    }
+    #accessLegend .pff-shared-legend__marker[data-shape="square"] {
+      width: 17px;
       height: 7px;
-      border: 1px solid rgba(102, 0, 255, 0.22);
-      background: rgba(102, 0, 255, 0.08) !important;
+      background: rgba(102, 0, 255, 0.08);
+      border-color: rgba(102, 0, 255, 0.22);
     }
 
     .benchmark-legend {
@@ -190,7 +204,7 @@
       <div class="chart-options-row">
         <div class="legend-nav">
           <div class="legend-viewport">
-            <div class="chart-legend" aria-label="Chart legend">
+            <div id="accessLegend" class="chart-legend" aria-label="Chart legend">
               <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--metro-colour)"></span><span>Metro (MM1)</span></span>
               <span class="legend-item"><span class="legend-line" style="--legend-colour: var(--nonmetro-colour)"></span><span>Non-metro (MM2–7)</span></span>
               <span class="legend-item"><span class="legend-line is-gap" style="--legend-colour: var(--access-gap-colour)"></span><span>Access gap</span></span>
@@ -222,6 +236,7 @@
 
   <script>
     'use strict';
+    const Shared = window.PFFModules || {};
 
     const CONFIG = Object.freeze({
       sheetId: '1KEegg33bfnqNQPZ8M6pDzrIFBYjbquayK3FOprPCTlE',
@@ -307,6 +322,8 @@
     let responsiveController = null;
     let tooltipInteractionCleanup = null;
     let yAxisController = null;
+    let legendController = null;
+    let gapVisible = true;
     let displayRows = [];
     let yScale = { min: 0, max: 10000, intervals: 5, step: 2000 };
     let pinnedGapIndex = null;
@@ -718,7 +735,7 @@
     const SUFFICIENT_COLOUR = '#20c9d7';
     const SATURATED_COLOUR = '#ff00ff';
     const AUSTRALIA_COLOUR = '#0b5d1e';
-    const CHART_TRANSITION_MS = 500;
+    const CHART_TRANSITION_MS = Shared.chartAnimations?.defaults?.chartMs ?? 600;
     const FIXED_TREND_WINDOW = 10;
 
     function coverageSeries(scope = state.scope) {
@@ -887,11 +904,9 @@
       note.innerHTML = `<strong>Trends:</strong> pills show fixed 10-year log-linear annual trends${projectionText}`;
     }
 
-    const yearTicksPlugin = PFFCharts.createYearTickMarksPlugin({
-      id: 'pffAccessGapYearTicks',
-      getValue({ index }) {
-        return displayRows[index]?.year;
-      }
+    // Shared 6px labelled-year / 2px unlabelled-year ticks.
+    const yearTicksPlugin = Shared.chartAxes?.createLabelDrivenTicksPlugin?.({
+      id: 'pffAccessGapYearTicks', axes: ['x']
     });
 
     const tooltipTopLayerPlugin = {
@@ -931,34 +946,41 @@
     }
 
 
+    // Preserve the original fixed 10-year trend values; use the more opaque
+    // shared pills and collision-aware placements for the visible lines.
     const accessTrendLabelsPlugin =
-      PFFCharts.createTrendLabelsPlugin({
+      Shared.chartTrends?.createTrendPillsPlugin?.({
         id: 'pffAccessGapFixed10yrTrendPills',
-
-        enabled() {
-          return true;
-        },
-
+        isMobile: () => PFF.mobileLayout(),
+        enabled() { return true; },
         isActive({ dataset, meta }) {
-          return Boolean(
-            dataset?._activeSeries &&
-            !meta?.hidden
-          );
+          return Boolean(dataset?._activeSeries && !meta?.hidden);
         },
-
         getTrendValue({ dataset }) {
           return trendForSeries(dataset?._seriesKey);
         },
-
         getSeriesColour({ dataset }) {
           return dataset?.borderColor || '#69718a';
         }
       });
 
+    function isLineVisible(chartInstance, datasetIndex) {
+      const dataset = chartInstance?.data?.datasets?.[datasetIndex];
+      if (!dataset || dataset._activeSeries === false) return false;
+      if (typeof chartInstance?.isDatasetVisible === 'function' &&
+          !chartInstance.isDatasetVisible(datasetIndex)) return false;
+      return chartInstance?.getDatasetMeta?.(datasetIndex)?.hidden !== true;
+    }
+
+    function canShowAccessGap(chartInstance) {
+      return gapVisible && isLineVisible(chartInstance, 0) && isLineVisible(chartInstance, 1);
+    }
+
     const accessPresentationPlugin = {
       id: 'pffAccessGapPresentation',
 
       beforeDatasetsDraw(chartInstance) {
+        if (!canShowAccessGap(chartInstance)) return;
         const metroMeta = chartInstance.getDatasetMeta(0);
         const nonMetroMeta = chartInstance.getDatasetMeta(1);
         if (!metroMeta?.data?.length || !nonMetroMeta?.data?.length) return;
@@ -999,7 +1021,7 @@
       },
 
       afterDatasetsDraw(chartInstance) {
-        if (!displayRows.length) return;
+        if (!displayRows.length || !canShowAccessGap(chartInstance)) return;
         const metroMeta = chartInstance.getDatasetMeta(0);
         const nonMetroMeta = chartInstance.getDatasetMeta(1);
         if (!metroMeta?.data?.length || !nonMetroMeta?.data?.length) return;
@@ -1080,35 +1102,25 @@
       }
     };
 
-    const accessBenchmarksPlugin = {
+    const accessBenchmarksPlugin = Shared.chartAnnotations?.createPlugin?.({
       id: 'pffAccessGapBenchmarks',
-      beforeDatasetsDraw(chartInstance) {
-        const { ctx, chartArea } = chartInstance;
-        if (!chartArea || !yAxisController) return;
-
-        const benchmarks = [
-          { value: SUFFICIENT_BENCHMARK, colour: SUFFICIENT_COLOUR },
-          { value: SATURATED_BENCHMARK, colour: SATURATED_COLOUR }
-        ];
-
-        ctx.save();
-        ctx.lineCap = 'round';
-        ctx.lineWidth = 2.2;
-        ctx.setLineDash([1, 4]);
-
-        benchmarks.forEach(benchmark => {
-          const ratio = PFF.clamp(yAxisController.valueToRatio(benchmark.value), 0, 1);
-          const y = chartArea.bottom - chartArea.height * ratio;
-          ctx.strokeStyle = benchmark.colour;
-          ctx.beginPath();
-          ctx.moveTo(chartArea.left, y);
-          ctx.lineTo(chartArea.right, y);
-          ctx.stroke();
-        });
-
-        ctx.restore();
+      getItems() {
+        return [
+          { axis: 'y', value: SUFFICIENT_BENCHMARK, colour: SUFFICIENT_COLOUR },
+          { axis: 'y', value: SATURATED_BENCHMARK, colour: SATURATED_COLOUR }
+        ].map(item => ({
+          ...item, width: 2.2, dash: [1, 4], cap: 'round',
+          // The original clamps out-of-scale benchmarks to the plot edge.
+          // Use the interpolated custom Y-axis rather than the Chart.js scale.
+          getPixel(chartInstance) {
+            const area = chartInstance?.chartArea;
+            if (!area || !yAxisController) return NaN;
+            const ratio = PFF.clamp(yAxisController.valueToRatio(item.value), 0, 1);
+            return area.bottom - area.height * ratio;
+          }
+        }));
       }
-    };
+    });
 
     const accessYAxisTitlePlugin = {
       id: 'pffAccessGapYAxisTitle',
@@ -1131,11 +1143,13 @@
     };
 
     function tooltipOptions() {
-      return PFFCharts.tooltipOptions({
+      return Shared.chartTooltips.tooltipOptions({
         mode: 'index',
         intersect: true,
         filter(item) {
-          return item.datasetIndex === 0;
+          // Tooltip remains available when the Metro line is toggled off.
+          const first = isLineVisible(chart, 0) ? 0 : 1;
+          return item.datasetIndex === first;
         },
         callbacks: {
           title(items) {
@@ -1160,9 +1174,11 @@
               : '';
 
             return [
-              `Metro (MM1): ${PFFCharts.formatInteger(Math.round(row.metro))}${trendText(trendForSeries('metro'))}`,
-              `Non-metro (MM2–7): ${PFFCharts.formatInteger(Math.round(row.nonmetro))}${trendText(trendForSeries('nonmetro'))}`,
-              Number.isFinite(gap)
+              isLineVisible(chart, 0)
+                ? `Metro (MM1): ${PFFCharts.formatInteger(Math.round(row.metro))}${trendText(trendForSeries('metro'))}` : '',
+              isLineVisible(chart, 1)
+                ? `Non-metro (MM2–7): ${PFFCharts.formatInteger(Math.round(row.nonmetro))}${trendText(trendForSeries('nonmetro'))}` : '',
+              canShowAccessGap(chart) && Number.isFinite(gap)
                 ? `Access gap: ${PFFCharts.formatInteger(Math.round(gap))} people per clinician · ${direction}`
                 : ''
             ].filter(Boolean);
@@ -1181,7 +1197,7 @@
 
     function chartOptions(animate = false) {
       const duration = PFF.reducedMotion() || !animate ? 0 : CHART_TRANSITION_MS;
-      return PFFCharts.baseChartOptions({
+      const base = PFFCharts.baseChartOptions({
         animation: {
           duration,
           easing: 'easeInOutCubic'
@@ -1212,17 +1228,25 @@
           tooltip: tooltipOptions()
         },
         scales: {
-          x: PFFCharts.xYearScaleOptions({
+          x: Shared.chartAxes.withXAxisTickMarks(PFFCharts.xYearScaleOptions({
             ticks: {
               callback(value, index) {
                 const year = Number(displayRows[index]?.year);
                 return Number.isFinite(year) && year % 2 === 0 ? String(year) : '';
               }
             }
-          }),
+          }), { yearMode: 'even' }),
           y: leftScaleOptions()
         }
       });
+      const standard = Shared.chartAnimations.withChartJsTiming(base);
+      standard.animation.duration = duration;
+      // The shared 170ms hover transition must also respect reduced motion.
+      standard.transitions.active.animation.duration = PFF.reducedMotion()
+        ? 0 : Shared.chartAnimations.defaults.hoverMs;
+      standard.animations.x = { ...(standard.animations.x || {}), duration, easing: 'easeInOutCubic' };
+      standard.animations.y = { ...(standard.animations.y || {}), duration, easing: 'easeInOutCubic' };
+      return standard;
     }
 
     function clearChartTooltip() {
@@ -1237,6 +1261,7 @@
       if (!chart || !Number.isInteger(index)) return;
       const active = chart.data.datasets
         .map((dataset, datasetIndex) => {
+          if (!isLineVisible(chart, datasetIndex)) return null;
           const value = Number(dataset?.data?.[index]);
           return Number.isFinite(value) ? { datasetIndex, index } : null;
         })
@@ -1351,7 +1376,13 @@
         { passive: true }
       );
 
+      const handleEscape = event => {
+        if (event.key === 'Escape') clearChartTooltip();
+      };
+      document.addEventListener('keydown', handleEscape);
+
       tooltipInteractionCleanup = () => {
+        document.removeEventListener('keydown', handleEscape);
         chartCanvas.removeEventListener(
           'pointerdown',
           handleCanvasPress
@@ -1362,6 +1393,27 @@
           handleDocumentPress
         );
       };
+    }
+
+    function mountAccessLegend() {
+      if (legendController || !chart) return;
+      legendController = Shared.chartLegends.mount({
+        root: document.getElementById('accessLegend'),
+        label: 'Toggle access chart series and gap highlight',
+        getChart() { return chart; },
+        items: [
+          { id: 'metro', datasetIndex: 0, label: 'Metro (MM1)', colour: METRO, markerType: 'line' },
+          { id: 'nonmetro', datasetIndex: 1, label: 'Non-metro (MM2–7)', colour: NONMETRO, markerType: 'line' },
+          { id: 'gap', datasetIndex: -1, label: 'Access gap', colour: ACCESS_GAP, markerType: 'square' }
+        ],
+        onToggle(item) {
+          if (item.id === 'gap') gapVisible = item.visible;
+          clearChartTooltip();
+          // The gap band/bracket only appears while BOTH constituent lines
+          // are visible, and can be independently switched off in the legend.
+          chart?.draw();
+        }
+      });
     }
 
     function buildDatasets(rows) {
@@ -1480,6 +1532,7 @@
           ]
         });
         setupTooltipTapInteractions();
+        mountAccessLegend();
       } else {
         chart.data.labels = rows.map(row => String(row.year));
         chart.data.datasets[0].data = rows.map(row => row.metro);
@@ -1494,17 +1547,57 @@
         chart.options.animations.y.easing = 'easeInOutCubic';
         chart.options.plugins.tooltip = tooltipOptions();
         chart.update();
+        // Capture the currently displayed positions for rapid state reversals.
+        const priorMajor = yAxisController?.majorTracks?.();
+        const priorMinor = yAxisController?.minorTracks?.();
         yAxisController?.animate(previousScale, nextScale, {
           duration,
           fromDecimals: 0,
           toDecimals: 0
         });
+        if (duration > 0 &&
+            (previousScale.min !== nextScale.min ||
+             previousScale.max !== nextScale.max ||
+             previousScale.intervals !== nextScale.intervals)) {
+          yAxisController.state.majorTracks =
+            Shared.chartAxes.slidingNumericAxisTracks(previousScale, nextScale, {
+              kind: 'major', fromTracks: priorMajor
+            });
+          yAxisController.state.minorTracks =
+            Shared.chartAxes.slidingNumericAxisTracks(previousScale, nextScale, {
+              kind: 'minor', fromTracks: priorMinor
+            });
+        }
       }
 
       updateAccessibleSummary();
     }
 
-    startApp(renderLoaded);
+    const requiredShared = [
+      ['axes', Shared.chartAxes?.withXAxisTickMarks],
+      ['sliding Y-axis', Shared.chartAxes?.slidingNumericAxisTracks],
+      ['year ticks', Shared.chartAxes?.createLabelDrivenTicksPlugin],
+      ['animation', Shared.chartAnimations?.withChartJsTiming],
+      ['tooltip', Shared.chartTooltips?.tooltipOptions],
+      ['responsive touch', Shared.chartResponsive?.suppressTapFlash],
+      ['reference lines', Shared.chartAnnotations?.createPlugin],
+      ['trend pills', Shared.chartTrends?.createTrendPillsPlugin],
+      ['legend', Shared.chartLegends?.mount]
+    ];
+    const missingShared = requiredShared
+      .filter(([, value]) => typeof value !== 'function')
+      .map(([name]) => name);
+    if (missingShared.length) {
+      app.classList.remove('is-loading');
+      app.setAttribute('aria-busy', 'false');
+      document.getElementById('loadingState').style.display = 'none';
+      statusEl.textContent = `Missing shared chart assets: ${missingShared.join(', ')}`;
+      statusEl.setAttribute('role', 'alert');
+      console.error('[PFF access gap pilot]', statusEl.textContent);
+    } else {
+      Shared.chartResponsive.suppressTapFlash(chartCanvas);
+      startApp(renderLoaded);
+    }
   </script>
 </body>
 </html>
