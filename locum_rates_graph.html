@@ -838,6 +838,13 @@
         return value % 5 === 0;
       }
 
+      if (
+        view ===
+        'employerRuralityBands'
+      ) {
+        return true;
+      }
+
       if (view === 'date') {
         const month =
           new Date(value).getUTCMonth();
@@ -1620,6 +1627,92 @@
       };
     }
 
+    function beginXAxisOptionTransition(
+      nextOptions
+    ) {
+      if (
+        !chart ||
+        !nextOptions
+      ) {
+        return false;
+      }
+
+      const previousOptions =
+        currentXAxisOptions ||
+        chart.options.scales.x;
+
+      const previousScale =
+        chart.scales.x;
+
+      xAxisFade.active = true;
+      xAxisFade.progress = 0;
+      xAxisFade.from =
+        safeCaptureXAxisSnapshot(
+          previousScale,
+          previousOptions
+        );
+
+      xAxisFade.changes =
+        getXAxisChangeMap(
+          previousOptions,
+          nextOptions
+        );
+
+      chart.options.scales.x =
+        createFadingXAxisOptions(
+          nextOptions
+        );
+
+      currentXAxisOptions =
+        nextOptions;
+
+      chart.update('none');
+      return true;
+    }
+
+    function setXAxisOptionTransitionProgress(
+      progress
+    ) {
+      if (!xAxisFade.active) {
+        return;
+      }
+
+      xAxisFade.progress = clamp(
+        progress,
+        0,
+        1
+      );
+    }
+
+    function completeXAxisOptionTransition(
+      finalOptions
+    ) {
+      if (
+        !chart ||
+        !finalOptions
+      ) {
+        return;
+      }
+
+      xAxisFade.active = false;
+      xAxisFade.progress = 1;
+      xAxisFade.from = null;
+      xAxisFade.changes = {
+        ticks: false,
+        labels: false,
+        title: false,
+        border: false
+      };
+
+      chart.options.scales.x =
+        finalOptions;
+
+      currentXAxisOptions =
+        finalOptions;
+
+      chart.update('none');
+    }
+
     const xAxisFadePlugin = {
       id: 'xAxisFadePlugin',
 
@@ -1675,20 +1768,29 @@
       id: 'variableAxisTickPlugin',
 
       afterDatasetsDraw(activeChart) {
+        const tickView =
+          activeChart
+            .scales
+            .x
+            ?.options
+            ?.pffTickView ||
+          activeView;
+
         if (
           [
             'experience',
             'date',
             'rurality',
-            'structure'
-          ].includes(activeView) &&
+            'structure',
+            'employerRuralityBands'
+          ].includes(tickView) &&
           activeChart.scales.x?.options?.grid?.drawTicks !== false
         ) {
           drawVariableAxisTicks(
             activeChart.ctx,
             activeChart.scales.x,
             'x',
-            activeView
+            tickView
           );
         }
 
@@ -1914,6 +2016,45 @@
       return `${lower}–<${upper} years`;
     }
 
+    function employerOverlayRuralityBand(value) {
+      return {
+        key: value,
+        label: value,
+        sort:
+          RURALITY_ORDER.indexOf(value)
+      };
+    }
+
+    function employerOverlayRuralityBands() {
+      const bands =
+        RURALITY_ORDER.map(
+          employerOverlayRuralityBand
+        );
+
+      const ordered =
+        bands.sort(
+          (first, second) =>
+            first.sort - second.sort
+        );
+
+      const left = 8;
+      const right = 92;
+
+      return ordered.map(
+        (band, index) => ({
+          ...band,
+
+          x:
+            ordered.length === 1
+              ? 50
+              : left +
+                index /
+                (ordered.length - 1) *
+                (right - left)
+        })
+      );
+    }
+
     function buildIndividualDetailLines(raw) {
       if (activeView === 'experience') {
         return [
@@ -2099,6 +2240,110 @@
           scale.height = 46;
         }
       };
+    }
+
+    function bubbleHiddenXAxis() {
+      return stabiliseXAxisOptions({
+        type: 'linear',
+        pffTickView: 'hidden',
+        min: 0,
+        max: 100,
+
+        title: {
+          display: false
+        },
+
+        ticks: {
+          display: false
+        },
+
+        grid: {
+          drawOnChartArea: false,
+          drawTicks: false
+        },
+
+        border: {
+          display: false
+        }
+      });
+    }
+
+    function employerOverlayRuralityXAxis() {
+      const bands =
+        employerOverlayRuralityBands();
+
+      return stabiliseXAxisOptions({
+        type: 'linear',
+        pffTickView:
+          'employerRuralityBands',
+        min: 0,
+        max: 100,
+
+        afterBuildTicks(scale) {
+          scale.ticks = bands.map(
+            band => ({
+              value: band.x
+            })
+          );
+        },
+
+        title: {
+          display: true,
+          text:
+            'Rurality (MM1 = metro; MM7 = very remote)',
+          color: '#151515',
+
+          font: {
+            family: 'Lato',
+            size: 13,
+            weight: '700'
+          }
+        },
+
+        ticks: {
+          color: '#151515',
+          autoSkip: false,
+          maxRotation: 0,
+          minRotation: 0,
+
+          font: {
+            family: 'Lato',
+            size: 10,
+            weight: '400'
+          },
+
+          callback(value) {
+            const numericValue =
+              Number(value);
+
+            return (
+              bands.find(
+                band =>
+                  Math.abs(
+                    band.x -
+                    numericValue
+                  ) < 0.001
+              )?.label ||
+              ''
+            );
+          }
+        },
+
+        grid: {
+          drawOnChartArea: false,
+          drawTicks: true,
+          tickLength: 6,
+          tickColor:
+            'rgba(21, 21, 21, 0)',
+          tickWidth: 0
+        },
+
+        border: {
+          display: true,
+          color: '#151515',
+          width: 1.1
+        }
+      });
     }
 
     function createYAxisOptions() {
@@ -6908,6 +7153,150 @@
         return [];
       }
 
+      if (view === 'employer') {
+        const bands =
+          employerOverlayRuralityBands();
+
+        const bandByKey =
+          new Map(
+            bands.map(
+              band => [
+                band.key,
+                band
+              ]
+            )
+          );
+
+        const groupedByRuralityAndRate =
+          new Map();
+
+        categoryRows.forEach(row => {
+          const band =
+            employerOverlayRuralityBand(
+              row.rurality
+            );
+
+          const groupKey =
+            `${band.key}|${row.hourlyRate}`;
+
+          if (
+            !groupedByRuralityAndRate.has(
+              groupKey
+            )
+          ) {
+            groupedByRuralityAndRate.set(
+              groupKey,
+              {
+                bandKey: band.key,
+                rows: []
+              }
+            );
+          }
+
+          groupedByRuralityAndRate
+            .get(groupKey)
+            .rows
+            .push(row);
+        });
+
+        const points = [];
+
+        groupedByRuralityAndRate.forEach(
+          group => {
+            const band =
+              bandByKey.get(
+                group.bandKey
+              );
+
+            if (!band) {
+              return;
+            }
+
+            const groupRows =
+              group.rows
+                .slice()
+                .sort(
+                  (first, second) =>
+                    first.sourceIndex -
+                    second.sourceIndex
+                );
+
+            const pointCount =
+              groupRows.length;
+
+            const halfSpan = Math.min(
+              17,
+
+              Math.max(
+                0,
+                (pointCount - 1) *
+                  1.5
+              ),
+
+              Math.max(
+                0,
+
+                Math.min(
+                  band.x - 5,
+                  95 - band.x
+                )
+              )
+            );
+
+            groupRows.forEach(
+              (row, index) => {
+                const targetX =
+                  pointCount === 1
+                    ? band.x
+                    : band.x -
+                      halfSpan +
+                      index /
+                      (pointCount - 1) *
+                      halfSpan *
+                      2;
+
+                points.push({
+                  kind:
+                    'bubbleRaw',
+
+                  bubbleView:
+                    view,
+
+                  categoryKey,
+
+                  label:
+                    aggregatePoint.label,
+
+                  fullName:
+                    aggregatePoint.fullName,
+
+                  x:
+                    aggregatePoint.x,
+
+                  y:
+                    aggregatePoint.y,
+
+                  targetX,
+
+                  targetY:
+                    row.hourlyRate,
+
+                  colour:
+                    aggregatePoint.colour,
+
+                  statistics:
+                    aggregatePoint.statistics,
+
+                  ...row
+                });
+              }
+            );
+          }
+        );
+
+        return points;
+      }
+
       const rateGroups =
         new Map();
 
@@ -7040,6 +7429,15 @@
       const shouldDim =
         store.splitKeys.size === 0;
 
+      const shouldSwitchEmployerXAxis =
+        view === 'employer' &&
+        shouldDim;
+
+      const employerOverlayXAxis =
+        shouldSwitchEmployerXAxis
+          ? employerOverlayRuralityXAxis()
+          : null;
+
       const startYAxisRange =
         copyDisplayedYAxisRange();
 
@@ -7069,6 +7467,13 @@
 
       chart.data.datasets[1].data =
         store.rawPoints;
+
+      const xAxisTransitionActive =
+        employerOverlayXAxis
+          ? beginXAxisOptionTransition(
+              employerOverlayXAxis
+            )
+          : false;
 
       chart.update('none');
       updateReaggregateButton();
@@ -7105,6 +7510,12 @@
           if (shouldDim) {
             store.dimProgress =
               progress;
+          }
+
+          if (xAxisTransitionActive) {
+            setXAxisOptionTransitionProgress(
+              progress
+            );
           }
 
           newPoints.forEach(point => {
@@ -7151,6 +7562,12 @@
             store.dimProgress = 1;
           }
 
+          if (xAxisTransitionActive) {
+            completeXAxisOptionTransition(
+              employerOverlayXAxis
+            );
+          }
+
           interactionLocked = false;
           chart.update('none');
           updateReaggregateButton();
@@ -7178,6 +7595,11 @@
 
       const view =
         activeView;
+
+      const employerBaseXAxis =
+        view === 'employer'
+          ? bubbleHiddenXAxis()
+          : null;
 
       const startYAxisRange =
         copyDisplayedYAxisRange();
@@ -7224,6 +7646,13 @@
         }
       );
 
+      const xAxisTransitionActive =
+        employerBaseXAxis
+          ? beginXAxisOptionTransition(
+              employerBaseXAxis
+            )
+          : false;
+
       chart.update('none');
       updateReaggregateButton();
 
@@ -7256,6 +7685,12 @@
 
           store.dimProgress =
             1 - progress;
+
+          if (xAxisTransitionActive) {
+            setXAxisOptionTransitionProgress(
+              progress
+            );
+          }
 
           store.rawPoints.forEach(
             point => {
@@ -7311,6 +7746,12 @@
           store.mergingKeys.clear();
           store.mergeProgress = 0;
           store.dimProgress = 0;
+
+          if (xAxisTransitionActive) {
+            completeXAxisOptionTransition(
+              employerBaseXAxis
+            );
+          }
 
           interactionLocked = false;
           chart.update('none');
